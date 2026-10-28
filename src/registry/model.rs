@@ -100,45 +100,6 @@ fn default_field_type() -> String {
     "string".to_string()
 }
 
-/// Where a namespace's table appears in the generated documentation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RenderMode {
-    /// A generated page per namespace, with row references linking to it, once
-    /// [`REGISTRY_PAGES_ENABLED`] is on. While it is off this renders no page and a
-    /// reference is its slug, exactly as under `Embed`.
-    #[default]
-    Page,
-    /// No standalone page. The project embeds the table where it wants with
-    /// `{{registry:<key>}}`, and row references render as plain text, because
-    /// a link needs a target.
-    Embed,
-}
-
-/// Whether the registry renders any document at all.
-///
-/// Off: the registry writes no generated page. The rows stay the one source and every
-/// tool reading them is untouched; only the rendered page goes. This is the one switch.
-/// [`RenderMode::has_page`] reads it, and both the page planner and the row-link target
-/// ask `has_page`, so no path renders a page or links to one while it is off. A table
-/// embedded into a template is a different path and is not governed by it.
-///
-// FIXME: pages are off until a way for the registry to render documents is settled. While
-// off, `plan_registry_pages` (src/document.rs), `registry_page_body` (src/registry/render.rs),
-// `DocIndex::registry_doc` and the registry-page section of scripts/pdf.sh are unreachable,
-// the book that script builds carries no registry, and nothing tests the `has_page`-true branch
-// of `doc_target`, the citation links it produces, or the link control for
-// `a_reference_into_an_embed_namespace_is_plain_text`, which now matches a renderer that never
-// links. The ordered page names are still tested in src/document.rs. Restore the link tests
-// beside the switch when it goes back on.
-pub const REGISTRY_PAGES_ENABLED: bool = false;
-
-impl RenderMode {
-    pub const fn has_page(self) -> bool {
-        REGISTRY_PAGES_ENABLED && matches!(self, RenderMode::Page)
-    }
-}
-
 /// A declared namespace: one kind of thing the registry holds.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct RegistryNamespace {
@@ -149,12 +110,10 @@ pub struct RegistryNamespace {
     pub title:       Option<String>,
     #[serde(default)]
     pub description: Option<String>,
-    /// When set, a bare row reference renders this field's value instead of a
-    /// link, so a constant is stated once and every mention stays current.
+    /// When set, a bare row reference renders this field's value instead of the
+    /// row's slug, so a constant is stated once and every mention stays current.
     #[serde(default)]
     pub value_field: Option<String>,
-    #[serde(default)]
-    pub render:      RenderMode,
     /// Render the table in sections, one per distinct value of this field.
     ///
     /// A flat table of every row is the wrong shape for a namespace whose rows
@@ -171,19 +130,6 @@ pub struct RegistryNamespace {
 impl RegistryNamespace {
     pub fn title(&self) -> String {
         self.title.clone().unwrap_or_else(|| self.key.clone())
-    }
-
-    /// The generated page's filename, matching the uppercase convention every
-    /// other generated document here follows.
-    ///
-    /// No prefix: a namespace's name is already the document's subject, and
-    /// `VOCAB.md` reads better than `REGISTRY-VOCAB.md` beside `DESIGN.md` and
-    /// `CATALOGUE.md`. The prefix was implicitly preventing a namespace from
-    /// colliding with a hand-authored document, which `render_pages` now checks
-    /// for directly. Padding every name to avoid a collision hides it; checking
-    /// reports it.
-    pub fn page_name(&self) -> String {
-        format!("{}.md", self.key.to_uppercase().replace('_', "-"))
     }
 }
 
@@ -321,7 +267,6 @@ pub fn builtin_vocab() -> RegistryNamespace {
                 .to_string(),
         ),
         value_field: None,
-        render: RenderMode::Page,
         // Vocab is the case that motivates grouping: its rows belong to
         // several unrelated closed sets and a flat table mixes them.
         group_by: Some("kind".to_string()),
@@ -377,7 +322,6 @@ pub fn builtin_reference() -> RegistryNamespace {
                 .to_string(),
         ),
         value_field: None,
-        render: RenderMode::Page,
         group_by: Some("kind".to_string()),
         fields: vec![
             f("title", true, "The work's own title, as published."),

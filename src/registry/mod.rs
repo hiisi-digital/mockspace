@@ -92,7 +92,6 @@ mod tests {
             title:       None,
             description: None,
             value_field: value_field.map(|s| s.to_string()),
-            render:      RenderMode::Page,
             group_by:    None,
             fields:      vec![],
         }
@@ -129,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn a_row_reference_is_the_slug_while_pages_are_off() {
+    fn a_row_reference_is_its_slug() {
         let reg = reg_with("xpbd", "vocab", &[]);
         let out = r_all("see {{ reg::vocab::xpbd }} now", &[ns("vocab", None)], &reg);
         assert_eq!(out, "see xpbd now");
@@ -874,7 +873,7 @@ mod tests {
         // `PLAN_VALIDATE.md` where the file is written as `140_PLAN_VALIDATE.md`.
         //
         // The reference is to a crate, because the registry writes no page for a row to
-        // link to while `REGISTRY_PAGES_ENABLED` is off, and a crate document is what
+        // link to, and a crate document is what
         // the index still names.
         let tmp = tempfile::tempdir().unwrap();
         let crates_dir = tmp.path().join("mock").join("crates");
@@ -1344,7 +1343,6 @@ mod tests {
         let r = Resolved::Row {
             namespace: "law".into(),
             slug:      "keys".into(),
-            target:    "902_LAW.md#keys".into(),
             fields:    vec![(
                 "crates".into(),
                 "[world](120_WORLD.md), [store](130_STORE.md)".into(),

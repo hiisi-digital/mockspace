@@ -9,9 +9,8 @@
 # of the dependency graph, and the set of markdown files combined in order. Both
 # were wrong in ways nothing reported. The name arrived with the dot file's
 # quotes still on it, which pandoc read as a broken YAML title and refused. The
-# file set knew about crates and nothing else, so a project whose canon is a
-# typed registry got a book with every crate's documentation and none of its
-# canon.
+# file set once chose registry pages by a line each carried; the registry writes
+# none now, and the set is pinned so that choice does not return unnoticed.
 #
 # Neither failure is visible in a passing run. The second one especially: a book
 # missing a chapter is a book, and the only signal is a count nobody compares
@@ -51,7 +50,7 @@ _fixture() {
     } > "$root/docs/STRUCTURE.GRAPH.dot"
 }
 
-# _page <root> <NAME> <rows> -> a generated registry page
+# _page <root> <NAME> <rows> -> a registry page as an earlier version wrote it
 #
 # The row-count sentence is what mockspace puts on every registry page and on no
 # other document, so it is what the script recognises them by. Written out here
@@ -132,107 +131,33 @@ it_falls_back_to_the_directory_name_when_the_graph_names_nothing() {
 # --- the file set ------------------------------------------------------------
 
 #[test]
-it_carries_the_declared_registry_pages_in_declaration_order() {
-    # Declaration order is the project's own, and alphabetical would put the
-    # rulings before the things they rule on.
-    local d; d="$(mktemp -d)"
-    _fixture "$d/proj" 'digraph "proj" {'
-    _config "$d/proj" topic slot ruling
-    _page "$d/proj" TOPIC 3
-    _page "$d/proj" SLOT 42
-    _page "$d/proj" RULING 101
-    assert_eq "$(_files "$d/proj")" "TOPIC.md SLOT.md RULING.md"
-    rm -rf "$d"
-}
-
-#[test]
-it_carries_a_registry_page_the_config_never_names() {
-    # Some namespaces are mockspace's own and appear in no project's config.
-    # Reading only the config left the reference namespace out of every book,
-    # which is this section's own defect one namespace narrower, and nothing
-    # reported it because a book missing a chapter is still a book.
-    local d; d="$(mktemp -d)"
-    _fixture "$d/proj" 'digraph "proj" {'
-    _config "$d/proj" ruling
-    _page "$d/proj" RULING 101
-    _page "$d/proj" REFERENCE 1
-    assert_eq "$(_files "$d/proj")" "RULING.md REFERENCE.md"
-    rm -rf "$d"
-}
-
-#[test]
-it_carries_a_page_that_is_both_declared_and_found_only_once() {
-    # The two passes overlap by design. A page named by the config and carrying
-    # the row-count line is reached twice, and must appear once, at the position
-    # the config gave it rather than the one the sweep would.
-    local d; d="$(mktemp -d)"
-    _fixture "$d/proj" 'digraph "proj" {'
-    _config "$d/proj" zeta alpha
-    _page "$d/proj" ZETA 1
-    _page "$d/proj" ALPHA 1
-    assert_eq "$(_files "$d/proj")" "ZETA.md ALPHA.md"
-    rm -rf "$d"
-}
-
-#[test]
-it_carries_nothing_registry_shaped_when_there_are_no_registry_pages() {
-    # The control for the two tests above. A sweep that picked up every markdown
-    # file would satisfy both of them and be entirely wrong, and this is the
-    # arm that fails when it does.
-    local d; d="$(mktemp -d)"
-    _fixture "$d/proj" 'digraph "proj" {'
-    _config "$d/proj" ruling topic
-    _plain "$d/proj" DESIGN
-    _plain "$d/proj" PRINCIPLES
-    assert_eq "$(_files "$d/proj")" "DESIGN.md PRINCIPLES.md"
-    rm -rf "$d"
-}
-
-#[test]
-it_does_not_carry_a_document_that_is_neither_declared_nor_a_registry_page() {
-    # Same control pointed at one file: a stray document sitting in docs/ is not
-    # canon and does not join the book by being uppercase.
-    local d; d="$(mktemp -d)"
-    _fixture "$d/proj" 'digraph "proj" {'
-    _config "$d/proj" ruling
-    _page "$d/proj" RULING 2
-    _plain "$d/proj" NOTES
-    assert_eq "$(_files "$d/proj")" "RULING.md"
-    rm -rf "$d"
-}
-
-#[test]
-it_reads_a_key_line_the_config_indents() {
-    # TOML permits the indentation and mockspace does not forbid it, so a config
-    # that uses it must not silently lose its declared order and fall through to
-    # the alphabetical sweep.
-    local d; d="$(mktemp -d)"
-    _fixture "$d/proj" 'digraph "proj" {'
-    {
-        printf '[[registry.namespace]]\n    key = "zeta"\n\n'
-        printf '[[registry.namespace]]\n    key = "alpha"\n\n'
-    } > "$d/proj/mockspace.toml"
-    _page "$d/proj" ZETA 1
-    _page "$d/proj" ALPHA 1
-    assert_eq "$(_files "$d/proj")" "ZETA.md ALPHA.md"
-    rm -rf "$d"
-}
-
-#[test]
 it_opens_with_the_design_document_and_closes_with_the_addenda() {
     # The canon sits between the entrypoint and the appendices. Putting it after
     # the workflow addendum would read as an afterthought, and before the design
     # document as the opening chapter.
     local d; d="$(mktemp -d)"
     _fixture "$d/proj" 'digraph "proj" {'
-    _config "$d/proj" ruling
     _plain "$d/proj" DESIGN
-    _page  "$d/proj" RULING 7
     _plain "$d/proj" STRUCTURE
     _plain "$d/proj" PRINCIPLES
     _plain "$d/proj" WORKFLOW
     assert_eq "$(_files "$d/proj")" \
-        "DESIGN.md RULING.md STRUCTURE.md PRINCIPLES.md WORKFLOW.md"
+        "DESIGN.md STRUCTURE.md PRINCIPLES.md WORKFLOW.md"
+    rm -rf "$d"
+}
+
+#[test]
+it_carries_no_registry_page_even_when_one_sits_in_docs() {
+    # The registry writes no page, so the book has no chapter for one. A page an
+    # earlier version left behind, declared in the config and carrying the
+    # row-count line, is not picked up: the case that fails is the old selection,
+    # which carried it.
+    local d; d="$(mktemp -d)"
+    _fixture "$d/proj" 'digraph "proj" {'
+    _config "$d/proj" ruling
+    _page "$d/proj" RULING 101
+    _plain "$d/proj" DESIGN
+    assert_eq "$(_files "$d/proj")" "DESIGN.md"
     rm -rf "$d"
 }
 

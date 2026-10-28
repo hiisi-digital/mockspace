@@ -126,29 +126,6 @@ fn regex_lite_replace(s: &str, from: &str, to: &str) -> String {
 ///
 /// Accepts the short name or the full directory name, since the prefix is
 /// stable and repeating it at every reference buys nothing.
-/// The link target for a row: its namespace's document, plus the row's anchor.
-///
-/// Asks the index what the document is called rather than reconstructing it.
-/// Reconstructing it is what put `LAW.md` in a link while the file was written
-/// as `902_LAW.md`.
-fn doc_target(ns: &RegistryNamespace, row: &RegistryRow, cfg: &crate::config::Config) -> String {
-    // A namespace with no page, an embed namespace or any namespace while
-    // `REGISTRY_PAGES_ENABLED` is off, has nothing to link to. Empty is the
-    // signal, and `Resolved::Row` renders the slug as plain text when it sees
-    // one. Before this, a reference into an embed namespace produced a link to a
-    // file the generator never writes, which `RenderMode::Embed`'s own
-    // documentation says does not happen.
-    if !ns.render.has_page() {
-        return String::new();
-    }
-    let file = cfg
-        .doc_index
-        .registry_doc(&ns.key)
-        .map(str::to_string)
-        .unwrap_or_else(|| ns.page_name());
-    format!("{}{file}#{}", cfg.doc_link_prefix, row.anchor())
-}
-
 fn resolve_crate_ref(name: &str, cfg: &crate::config::Config, docs_dir: &Path) -> Option<String> {
     let prefixed = format!("{}-{name}", cfg.crate_prefix);
     // Searched across every source directory: a reference names a crate, not a
@@ -694,31 +671,26 @@ pub fn resolve_typed(
             3 | 4 if parts[1] == "reference" => {
                 let qualified = format!("{}::{}", parts[1], parts[2]);
                 let row = reg.get(&qualified)?;
-                let ns = by_key.get("reference")?;
-                let target = doc_target(ns, row, cfg);
+                if !by_key.contains_key("reference") {
+                    return None;
+                }
 
                 // `::citation` is a computed field, not one the row declares:
-                // the full form, linked. Everything else is a real field.
+                // the full form. Everything else is a real field.
                 if parts.len() == 4 && parts[3] != "citation" {
                     return row.fields.get(parts[3]).cloned().map(Resolved::Field);
                 }
 
-                // A short linked form by default, the full one on request.
-                //
-                // Both are hyperlinks, because a citation a reader cannot
-                // follow is worth less than one they can, and markdown costs
-                // nothing to make it clickable. They differ in width: a
-                // sources column carrying four hundred full citations is
-                // unreadable, while the same citation in prose wants its
-                // title. Default to the form that fits everywhere.
+                // A short form by default, the full one on request. They differ
+                // in width: a sources column carrying four hundred full citations
+                // is unreadable, while the same citation in prose wants its
+                // title. Default to the form that fits everywhere. There is no
+                // page for either to link to, so the citation is its text alone.
                 let text =
                     if parts.len() == 4 { format_citation(row) } else { short_citation(row) };
-                // An empty target is a namespace with no page, which is every namespace
-                // while the registry writes none: the citation is then its text alone,
-                // never `[text]()`.
                 Some(Resolved::Citation {
                     text,
-                    link: Some(target).filter(|t| !t.is_empty()),
+                    link: None,
                 })
             },
             3 | 4 => {
@@ -742,11 +714,10 @@ pub fn resolve_typed(
                     {
                         return None;
                     }
-                    // A field typed as a namespace holds slugs, and a slug is
-                    // not what a reader wants to see. Rendered as links, so a
-                    // field reference and the same field's table cell agree:
-                    // one of them showing bare slugs while the other links was
-                    // the first thing this produced.
+                    // A field typed as a namespace holds slugs, and each is resolved
+                    // through the same path as the field's table cell, so a field
+                    // reference and the cell agree, and a slug that names no row is
+                    // reported rather than passed through.
                     if let Some(target) = ns
                         .fields
                         .iter()
@@ -781,14 +752,13 @@ pub fn resolve_typed(
                     return row.fields.get(parts[3]).cloned().map(Resolved::Field);
                 }
                 // A namespace declaring a value field renders that instead of a
-                // link, so a constant states its number wherever it is named.
+                // slug, so a constant states its number wherever it is named.
                 if let Some(v) = ns.value_field.as_ref().and_then(|f| row.fields.get(f)) {
                     return Some(Resolved::Field(v.clone()));
                 }
                 Some(Resolved::Row {
                     namespace: row.namespace.clone(),
                     slug:      row.slug.clone(),
-                    target:    doc_target(ns, row, cfg),
                     fields:    row_fields(ns, row),
                 })
             },

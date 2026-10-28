@@ -24,7 +24,7 @@ use super::*;
 /// shipped `{{ slot::display }}` as literal text, which is the failure this
 /// test exists for.
 #[test]
-fn a_row_reference_cell_is_the_slug_while_pages_are_off() {
+fn a_row_reference_cell_is_its_slug() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "slot")])];
     let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
     let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
@@ -143,32 +143,12 @@ fn a_reference_to_an_ordinary_field_renders_its_value() {
     assert_eq!(resolved("{{ answer::niri::slot }}", &nss, &r), "display");
 }
 
-fn embed(key: &str, fields: &[(&str, &str)]) -> RegistryNamespace {
-    let mut n = ns(key, fields);
-    n.render = RenderMode::Embed;
-    n
-}
-
-/// A namespace with no page has nothing to link to, so a reference into it
-/// is the slug. Before this, it produced a link to a file the generator
-/// never writes, and the comment above the cell renderer claimed the case
-/// was handled.
+/// The registry writes no page, so a reference into any namespace has nothing to link to
+/// and is the row's slug. The case that fails: a renderer still building a link to a file
+/// nobody writes would give `[display](SLOT.md#display)`.
 #[test]
-fn a_reference_into_an_embed_namespace_is_plain_text() {
-    let nss = vec![embed("slot", &[]), ns("answer", &[("slot", "slot")])];
-    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
-    assert_eq!(resolved("{{ answer::niri::slot }}", &nss, &r), "display");
-    assert_eq!(resolved("{{ slot::display }}", &nss, &r), "display");
-}
-
-/// A namespace declared `render = "page"` has no page while the registry writes none, so
-/// a reference into it is the slug as well, and never a link to a file nobody writes.
-/// This is the case that fails with `REGISTRY_PAGES_ENABLED` on: the reference then
-/// renders `[display](SLOT.md#display)`.
-#[test]
-fn a_reference_into_a_page_namespace_is_plain_text_while_pages_are_off() {
+fn a_reference_into_a_namespace_is_plain_text() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "slot")])];
-    assert!(matches!(nss[0].render, RenderMode::Page), "the fixture must be a page namespace");
     let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
     assert_eq!(resolved("{{ answer::niri::slot }}", &nss, &r), "display");
     assert_eq!(resolved("{{ slot::display }}", &nss, &r), "display");

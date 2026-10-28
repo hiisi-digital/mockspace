@@ -211,7 +211,7 @@ pub const FINDING_KINDS: &[&str] = &[
 /// when the two disagree. `FIELD_KEYS` and `FINDING_KINDS` are held the same way,
 /// the kinds in both directions.
 const NAMESPACE_KEYS: &[&str] =
-    &["key", "title", "description", "value_field", "render", "group_by", "field"];
+    &["key", "title", "description", "value_field", "group_by", "field"];
 
 /// Keys a `[[registry.namespace.field]]` table may carry. Mirrors `RegistryField`.
 const FIELD_KEYS: &[&str] =

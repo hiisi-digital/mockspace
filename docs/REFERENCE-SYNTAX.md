@@ -14,13 +14,11 @@ documents are generated.
 | `{{ reg::spike }}` | a whole namespace | its table, inline |
 | `{{ seed::DESIGN::844 }}` | a place in a file | a line link |
 
-The registry writes no pages for now. A namespace declared `render = "page"` is
-read, validated and queried like any other, but no `<KEY>.md` is written into the
-docs directory, so a row reference has no document to link to and renders as its
-slug. A page an earlier run wrote is removed by the sweep of `docs/`. The switch is
-`REGISTRY_PAGES_ENABLED` in `src/registry/model.rs`, and nothing else turns pages on. A
-table written into a template with `{{ reg::spike }}` or `{{registry:spike}}` is
-rendered into that template's own document, and is not governed by it.
+The registry writes no page into the docs directory. A namespace is read, validated and
+queried, and a table of it is written wherever a template asks for one with
+`{{ reg::spike }}` or `{{registry:spike}}`, in that template's own document. A row
+reference has no document to link to, so it renders as the row's slug. A page an
+earlier version wrote is removed by the sweep of `docs/`.
 
 The braces are required, and they are not ceremony. They make a reference
 something the author states rather than something the renderer guesses from a
@@ -189,15 +187,13 @@ reference the namespace.
 
 **A namespace declaring `value_field` cannot be referenced this way**, and that is
 refused at the declaration too. A reference into such a namespace renders that
-field's text rather than a link, which is right for a constant stated once and
-wrong for a relation: the reference exists to link once pages are written again, and the text arrives in a table
-cell after the cell's own escaping has run, so a value carrying a pipe ends the
-column early.
+field's text rather than the slug, which is right for a constant stated once and
+wrong for a relation: the reference exists to name a row, and the text arrives in a
+table cell after the cell's own escaping has run, so a value carrying a pipe ends
+the column early.
 
-**A target with no page**, which is every namespace while the registry writes none and
-a namespace rendered with `render = "embed"` in any case, gets the slug as plain text
-from a reference rather than a link. That holds for a table cell and for a
-`{{ ns::slug }}` in prose alike.
+**A reference to a row gives its slug as plain text**, in a table cell and in a
+`{{ ns::slug }}` in prose alike, because the registry writes no page for it to link to.
 
 ### Asking what points at a row
 

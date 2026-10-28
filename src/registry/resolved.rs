@@ -33,9 +33,7 @@ pub enum Resolved {
     Row {
         namespace: String,
         slug:      String,
-        /// Where the row's document is, and its anchor within it.
-        target:    String,
-        /// What the row says, for a reader who cannot follow the link.
+        /// What the row says, for a reader who has only the reference.
         fields:    Vec<(String, String)>,
     },
     /// One field of a row: `law::keys::statement`.
@@ -70,18 +68,11 @@ impl Resolved {
                 rows,
                 ..
             } => render_markdown_table(columns, rows),
-            // An empty target means the namespace has no page, so the slug is
-            // the whole answer. A link needs somewhere to point.
+            // A row has no page to link to, so its slug is the whole answer.
             Resolved::Row {
                 slug,
-                target,
                 ..
-            } if target.is_empty() => slug.clone(),
-            Resolved::Row {
-                slug,
-                target,
-                ..
-            } => format!("[{slug}]({target})"),
+            } => slug.clone(),
             Resolved::Field(v) => v.clone(),
             Resolved::Citation {
                 text,
@@ -102,8 +93,8 @@ impl Resolved {
     /// How this appears in a terminal.
     ///
     /// A link is useless where it cannot be clicked, so a row shows what it
-    /// says and then where it lives. A table gets aligned columns, because
-    /// pipes are for markdown parsers rather than for people.
+    /// says. A table gets aligned columns, because pipes are for markdown parsers
+    /// rather than for people.
     pub fn to_terminal(&self) -> String {
         match self {
             Resolved::Table {
@@ -118,16 +109,12 @@ impl Resolved {
             Resolved::Row {
                 namespace,
                 slug,
-                target,
                 fields,
             } => {
                 let mut out = format!("{namespace}::{slug}\n");
                 let width = fields.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
                 for (k, v) in fields {
                     out.push_str(&format!("  {k:<width$}  {}\n", unlink(v)));
-                }
-                if !target.is_empty() {
-                    out.push_str(&format!("\n  in {target}\n"));
                 }
                 out
             },

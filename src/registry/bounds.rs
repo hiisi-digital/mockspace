@@ -130,7 +130,6 @@ mod tests {
             title: None,
             description: None,
             value_field: None,
-            render: RenderMode::Page,
             group_by: None,
             fields,
         }]
