@@ -77,6 +77,60 @@ pub(crate) fn forgives_failure(mock_dir: &Path, args: &[&str]) -> bool {
     diagnostic_is_no_members(&String::from_utf8_lossy(&out.stderr))
 }
 
+/// The arguments of the gate's `cargo check`, bounded to the scoped packages.
+///
+/// `scope` is the crate list `--scope` carries, by directory name, and each name
+/// is looked up under every declared source directory and turned into the
+/// package name its manifest declares, since the two need not agree. The check
+/// stays the whole workspace, never narrowed, when there is no crate list, when
+/// a shared input is staged (the registry, the config, the workspace manifest
+/// and lockfile reach every crate), and when a named crate cannot be resolved,
+/// because a bound that drops what it cannot find narrows the gate silently.
+pub(crate) fn check_args(
+    src_dirs: &[std::path::PathBuf],
+    scope: Option<&str>,
+    shared_staged: bool,
+) -> Vec<String> {
+    let full = vec!["check".to_string()];
+    let Some(scope) = scope else {
+        return full;
+    };
+    if shared_staged || scope == "infra" {
+        return full;
+    }
+    let names: Vec<&str> = scope
+        .split(',')
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .collect();
+    if names.is_empty() {
+        return full;
+    }
+    let mut args = full;
+    for name in names {
+        let Some(package) = package_name_of(src_dirs, name) else {
+            return vec!["check".to_string()];
+        };
+        args.push("-p".to_string());
+        args.push(package);
+    }
+    args
+}
+
+/// The `[package] name` of the crate directory `dir_name` under any source directory.
+fn package_name_of(src_dirs: &[std::path::PathBuf], dir_name: &str) -> Option<String> {
+    let dir = src_dirs
+        .iter()
+        .map(|d| d.join(dir_name))
+        .find(|d| d.is_dir())?;
+    let text = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
+    let doc = text.parse::<toml_edit::DocumentMut>().ok()?;
+    doc.get("package")?
+        .get("name")?
+        .as_str()
+        .map(str::to_string)
+}
+
 /// A cargo command against the mock workspace, with the inherited rustup env
 /// stripped so `mock/rust-toolchain.toml` wins over the toolchain the outer
 /// process already resolved.
@@ -242,5 +296,50 @@ mod tests {
             forgives_failure(tmp.path(), &["check"]),
             "a members glob matching nothing is the same pre-taxonomy state"
         );
+    }
+    fn two_src_dirs() -> (tempfile::TempDir, Vec<std::path::PathBuf>) {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("crates");
+        let b = tmp.path().join("applets/console/crates");
+        for (dir, folder, name) in
+            [(&a, "kaski-sim", "kaski-sim"), (&b, "console-core", "kaski-console-core")]
+        {
+            std::fs::create_dir_all(dir.join(folder)).unwrap();
+            std::fs::write(
+                dir.join(folder).join("Cargo.toml"),
+                format!("[package]\nname = \"{name}\"\n"),
+            )
+            .unwrap();
+        }
+        (tmp, vec![a, b])
+    }
+
+    #[test]
+    fn check_is_bounded_to_the_scoped_packages_under_any_source_directory() {
+        let (_tmp, dirs) = two_src_dirs();
+        assert_eq!(check_args(&dirs, Some("console-core,kaski-sim"), false), [
+            "check",
+            "-p",
+            "kaski-console-core",
+            "-p",
+            "kaski-sim"
+        ]);
+    }
+
+    #[test]
+    fn check_stays_whole_without_a_crate_list_or_with_a_shared_input() {
+        let (_tmp, dirs) = two_src_dirs();
+        // each of these must differ from the bounded answer above
+        assert_eq!(check_args(&dirs, None, false), ["check"]);
+        assert_eq!(check_args(&dirs, Some("infra"), false), ["check"]);
+        assert_eq!(check_args(&dirs, Some("console-core"), true), ["check"]);
+    }
+
+    #[test]
+    fn check_is_not_narrowed_by_a_crate_it_cannot_find() {
+        let (_tmp, dirs) = two_src_dirs();
+        assert_eq!(check_args(&dirs, Some("console-core,nope"), false), [
+            "check"
+        ]);
     }
 }

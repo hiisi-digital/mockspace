@@ -65,6 +65,8 @@ mod gitignore_tests;
 #[cfg(test)]
 mod hooks_identity_tests;
 #[cfg(test)]
+mod hooks_src_dirs_tests;
+#[cfg(test)]
 mod lint_crates_tests;
 
 /// Marker in generated hooks for identification and versioning.
@@ -116,7 +118,7 @@ pub fn bootstrap_from_buildscript() {
 /// Best-effort and quiet: setup failures never block the command the user
 /// actually ran. Idempotent and cheap on the common path (fingerprint-guarded
 /// hook writes, a single `git config` read).
-pub fn ensure_gate(repo_root: &Path, mock_dir: &Path) {
+pub fn ensure_gate(repo_root: &Path, mock_dir: &Path, src_dirs: &[PathBuf]) {
     let mut actions = Vec::new();
 
     // The engine is the generated validator's only writer now that the
@@ -124,7 +126,7 @@ pub fn ensure_gate(repo_root: &Path, mock_dir: &Path) {
     // validator and blocks while it is missing, telling the user to run
     // `cargo mock`; if that run did not materialise the validator, the
     // guidance would loop forever.
-    ensure_generated_hooks(repo_root, mock_dir, &mut actions);
+    ensure_generated_hooks(repo_root, mock_dir, src_dirs, &mut actions);
 
     // Generated files merge without conflict: the driver `.gitattributes` names
     // lives in the clone's config, so it is registered with the hooks.

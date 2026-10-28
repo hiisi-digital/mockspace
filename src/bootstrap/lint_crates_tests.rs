@@ -23,7 +23,7 @@ fn gen_pre_push_passes_bash_syntax_check() {
     // Run `bash -n` on the generated script to catch syntax errors
     // (unbalanced quotes, missing fi/done, format-string slips). Does
     // not execute the script, just parses it.
-    let script = gen_pre_push("mock", Path::new("/dev/null"));
+    let script = gen_pre_push("mock", &["crates"], Path::new("/dev/null"));
     let mut path = std::env::temp_dir();
     path.push(format!("mockspace_pre_push_test_{}.sh", std::process::id()));
     std::fs::write(&path, &script).unwrap();
@@ -45,7 +45,7 @@ fn gen_pre_push_passes_bash_syntax_check() {
 fn gen_pre_push_includes_scope_branch() {
     // Sanity check: the generated script names the new-branch /
     // changed-crates scopes the way the hook expects.
-    let script = gen_pre_push("mock", Path::new("/dev/null"));
+    let script = gen_pre_push("mock", &["crates"], Path::new("/dev/null"));
     assert!(
         script.contains("CHANGED_CRATES"),
         "expected CHANGED_CRATES var in generated pre-push hook"

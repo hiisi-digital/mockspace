@@ -161,7 +161,7 @@ Common flags:
 |---------------------|--------------------------------------------------------------|
 | `--lint-only`       | Run lints only; skip generation and dylib checks             |
 | `--doc-only`        | Skip source lints; run only doc-related checks               |
-| `--scope <csv>`     | Restrict lints to named crates (comma-separated)             |
+| `--scope <csv>`     | Restrict lints, and a full run's `cargo check`, to named crates (comma-separated, by directory name under any `src_dirs` entry) |
 | `--scope infra`     | Infrastructure-only mode (no crate check, no crate lints)    |
 | `--commit`          | Lint mode: `Commit` (typically most permissive gate)         |
 | `--strict`          | Lint mode: `Push` (strictest gate)                           |
@@ -170,7 +170,7 @@ Common flags:
 | `--y`               | Answer a `--nuke` in advance, for a second run and for a script. |
 | `--dir <path>`      | Override auto-discovered mock dir                            |
 
-The generated `pre-commit` hook runs `cargo mock` scoped to changed crates with `--commit`. The generated `pre-push` hook runs `cargo mock --lint-only --strict`.
+The generated `pre-commit` hook runs `cargo mock --lint-only --commit` scoped to the crates it finds staged, where a crate is the directory directly under any directory the project declares in `src_dirs`. The generated `pre-push` hook runs `cargo mock --lint-only --strict`, scoped to the crates the push changed under the same directories. A staged or pushed shared input (a file under `<mock>/registry/`, `mockspace.toml`, or the mock workspace's `Cargo.toml` or `Cargo.lock`) is never bounded to the crates beside it: the hook runs everything. The hooks are regenerated when `src_dirs` changes.
 
 This table (and the one above it) is not the exhaustive command reference; run `mock tools` for that, or `mock tools --long` for full usage and declared arguments per command. It never goes stale the way a hand-written list does, because it is computed from the same declarations the engine dispatches against.
 

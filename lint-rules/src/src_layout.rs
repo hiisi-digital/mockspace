@@ -87,6 +87,11 @@ impl SrcLayout {
         self.dirs.is_empty()
     }
 
+    /// The declared directories, relative to the mock dir, without a trailing slash.
+    pub fn dirs(&self) -> &[String] {
+        &self.dirs
+    }
+
     /// The pathspecs to hand git, one per declared directory.
     pub fn pathspecs(&self) -> Vec<String> {
         self.dirs.iter().map(|d| format!("{d}/")).collect()
