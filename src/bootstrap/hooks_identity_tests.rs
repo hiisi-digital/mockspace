@@ -70,27 +70,11 @@ fn make_executable(path: &Path) {
     std::fs::set_permissions(path, p).unwrap();
 }
 
-/// Take the session's own identity out of the child's environment. The workspace
-/// supplies one through `GIT_AUTHOR_*` and `GIT_COMMITTER_*`, and an ambient
-/// override beats the repository's `user.name` the test sets, so a test about
-/// which identity reaches the gate would be measuring the machine's instead.
-/// Applied before the test's own variables, which are the ones meant to count.
-pub(super) fn without_ambient_identity(c: &mut Command) -> &mut Command {
-    for k in [
-        "GIT_AUTHOR_NAME",
-        "GIT_AUTHOR_EMAIL",
-        "GIT_AUTHOR_DATE",
-        "GIT_COMMITTER_NAME",
-        "GIT_COMMITTER_EMAIL",
-        "GIT_COMMITTER_DATE",
-        "EMAIL",
-        "GIT_CONFIG_COUNT",
-        "GIT_CONFIG_PARAMETERS",
-    ] {
-        c.env_remove(k);
-    }
-    c
-}
+/// The scrubs of a child's environment, from the one file the integration tests
+/// include too (`tests/common/ambient.rs`; see its header for why not a module).
+#[path = "../../tests/common/ambient.rs"]
+mod ambient;
+pub(super) use ambient::{clean_of_the_machine, without_ambient_identity, without_ambient_repo};
 
 /// Git with the machine's own config out of the way, so a global identity on
 /// whatever runs this cannot stand in for the one under test.
@@ -102,7 +86,7 @@ pub(super) fn git_command(repo: &Path, path: &str, envs: &[(&str, &str)], args: 
         .env("HOME", repo)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null");
-    without_ambient_identity(&mut c);
+    clean_of_the_machine(&mut c);
     for (k, v) in envs {
         c.env(k, v);
     }
@@ -249,7 +233,7 @@ fn run_hook(fx: &Fixture, envs: &[(&str, &str)]) -> std::process::Output {
         .env("HOME", &fx.repo)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null");
-    without_ambient_identity(&mut c);
+    clean_of_the_machine(&mut c);
     for (k, v) in envs {
         c.env(k, v);
     }

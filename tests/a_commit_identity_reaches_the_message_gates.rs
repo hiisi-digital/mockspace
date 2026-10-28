@@ -26,6 +26,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+/// The scrubs of a child's environment, shared with the lib tests by path.
+#[path = "common/ambient.rs"]
+mod ambient;
+
 /// A lint refusing any commit whose author or committer names `Claude`.
 const PROBE: &str = r#"use mockspace::{Lint, LintError, MessageContext, MessageLint};
 
@@ -190,17 +194,13 @@ fn git_env(fx: &Fixture, args: &[&str], who: (&str, &str), envs: &[(&str, &str)]
         std::env::var("PATH").unwrap_or_default()
     );
     let mut c = Command::new("git");
+    ambient::clean_of_the_machine(&mut c);
     c.current_dir(&fx.repo)
         .args(args)
         .env("PATH", path)
         .env("HOME", &fx.repo)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env_remove("GIT_AUTHOR_DATE")
-        .env_remove("GIT_COMMITTER_DATE")
-        .env_remove("EMAIL")
-        .env_remove("GIT_CONFIG_COUNT")
-        .env_remove("GIT_CONFIG_PARAMETERS")
         .env("GIT_AUTHOR_NAME", who.0)
         .env("GIT_AUTHOR_EMAIL", who.1)
         .env("GIT_COMMITTER_NAME", who.0)
@@ -231,7 +231,9 @@ fn commits_on_head(fx: &Fixture) -> usize {
 fn install_the_gate(fx: &Fixture) {
     let msg = fx.repo.join("MSG");
     fs::write(&msg, "feat: add a thing\n").unwrap();
-    let out = Command::new(fx.bin.join("mock"))
+    let mut engine = Command::new(fx.bin.join("mock"));
+    ambient::clean_of_the_machine(&mut engine);
+    let out = engine
         .current_dir(&fx.repo)
         .env("HOME", &fx.repo)
         .env(

@@ -39,9 +39,6 @@ pub(super) fn git(root: &Path, args: &[&str]) -> String {
         ],
         args,
     );
-    for k in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"] {
-        c.env_remove(k);
-    }
     let out = c.output().expect("git runs");
     assert!(
         out.status.success(),
@@ -113,7 +110,8 @@ pub(super) fn run_full(hook_text: &str, root: &Path, stdin: &str) -> (String, Ve
         bin.display(),
         std::env::var("PATH").unwrap_or_default()
     );
-    let mut child = Command::new("bash")
+    let mut hook_cmd = Command::new("bash");
+    hook_cmd
         .arg(&hook)
         .current_dir(root)
         .env("PATH", path)
@@ -122,9 +120,9 @@ pub(super) fn run_full(hook_text: &str, root: &Path, stdin: &str) -> (String, Ve
         .env_remove("XDG_CONFIG_HOME")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("bash runs");
+        .stderr(Stdio::piped());
+    super::hooks_identity_tests::clean_of_the_machine(&mut hook_cmd);
+    let mut child = hook_cmd.spawn().expect("bash runs");
     {
         use std::io::Write;
         child
