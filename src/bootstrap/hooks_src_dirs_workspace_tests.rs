@@ -8,7 +8,10 @@
 //!
 //! The fixture and the hook runner are those of `hooks_src_dirs_tests`.
 
-use super::hooks_src_dirs_tests::{KASKI, commit_run_on, push_run_on};
+use super::hooks::{HookLayout, gen_pre_commit};
+use super::hooks_src_dirs_tests::{
+    KASKI, commit_run_on, fixture, git, push_run_on, run_full, scope_call, stage,
+};
 
 /// The kaski shape on disk: the mock workspace and the console workspace, each
 /// with its manifest and lockfile and its own crates.
@@ -155,4 +158,59 @@ fn a_shared_input_beside_a_workspace_lockfile_is_not_doc_only() {
     let alone = [("mock/registry/tenets.toml", "x = 1\n")];
     let (out, args) = commit_run_on(KASKI, KASKI_TREE, &alone);
     assert_eq!(args, "mock --lint-only --commit --doc-only", "{out}");
+}
+
+/// What the pre-commit hook scopes a staged mock lockfile to, over a tree built on
+/// disk by `setup` so it can hold a dot-directory and a symlink.
+fn lockfile_scope_over(setup: &dyn Fn(&std::path::Path)) -> String {
+    let tmp = fixture();
+    let root = tmp.path();
+    setup(root);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "base"]);
+    stage(root, &[("mock/Cargo.lock", "# lock 2\n")]);
+    let (out, calls) = run_full(
+        &gen_pre_commit("mock", &HookLayout::of(&["crates"]), &root.join("no-user-hook")),
+        root,
+        "",
+    );
+    let call = scope_call(&calls);
+    call.split("--scope ")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no scope in `{call}`:\n{out}"))
+        .trim()
+        .to_string()
+}
+
+fn put(root: &std::path::Path, rel: &str, body: &str) {
+    let p = root.join(rel);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(p, body).unwrap();
+}
+
+/// The engine lists a dot-directory as a package, so a lockfile moves it too. The
+/// hook's plain glob left it out of the scope.
+#[test]
+fn a_lockfile_scopes_to_a_crate_in_a_dot_directory() {
+    let scope = lockfile_scope_over(&|root| {
+        put(root, "mock/Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n");
+        put(root, "mock/Cargo.lock", "# lock 1\n");
+        put(root, "mock/crates/real/src/lib.rs", "fn r() {}\n");
+        put(root, "mock/crates/.hidden/src/lib.rs", "fn h() {}\n");
+    });
+    assert_eq!(scope, ".hidden,real");
+}
+
+/// The engine does not follow a symlinked directory, so a link is not a crate and
+/// a lockfile moves nothing through it. The hook's glob followed it.
+#[test]
+fn a_lockfile_does_not_scope_to_a_symlinked_directory() {
+    let scope = lockfile_scope_over(&|root| {
+        put(root, "mock/Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n");
+        put(root, "mock/Cargo.lock", "# lock 1\n");
+        put(root, "mock/crates/real/src/lib.rs", "fn r() {}\n");
+        put(root, "mock/elsewhere/src/lib.rs", "fn e() {}\n");
+        std::os::unix::fs::symlink("../elsewhere", root.join("mock/crates/linked")).unwrap();
+    });
+    assert_eq!(scope, "real");
 }

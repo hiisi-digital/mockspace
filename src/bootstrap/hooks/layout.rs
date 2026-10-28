@@ -180,20 +180,31 @@ ms_ws_root_of() {{
     printf '%s\n' "$MOCK_DIR"
 }}
 
+# The names of the crates directly under source directory $1, one a line. A crate
+# is what the engine's `package_dirs_in` lists, a directory directly under a
+# source directory that is not a symlink, with the dot-directories among them, so
+# the glob takes dot-names and a link is passed over. The one place a hook lists
+# crates from disk. A subshell, so the option stays local.
+ms_package_dirs() (
+    shopt -s dotglob
+    local c
+    for c in "$MOCK_DIR/$1/"*/; do
+        if [ -d "$c" ] && [ ! -L "${{c%/}}" ]; then
+            basename "$c"
+        fi
+    done
+)
+
 # The crates, comma-joined and sorted, of every workspace whose manifest or
 # lockfile is among the newline-separated paths in $1: all the crates under the
 # source directories that workspace holds. A lockfile moves every crate in its
 # own workspace and none in another.
 ms_ws_crates_of() {{
-    local d w c
+    local d w
     for d in ${{SRC_DIRS[@]+"${{SRC_DIRS[@]}}"}}; do
         w="$(ms_ws_root_of "$d")"
         if grep -qxF -e "$w/Cargo.toml" -e "$w/Cargo.lock" <<< "$1"; then
-            for c in "$MOCK_DIR/$d/"*/; do
-                if [ -d "$c" ]; then
-                    basename "$c"
-                fi
-            done
+            ms_package_dirs "$d"
         fi
     done | sort -u | tr '\n' ',' | sed 's/,$//'
 }}
@@ -218,26 +229,20 @@ ms_src_files_of() {{
 
 # Whether every crate under the source directories carries the nuke marker, and
 # there is at least one. The engine's `detect_nuked_workspace` is the same
-# question: one live crate anywhere means the workspace is not nuked. A crate is
-# what the engine's `package_dirs_in` lists, a directory directly under a source
-# directory that is not a symlink, with the dot-directories among them, so the
-# glob takes dot-names and a link is passed over. A subshell, so the option
-# stays local.
-ms_nuked() (
-    shopt -s dotglob
+# question: one live crate anywhere means the workspace is not nuked. The crates
+# are those `ms_package_dirs` lists.
+ms_nuked() {{
     local d c any=1
     for d in ${{SRC_DIRS[@]+"${{SRC_DIRS[@]}}"}}; do
-        for c in "$MOCK_DIR/$d/"*/; do
-            if [ -d "$c" ] && [ ! -L "${{c%/}}" ]; then
-                any=0
-                if ! grep -qF -- "$NUKE_MARKER" "${{c}}src/lib.rs" 2>/dev/null; then
-                    return 1
-                fi
+        while IFS= read -r c; do
+            any=0
+            if ! grep -qF -- "$NUKE_MARKER" "$MOCK_DIR/$d/$c/src/lib.rs" 2>/dev/null; then
+                return 1
             fi
-        done
+        done < <(ms_package_dirs "$d")
     done
     return $any
-)
+}}
 
 # The code the run compiles besides the crates it lints: the project lints and
 # the lint packs declared by path. A pack under a source directory is also a
