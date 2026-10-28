@@ -290,7 +290,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     if !args.iter().any(|a| a == "--lint-only")
         && !args.iter().any(|a| a == "activate" || a == "deactivate")
     {
-        bootstrap::ensure_gate(&cfg.repo_root, &cfg.mock_dir, &cfg.src_dirs, &cfg.nuke_marker);
+        bootstrap::ensure_gate(
+            &cfg.repo_root,
+            &cfg.mock_dir,
+            &cfg.src_dirs,
+            &cfg.nuke_marker,
+            &cfg.config_path,
+        );
     }
 
     // Effective custom lints. The old proxy statically links them in and passes

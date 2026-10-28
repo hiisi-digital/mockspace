@@ -23,10 +23,11 @@ pub(crate) fn ensure_generated_hooks(
     mock_dir: &Path,
     src_dirs: &[PathBuf],
     nuke_marker: &str,
+    config_path: &Path,
     actions: &mut Vec<String>,
 ) {
     let out_dir = crate::build_dir::ensure_under_target(mock_dir, &["hooks"]);
-    let layout = HookLayout::declared(mock_dir, src_dirs, nuke_marker);
+    let layout = HookLayout::declared(repo_root, mock_dir, src_dirs, nuke_marker, config_path);
 
     let mock_rel = mock_dir
         .strip_prefix(repo_root)
@@ -75,25 +76,37 @@ pub(crate) fn ensure_generated_hooks(
     }
 }
 
-/// What the generated hooks are told about the project: where its source lives
-/// and what a nuked crate carries.
+/// What the generated hooks are told about the project: where its source lives,
+/// what a nuked crate carries, and which lint packs it declares by path.
 ///
-/// Both come from the same places the engine reads them. The directories are
+/// All of it comes from the same places the engine reads it. The directories are
 /// those `SrcLayout` holds, so a hook and a lint address a crate by one
 /// definition, and the marker is the config's `nuke_marker`, the text the
 /// engine's own nuke detection looks for.
 pub(crate) struct HookLayout {
     pub(crate) src_dirs: Vec<String>,
     pub(crate) nuke_marker: String,
+    /// The directories of the `[lint-crates]` packs declared by path, relative
+    /// to the repository root. A pack is code the run compiles, as a file under
+    /// the mock directory's `lints/` is.
+    pub(crate) lint_packs: Vec<String>,
 }
 
 impl HookLayout {
-    /// From the absolute directories the config carries, as `SrcLayout` reads them.
-    pub(crate) fn declared(mock_dir: &Path, src_dirs: &[PathBuf], nuke_marker: &str) -> Self {
+    /// From the absolute directories the config carries, as `SrcLayout` reads
+    /// them, and the path packs `config_path` declares under `[lint-crates]`.
+    pub(crate) fn declared(
+        repo_root: &Path,
+        mock_dir: &Path,
+        src_dirs: &[PathBuf],
+        nuke_marker: &str,
+        config_path: &Path,
+    ) -> Self {
         let layout = mockspace_lint_rules::src_layout::SrcLayout::new(mock_dir, src_dirs);
         Self {
             src_dirs: layout.dirs().to_vec(),
             nuke_marker: nuke_marker.to_string(),
+            lint_packs: lint_pack_dirs(repo_root, mock_dir, config_path),
         }
     }
 
@@ -104,8 +117,71 @@ impl HookLayout {
         Self {
             src_dirs: src_dirs.iter().map(|d| d.to_string()).collect(),
             nuke_marker: crate::config::DEFAULT_NUKE_MARKER.to_string(),
+            lint_packs: Vec::new(),
         }
     }
+
+    /// As `of`, with path packs at these repository-relative directories.
+    #[cfg(test)]
+    pub(crate) fn of_with_packs(src_dirs: &[&str], packs: &[&str]) -> Self {
+        Self {
+            lint_packs: packs.iter().map(|d| d.to_string()).collect(),
+            ..Self::of(src_dirs)
+        }
+    }
+}
+
+/// The directories of the `[lint-crates]` packs `config_path` declares by path,
+/// relative to `repo_root`.
+///
+/// A path is written as cargo reads it from the generated lint crate, which
+/// sits at `<mock_dir>/target/mockspace-lints/`, so it is resolved from there.
+/// A pack outside the repository cannot be staged and is left out.
+fn lint_pack_dirs(repo_root: &Path, mock_dir: &Path, config_path: &Path) -> Vec<String> {
+    let from = mock_dir.join("target").join("mockspace-lints");
+    let mut dirs = Vec::new();
+    for (name, spec) in super::lints::parse_lint_crates(config_path) {
+        // `parse_lint_crates` re-emits each dependency as the value cargo reads, so
+        // the spec parses as the right-hand side of a key whatever form it was
+        // written in.
+        let Ok(doc) = format!("{name} = {spec}").parse::<toml_edit::DocumentMut>() else {
+            continue;
+        };
+        let Some(path) = doc
+            .get(&name)
+            .and_then(|dep| dep.get("path"))
+            .and_then(|p| p.as_str())
+        else {
+            continue;
+        };
+        let resolved = lexically_normal(&from.join(path));
+        let Ok(rel) = resolved.strip_prefix(repo_root) else {
+            continue;
+        };
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        if !rel.is_empty() && !dirs.contains(&rel) {
+            dirs.push(rel);
+        }
+    }
+    dirs
+}
+
+/// `path` with its `.` and `..` components folded away, without touching the
+/// disk: a pack's directory is resolved the way cargo reads the path, and a
+/// symlink on the way is not followed by either side.
+fn lexically_normal(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {},
+            Component::ParentDir => {
+                out.pop();
+            },
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Single-quote a word for bash.
@@ -123,9 +199,18 @@ fn sh_quote(word: &str) -> String {
 /// crate exists, which is what a documentation repository is.
 pub(crate) fn src_layout_shell(layout: &HookLayout) -> String {
     let words: Vec<String> = layout.src_dirs.iter().map(|d| sh_quote(d)).collect();
+    let packs: Vec<String> = layout
+        .lint_packs
+        .iter()
+        .map(|d| sh_quote(&format!("{d}/")))
+        .collect();
     format!(
         r##"# The declared source directories, relative to the mock directory.
 SRC_DIRS=({dirs})
+
+# The directories of the lint packs the config declares by path, relative to the
+# repository root.
+MS_PACKS=({packs})
 
 # What a nuked crate's `lib.rs` carries, as the config names it.
 NUKE_MARKER={marker}
@@ -217,16 +302,23 @@ ms_nuked() {{
     return $any
 }}
 
-# The inputs every crate shares: the registry, the project lints and the
-# config. A change to one reaches all of them, so it is never bounded to the
-# crates a commit or push also touches. The config is named at the two places
-# it lives, the repo root and the mock directory, and nowhere deeper: a fixture
-# of that name under a source directory belongs to its crate. A manifest or
-# lockfile is not here: it reaches the crates of its own workspace, which
-# `ms_ws_crates_of` answers.
-MS_SHARED=("$MOCK_DIR/registry/" "$MOCK_DIR/lints/" "mockspace.toml" "$MOCK_DIR/mockspace.toml")
+# The code the run compiles besides the crates it lints: the project lints and
+# the lint packs declared by path. A pack under a source directory is also a
+# crate by its place, and this is what keeps the crate reading from bounding a
+# commit to it, since a changed lint has to run over every crate.
+MS_CODE=("$MOCK_DIR/lints/" ${{MS_PACKS[@]+"${{MS_PACKS[@]}}"}})
+
+# The inputs every crate shares: the registry, the code above and the config. A
+# change to one reaches all of them, so it is never bounded to the crates a
+# commit or push also touches. The config is named at the two places it lives,
+# the repo root and the mock directory, and nowhere deeper: a fixture of that
+# name under a source directory belongs to its crate. A manifest or lockfile is
+# not here: it reaches the crates of its own workspace, which `ms_ws_crates_of`
+# answers.
+MS_SHARED=("$MOCK_DIR/registry/" "${{MS_CODE[@]}}" "mockspace.toml" "$MOCK_DIR/mockspace.toml")
 "##,
         dirs = words.join(" "),
+        packs = packs.join(" "),
         marker = sh_quote(&layout.nuke_marker),
     )
 }
@@ -538,7 +630,7 @@ STAGED=$(git diff --cached --name-only -- "$MOCK_DIR" 2>/dev/null || true)
 # every row in the registry at once, and it was the one commit that ran no
 # validation at all. The durable hook already checked both; this one did not.
 if [ -z "$STAGED" ]; then
-    STAGED=$(git diff --cached --name-only -- '*mockspace.toml' 2>/dev/null || true)
+    STAGED=$(git diff --cached --name-only -- '*mockspace.toml' ${{MS_PACKS[@]+"${{MS_PACKS[@]}}"}} 2>/dev/null || true)
 fi
 
 [ -z "$STAGED" ] && ms_chain "$@"
@@ -552,9 +644,16 @@ SRC_CRATES=$(ms_crates_of "$STAGED")
 # changed dependency is code the run has to compile, so it counts as source.
 WS_CRATES=$(ms_ws_crates_of "$STAGED")
 CHANGED_CRATES=$(ms_union "$SRC_CRATES" "$WS_CRATES")
-STAGED_RS=$(ms_src_files_of "$STAGED" ".rs")
+# Source is a `.rs` file under a source directory, and a crate's own manifest or
+# lockfile: a `[features]` or `[lints]` edit changes what the source lints see,
+# which a `--doc-only` run skips.
+STAGED_SRC=$(
+    ms_src_files_of "$STAGED" ".rs"
+    ms_src_files_of "$STAGED" "/Cargo.toml"
+    ms_src_files_of "$STAGED" "/Cargo.lock"
+)
 
-# A staged shared input (the registry, the project lints, the config)
+# A staged shared input (the registry, the project lints and packs, the config)
 # reaches every crate, so it is never bounded to the crates also
 # staged. Asked of the whole index, since the config may sit at the repo root.
 SHARED_STAGED=0
@@ -566,16 +665,16 @@ ARGS=(--lint-only --commit)
 
 if [ "$SHARED_STAGED" = "1" ]; then
     # No `--scope`: every crate and every repo lint runs. `--doc-only` still
-    # holds when nothing under a source directory is a staged `.rs` file, and
-    # the engine verifies the claim against the same layout.
+    # holds when nothing under a source directory is staged source, and the
+    # engine verifies the claim against the same layout.
     echo "  shared inputs staged: full scope"
-    # A staged project lint is code the run has to compile and run, which
-    # `--doc-only` would skip, so it keeps the flag off.
-    if [ -z "$STAGED_RS" ] && [ -z "$WS_CRATES" ] && git diff --cached --quiet -- "$MOCK_DIR/lints/" 2>/dev/null; then
+    # A staged project lint or lint pack is code the run has to compile and run,
+    # which `--doc-only` would skip, so it keeps the flag off.
+    if [ -z "$STAGED_SRC" ] && [ -z "$WS_CRATES" ] && git diff --cached --quiet -- "${{MS_CODE[@]}}" 2>/dev/null; then
         ARGS+=(--doc-only)
     fi
 elif [ -n "$CHANGED_CRATES" ]; then
-    if [ -z "$STAGED_RS" ] && [ -z "$WS_CRATES" ]; then
+    if [ -z "$STAGED_SRC" ] && [ -z "$WS_CRATES" ]; then
         echo "  crates: $CHANGED_CRATES (doc-only)"
         ARGS+=(--scope "$CHANGED_CRATES" --doc-only)
     else

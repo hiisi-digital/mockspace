@@ -123,6 +123,7 @@ pub fn ensure_gate(
     mock_dir: &Path,
     src_dirs: &[PathBuf],
     nuke_marker: &str,
+    config_path: &Path,
 ) {
     let mut actions = Vec::new();
 
@@ -131,7 +132,14 @@ pub fn ensure_gate(
     // validator and blocks while it is missing, telling the user to run
     // `cargo mock`; if that run did not materialise the validator, the
     // guidance would loop forever.
-    ensure_generated_hooks(repo_root, mock_dir, src_dirs, nuke_marker, &mut actions);
+    ensure_generated_hooks(
+        repo_root,
+        mock_dir,
+        src_dirs,
+        nuke_marker,
+        config_path,
+        &mut actions,
+    );
 
     // Generated files merge without conflict: the driver `.gitattributes` names
     // lives in the clone's config, so it is registered with the hooks.

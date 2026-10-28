@@ -404,8 +404,8 @@ fn the_nuke_marker_is_the_configured_one() {
     let base = git(root.path(), &["rev-parse", "HEAD"]);
     let line = format!("refs/heads/m {base} refs/heads/m {}\n", "1".repeat(40));
     let layout = HookLayout {
-        src_dirs:    vec!["applets/console/crates".to_string()],
         nuke_marker: "Nuked by a design round".to_string(),
+        ..HookLayout::of(&["applets/console/crates"])
     };
     let (out, _) = run_full(
         &gen_pre_push("mock", &layout, &root.path().join("no-user-hook")),
@@ -524,15 +524,51 @@ fn the_mock_lockfile_scopes_to_the_mock_workspace_and_not_the_console() {
 }
 
 /// The control for the arms above: a crate's own lockfile is not a workspace root,
-/// so it is that crate's file and moves no other (a non-source file, so doc-only).
+/// so it moves no other crate. It is that crate's source, since a changed
+/// dependency is code the run compiles, so the scope keeps the source lints on.
 #[test]
-fn a_crates_own_lockfile_moves_no_workspace() {
+fn a_crates_own_lockfile_is_that_crates_source_and_moves_no_workspace() {
     let staged = [("mock/crates/kaski-sim/Cargo.lock", "# lock 2\n")];
     let (out, args) = commit_run_on(KASKI, KASKI_TREE, &staged);
-    assert_eq!(
-        args, "mock --lint-only --commit --scope kaski-sim --doc-only",
-        "{out}"
-    );
+    assert_eq!(args, "mock --lint-only --commit --scope kaski-sim", "{out}");
+}
+
+/// A `[features]` or `[lints]` edit lives in the crate's own manifest, and a
+/// `--doc-only` run skips the very source lints that edit changes.
+#[test]
+fn a_crates_own_manifest_is_that_crates_source_not_doc_only() {
+    let staged = [(
+        "mock/applets/console/crates/console-core/Cargo.toml",
+        "[package]\nname = \"console-core\"\n[features]\nx = []\n",
+    )];
+    let (out, args) = commit_run_on(KASKI, KASKI_TREE, &staged);
+    assert_eq!(args, "mock --lint-only --commit --scope console-core", "{out}");
+}
+
+/// The control: a documentation file of the same crate is still doc-only, so the
+/// two arms above are about the manifest and not about the flag being gone.
+#[test]
+fn a_crates_documentation_alone_is_still_doc_only() {
+    let docs = [("mock/crates/kaski-sim/DESIGN.md.tmpl", "x\n")];
+    let (out, args) = commit_run_on(KASKI, KASKI_TREE, &docs);
+    assert_eq!(args, "mock --lint-only --commit --scope kaski-sim --doc-only", "{out}");
+}
+
+/// A shared input staged beside a workspace lockfile keeps `--doc-only` off: the
+/// lockfile is a dependency the run has to compile. Without the guard on the
+/// workspace crates the shared-input arm adds the flag back.
+#[test]
+fn a_shared_input_beside_a_workspace_lockfile_is_not_doc_only() {
+    let staged = [
+        ("mock/registry/tenets.toml", "x = 1\n"),
+        ("mock/Cargo.lock", "# lock 2\n"),
+    ];
+    let (out, args) = commit_run_on(KASKI, KASKI_TREE, &staged);
+    assert_eq!(args, "mock --lint-only --commit", "{out}");
+    // and the shared input alone, over the same tree, is doc-only
+    let alone = [("mock/registry/tenets.toml", "x = 1\n")];
+    let (out, args) = commit_run_on(KASKI, KASKI_TREE, &alone);
+    assert_eq!(args, "mock --lint-only --commit --doc-only", "{out}");
 }
 
 #[test]
@@ -556,19 +592,19 @@ fn the_declaration_is_the_one_the_source_layout_holds() {
     let dirs = [
         mock.join("crates"),
         mock.join("applets/console/crates/"),
-        mock.join("../outside"),
         Path::new("/elsewhere/crates").to_path_buf(),
         mock.to_path_buf(),
     ];
     let held = mockspace_lint_rules::src_layout::SrcLayout::new(mock, &dirs);
-    let hook = HookLayout::declared(mock, &dirs, "m");
+    let config = Path::new("/r/mock/mockspace.toml");
+    let hook = HookLayout::declared(Path::new("/r"), mock, &dirs, "m", config);
     assert_eq!(hook.src_dirs, held.dirs());
     // and not a second reading of it: the entries the layout keeps are kept, the
-    // ones it cannot address are not
+    // ones it cannot address are not. An entry with a `..` in it never gets here,
+    // `Config::from_dir` refuses it.
     assert_eq!(hook.src_dirs, vec![
         "crates".to_string(),
-        "applets/console/crates".to_string(),
-        "../outside".to_string()
+        "applets/console/crates".to_string()
     ]);
 }
 
@@ -594,6 +630,7 @@ fn ensure_generated_hooks_writes_the_declared_directories() {
         &mock,
         &[mock.join("crates"), mock.join("applets/console/crates")],
         crate::config::DEFAULT_NUKE_MARKER,
+        &root.join("mockspace.toml"),
         &mut actions,
     );
     let hook = fs::read_to_string(generated_hooks_dir(&mock).join("pre-commit")).unwrap();
@@ -697,4 +734,133 @@ fn a_project_lint_is_a_shared_input() {
         ("mock/lints/no-foo/src/lib.rs", "fn l() {}\n"),
     ]);
     assert_eq!(args, "mock --lint-only --strict", "{out}");
+}
+
+const PACK: &str = "mock/crates/kaski-asset-lints";
+
+fn commit_with_packs(
+    packs: &[&str],
+    base: &[(&str, &str)],
+    files: &[(&str, &str)],
+) -> (String, String) {
+    let tmp = fixture();
+    if !base.is_empty() {
+        stage(tmp.path(), base);
+        git(tmp.path(), &["commit", "-q", "-m", "base"]);
+    }
+    stage(tmp.path(), files);
+    let (printed, calls) = run_full(
+        &gen_pre_commit(
+            "mock",
+            &HookLayout::of_with_packs(KASKI, packs),
+            &tmp.path().join("no-user-hook"),
+        ),
+        tmp.path(),
+        "",
+    );
+    (printed, scope_call(&calls))
+}
+
+fn push_with_packs(packs: &[&str], files: &[(&str, &str)]) -> (String, String) {
+    let tmp = fixture();
+    let root = tmp.path();
+    stage(root, &[("README", "base\n")]);
+    git(root, &["commit", "-q", "-m", "base"]);
+    let base = git(root, &["rev-parse", "HEAD"]);
+    stage(root, files);
+    git(root, &["commit", "-q", "-m", "work"]);
+    let head = git(root, &["rev-parse", "HEAD"]);
+    let line = format!("refs/heads/m {head} refs/heads/m {base}\n");
+    let (printed, calls) = run_full(
+        &gen_pre_push(
+            "mock",
+            &HookLayout::of_with_packs(KASKI, packs),
+            &root.join("no-user-hook"),
+        ),
+        root,
+        &line,
+    );
+    (printed, scope_call(&calls))
+}
+
+/// A lint pack declared by path is code the run compiles, as a file under the mock
+/// directory's `lints/` is. One that sits under a source directory is also a crate,
+/// and the crate reading would bound the commit to it, so the changed lint would
+/// never run over the others.
+#[test]
+fn a_pack_under_a_source_directory_is_a_shared_input() {
+    let src = format!("{PACK}/src/lib.rs");
+    let manifest = format!("{PACK}/Cargo.toml");
+    for file in [&src, &manifest] {
+        let (out, args) = commit_with_packs(&[PACK], &[], &[(file, "x\n")]);
+        assert_eq!(args, "mock --lint-only --commit", "{file}: {out}");
+        let (out, args) = push_with_packs(&[PACK], &[(file, "x\n")]);
+        assert_eq!(args, "mock --lint-only --strict", "{file}: {out}");
+    }
+}
+
+/// The control: a sibling crate in the same source directory stays bounded to
+/// itself, so the arm above is about the pack and not about the directory.
+#[test]
+fn a_crate_beside_a_pack_stays_scoped_to_itself() {
+    let sibling = "mock/crates/kaski-sim/src/lib.rs";
+    let (out, args) = commit_with_packs(&[PACK], &[], &[(sibling, "fn s() {}\n")]);
+    assert_eq!(args, "mock --lint-only --commit --scope kaski-sim", "{out}");
+    let (out, args) = push_with_packs(&[PACK], &[(sibling, "fn s() {}\n")]);
+    assert_eq!(args, "mock --lint-only --strict --scope kaski-sim", "{out}");
+}
+
+/// A pack that is declared but has not been staged leaves a commit as before.
+#[test]
+fn the_same_edit_without_a_declared_pack_is_scoped_to_its_crate() {
+    let src = format!("{PACK}/src/lib.rs");
+    let (out, args) = commit_with_packs(&[], &[], &[(&src, "fn l() {}\n")]);
+    assert_eq!(args, "mock --lint-only --commit --scope kaski-asset-lints", "{out}");
+}
+
+/// A pack outside the mock directory is staged outside the surface the hook looks
+/// at, and still enters the gate with the full scope.
+#[test]
+fn a_pack_outside_the_mock_directory_enters_the_gate() {
+    let (out, args) = commit_with_packs(&["tools/packs/p"], &[], &[(
+        "tools/packs/p/src/lib.rs",
+        "fn l() {}\n",
+    )]);
+    assert_eq!(args, "mock --lint-only --commit", "{out}");
+    let (out, args) = push_with_packs(&["tools/packs/p"], &[(
+        "tools/packs/p/src/lib.rs",
+        "fn l() {}\n",
+    )]);
+    assert_eq!(args, "mock --lint-only --strict", "{out}");
+}
+
+/// The packs the layout carries are those the config declares by path, resolved the
+/// way cargo reads them: from the generated lint crate at
+/// `<mock>/target/mockspace-lints/`, and kept as repository-relative directories.
+#[test]
+fn the_layout_reads_the_path_packs_of_the_config() {
+    let tmp = fixture();
+    let root = tmp.path();
+    let mock = root.join("mock");
+    fs::create_dir_all(&mock).unwrap();
+    let config = root.join("mockspace.toml");
+    fs::write(
+        &config,
+        "[lint-crates]\n\
+         remote = { git = \"ssh://git@github.com/o/r.git\", branch = \"dev\" }\n\
+         version = \"0.1\"\n\
+         inline = { path = \"../../crates/kaski-asset-lints\" }\n\
+         outside = { path = \"../../../../elsewhere\" }\n\
+         [lint-crates.table]\n\
+         path = \"../../../tools/table-pack/\"\n",
+    )
+    .unwrap();
+    let layout = HookLayout::declared(root, &mock, &[mock.join("crates")], "m", &config);
+    assert_eq!(layout.lint_packs, vec![
+        "mock/crates/kaski-asset-lints".to_string(),
+        "tools/table-pack".to_string(),
+    ]);
+    // no config, no packs
+    let none = HookLayout::declared(root, &mock, &[], "m", &root.join("absent.toml"));
+    assert!(none.lint_packs.is_empty());
 }
