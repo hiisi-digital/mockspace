@@ -45,14 +45,32 @@ fn the_commit_branches_pass_these_arguments() {
             "mock --lint-only --commit --scope infra",
         ),
         (
-            "shared input beside source",
+            "registry row beside source: bounded to the crate, the repo lints read the row",
             &[(CONSOLE_SRC, "fn x() {}\n"), ("mock/registry/tenets.toml", "x = 1\n")],
-            "mock --lint-only --commit",
+            "mock --lint-only --commit --scope console-core",
         ),
         (
-            "shared input alone",
+            "registry row alone: the repo lints and no crate's",
             &[("mock/registry/tenets.toml", "x = 1\n")],
+            "mock --lint-only --commit --scope infra",
+        ),
+        (
+            "registry rows alone, a ticket and its page under docs",
+            &[
+                ("mock/registry/ticket/items/a.toml", "x = 1\n"),
+                ("docs/TICKET-MOVE.md", "x\n"),
+            ],
+            "mock --lint-only --commit --scope infra",
+        ),
+        (
+            "config alone: every crate, the claim of no source kept",
+            &[("mock/mockspace.toml", "x = 1\n")],
             "mock --lint-only --commit --doc-only",
+        ),
+        (
+            "project lint beside a registry row: every crate, source lints on",
+            &[("mock/lints/a.rs", "fn x() {}\n"), ("mock/registry/tenets.toml", "x = 1\n")],
+            "mock --lint-only --commit",
         ),
     ];
     for (what, files, want) in table {
@@ -75,8 +93,31 @@ fn the_push_branches_pass_these_arguments() {
             "mock --lint-only --strict",
         ),
         (
-            "shared input beside source",
+            "registry row beside source: bounded to the crate",
             &[(CONSOLE_SRC, "fn x() {}\n"), ("mock/registry/tenets.toml", "x = 1\n")],
+            "mock --lint-only --strict --scope console-core",
+        ),
+        (
+            "registry row alone: the repo lints and no crate's",
+            &[("mock/registry/tenets.toml", "x = 1\n")],
+            "mock --lint-only --strict --scope infra",
+        ),
+        (
+            "registry rows alone, a ticket and its page under docs",
+            &[
+                ("mock/registry/ticket/items/a.toml", "x = 1\n"),
+                ("docs/TICKET-MOVE.md", "x\n"),
+            ],
+            "mock --lint-only --strict --scope infra",
+        ),
+        (
+            "project lint alone: every crate",
+            &[("mock/lints/a.rs", "fn x() {}\n")],
+            "mock --lint-only --strict",
+        ),
+        (
+            "config alone: every crate",
+            &[("mock/mockspace.toml", "x = 1\n")],
             "mock --lint-only --strict",
         ),
     ];
@@ -143,7 +184,7 @@ fn the_full_scope_is_given_its_own_reason() {
         ),
         (
             "a shared input on an existing branch",
-            vec![("mock/registry/tenets.toml", "[[tenet]]\nid = \"a\"\n")],
+            vec![("mock/lints/a.rs", "fn x() {}\n")],
             Box::new(|base| base.to_string()),
             "(shared input)",
         ),
