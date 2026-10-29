@@ -195,3 +195,56 @@ fn clean_content_in_a_scoped_crate_is_allowed() {
         "clean content was denied: {out}"
     );
 }
+
+#[test]
+fn a_forbidden_import_written_through_an_edit_is_denied() {
+    // An Edit carries the text in `new_string`, not `content`.
+    let tmp = tempfile::tempdir().unwrap();
+    let hook = generated_hook(tmp.path());
+    let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    let payload = |path: &Path| {
+        serde_json::json!({
+            "session_id": "t",
+            "transcript_path": "/tmp/t",
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Edit",
+            "tool_input": {
+                "file_path": path.display().to_string(),
+                "old_string": "fn f() {}",
+                "new_string": "fn f(x: &dyn Tr) {}",
+            }
+        })
+        .to_string()
+    };
+    let script = fs::read_to_string(tmp.path().join(".claude/hooks").join(&hook)).unwrap();
+    let out = super::write_guard_phase_tests::run_from(tmp.path(), &script, &payload(&target));
+    assert!(super::write_guard_phase_tests::refused(&out), "the edit was let through: {out}");
+    let outside = tmp.path().join("mock/crates/other/src/lib.rs");
+    let out = super::write_guard_phase_tests::run_from(tmp.path(), &script, &payload(&outside));
+    assert!(!super::write_guard_phase_tests::refused(&out), "control: out of scope is allowed: {out}");
+}
+
+#[test]
+#[should_panic(expected = "failed to create a hooks or rules directory")]
+fn a_hooks_directory_that_cannot_be_made_fails_loudly() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".claude")).unwrap();
+    // a regular file where the directory must go
+    fs::write(tmp.path().join(".claude/hooks"), "").unwrap();
+    let cfg = cfg_with_rule(tmp.path());
+    derive(tmp.path(), &cfg);
+}
+
+#[test]
+#[should_panic(expected = "failed to write forbidden-imports claude hook")]
+fn a_hook_that_cannot_be_written_fails_loudly() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = cfg_with_rule(tmp.path());
+    derive(tmp.path(), &cfg);
+    // the second run meets a directory where the script goes
+    let hook = generated_hook(tmp.path());
+    let path = tmp.path().join(".claude/hooks").join(&hook);
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    derive(tmp.path(), &cfg);
+}
