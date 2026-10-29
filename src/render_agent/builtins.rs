@@ -445,6 +445,18 @@ fi
 if [[ -z "$REPO_ROOT" ]]; then
     allow
 fi
+# --- A merge's conflict is resolved whatever the phase ---
+# A merge that conflicts in a design template or a source file leaves the
+# markers in the working tree, and the phase would refuse the edit that removes
+# them, so the merge could not be finished and the only way on was around the
+# gate. While a merge is in progress an edit to a path git lists as unmerged is
+# let through, in any phase. The path stops being unmerged when its resolution
+# is staged, so this opens no other file and no later edit of a resolved one.
+if git -C "$REPO_ROOT" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    if [[ -n "$(git -C "$REPO_ROOT" ls-files -u -- "${{MOCK_ROOT}}/${{REL_PATH}}" 2>/dev/null)" ]]; then
+        allow
+    fi
+fi
 # --- Detect phase ---
 # All git ls-files queries run with `-C "$REPO_ROOT"` so phase detection is
 # cwd-independent. Without it, invocations from a subdir (e.g. `mock/`) would
