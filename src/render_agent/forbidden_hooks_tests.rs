@@ -248,3 +248,47 @@ fn a_hook_that_cannot_be_written_fails_loudly() {
     fs::create_dir(&path).unwrap();
     derive(tmp.path(), &cfg);
 }
+
+#[test]
+fn a_full_render_registers_the_forbidden_imports_hooks_under_write_and_edit() {
+    // Through `generate_agent_rules`, where the derived hooks join the builtin ones: the hand-wired
+    // test above would stay green if that join were dropped.
+    let mock = super::tests::skill_fixture(None);
+    let root = mock.parent().unwrap().to_path_buf();
+    let mut cfg = Config::from_dir(&mock);
+    let rule = cfg_with_rule(&root);
+    cfg.lint_overrides.params = rule.lint_overrides.params;
+    cfg.src_dirs = vec![root.join("mock/crates")];
+    generate_agent_rules(
+        &CrateMap::default(),
+        &cfg,
+        &crate::registry::Registry::default(),
+        &super::tests::pack_with_stub_tool(),
+    );
+    let settings: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    let entries = settings["hooks"]["PreToolUse"].as_array().expect("a PreToolUse list");
+    for matcher in ["Write", "Edit"] {
+        let registered = entries
+            .iter()
+            .filter(|e| e["matcher"] == matcher)
+            .flat_map(|e| e["hooks"].as_array().into_iter().flatten())
+            .filter_map(|h| h["command"].as_str())
+            .any(|c| c.contains("lint-forbidden-"));
+        assert!(registered, "the full render left no {matcher} entry for the hook:\n{settings}");
+    }
+}
+
+#[test]
+#[should_panic(expected = "failed to write forbidden-imports copilot hook")]
+fn a_copilot_hook_that_cannot_be_written_fails_loudly() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = cfg_with_rule(tmp.path());
+    derive(tmp.path(), &cfg);
+    let hook = generated_hook(tmp.path());
+    let path = tmp.path().join(".github/hooks").join(&hook);
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    derive(tmp.path(), &cfg);
+}

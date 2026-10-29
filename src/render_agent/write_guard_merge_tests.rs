@@ -57,6 +57,12 @@ fn merging_in(tag: &str, round: &str) -> std::path::PathBuf {
     d
 }
 
+/// Ends the merge the way a squash or a rebase leaves it: the unmerged stages stay in the index and
+/// `MERGE_HEAD` is gone. `merge --abort` would clear the stages too and prove nothing about the check.
+fn end_merge_keeping_conflicts(repo: &std::path::Path) {
+    std::fs::remove_file(repo.join(".git/MERGE_HEAD")).unwrap();
+}
+
 fn edit(repo: &std::path::Path, rel: &str) -> String {
     let guard = guard_for(repo);
     run_from(repo, &guard, &write_payload(&repo.join(rel)))
@@ -100,9 +106,9 @@ fn a_file_is_gated_again_once_its_conflict_is_staged() {
 
 #[test]
 fn the_same_file_is_gated_when_no_merge_is_in_progress() {
-    // The control for the first two: it is the merge that excuses them.
+    // The control for the first two: it is the merge in progress (`MERGE_HEAD`) that excuses them, with the conflict still listed.
     let d = merging();
-    git(&d, &["merge", "--abort"]);
+    end_merge_keeping_conflicts(&d);
     let out = edit(&d, "mock/crates/x/DESIGN.md.tmpl");
     assert!(refused(&out), "a template was writable in TOPIC: {out}");
 }
@@ -132,7 +138,7 @@ fn a_directory_holding_a_conflict_is_not_opened_whole() {
     let with_slash = format!("{}/", krate.display());
     let during = run_from(&d, &guard, &write_payload(&krate));
     let during2 = run_from(&d, &guard, &write_payload(std::path::Path::new(&with_slash)));
-    git(&d, &["merge", "--abort"]);
+    end_merge_keeping_conflicts(&d);
     let after = run_from(&d, &guard, &write_payload(&krate));
     assert!(refused(&after), "control: no merge refuses");
     assert!(refused(&during), "a merge opened the whole crate directory: {during}");
@@ -157,7 +163,7 @@ fn an_edit_of_a_file_in_conflict_is_let_through_and_of_another_is_not() {
     assert!(!refused(&conflicted), "the conflicted template was refused to an Edit: {conflicted}");
     let other = run_from(&d, &guard, &edit_payload(&d.join("mock/crates/x/README.md.tmpl")));
     assert!(refused(&other), "an unconflicted template was open to an Edit: {other}");
-    git(&d, &["merge", "--abort"]);
+    end_merge_keeping_conflicts(&d);
     let after = run_from(&d, &guard, &edit_payload(&d.join("mock/crates/x/DESIGN.md.tmpl")));
     assert!(refused(&after), "control: no merge refuses an Edit: {after}");
 }
@@ -168,7 +174,7 @@ fn a_conflicted_source_file_is_open_in_the_doc_phase() {
     let d = merging_in("merge-doc", "202609062251_changelist.doc.md");
     let out = edit(&d, "mock/crates/x/src/lib.rs");
     assert!(!refused(&out), "the conflicted source was refused in DOC: {out}");
-    git(&d, &["merge", "--abort"]);
+    end_merge_keeping_conflicts(&d);
     let after = edit(&d, "mock/crates/x/src/lib.rs");
     assert!(refused(&after), "control: source is gated in DOC without a merge: {after}");
 }
@@ -179,7 +185,7 @@ fn a_conflicted_template_is_open_in_the_impl_phase() {
     let d = merging_in("merge-impl", "202609062251_changelist.src.md");
     let out = edit(&d, "mock/crates/x/DESIGN.md.tmpl");
     assert!(!refused(&out), "the conflicted template was refused in IMPL: {out}");
-    git(&d, &["merge", "--abort"]);
+    end_merge_keeping_conflicts(&d);
     let after = edit(&d, "mock/crates/x/DESIGN.md.tmpl");
     assert!(refused(&after), "control: a template is gated in IMPL without a merge: {after}");
 }

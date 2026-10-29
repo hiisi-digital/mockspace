@@ -115,8 +115,9 @@ pub(crate) fn generate_lint_derived_content(
         return (0, Vec::new());
     }
 
-    // This runs ahead of the phase that creates the hooks directories, so on a
-    // fresh tree they do not exist and a write into them would fail unseen.
+    // The directories are made here so the writes below do not depend on the order of
+    // the render phases, and a failure to make one stops the render instead of
+    // being dropped.
     for dir in [claude_rules_dir, copilot_instructions_dir, claude_hooks_dir, copilot_hooks_dir] {
         fs::create_dir_all(dir).expect("failed to create a hooks or rules directory");
     }
