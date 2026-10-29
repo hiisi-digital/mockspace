@@ -15,6 +15,7 @@
 //! neither touched.
 
 use super::write_guard_phase_tests::{
+    bash_payload,
     git,
     guard_for,
     refused,
@@ -99,4 +100,42 @@ fn the_same_file_is_gated_when_no_merge_is_in_progress() {
     git(&d, &["merge", "--abort"]);
     let out = edit(&d, "mock/crates/x/DESIGN.md.tmpl");
     assert!(refused(&out), "a template was writable in TOPIC: {out}");
+}
+
+#[test]
+fn a_directory_holding_a_conflict_is_not_opened_whole() {
+    // The exception is for the file git lists as unmerged, not for a directory that holds one.
+    let d = merging();
+    let guard = guard_for(&d);
+    let cmd = format!("rm -rf {}", d.join("mock/crates/x").display());
+    let during = run_from(&d, &guard, &bash_payload(&cmd));
+    let cmd2 = format!("rm -rf {}/", d.join("mock/crates/x").display());
+    let during2 = run_from(&d, &guard, &bash_payload(&cmd2));
+    git(&d, &["merge", "--abort"]);
+    let after = run_from(&d, &guard, &bash_payload(&cmd));
+    assert!(refused(&after), "control: no merge refuses");
+    assert!(
+        refused(&during),
+        "a merge opened the whole crate directory: {during}"
+    );
+    assert!(
+        refused(&during2),
+        "a merge opened the whole crate directory: {during2}"
+    );
+}
+
+#[test]
+fn a_command_naming_a_conflicted_file_is_not_opened() {
+    // Write and Edit carry one path and can be matched exactly; a command's targets are not parsed.
+    let d = merging();
+    let guard = guard_for(&d);
+    let cmd = format!(
+        "sed -i s/a/b/ {}",
+        d.join("mock/crates/x/DESIGN.md.tmpl").display()
+    );
+    let during = run_from(&d, &guard, &bash_payload(&cmd));
+    assert!(
+        refused(&during),
+        "a command write was let through by the merge exception: {during}"
+    );
 }

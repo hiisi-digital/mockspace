@@ -195,7 +195,7 @@ fn standing_inside_the_repository_still_works() {
 
 /// A Bash command that writes, which is the other way the guard is reached and
 /// the one that carries no `file_path`.
-fn bash_payload(command: &str) -> String {
+pub(super) fn bash_payload(command: &str) -> String {
     serde_json::json!({
         "session_id": "t",
         "transcript_path": "/tmp/t",

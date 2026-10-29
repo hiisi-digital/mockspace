@@ -449,11 +449,16 @@ fi
 # A merge that conflicts in a design template or a source file leaves the
 # markers in the working tree, and the phase would refuse the edit that removes
 # them, so the merge could not be finished and the only way on was around the
-# gate. While a merge is in progress an edit to a path git lists as unmerged is
-# let through, in any phase. The path stops being unmerged when its resolution
-# is staged, so this opens no other file and no later edit of a resolved one.
-if git -C "$REPO_ROOT" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
-    if [[ -n "$(git -C "$REPO_ROOT" ls-files -u -- "${{MOCK_ROOT}}/${{REL_PATH}}" 2>/dev/null)" ]]; then
+# gate. While a merge is in progress a Write or Edit to a path git lists as
+# unmerged is let through, in any phase. The path stops being unmerged when its
+# resolution is staged, so this opens no other file and no later edit of a
+# resolved one. The match is on the whole path, never a prefix: a directory
+# holding a conflict stays gated, and a Bash command names targets this hook
+# does not parse, so it is never let through here.
+if [[ -n "$FILE_PATH" ]] && git -C "$REPO_ROOT" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    UNMERGED_REL="${{MOCK_ROOT}}/${{REL_PATH}}"
+    if git -C "$REPO_ROOT" ls-files -u -z -- ":(literal)$UNMERGED_REL" 2>/dev/null \
+        | tr "\0" "\n" | cut -f2 | grep -Fxq -- "$UNMERGED_REL"; then
         allow
     fi
 fi
