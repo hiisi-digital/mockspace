@@ -118,7 +118,7 @@ pub(crate) fn generate_lint_derived_content(
     // This runs ahead of the phase that creates the hooks directories, so on a
     // fresh tree they do not exist and a write into them would fail unseen.
     for dir in [claude_rules_dir, copilot_instructions_dir, claude_hooks_dir, copilot_hooks_dir] {
-        let _ = fs::create_dir_all(dir);
+        fs::create_dir_all(dir).expect("failed to create a hooks or rules directory");
     }
 
     let src_dirs_repo = src_dirs_from_repo(cfg);
@@ -243,10 +243,12 @@ pub(crate) fn generate_lint_derived_content(
         );
 
         let claude_hook_path = claude_hooks_dir.join(&hook_name);
-        write_executable(&claude_hook_path, &claude_hook).ok();
+        write_executable(&claude_hook_path, &claude_hook)
+            .expect("failed to write forbidden-imports claude hook");
 
         let copilot_hook_path = copilot_hooks_dir.join(&hook_name);
-        write_executable(&copilot_hook_path, &copilot_hook).ok();
+        write_executable(&copilot_hook_path, &copilot_hook)
+            .expect("failed to write forbidden-imports copilot hook");
         count += 2;
 
         // The hook reads the text being written (`new_string` or `content`), so
