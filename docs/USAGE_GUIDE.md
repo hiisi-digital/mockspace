@@ -585,7 +585,10 @@ Each template may use `{{HOOK_HELPERS}}` to get platform-appropriate helper func
 # @matchers: Bash, Write, Edit
 ```
 
-Two built-in hooks are always generated: `check-byline.sh` (commit authorship policy, controlled by `${PROJECT_UPPER}_AGENT_MODE`) and `mockspace-write-guard.sh` (blocks writes to generated files from outside `mock/`).
+Five built-in hooks are always generated, to both `.claude/hooks/` and `.github/hooks/`: `check-message.sh` (submits authored messages, commit and pull request text among them, to the configured message lints), `mockspace-write-guard.sh` (blocks writes by phase and to generated files from outside `mock/`), `mockspace-reminder.sh` (prints the rules reminder before a tool touches mockspace paths, never blocking), `no-yagni-guard.sh` (flags YAGNI reasoning in commit messages) and `mockspace-gate.sh` (blocks `git commit` and `git push` while the gate is broken). The write guard lets a Write or Edit through to a path git lists as unmerged while a merge is in progress, in any phase; the match is on the whole path, so a directory holding a conflict stays gated, and so does every Bash command that writes.
+
+Each `[lints.forbidden-imports]` scope also generates a `lint-forbidden-<scope>.sh` hook beside them, registered under `Write` and `Edit` in the generated settings. It denies a write whose new text contains a forbidden token, in a crate matching the scope.
+
 
 ### Agent config: `mock/agent/config.toml`
 
