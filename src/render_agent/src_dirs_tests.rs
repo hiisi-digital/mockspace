@@ -126,6 +126,7 @@ fn generate_forbidden(repo: &Path, cfg: &Config) -> (PathBuf, PathBuf) {
         "",
         "",
         "",
+        &mut 0,
     );
     (rules, hooks)
 }
@@ -361,4 +362,57 @@ fn the_sweep_sees_a_literal_crates_directory_when_there_is_one() {
         "```\nmock/crates/<crate>/\n```\nedit `crates/<crate>/DESIGN.md.tmpl`\n".to_string(),
     )];
     assert_eq!(naming_crates_dir(&texts).len(), 2);
+}
+
+/// The commands `.claude/settings.json` runs for one tool name.
+fn commands_for(settings: &serde_json::Value, matcher: &str) -> Vec<String> {
+    settings["hooks"]["PreToolUse"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry["matcher"] == matcher)
+        .flat_map(|entry| entry["hooks"].as_array().cloned().unwrap_or_default())
+        .filter_map(|hook| hook["command"].as_str().map(String::from))
+        .collect()
+}
+
+/// A forbidden-imports guard is wired to the edits and writes it reads.
+///
+/// The guard was written beside the rule and never handed to the settings
+/// merge, so no event called it: renki carried two such scripts that blocked
+/// nothing, and a workspace aggregating the repo's hooks refused it for them.
+#[test]
+fn the_forbidden_imports_hook_is_registered_on_the_edits_and_writes_it_checks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = forbidden_imports_cfg(tmp.path());
+    generate_agent_rules(
+        &CrateMap::default(),
+        &cfg,
+        &crate::registry::Registry::default(),
+        &LintPack::default(),
+    );
+    let settings: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(tmp.path().join(".claude").join("settings.json"))
+            .expect("the render writes the settings"),
+    )
+    .unwrap();
+    let guard = |matcher: &str| {
+        commands_for(&settings, matcher)
+            .into_iter()
+            .filter(|c| c.starts_with(".claude/hooks/lint-forbidden-"))
+            .collect::<Vec<_>>()
+    };
+    for matcher in ["Edit", "Write"] {
+        let found = guard(matcher);
+        assert_eq!(found.len(), 1, "{matcher}: {found:?}");
+        assert!(
+            tmp.path().join(&found[0]).is_file(),
+            "the registered guard is the script on disk: {}",
+            found[0]
+        );
+    }
+    assert!(
+        guard("Bash").is_empty(),
+        "the guard reads no command, so a shell call is not its event"
+    );
 }

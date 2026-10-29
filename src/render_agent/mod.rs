@@ -226,7 +226,7 @@ pub fn generate_agent_rules(
     // --- Lint-derived rules and hooks (from forbidden-imports config) ---
     let claude_hooks_dir = repo_root.join(".claude").join("hooks");
     let copilot_hooks_dir = repo_root.join(".github").join("hooks");
-    count += generate_lint_derived_content(
+    let lint_hooks = generate_lint_derived_content(
         cfg,
         &claude_rules_dir,
         &copilot_instructions_dir,
@@ -235,6 +235,7 @@ pub fn generate_agent_rules(
         &header_md,
         &preamble,
         &postamble,
+        &mut count,
     );
 
     // --- Per-crate README-derived rules (scoped to that crate's directory) ---
@@ -534,6 +535,9 @@ pub fn generate_agent_rules(
 
     let mut all_hooks: Vec<HookMeta> =
         generate_builtin_hooks(cfg, &claude_hooks_dir, &copilot_hooks_dir, &mut count);
+    // The forbidden-imports guards were written with the rules above; they are
+    // registered here with the rest, or no event would ever call them.
+    all_hooks.extend(lint_hooks);
 
     // --- Consumer hooks: hooks/*.sh.tmpl -> .claude/hooks/*.sh + .github/hooks/*.sh ---
     let hooks_dir = agent_dir.join("hooks");

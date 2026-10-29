@@ -11,6 +11,10 @@ use super::*;
 /// generates:
 /// - An agent rule file per scope (tells the agent what's forbidden)
 /// - An agent hook per scope (blocks writes containing forbidden patterns)
+///
+/// Returns the hooks it wrote, for the settings merge to register beside the
+/// builtins. A hook written and not returned is wired to no event, so it never
+/// runs and the guard it carries is not there at all.
 pub(crate) fn generate_lint_derived_content(
     cfg: &Config,
     claude_rules_dir: &Path,
@@ -20,10 +24,11 @@ pub(crate) fn generate_lint_derived_content(
     header_md: &str,
     preamble: &str,
     postamble: &str,
-) -> usize {
+    count: &mut usize,
+) -> Vec<HookMeta> {
     use std::collections::{BTreeMap as Map, BTreeSet as Set};
 
-    let mut count = 0;
+    let mut hooks = Vec::new();
 
     // Track slugs we wrote this render so we can sweep orphans afterwards.
     // Without this, files written for a previous mockspace.toml configuration
@@ -107,7 +112,7 @@ pub(crate) fn generate_lint_derived_content(
     }
 
     if by_scope.is_empty() {
-        return 0;
+        return hooks;
     }
 
     let src_dirs_repo = src_dirs_from_repo(cfg);
@@ -163,11 +168,11 @@ pub(crate) fn generate_lint_derived_content(
         let claude_path = claude_rules_dir.join(format!("{rule_name}.md"));
         render_design::write_generated_ok(&claude_path, &claude_content);
         eprintln!("  {} (lint-derived)", claude_path.display());
-        count += 1;
+        *count += 1;
 
         let copilot_path = copilot_instructions_dir.join(format!("{rule_name}.instructions.md"));
         render_design::write_generated_ok(&copilot_path, &copilot_content);
-        count += 1;
+        *count += 1;
 
         // --- Agent Hook ---
         // Generate a hook that blocks writes containing forbidden patterns
@@ -232,11 +237,22 @@ pub(crate) fn generate_lint_derived_content(
         );
 
         let claude_hook_path = claude_hooks_dir.join(&hook_name);
-        write_executable(&claude_hook_path, &claude_hook).ok();
+        let written = write_executable(&claude_hook_path, &claude_hook).is_ok();
 
         let copilot_hook_path = copilot_hooks_dir.join(&hook_name);
         write_executable(&copilot_hook_path, &copilot_hook).ok();
-        count += 2;
+        *count += 2;
+
+        // It reads the path and the text an edit or a write would leave, and
+        // nothing of a shell command, so those two are what it fires on. A hook
+        // whose script could not be written is not registered: an event wired
+        // to a missing script fails every call it matches.
+        if written {
+            hooks.push(HookMeta {
+                name:     hook_name,
+                matchers: vec!["Write".into(), "Edit".into()],
+            });
+        }
     }
 
     // Sweep orphan rendered files. When a scope is removed from
@@ -255,7 +271,7 @@ pub(crate) fn generate_lint_derived_content(
     sweep_orphan_generated_files(claude_hooks_dir, P, ".sh", &active_slugs);
     sweep_orphan_generated_files(copilot_hooks_dir, P, ".sh", &active_slugs);
 
-    count
+    hooks
 }
 
 /// Delete any file in `dir` whose name matches `<prefix><slug><suffix>` where
