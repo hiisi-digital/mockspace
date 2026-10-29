@@ -117,12 +117,7 @@ pub(crate) fn generate_lint_derived_content(
 
     // This runs ahead of the phase that creates the hooks directories, so on a
     // fresh tree they do not exist and a write into them would fail unseen.
-    for dir in [
-        claude_rules_dir,
-        copilot_instructions_dir,
-        claude_hooks_dir,
-        copilot_hooks_dir,
-    ] {
+    for dir in [claude_rules_dir, copilot_instructions_dir, claude_hooks_dir, copilot_hooks_dir] {
         let _ = fs::create_dir_all(dir);
     }
 

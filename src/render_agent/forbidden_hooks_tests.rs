@@ -60,9 +60,21 @@ fn a_forbidden_imports_hook_is_returned_with_the_events_it_guards() {
         .find(|h| h.name.starts_with("lint-forbidden-"))
         .expect("the generated hook is returned for the settings step");
     // It inspects the text being written, so it guards the writing tools, not Bash.
-    assert!(hook.matchers.iter().any(|m| m == "Write"), "{:?}", hook.matchers);
-    assert!(hook.matchers.iter().any(|m| m == "Edit"), "{:?}", hook.matchers);
-    assert!(!hook.matchers.iter().any(|m| m == "Bash"), "{:?}", hook.matchers);
+    assert!(
+        hook.matchers.iter().any(|m| m == "Write"),
+        "{:?}",
+        hook.matchers
+    );
+    assert!(
+        hook.matchers.iter().any(|m| m == "Edit"),
+        "{:?}",
+        hook.matchers
+    );
+    assert!(
+        !hook.matchers.iter().any(|m| m == "Bash"),
+        "{:?}",
+        hook.matchers
+    );
 }
 
 #[test]
