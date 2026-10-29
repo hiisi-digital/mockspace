@@ -20,6 +20,7 @@ fn cfg_with_rule(repo: &Path) -> Config {
     let mut cfg = Config::from_dir(&mock);
     cfg.repo_root = repo.to_path_buf();
     cfg.mock_dir = mock;
+    cfg.src_dirs = vec![repo.join("mock/crates")];
     let rule: std::collections::HashMap<String, String> = [
         ("rule.no-dyn.scope", "sim-*"),
         ("rule.no-dyn.forbidden", "dyn"),
@@ -99,11 +100,26 @@ fn the_generated_settings_register_a_forbidden_imports_hook_under_an_event() {
     let cfg = cfg_with_rule(tmp.path());
     let (_, hooks) = derive(tmp.path(), &cfg);
     wire::generate_settings(tmp.path(), &hooks);
-    let settings = fs::read_to_string(tmp.path().join(".claude/settings.json")).unwrap();
-    assert!(
-        settings.contains("lint-forbidden-"),
-        "no event runs the hook:\n{settings}"
-    );
+    let settings: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(tmp.path().join(".claude/settings.json")).unwrap(),
+    )
+    .unwrap();
+    let entries = settings["hooks"]["PreToolUse"]
+        .as_array()
+        .expect("a PreToolUse list");
+    for matcher in ["Write", "Edit"] {
+        let script = entries
+            .iter()
+            .filter(|e| e["matcher"] == matcher)
+            .flat_map(|e| e["hooks"].as_array().into_iter().flatten())
+            .filter_map(|h| h["command"].as_str())
+            .find(|c| c.contains("lint-forbidden-"))
+            .unwrap_or_else(|| panic!("no {matcher} entry runs the hook:\n{settings}"));
+        assert!(
+            tmp.path().join(script).is_file(),
+            "the {matcher} entry names {script}, which is not on disk"
+        );
+    }
 }
 
 #[test]
@@ -117,4 +133,65 @@ fn a_config_without_forbidden_imports_returns_no_hooks() {
     let (n, hooks) = derive(tmp.path(), &cfg);
     assert_eq!(n, 0);
     assert!(hooks.is_empty());
+}
+
+/// Runs the generated hook the way the editor does, with a Write of `content` to `path`.
+fn run_hook(repo: &Path, hook: &str, path: &Path, content: &str) -> String {
+    let payload = serde_json::json!({
+        "session_id": "t",
+        "transcript_path": "/tmp/t",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Write",
+        "tool_input": { "file_path": path.display().to_string(), "content": content }
+    })
+    .to_string();
+    let script = fs::read_to_string(repo.join(".claude/hooks").join(hook)).unwrap();
+    super::write_guard_phase_tests::run_from(repo, &script, &payload)
+}
+
+fn generated_hook(repo: &Path) -> String {
+    let cfg = cfg_with_rule(repo);
+    let (_, hooks) = derive(repo, &cfg);
+    hooks
+        .into_iter()
+        .find(|h| h.name.starts_with("lint-forbidden-"))
+        .expect("the hook is generated")
+        .name
+}
+
+#[test]
+fn a_forbidden_import_in_a_scoped_crate_is_denied() {
+    let tmp = tempfile::tempdir().unwrap();
+    let hook = generated_hook(tmp.path());
+    let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    let out = run_hook(tmp.path(), &hook, &target, "fn f(x: &dyn Tr) {}\n");
+    assert!(
+        super::write_guard_phase_tests::refused(&out),
+        "the forbidden token was let through: {out}"
+    );
+}
+
+#[test]
+fn the_same_content_in_a_crate_outside_the_scope_is_allowed() {
+    // The control for the deny above: it is the scope that decides, not the content alone.
+    let tmp = tempfile::tempdir().unwrap();
+    let hook = generated_hook(tmp.path());
+    let target = tmp.path().join("mock/crates/other/src/lib.rs");
+    let out = run_hook(tmp.path(), &hook, &target, "fn f(x: &dyn Tr) {}\n");
+    assert!(
+        !super::write_guard_phase_tests::refused(&out),
+        "a crate outside the scope was denied: {out}"
+    );
+}
+
+#[test]
+fn clean_content_in_a_scoped_crate_is_allowed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let hook = generated_hook(tmp.path());
+    let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    let out = run_hook(tmp.path(), &hook, &target, "fn f() {}\n");
+    assert!(
+        !super::write_guard_phase_tests::refused(&out),
+        "clean content was denied: {out}"
+    );
 }
