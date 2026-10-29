@@ -189,3 +189,21 @@ fn a_conflicted_template_is_open_in_the_impl_phase() {
     let after = edit(&d, "mock/crates/x/DESIGN.md.tmpl");
     assert!(refused(&after), "control: a template is gated in IMPL without a merge: {after}");
 }
+
+#[test]
+fn a_conflicted_file_is_open_once_the_round_is_sealed_or_closed() {
+    // The doc lock is DRAFT and the source lock is CLOSED: the phases that gate the most.
+    for (tag, round) in [
+        ("merge-draft", "202609062251_changelist.doc.lock.md"),
+        ("merge-closed", "202609062251_changelist.src.lock.md"),
+    ] {
+        let d = merging_in(tag, round);
+        for rel in ["mock/crates/x/DESIGN.md.tmpl", "mock/crates/x/src/lib.rs"] {
+            let out = edit(&d, rel);
+            assert!(!refused(&out), "{rel} was refused in {tag}: {out}");
+        }
+        end_merge_keeping_conflicts(&d);
+        let after = edit(&d, "mock/crates/x/DESIGN.md.tmpl");
+        assert!(refused(&after), "control: a template is gated in {tag} without a merge: {after}");
+    }
+}

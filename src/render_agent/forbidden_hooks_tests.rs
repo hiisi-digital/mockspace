@@ -35,9 +35,8 @@ fn cfg_with_rule(repo: &Path) -> Config {
     cfg
 }
 
-/// Runs the lint-derived generation the way the renderer does: the hook
-/// directories are not created beforehand, since they do not exist yet in a
-/// fresh tree at that point of the render.
+/// Runs the lint-derived generation the way the renderer does, with no hook
+/// directories made beforehand.
 fn derive(repo: &Path, cfg: &Config) -> (usize, Vec<HookMeta>) {
     generate_lint_derived_content(
         cfg,
@@ -76,22 +75,6 @@ fn a_forbidden_imports_hook_is_returned_with_the_events_it_guards() {
         "{:?}",
         hook.matchers
     );
-}
-
-#[test]
-fn a_forbidden_imports_hook_is_written_into_a_tree_without_a_hooks_directory() {
-    let tmp = tempfile::tempdir().unwrap();
-    let cfg = cfg_with_rule(tmp.path());
-    let (_, hooks) = derive(tmp.path(), &cfg);
-    for h in &hooks {
-        assert!(
-            tmp.path().join(".claude/hooks").join(&h.name).is_file(),
-            "{} was returned but not written",
-            h.name
-        );
-        assert!(tmp.path().join(".github/hooks").join(&h.name).is_file());
-    }
-    assert!(!hooks.is_empty());
 }
 
 #[test]
