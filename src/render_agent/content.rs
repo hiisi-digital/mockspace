@@ -11,6 +11,10 @@ use super::*;
 /// generates:
 /// - An agent rule file per scope (tells the agent what's forbidden)
 /// - An agent hook per scope (blocks writes containing forbidden patterns)
+///
+/// Returns how many files were written and the metadata of each hook, which the
+/// settings step needs to register it under the tools it guards. A hook written
+/// but not returned sits in `hooks/` under no event and nothing ever runs it.
 pub(crate) fn generate_lint_derived_content(
     cfg: &Config,
     claude_rules_dir: &Path,
@@ -20,10 +24,11 @@ pub(crate) fn generate_lint_derived_content(
     header_md: &str,
     preamble: &str,
     postamble: &str,
-) -> usize {
+) -> (usize, Vec<HookMeta>) {
     use std::collections::{BTreeMap as Map, BTreeSet as Set};
 
     let mut count = 0;
+    let mut hook_metas: Vec<HookMeta> = Vec::new();
 
     // Track slugs we wrote this render so we can sweep orphans afterwards.
     // Without this, files written for a previous mockspace.toml configuration
@@ -107,7 +112,14 @@ pub(crate) fn generate_lint_derived_content(
     }
 
     if by_scope.is_empty() {
-        return 0;
+        return (0, Vec::new());
+    }
+
+    // The directories are made here so the writes below do not depend on the order of
+    // the render phases, and a failure to make one stops the render instead of
+    // being dropped.
+    for dir in [claude_rules_dir, copilot_instructions_dir, claude_hooks_dir, copilot_hooks_dir] {
+        fs::create_dir_all(dir).expect("failed to create a hooks or rules directory");
     }
 
     let src_dirs_repo = src_dirs_from_repo(cfg);
@@ -232,11 +244,20 @@ pub(crate) fn generate_lint_derived_content(
         );
 
         let claude_hook_path = claude_hooks_dir.join(&hook_name);
-        write_executable(&claude_hook_path, &claude_hook).ok();
+        write_executable(&claude_hook_path, &claude_hook)
+            .expect("failed to write forbidden-imports claude hook");
 
         let copilot_hook_path = copilot_hooks_dir.join(&hook_name);
-        write_executable(&copilot_hook_path, &copilot_hook).ok();
+        write_executable(&copilot_hook_path, &copilot_hook)
+            .expect("failed to write forbidden-imports copilot hook");
         count += 2;
+
+        // The hook reads the text being written (`new_string` or `content`), so
+        // it guards the tools that write, and Bash is not one of them.
+        hook_metas.push(HookMeta {
+            name:     hook_name,
+            matchers: vec!["Write".into(), "Edit".into()],
+        });
     }
 
     // Sweep orphan rendered files. When a scope is removed from
@@ -255,7 +276,7 @@ pub(crate) fn generate_lint_derived_content(
     sweep_orphan_generated_files(claude_hooks_dir, P, ".sh", &active_slugs);
     sweep_orphan_generated_files(copilot_hooks_dir, P, ".sh", &active_slugs);
 
-    count
+    (count, hook_metas)
 }
 
 /// Delete any file in `dir` whose name matches `<prefix><slug><suffix>` where

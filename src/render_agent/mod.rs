@@ -59,6 +59,8 @@ pub(crate) use vars::*;
 mod bookend;
 pub(crate) use bookend::*;
 #[cfg(test)]
+mod forbidden_hooks_tests;
+#[cfg(test)]
 mod hook_output_tests;
 #[cfg(test)]
 mod message_domain_tests;
@@ -68,6 +70,8 @@ mod message_scope_tests;
 mod src_dirs_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod write_guard_merge_tests;
 #[cfg(test)]
 mod write_guard_phase_tests;
 
@@ -226,7 +230,7 @@ pub fn generate_agent_rules(
     // --- Lint-derived rules and hooks (from forbidden-imports config) ---
     let claude_hooks_dir = repo_root.join(".claude").join("hooks");
     let copilot_hooks_dir = repo_root.join(".github").join("hooks");
-    count += generate_lint_derived_content(
+    let (derived_count, lint_derived_hooks) = generate_lint_derived_content(
         cfg,
         &claude_rules_dir,
         &copilot_instructions_dir,
@@ -236,6 +240,7 @@ pub fn generate_agent_rules(
         &preamble,
         &postamble,
     );
+    count += derived_count;
 
     // --- Per-crate README-derived rules (scoped to that crate's directory) ---
     count += generate_crate_readme_rules(
@@ -534,6 +539,9 @@ pub fn generate_agent_rules(
 
     let mut all_hooks: Vec<HookMeta> =
         generate_builtin_hooks(cfg, &claude_hooks_dir, &copilot_hooks_dir, &mut count);
+    // The forbidden-imports hooks were written earlier in the render; they join
+    // here so the settings step registers them with the rest.
+    all_hooks.extend(lint_derived_hooks);
 
     // --- Consumer hooks: hooks/*.sh.tmpl -> .claude/hooks/*.sh + .github/hooks/*.sh ---
     let hooks_dir = agent_dir.join("hooks");

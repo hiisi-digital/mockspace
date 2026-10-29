@@ -34,7 +34,7 @@ use std::process::Command;
 
 use super::*;
 
-fn scratch(tag: &str) -> std::path::PathBuf {
+pub(super) fn scratch(tag: &str) -> std::path::PathBuf {
     static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let d = std::env::temp_dir().join(format!(
         "ms_wgphase_{tag}_{}_{}",
@@ -45,7 +45,7 @@ fn scratch(tag: &str) -> std::path::PathBuf {
     d
 }
 
-fn git(dir: &std::path::Path, args: &[&str]) {
+pub(super) fn git(dir: &std::path::Path, args: &[&str]) {
     let ok = Command::new("git")
         .args(args)
         .current_dir(dir)
@@ -59,7 +59,7 @@ fn git(dir: &std::path::Path, args: &[&str]) {
 
 /// A repository whose mock directory holds the named design-round files,
 /// committed, since the guard reads tracked files rather than the working tree.
-fn repo_with_rounds(tag: &str, rounds: &[&str]) -> std::path::PathBuf {
+pub(super) fn repo_with_rounds(tag: &str, rounds: &[&str]) -> std::path::PathBuf {
     let d = scratch(tag);
     git(&d, &["init", "-q", "-b", "main"]);
     git(&d, &["config", "user.name", "t"]);
@@ -86,7 +86,7 @@ fn cfg_at(repo_root: &std::path::Path) -> Config {
     c
 }
 
-fn guard_for(repo_root: &std::path::Path) -> String {
+pub(super) fn guard_for(repo_root: &std::path::Path) -> String {
     let cfg = cfg_at(repo_root);
     builtin_write_guard(&cfg)
         .replace("{{HOOK_HELPERS}}", crate::render_agent::CLAUDE_HOOK_HELPERS)
@@ -94,7 +94,7 @@ fn guard_for(repo_root: &std::path::Path) -> String {
 }
 
 /// A Write of `path`, which is how an agent edits a design template.
-fn write_payload(path: &std::path::Path) -> String {
+pub(super) fn write_payload(path: &std::path::Path) -> String {
     serde_json::json!({
         "session_id": "t",
         "transcript_path": "/tmp/t",
@@ -106,7 +106,7 @@ fn write_payload(path: &std::path::Path) -> String {
 }
 
 /// Run the guard from `cwd`, which is the whole variable these arms move.
-fn run_from(cwd: &std::path::Path, script: &str, payload: &str) -> String {
+pub(super) fn run_from(cwd: &std::path::Path, script: &str, payload: &str) -> String {
     let f = cwd.join(format!("guard_{}.sh", std::process::id()));
     std::fs::write(&f, script).unwrap();
     let out = Command::new("bash")
@@ -126,7 +126,7 @@ fn run_from(cwd: &std::path::Path, script: &str, payload: &str) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
-fn refused(out: &str) -> bool {
+pub(super) fn refused(out: &str) -> bool {
     out.contains("permissionDecision")
 }
 
@@ -195,7 +195,7 @@ fn standing_inside_the_repository_still_works() {
 
 /// A Bash command that writes, which is the other way the guard is reached and
 /// the one that carries no `file_path`.
-fn bash_payload(command: &str) -> String {
+pub(super) fn bash_payload(command: &str) -> String {
     serde_json::json!({
         "session_id": "t",
         "transcript_path": "/tmp/t",

@@ -556,7 +556,7 @@ fn agent_gate_is_a_generated_builtin() {
 /// A throwaway repository with a mockspace.toml and an agent config, so the
 /// gate is exercised through the config that actually declares it rather than
 /// through a hand-built struct that could drift from it.
-fn skill_fixture(design_talks: Option<bool>) -> std::path::PathBuf {
+pub(super) fn skill_fixture(design_talks: Option<bool>) -> std::path::PathBuf {
     // A sequence number besides the pid and the flag: two tests passing the
     // same flag otherwise share one directory and remove_dir_all it under
     // each other when the suite runs in parallel.
@@ -924,7 +924,7 @@ impl mockspace_lint_rules::tool::Tool for StubTool {
     }
 }
 
-fn pack_with_stub_tool() -> LintPack {
+pub(super) fn pack_with_stub_tool() -> LintPack {
     LintPack {
         tools: vec![Box::new(StubTool)],
         ..LintPack::default()
