@@ -48,7 +48,7 @@
 
 use std::collections::BTreeMap;
 
-use mockspace_lint_rules::{LintConfig, LintPack, Severity};
+use mockspace_lint_rules::{LintConfig, LintPack, Reach, Severity};
 
 /// Which input kind a lint is handed.
 ///
@@ -88,6 +88,9 @@ pub struct Listing {
     pub kind:      Kind,
     /// The severity the lint itself declares when the project says nothing.
     pub default:   Severity,
+    /// How much the lint reads, which is what decides how little of a run it can be answered
+    /// from saved verdicts with. A lint that declares none is the whole repository.
+    pub reach:     Reach,
     /// The base severity this project configured, where it configured one.
     ///
     /// `None` is not a fault and is the interesting case: the lint runs at its
@@ -169,26 +172,26 @@ pub fn enumerate(pack: &LintPack, config: &LintConfig) -> Vec<Listing> {
     let mut out: Vec<Listing> = Vec::new();
 
     for l in mockspace_lint_rules::all_lints() {
-        out.push(one(l.name(), Kind::Crate, l.default_severity(), config));
+        out.push(one(l.name(), Kind::Crate, l.default_severity(), l.reach(), config));
     }
     for l in mockspace_lint_rules::all_workspace_lints() {
-        out.push(one(l.name(), Kind::Workspace, l.default_severity(), config));
+        out.push(one(l.name(), Kind::Workspace, l.default_severity(), l.reach(), config));
     }
     for l in mockspace_lint_rules::all_repo_lints() {
-        out.push(one(l.name(), Kind::Repo, l.default_severity(), config));
+        out.push(one(l.name(), Kind::Repo, l.default_severity(), l.reach(), config));
     }
 
     for l in &pack.crate_lints {
-        out.push(one(l.name(), Kind::Crate, l.default_severity(), config));
+        out.push(one(l.name(), Kind::Crate, l.default_severity(), l.reach(), config));
     }
     for l in &pack.workspace_lints {
-        out.push(one(l.name(), Kind::Workspace, l.default_severity(), config));
+        out.push(one(l.name(), Kind::Workspace, l.default_severity(), l.reach(), config));
     }
     for l in &pack.repo_lints {
-        out.push(one(l.name(), Kind::Repo, l.default_severity(), config));
+        out.push(one(l.name(), Kind::Repo, l.default_severity(), l.reach(), config));
     }
     for l in &pack.message_lints {
-        out.push(one(l.name(), Kind::Message, l.default_severity(), config));
+        out.push(one(l.name(), Kind::Message, l.default_severity(), l.reach(), config));
     }
 
     out.sort_by(|a, b| (a.kind, &a.name).cmp(&(b.kind, &b.name)));
@@ -208,11 +211,12 @@ fn named_in_config(name: &str, config: &LintConfig) -> bool {
         || config.crates.contains_key(name)
 }
 
-fn one(name: &str, kind: Kind, default: Severity, config: &LintConfig) -> Listing {
+fn one(name: &str, kind: Kind, default: Severity, reach: Reach, config: &LintConfig) -> Listing {
     Listing {
         name: name.to_string(),
         kind,
         default,
+        reach,
         confirmed: config.base.get(name).copied(),
         named: named_in_config(name, config),
     }
@@ -332,9 +336,10 @@ fn render_group(out: &mut String, kind: Kind, listings: &[Listing]) {
         // is embedded verbatim into the generated agent rules.
         let _ = writeln!(
             out,
-            "    {:<width$}  {:<10}  {}{}",
+            "    {:<width$}  {:<10}  {:<10}  {}{}",
             l.name,
             l.effective().label(),
+            l.reach.label(),
             source,
             note,
             width = width
@@ -426,6 +431,41 @@ mod tests {
             c.base.insert((*k).to_string(), *v);
         }
         c
+    }
+
+    struct Wide(&'static str);
+
+    impl Lint for Wide {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+
+        fn reach(&self) -> Reach {
+            Reach::File
+        }
+    }
+
+    impl CrateLint for Wide {
+        fn check(&self, _ctx: &LintContext) -> Vec<LintError> {
+            Vec::new()
+        }
+    }
+
+    /// What a lint reads is what lets it be answered from a saved verdict, so the listing says it, and
+    /// says the whole repository for the lint that declared nothing.
+    #[test]
+    fn the_listing_shows_how_much_each_lint_reads() {
+        let pack = pack_with(vec![
+            Box::new(Wide("narrow")),
+            Box::new(Named("undeclared", Severity::ADVISORY)),
+        ]);
+        let listings = enumerate(&pack, &LintConfig::empty());
+        assert_eq!(listing(&listings, "narrow").reach, Reach::File);
+        assert_eq!(listing(&listings, "undeclared").reach, Reach::Repository);
+        let table = render_table(&listings, &[]);
+        let line = |name: &str| table.lines().find(|l| l.trim_start().starts_with(name)).unwrap().to_string();
+        assert!(line("narrow").contains("file"), "{}", line("narrow"));
+        assert!(line("undeclared").contains("repository"), "{}", line("undeclared"));
     }
 
     /// The control. Without it every assertion below is satisfied by an
