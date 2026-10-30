@@ -30,8 +30,10 @@
 //!   lines of one parent, which no side wrote, is not inherited. Sections of
 //!   the two sides in either order are, since neither side's own order moved.
 //! - **Anchored.** A line the staged content and every parent carry exactly once
-//!   keeps its place among the others such lines, in the order every parent has
-//!   them. The interleaving above alone cannot see a swap of two lines the
+//!   keeps its place among the others such lines, in the whole order of one
+//!   parent: the one order the parents share, or either side's where one side
+//!   moved a shared line and the other kept it, never a mix of the two. The
+//!   interleaving above alone cannot see a swap of two lines the
 //!   parents share, because either parent could be said to have supplied either.
 //!
 //! **Bounds of the sequence test, and none of them lets a file through
@@ -67,11 +69,37 @@ const MAX_PERMUTED_PARENTS: usize = 4;
 pub(crate) enum Verdict {
     /// Nothing the parents did not carry, in order.
     Recombines,
-    /// A line was typed, repeated, deleted or moved.
-    Authored,
+    /// A line was typed, repeated, deleted or moved, and which test said so.
+    Authored(Why),
     /// The order test would take longer than [`TIME_CAP`] allows, so the file
     /// is not judged inherited.
     TooLarge,
+}
+
+/// Which line test found a merge authored, so the refusal can say it.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum Why {
+    /// A line no parent carries, a repeat past the bound, or a line every
+    /// parent carries that is gone.
+    Counted,
+    /// The lines the parents share stand in an order no single parent has.
+    Order,
+    /// The lines do not split into one subsequence per parent.
+    Sequence,
+}
+
+impl Why {
+    /// The sentence a refusal prints for it.
+    pub(crate) const fn says(self) -> &'static str {
+        match self {
+            Why::Counted => {
+                "a line neither parent carries, a line repeated beyond what the parents carry \
+                 together, or a line every parent carries that is gone"
+            },
+            Why::Order => "the lines the parents share, in an order no single parent has them in",
+            Why::Sequence => "lines that do not keep each parent's own order",
+        }
+    }
 }
 
 /// Whether `staged` only recombines the lines of `parents`, per the module doc.
@@ -92,12 +120,15 @@ pub(crate) fn recombines<'a>(
         .iter()
         .map(|p| p.iter().map(|l| id_of(*l)).collect())
         .collect();
-    if !counted(&staged, &parents, &base) || !anchors_keep_their_order(&staged, &parents) {
-        return Verdict::Authored;
+    if !counted(&staged, &parents, &base) {
+        return Verdict::Authored(Why::Counted);
+    }
+    if !anchors_keep_their_order(&staged, &parents) {
+        return Verdict::Authored(Why::Order);
     }
     match in_sequence(&staged, &parents) {
         Ok(true) => Verdict::Recombines,
-        Ok(false) => Verdict::Authored,
+        Ok(false) => Verdict::Authored(Why::Sequence),
         Err(TooLarge) => Verdict::TooLarge,
     }
 }
@@ -129,9 +160,14 @@ fn counted(staged: &[u32], parents: &[Vec<u32>], base: &[u32]) -> bool {
 }
 
 /// Whether the lines every parent and the staged content carry exactly once
-/// stand in the order every parent has them. Without it a swap of two lines the
-/// parents share would pass, since either parent could be said to have supplied
-/// either line.
+/// stand in the order some parent has them, the whole of that order. Without it
+/// a swap of two lines the parents share would pass, since either parent could
+/// be said to have supplied either line. Where the parents agree that order is
+/// theirs; where one side moved a line the other kept, the conflict asks for a
+/// choice between the sides, so either side's order stands. A mix of the two is
+/// refused, since stitching orders pair by pair puts a line where no side had
+/// it, and so is a conflicted merge where each side moved different shared
+/// lines, which is the safe direction.
 fn anchors_keep_their_order(staged: &[u32], parents: &[Vec<u32>]) -> bool {
     let once = |lines: &[u32]| {
         let mut t = tally(lines);
@@ -147,7 +183,7 @@ fn anchors_keep_their_order(staged: &[u32], parents: &[Vec<u32>]) -> bool {
         lines.iter().copied().filter(|l| anchors.contains_key(l)).collect()
     };
     let spine = ordered(staged);
-    parents.iter().all(|p| ordered(p) == spine)
+    parents.iter().any(|p| ordered(p) == spine)
 }
 
 /// The sequence test would pass [`TIME_CAP`].
@@ -355,6 +391,68 @@ mod tests {
         assert_eq!(
             verdict(&format!("{reversed}{b}"), "", &[&a, &b]),
             Verdict::TooLarge
+        );
+    }
+
+    #[test]
+    fn a_consolidation_taking_one_sides_order_where_the_sides_disagree_is_inherited() {
+        // trunk re-sorted two imports the base had and the branch kept, and the
+        // branch added a line. Taking trunk's order and the branch's line is the
+        // merge git would make with trunk's hunk; before this it read as
+        // authored, since the shared lines' order could equal only one parent.
+        let base = "use a;\nuse c;\nbody\n";
+        let parents = ["use a;\nuse c;\nbody\nmine\n", "use c;\nuse a;\nbody\n"];
+        assert!(ok("use c;\nuse a;\nbody\nmine\n", base, &parents));
+        assert!(ok("use a;\nuse c;\nbody\nmine\n", base, &parents), "the branch's order too");
+    }
+
+    #[test]
+    fn a_swap_of_two_lines_no_parent_swapped_is_still_refused_where_the_sides_disagree_elsewhere() {
+        // the negative beside it: the sides disagree on a and c, and both keep
+        // x before y, so putting y first is an edit nobody made
+        let base = "use a;\nuse c;\nx\ny\n";
+        let parents = ["use a;\nuse c;\nx\ny\nmine\n", "use c;\nuse a;\nx\ny\n"];
+        assert!(ok("use c;\nuse a;\nx\ny\nmine\n", base, &parents), "the control");
+        assert!(!ok("use c;\nuse a;\ny\nx\nmine\n", base, &parents));
+    }
+
+    #[test]
+    fn where_the_sides_disagree_the_shared_lines_take_one_sides_order_whole_and_never_a_mix() {
+        // trunk moved c to the top. Putting c between a and b is a place no
+        // side had it, though each pair of the three is in some side's order.
+        let base = "a\nb\nc\n";
+        let parents = ["a\nb\nc\nmine\n", "c\na\nb\n"];
+        assert_eq!(verdict("c\na\nb\nmine\n", base, &parents), Verdict::Recombines, "the control");
+        assert_eq!(verdict("a\nc\nb\nmine\n", base, &parents), Verdict::Authored(Why::Order));
+        // three parents covering every pair between them, and a reversal none has
+        let three = ["a\nb\nc\n", "b\nc\na\n", "c\na\nb\n"];
+        assert_eq!(verdict("b\nc\na\n", base, &three), Verdict::Recombines, "the control");
+        assert_eq!(verdict("c\nb\na\n", base, &three), Verdict::Authored(Why::Order));
+        // each side moved a different shared line: a recombination, refused on
+        // purpose, so that widening the rule to a three-way merge of the orders is
+        // a choice somebody makes and not a drift
+        let moved_apart = ["b\na\nc\nd\n", "a\nb\nd\nc\n"];
+        let base4 = "a\nb\nc\nd\n";
+        assert_eq!(verdict("b\na\nc\nd\n", base4, &moved_apart), Verdict::Recombines, "the control");
+        assert_eq!(verdict("b\na\nd\nc\n", base4, &moved_apart), Verdict::Authored(Why::Order));
+    }
+
+    #[test]
+    fn a_refusal_names_the_test_that_refused_it() {
+        // a merge refused with no reason left a helper unable to tell a typed
+        // line from a moved one, so each test answers for itself
+        let base = "h\nx\ny\n";
+        let parents = ["h\nx\ny\nours\n", "h\nx\ny\ntheirs\n"];
+        assert_eq!(verdict("h\nx\ny\nours\ntheirs\n", base, &parents), Verdict::Recombines, "the control");
+        assert_eq!(
+            verdict("h\nx\ny\nours\ntheirs\nmine\n", base, &parents),
+            Verdict::Authored(Why::Counted)
+        );
+        assert_eq!(verdict("h\ny\nx\nours\ntheirs\n", base, &parents), Verdict::Authored(Why::Order));
+        // a and b repeat, so no line anchors them, and only the sequence test sees the swap
+        assert_eq!(
+            verdict("x\nb\nb\na\na\n", "", &["x\na\na\nb\nb\n", "y"]),
+            Verdict::Authored(Why::Sequence)
         );
     }
 
