@@ -15,6 +15,8 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+pub mod verdicts;
+
 use mockspace_lint_rules::{
     self,
     CrateSourceFile,
@@ -165,6 +167,13 @@ pub fn run_lints(
     let mut parser = mockspace_lint_rules::make_parser();
     let mut all_errors: Vec<LintError> = Vec::new();
 
+    // Saved verdicts: a lint declaring a reach is answered from the store when what it depends
+    // on did not move. None when switched off or when the machine has nowhere to keep them.
+    let verdicts = timing::time("phase:open-verdict-store", || {
+        verdicts::DiskVerdicts::open(mock_dir, &pack.identity)
+    });
+    let saved = verdicts.as_ref().map(|v| v as &dyn mockspace_lint_rules::verdict::VerdictCache);
+
     let mut parsed: Vec<ParsedCrate> = Vec::new();
 
     let overrides = if lint_overrides.is_empty() { None } else { Some(lint_overrides) };
@@ -230,11 +239,12 @@ pub fn run_lints(
             primitive_introductions,
         };
 
-        all_errors.extend(mockspace_lint_rules::check_crate_with_extra(
+        all_errors.extend(mockspace_lint_rules::check_crate_saving(
             &ctx,
             doc_only,
             overrides,
             &pack.crate_lints,
+            saved,
         ));
 
         parsed.push(ParsedCrate {
@@ -279,11 +289,12 @@ pub fn run_lints(
         .map(|(name, ctx)| (*name, ctx))
         .collect();
 
-    all_errors.extend(mockspace_lint_rules::check_workspace_with_extra(
+    all_errors.extend(mockspace_lint_rules::check_workspace_saving(
         &cross_refs,
         doc_only,
         overrides,
         &pack.workspace_lints,
+        saved,
     ));
 
     // Repo lints take no crates at all, so they run even when the workspace has
