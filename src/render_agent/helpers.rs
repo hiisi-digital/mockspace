@@ -96,7 +96,8 @@ pub(crate) const COPILOT_HOOK_HELPERS: &str = r##"# --- Platform helpers (Copilo
 # Copilot's file tools name their arguments differently from Claude's: `path`,
 # `old_str`, `new_str` and `file_text` for what Claude calls `file_path`,
 # `old_string`, `new_string` and `content`. A field is read under either name, so a
-# hook written against the Claude names reads a Copilot call too.
+# hook written against the Claude names reads a Copilot call too. The hooks reference
+# gives `toolArgs` as `unknown` and names none of these arguments.
 _extract() {
     local alt=""
     case "$1" in

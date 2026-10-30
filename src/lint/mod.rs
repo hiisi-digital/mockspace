@@ -183,6 +183,16 @@ pub fn lint_edit(
     // as it will be at commit and not passed for want of a crate.
     let new_root;
     let empty_root = !crates.contains_key(crate_name);
+    if empty_root {
+        // Discovery takes a real directory with a `src/lib.rs`, so the gate never reads a crate
+        // directory that is a link, nor a crate that has only a binary root. What it will read
+        // once the root exists is judged; what it never reads is not.
+        let is_link = std::fs::symlink_metadata(&crate_dir).is_ok_and(|m| m.file_type().is_symlink());
+        let binary_only = rel_path != Path::new("src/lib.rs") && crate_dir.join("src/main.rs").exists();
+        if is_link || binary_only {
+            return None;
+        }
+    }
     let info = match crates.get(crate_name) {
         Some(info) => info,
         None => {

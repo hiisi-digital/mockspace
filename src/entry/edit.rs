@@ -105,30 +105,79 @@ fn normalised(path: &Path) -> Option<std::path::PathBuf> {
     Some(out)
 }
 
-/// `path` with the directory symlink that leads to a source directory followed, and
-/// everything below that point left as it is spelled.
-///
-/// An edit written through a link to a source directory names no crate under the real
-/// ones and would pass unjudged. The ancestors are walked from the root: the first one
-/// that exists and resolves to a source directory, or below one, is replaced by what it
-/// resolves to. Links inside a crate are left alone, since the gate reads a symlinked
-/// `src` or module directory at the place it sits in the crate and the edit has to be
-/// judged there. `src_dirs` are the canonical ones. A path through no source directory
-/// comes back as it was.
-fn through_directory_links(path: &Path, src_dirs: &[std::path::PathBuf]) -> std::path::PathBuf {
-    let mut prefix = std::path::PathBuf::new();
-    let mut comps = path.components();
-    while let Some(c) = comps.next() {
-        prefix.push(c.as_os_str());
-        let Ok(real) = prefix.canonicalize() else {
-            // Nothing past a directory that does not exist can be a link.
-            break;
-        };
-        if src_dirs.iter().any(|d| real.starts_with(d)) {
-            return real.join(comps.as_path());
+/// A directory as the gate knows it: what it really is, and where it sits.
+type GateDir = (std::path::PathBuf, std::path::PathBuf);
+
+/// `dir` and every directory under it, followed through links the way the gate's own walk
+/// follows them, each recorded once under the first spelling that reached it.
+fn walk_dirs(dir: &Path, out: &mut Vec<GateDir>, seen: &mut std::collections::BTreeSet<std::path::PathBuf>) {
+    let Ok(real) = dir.canonicalize() else { return };
+    if !seen.insert(real.clone()) {
+        return;
+    }
+    out.push((real, dir.to_path_buf()));
+    let Ok(read) = std::fs::read_dir(dir) else { return };
+    for entry in read.flatten() {
+        if entry.path().is_dir() {
+            walk_dirs(&entry.path(), out, seen);
         }
     }
-    path.to_path_buf()
+}
+
+/// Every directory the gate reads Rust from: the source directories, each crate directory
+/// beneath them that is a real directory (discovery does not follow a link there), and
+/// everything under a crate's `src`.
+fn gate_directories(src_dirs: &[std::path::PathBuf]) -> Vec<GateDir> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for root in src_dirs {
+        if let Ok(real) = root.canonicalize() {
+            out.push((real, root.to_path_buf()));
+        }
+        let Ok(read) = std::fs::read_dir(root) else { continue };
+        for entry in read.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())) {
+            if let Ok(real) = entry.path().canonicalize() {
+                out.push((real, entry.path()));
+            }
+            walk_dirs(&entry.path().join("src"), &mut out, &mut seen);
+        }
+    }
+    out
+}
+
+/// `path` spelled the way the gate reaches the same file: its directory taken to the
+/// place in a crate that really is that directory, and its last component kept.
+///
+/// An edit written through a link, to a source directory or into a crate's linked `src` or
+/// module directory, names no crate when read lexically and would pass unjudged, while the
+/// gate lints the file at its place in the crate. The deepest directory of the path that
+/// exists is resolved, the rest is appended as spelled, since the file or its directories may
+/// be what the edit creates. A path that reaches none of the gate's directories comes back as
+/// it was.
+fn through_directory_links(path: &Path, src_dirs: &[std::path::PathBuf]) -> std::path::PathBuf {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return path.to_path_buf();
+    };
+    let mut rest = Vec::new();
+    let mut probe = parent;
+    let real = loop {
+        match probe.canonicalize() {
+            Ok(real) => break real,
+            Err(_) => match (probe.parent(), probe.file_name()) {
+                (Some(up), Some(last)) => {
+                    rest.push(last.to_os_string());
+                    probe = up;
+                },
+                _ => return path.to_path_buf(),
+            },
+        }
+    };
+    let Some((_, place)) = gate_directories(src_dirs).into_iter().find(|(r, _)| *r == real) else {
+        return path.to_path_buf();
+    };
+    let mut out = place;
+    out.extend(rest.iter().rev());
+    out.join(name)
 }
 
 /// Ask. Exit success when the lint blocks nothing in `req.file`, failure with the

@@ -447,28 +447,68 @@ fn a_copilot_apply_patch_adding_a_violation_is_refused() {
 }
 
 #[test]
-fn a_symlink_inside_a_crate_is_judged_where_the_gate_reads_it() {
+fn a_link_inside_a_crate_is_judged_where_the_gate_reads_it_by_any_spelling() {
     // The gate follows a linked `src` or module directory and lints what is in it at the
-    // place it sits in the crate, so an edit through that place is judged there too.
+    // place it sits in the crate, so an edit is judged there however the path reaches it.
     let repo = fixture();
+    let sim = repo.root.join("mock/crates/fixture-sim");
+    let violation = "use std::fmt;\npub fn f() {}\n";
+
+    // `src` is a link, and the file is named in the crate and through an alias to the link.
     let elsewhere = repo.root.join("elsewhere");
     write(&elsewhere.join("src/lib.rs"), "pub fn f() {}\n");
-    let sim = repo.root.join("mock/crates/fixture-sim");
     fs::remove_dir_all(sim.join("src")).unwrap();
     std::os::unix::fs::symlink(elsewhere.join("src"), sim.join("src")).unwrap();
-    let out = hook_says(&repo, &sim.join("src/lib.rs"), "use std::fmt;\npub fn f() {}\n");
-    assert!(refused(&out), "a violation in a crate whose src is a link was passed: {out}");
+    assert!(refused(&hook_says(&repo, &sim.join("src/lib.rs"), violation)), "in the crate");
+    let alias = repo.root.join("alias");
+    std::os::unix::fs::symlink(sim.join("src"), &alias).unwrap();
+    assert!(refused(&hook_says(&repo, &alias.join("lib.rs"), violation)), "through an alias to the linked src");
 
+    // A module directory is a link, in the in-scope crate, and the same two spellings.
     let shared = repo.root.join("sharedgen");
     write(&shared.join("mod.rs"), "pub fn g() {}\n");
-    let ui = repo.root.join("mock/crates/fixture-sim/../fixture-ui");
-    std::os::unix::fs::symlink(&shared, ui.join("src/gen")).unwrap();
-    let out = hook_says(&repo, &ui.join("src/gen/mod.rs"), "use std::fmt;\n");
-    // fixture-ui is outside the rule's scope, so a violation there is the lint's to pass; the
-    // control is that the path is read as in the crate and not dropped as outside every one.
-    assert!(!refused(&out), "{out}");
-    let out = hook_says(&repo, &sim.join("src/gen/mod.rs"), "use std::fmt;\n");
-    assert!(refused(&out), "{out}");
+    std::os::unix::fs::symlink(&shared, sim.join("src/gen")).unwrap();
+    assert!(refused(&hook_says(&repo, &sim.join("src/gen/mod.rs"), "use std::fmt;\n")), "in the crate");
+    let alias2 = repo.root.join("alias2");
+    std::os::unix::fs::symlink(sim.join("src/gen"), &alias2).unwrap();
+    assert!(refused(&hook_says(&repo, &alias2.join("mod.rs"), "use std::fmt;\n")), "through an alias to the linked module directory");
+    // The control: clean text through the same spellings is passed.
+    assert!(!refused(&hook_says(&repo, &alias2.join("mod.rs"), "pub fn g() {}\n")));
+}
+
+#[test]
+fn a_crate_the_gate_never_reads_is_not_refused_by_the_hook() {
+    // Discovery takes a real directory holding `src/lib.rs`: a crate with only a binary root,
+    // and a crate directory that is a link, are never linted at commit, so the hook has no
+    // verdict on them either.
+    let repo = fixture();
+    write(&repo.root.join("mock/mockspace.toml"), &CONFIG.replace("scope = \"fixture-sim\"", "scope = \"fixture-*\""));
+    let bin = repo.root.join("mock/crates/fixture-bin");
+    write(&bin.join("Cargo.toml"), "[package]\nname = \"fixture-bin\"\nversion = \"0.0.0\"\n");
+    write(&bin.join("src/main.rs"), "fn main() {}\n");
+    assert!(!refused(&hook_says(&repo, &bin.join("src/main.rs"), "use std::fmt;\nfn main() {}\n")), "a binary-only crate");
+    // The control that the widened scope refuses a crate the gate does read.
+    let sim = repo.root.join("mock/crates/fixture-sim");
+    assert!(refused(&hook_says(&repo, &sim.join("src/lib.rs"), "use std::fmt;\n")));
+
+    let real = repo.root.join("elsewhere");
+    write(&real.join("Cargo.toml"), "[package]\nname = \"fixture-linked\"\nversion = \"0.0.0\"\n");
+    write(&real.join("src/lib.rs"), "pub fn f() {}\n");
+    std::os::unix::fs::symlink(&real, repo.root.join("mock/crates/fixture-linked")).unwrap();
+    let through = repo.root.join("mock/crates/fixture-linked/src/lib.rs");
+    assert!(!refused(&hook_says(&repo, &through, "use std::fmt;\n")), "a crate directory that is a link");
+}
+
+#[test]
+fn an_existing_hooks_file_version_is_kept() {
+    let repo = fixture();
+    let path = repo.root.join(".github/hooks/hooks.json");
+    let mut doc: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    doc["version"] = serde_json::json!(2);
+    fs::write(&path, doc.to_string()).unwrap();
+    repo.generate();
+    let after: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(after["version"], 2, "a version the file carried was rewritten");
 }
 
 #[test]
