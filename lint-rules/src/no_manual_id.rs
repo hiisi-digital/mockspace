@@ -15,6 +15,10 @@ use crate::{CrateLint, Lint, LintContext, LintError};
 pub struct NoManualId;
 
 impl Lint for NoManualId {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::File
+    }
+
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }

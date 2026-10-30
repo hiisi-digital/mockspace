@@ -18,6 +18,10 @@ use crate::{CrateLint, Lint, LintContext, LintError};
 pub struct NoAdhocErrorEnum;
 
 impl Lint for NoAdhocErrorEnum {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::File
+    }
+
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }

@@ -226,6 +226,7 @@ mod tests {
             canon_paths: &canon,
             open_panels: &panels,
             registry:    &Default::default(),
+            verdicts:    None,
         })
     }
 

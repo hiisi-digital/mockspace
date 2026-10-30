@@ -11,7 +11,7 @@
 //! return type but different names). Suggests reuse from the crate that
 //! defines the original.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use tree_sitter::Node;
 
@@ -20,6 +20,10 @@ use crate::{Lint, LintContext, LintError, Severity, WorkspaceLint};
 pub struct NoDuplicateFn;
 
 impl Lint for NoDuplicateFn {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::Workspace
+    }
+
     fn name(&self) -> &'static str {
         "no-duplicate-fn"
     }
@@ -48,7 +52,7 @@ impl WorkspaceLint for NoDuplicateFn {
         let mut errors = Vec::new();
 
         // Group by name: exact name matches across different crates
-        let mut by_name: HashMap<&str, Vec<&FnSig>> = HashMap::new();
+        let mut by_name: BTreeMap<&str, Vec<&FnSig>> = BTreeMap::new();
         for sig in &all_fns {
             by_name.entry(sig.name.as_str()).or_default().push(sig);
         }
@@ -94,7 +98,7 @@ impl WorkspaceLint for NoDuplicateFn {
         }
 
         // Group by signature: same param types + return type but different names
-        let mut by_sig: HashMap<String, Vec<&FnSig>> = HashMap::new();
+        let mut by_sig: BTreeMap<String, Vec<&FnSig>> = BTreeMap::new();
         for sig in &all_fns {
             if sig.params.is_empty() && sig.ret.is_empty() {
                 continue; // Skip trivial signatures (no params, no return)

@@ -53,6 +53,10 @@ impl ForbiddenImports {
 }
 
 impl Lint for ForbiddenImports {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::File
+    }
+
     fn name(&self) -> &'static str {
         "forbidden-imports"
     }
@@ -425,7 +429,7 @@ fn is_ident_char(b: u8) -> bool {
 ///
 /// This is used for `finding_kind` which requires `&'static str`.
 /// The leaked memory is negligible (rule names are small and few).
-fn leak_rule_name(name: &str) -> &'static str {
+pub(crate) fn leak_rule_name(name: &str) -> &'static str {
     // Cache leaked strings to avoid leaking the same name multiple times
     use std::sync::Mutex;
     static CACHE: Mutex<Option<HashMap<String, &'static str>>> = Mutex::new(None);
