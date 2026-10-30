@@ -346,6 +346,42 @@ pub(crate) fn record_owner(
     super::write_if_changed(&local.join(POINTER), &gen_dir.display().to_string())
 }
 
+/// The tool names more than one source registers, as the last whole build saw them, one per line.
+const DUPLICATES: &str = "duplicate-tools";
+
+/// Record, beside the pointer, which tool names the last whole build found registered more than once. A
+/// run of one tool does not build the packs, so it cannot ask them; it reads this instead.
+pub(crate) fn record_duplicates(mock_dir: &Path, names: &[String]) -> Result<(), String> {
+    let local = crate::build_dir::ensure_under_target(mock_dir, &[crate::build_dir::LINT_CRATE]);
+    super::write_if_changed(&local.join(DUPLICATES), &names.join("\n"))
+}
+
+/// What the last whole build recorded: `None` when none has (or the file is gone), `Some(empty)` when it
+/// found no duplicate.
+pub(crate) fn duplicates_of(mock_dir: &Path) -> Option<Vec<String>> {
+    let text = std::fs::read_to_string(crate::build_dir::lint_crate_dir(mock_dir).join(DUPLICATES)).ok()?;
+    Some(text.lines().filter(|l| !l.is_empty()).map(str::to_string).collect())
+}
+
+/// What a run of one tool does, given the record of the last whole build.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ScopedPlan {
+    /// The tool's name is registered twice: refused, as every whole run refuses it.
+    Refuse(Vec<String>),
+    /// Nothing recorded yet: one whole build, which writes the record.
+    Whole,
+    /// Recorded and clean for this tool: build that tool alone.
+    OneTool,
+}
+
+pub(crate) fn plan_scoped(recorded: Option<Vec<String>>, tool: &str) -> ScopedPlan {
+    match recorded {
+        None => ScopedPlan::Whole,
+        Some(d) if d.iter().any(|n| n == tool) => ScopedPlan::Refuse(d),
+        Some(_) => ScopedPlan::OneTool,
+    }
+}
+
 /// Stamp the directory as used now. Written on every run, unlike the owner,
 /// because its modification time is the whole of what it records.
 pub(crate) fn touch_used(gen_dir: &Path) -> Result<(), String> {

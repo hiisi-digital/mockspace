@@ -338,8 +338,16 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         match arg_value(&args, "--mockspace-lint-rules-dep") {
             Some(dep) => {
                 let built = match scoped_tool(&args, &cfg.mock_dir.join("tools")) {
-                    Some(tool) => {
-                        crate::custom_lints::load_tool(&cfg, &cfg.config_path, &dep, tool)
+                    Some(tool) => match crate::custom_lints::scoped_plan(&cfg, tool) {
+                        crate::custom_lints::ScopedPlan::Refuse(d) => {
+                            return super::tool::refuse_duplicates(&d);
+                        },
+                        crate::custom_lints::ScopedPlan::OneTool => {
+                            crate::custom_lints::load_tool(&cfg, &cfg.config_path, &dep, tool)
+                        },
+                        crate::custom_lints::ScopedPlan::Whole => {
+                            crate::custom_lints::load(&cfg, &cfg.config_path, &dep)
+                        },
                     },
                     None => crate::custom_lints::load(&cfg, &cfg.config_path, &dep),
                 };

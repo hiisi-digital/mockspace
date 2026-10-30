@@ -609,3 +609,28 @@ fn a_whole_build_keeps_the_key_it_always_had() {
     assert_ne!(key, scoped);
 }
 const GOLDEN_WHOLE_KEY: &str = "3040726b2cef6a9f"; // fnv1a of the original key text, computed apart from the code
+
+#[test]
+fn a_whole_build_records_its_duplicate_tool_names_beside_the_pointer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mock = tmp.path().join("mock");
+    assert_eq!(duplicates_of(&mock), None, "nothing is recorded before a whole build");
+    record_duplicates(&mock, &["audit".to_string(), "sweep".to_string()]).unwrap();
+    assert_eq!(duplicates_of(&mock), Some(vec!["audit".to_string(), "sweep".to_string()]));
+    // the control: a whole build with none is a record of none, which is not the absent file
+    record_duplicates(&mock, &[]).unwrap();
+    assert_eq!(duplicates_of(&mock), Some(Vec::new()));
+}
+
+#[test]
+fn a_scoped_run_refuses_a_recorded_duplicate_and_builds_the_rest_alone() {
+    let rec = Some(vec!["audit".to_string()]);
+    assert_eq!(plan_scoped(rec.clone(), "audit"), ScopedPlan::Refuse(vec!["audit".to_string()]));
+    assert_eq!(plan_scoped(rec, "ticket-add"), ScopedPlan::OneTool);
+    assert_eq!(plan_scoped(Some(Vec::new()), "audit"), ScopedPlan::OneTool);
+}
+
+#[test]
+fn a_scoped_run_with_no_record_takes_the_whole_build_once() {
+    assert_eq!(plan_scoped(None, "ticket-add"), ScopedPlan::Whole);
+}

@@ -48,6 +48,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use mockspace_lint_rules::LintPack;
+use mockspace_lint_rules::tool::duplicate_tool_names;
 
 use crate::bootstrap::{
     ToolCrate,
@@ -57,6 +58,7 @@ use crate::bootstrap::{
     scan_lint_functions,
 };
 use crate::config::Config;
+pub(crate) use store::ScopedPlan;
 
 pub(crate) mod store;
 
@@ -100,6 +102,12 @@ fn discover(cfg: &Config, config_path: &Path) -> Option<Content> {
     })
 }
 
+/// What a run of the one tool `tool` does: refuse it, take the whole build, or build the tool alone, from the
+/// record the last whole build left.
+pub(crate) fn scoped_plan(cfg: &Config, tool: &str) -> store::ScopedPlan {
+    store::plan_scoped(store::duplicates_of(&cfg.mock_dir), tool)
+}
+
 /// The content of a build cut to the one tool in `<mock>/tools/<tool>`: that
 /// crate and its own path dependencies, no lint file and no pack. `None` when
 /// `tool` is no tool directory, so the caller falls back to the whole build.
@@ -108,11 +116,10 @@ fn discover(cfg: &Config, config_path: &Path) -> Option<Content> {
 /// pack (`ToolContext`), so the lints and the packs add nothing to a run of
 /// one, and compiling them is what a run of it waits on.
 ///
-/// Leaving the packs out means a name a pack also registers is not met here: it
-/// is a stale local copy of a tool the pack ships, refused with exit 2 by every
-/// whole run (`mock check`, `mock tools`) through `duplicate_tool_names`. A pack
-/// cannot be asked what it registers without building it, which is the cost
-/// this exists to avoid, so the refusal belongs to the runs that load it.
+/// Leaving the packs out means a name a pack also registers is not met here. The
+/// last whole build recorded such names (`store::record_duplicates`), and
+/// `scoped_plan` refuses a run of one of them with exit 2 before this is called,
+/// or takes the whole build once when nothing is recorded yet.
 fn discover_scoped(cfg: &Config, config_path: &Path, tool: &str) -> Option<Content> {
     let mut content = discover(cfg, config_path)?;
     content.tools.retain(|t| t.dir == tool);
@@ -223,6 +230,13 @@ fn build_and_load(
     // The returned boxes borrow their vtables from `lib`, so `lib` is stored
     // in `LoadedLints` and outlives them.
     let loaded = built.and_then(|dylib| unsafe { collect(&dylib) }.map(Some));
+    // Every whole build leaves the names its packs and local tools register twice, which a run of one tool
+    // cannot ask for without building the packs.
+    if scope.is_none() {
+        if let Ok(Some(l)) = &loaded {
+            store::record_duplicates(&cfg.mock_dir, &duplicate_tool_names(&l.pack.tools))?;
+        }
+    }
     // Released only once the library is mapped. The mapping outlives a later
     // rebuild by another worktree, and holding the lock for the whole lint run
     // would serialise every worktree on it.
