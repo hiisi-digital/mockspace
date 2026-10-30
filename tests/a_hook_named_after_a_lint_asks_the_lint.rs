@@ -251,17 +251,28 @@ fn the_copilot_hook_gives_the_lints_verdict_too() {
     let sim = repo.root.join("mock/crates/fixture-sim/src/lib.rs");
     let path = sim.display().to_string();
     fs::write(&sim, "pub fn f() {}\npub fn g() {}\n").unwrap();
+    // Copilot's own argument names.
+    let out = copilot_says(&repo, "edit", serde_json::json!({
+        "path": path, "old_str": "pub fn g() {}", "new_str": "use std::fmt;"
+    }));
+    assert!(refused(&out), "the Copilot hook passed what the lint refuses: {out}");
+    let out = copilot_says(&repo, "create", serde_json::json!({
+        "path": repo.root.join("mock/crates/fixture-sim/src/fresh.rs").display().to_string(),
+        "file_text": "use std::fmt;\n"
+    }));
+    assert!(refused(&out), "a created file holding a violation was passed: {out}");
+    // The control: the Claude spellings are read too.
     let out = copilot_says(&repo, "edit", serde_json::json!({
         "file_path": path, "old_string": "pub fn g() {}", "new_string": "use std::fmt;"
     }));
-    assert!(refused(&out), "the Copilot hook passed what the lint refuses: {out}");
+    assert!(refused(&out), "{out}");
     // The controls: a clean edit, and a file that is not Rust, are passed.
     let out = copilot_says(&repo, "edit", serde_json::json!({
-        "file_path": path, "old_string": "pub fn g", "new_string": "pub fn h"
+        "path": path, "old_str": "pub fn g", "new_str": "pub fn h"
     }));
     assert!(!refused(&out), "{out}");
     let out = copilot_says(&repo, "create", serde_json::json!({
-        "file_path": repo.root.join("notes.md").display().to_string(), "content": "use std::fmt;"
+        "path": repo.root.join("notes.md").display().to_string(), "file_text": "use std::fmt;"
     }));
     assert!(!refused(&out), "{out}");
     // A multi-edit through the same payload shape.

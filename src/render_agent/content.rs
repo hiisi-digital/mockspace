@@ -230,8 +230,10 @@ pub(crate) fn generate_lint_derived_content(
          set -uo pipefail\n\
          __INPUT=$(cat)\n\
          {{{{HOOK_HELPERS}}}}\n\
-         # Nothing that does not name a Rust file is the lint's to judge, so it needs no jq to\n\
-         # be passed; whatever might, and cannot be read without jq, is refused.\n\
+         # Without jq the path cannot be read, so a payload that never mentions a Rust file is\n\
+         # passed unread and one that does is refused, even where the mention is only text inside\n\
+         # a file that is not Rust. That over-refuses on a machine without jq and never passes\n\
+         # what the lint would refuse.\n\
          # Claude carries the path as raw JSON and Copilot inside a JSON-encoded string, where\n\
          # the quote after `.rs` is escaped, so both spellings are the same file.\n\
          case \"$__INPUT\" in *'.rs\"'* | *'.rs\\\"'*) ;; *) allow ;; esac\n\

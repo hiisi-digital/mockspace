@@ -237,7 +237,6 @@ fn text_the_lint_passes_is_passed_by_the_hook_though_the_old_substring_test_refu
     let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
     // A comment naming the path. The hook used to refuse any text containing `std::`.
     let text = "// no std::fmt in here, by design\npub fn f() {}\n";
-    assert!(text.contains("std::"), "the case must be one the substring test refused");
     assert!(
         edit_verdict(&cfg, &file, text).is_empty(),
         "the hook refused text the lint passes"
