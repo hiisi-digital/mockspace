@@ -119,7 +119,7 @@ Merge drivers cut conflicts off before they reach that point: the generated docu
 append_only = ["content/strings/en.toml", "mock/crates/*/src/tests/mod.rs"]
 ```
 
-Each entry is a `.gitattributes` pattern relative to the repository root, kept as narrow as the file it names. `cargo mock` writes the lines and registers the driver in the clone.
+Each entry is a `.gitattributes` pattern relative to the repository root, kept as narrow as the file it names. `cargo mock` writes the lines and registers the driver in the clone's git config (and, with `cargo mock register-drivers --global`, in the user's).
 
 ### The rest of the surface
 
@@ -403,7 +403,7 @@ a run for one member leaves every other file as it was, whatever it holds.
 
 Two branches that both moved a member's file merge without a conflict: `.gitattributes`
 sends `<mock>/test-history/**/*.json` to the `mockspace-test-history` merge driver
-(`cargo mock merge-test-history`), which `cargo mock` registers in the clone beside the
+(`cargo mock merge-test-history`), which `cargo mock` registers in the clone's git config (and, with `cargo mock register-drivers --global`, in the user's) beside the
 registry's. A member's green record, and a test binary's recorded pass, stays where both
 sides hold the same one or only one side moved it from the base, and is dropped where
 both moved it to different values, because neither fingerprint is the merged tree's; the

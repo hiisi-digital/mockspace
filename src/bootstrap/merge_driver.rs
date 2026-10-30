@@ -151,20 +151,34 @@ pub(crate) fn write_gitattributes(
     fs::write(&path, next).is_ok()
 }
 
-/// Where the script lives: the clone's git directory, shared by its worktrees.
+/// Where the script lives: under the git directory shared by the clone's worktrees, asked of git the way the
+/// registered command asks it, so the script is written where that command looks. `resolve_git_dir` reads a
+/// relative `gitdir:` against the current directory, which is wrong in a submodule or a worktree run from below
+/// its root.
 fn driver_script_path(repo_root: &Path) -> PathBuf {
-    resolve_git_dir(repo_root)
+    let asked = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()));
+    asked
+        .unwrap_or_else(|| resolve_git_dir(repo_root))
         .join("mockspace")
         .join("merge-generated")
 }
 
 /// Write the script, executable. Returns whether it changed.
-fn ensure_driver_script(path: &Path) -> bool {
+fn ensure_driver_script(path: &Path) -> Result<bool, String> {
     let script = driver_script();
     if fs::read_to_string(path).is_ok_and(|current| current == script) {
-        return false;
+        return Ok(false);
     }
-    write_executable(path, script).is_ok()
+    write_executable(path, script)
+        .map(|()| true)
+        .map_err(|e| format!("could not write {}: {e}", path.display()))
 }
 
 /// What git runs for a conflicting generated file: the script in the git directory of the clone it is run in,
@@ -180,7 +194,15 @@ pub(crate) fn generated_driver_command() -> String {
 /// directory, which only a clone target has.
 pub(crate) fn register_driver(target: &ConfigTarget, actions: &mut Vec<String>) {
     let wrote_script = match target {
-        ConfigTarget::Clone(repo_root) => ensure_driver_script(&driver_script_path(repo_root)),
+        ConfigTarget::Clone(repo_root) => match ensure_driver_script(&driver_script_path(repo_root)) {
+            Ok(changed) => changed,
+            // a driver registered over a script that is not there would run git's text merge and say it was
+            // the driver
+            Err(e) => {
+                actions.push(format!("could not register the {DRIVER} merge driver: {e}"));
+                return;
+            },
+        },
         ConfigTarget::User(_) => false,
     };
     let before = actions.len();

@@ -259,7 +259,9 @@ const COMMANDS: &[Cmd] = &[
                   registers per clone into the user's git config as well, with commands that \
                   name no clone: a clone made later, a worktree, or a container that never \
                   ran `cargo mock` there then calls them when its `.gitattributes` names one. \
-                  Idempotent. It writes to the user config and nowhere else, and needs no \
+                  Idempotent. Run inside a repository it also unsets that clone's older entry for the \
+                  generated-file driver where the entry names a path. It writes to the user \
+                  and clone config and nowhere else, and needs no \
                   project.",
     },
     Cmd {

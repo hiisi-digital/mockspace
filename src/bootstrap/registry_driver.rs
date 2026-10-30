@@ -74,27 +74,6 @@ pub(crate) fn register_registry_driver(
     );
 }
 
-/// Which git config a driver is written to: one clone's, or the user's, so a clone made later, or in
-/// a container that never ran `cargo mock` there, has the drivers git is told to call. `User(Some(file))`
-/// is the user's config at that path, for a test; `User(None)` is `git config --global`.
-pub(crate) enum ConfigTarget<'a> {
-    Clone(&'a Path),
-    User(Option<&'a Path>),
-}
-
-impl ConfigTarget<'_> {
-    /// `git config` over this target with `args`, `None` when git could not be run.
-    pub(crate) fn git_config(&self, args: &[&str]) -> Option<std::process::Output> {
-        let mut c = Command::new("git");
-        match self {
-            Self::Clone(repo) => c.arg("-C").arg(repo).args(["config", "--local"]),
-            Self::User(None) => c.args(["config", "--global"]),
-            Self::User(Some(file)) => c.args(["config", "--file"]).arg(file),
-        };
-        c.args(args).output().ok()
-    }
-}
-
 /// Register the merge driver `driver` in the clone's config, running `wanted`: the one
 /// registration every driver goes through, whether it is an engine subcommand or not.
 /// Idempotent: a second call with the same command changes nothing.
