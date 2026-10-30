@@ -1544,8 +1544,9 @@ impl RepoContext<'_> {
     /// its time on separable items (a shader compiled, a file hashed against a table) decomposes
     /// itself and asks here per item. `parts` is everything the item's verdict depends on, and
     /// nothing else: the item's bytes, whatever it imports, the version of any tool it runs. A part
-    /// left out makes a stale verdict replay as fresh, which is why a decomposing lint is covered by
-    /// the same kind of test as a declared reach. `lint` is the lint's name, mixed into the key so
+    /// left out makes a stale verdict replay as fresh. Nothing here checks the parts: `reach_check` covers
+    /// crate and workspace lints and has no entry point for a repo lint, so a pack tests its own
+    /// decomposition (change one input, expect a recompute). `lint` is the lint's name, mixed into the key so
     /// two lints asking with the same bytes do not share an answer.
     pub fn remembered(
         &self,
@@ -2035,9 +2036,10 @@ pub fn check_crate_with_extra(
 
 /// [`check_crate_with_extra`], answering from saved verdicts where `saved` is given.
 ///
-/// A lint is answered from the store only if it declared a reach that can be saved
-/// ([`Reach::is_cacheable`]); one that declared nothing is the widest and runs as it always did.
-/// A file-reach lint is saved per file, a crate-reach lint per crate. What a hit replays is the
+/// A lint is answered from the store only if it declared `Reach::File` or `Reach::Crate`; one that
+/// declared nothing is the widest and runs as it always did, and a crate lint declaring
+/// `Reach::Workspace` is not saved here, since that reach belongs to the workspace runner. A
+/// file-reach lint is saved per file, a crate-reach lint per crate. What a hit replays is the
 /// lint's own findings before the runner applies markers and severities, so those are applied to a
 /// replay exactly as to a fresh run.
 pub fn check_crate_saving(

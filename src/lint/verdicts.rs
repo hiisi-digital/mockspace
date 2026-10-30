@@ -94,9 +94,26 @@ impl DiskVerdicts {
         }
         let _ = fs::write(&marker, b"");
         let Ok(shards) = fs::read_dir(&self.dir) else { return };
-        for shard in shards.flatten().filter(|s| s.path().is_dir()) {
+        // Only what this store wrote: a two-hex shard directory, and in it an entry named by the
+        // rest of a key or one of its own half-written temporaries. The directory may be one the
+        // user pointed `MOCKSPACE_VERDICTS_DIR` at, with other things in it.
+        let is_hex = |s: &std::ffi::OsStr, len: usize| {
+            s.to_str().is_some_and(|s| s.len() == len && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        };
+        for shard in shards.flatten().filter(|s| s.path().is_dir() && is_hex(&s.file_name(), 2)) {
             let Ok(entries) = fs::read_dir(shard.path()) else { continue };
             for entry in entries.flatten() {
+                let name = entry.file_name();
+                let ours = is_hex(&name, 62)
+                    || name
+                        .to_str()
+                        .and_then(|n| n.strip_prefix('.')?.split_once('.'))
+                        .is_some_and(|(pid, key)| {
+                            pid.bytes().all(|b| b.is_ascii_digit()) && is_hex(key.as_ref(), 62)
+                        });
+                if !ours {
+                    continue;
+                }
                 let stale = entry
                     .metadata()
                     .and_then(|m| m.accessed().or_else(|_| m.modified()))

@@ -405,6 +405,10 @@ fn a_changed_crate_scalar_judges_the_file_lints_again() {
     assert!(after > before, "a changed crate prefix must judge again");
     let (before, after) = stores_after_changing(|f| f.with_crate_name("renamed", "renamed"));
     assert!(after > before, "a changed crate name must judge again");
+    let (before, after) = stores_after_changing(|f| f.with_crate_name("test-crate", "other-short"));
+    assert!(after > before, "a changed short name alone must judge again");
+    let (before, after) = stores_after_changing(|f| f.with_proc_macro_crates(&["test-crate"]));
+    assert!(after > before, "a crate becoming a proc-macro crate must judge again");
     let (before, after) = stores_after_changing(|f| f.with_lint_proc_macro_source(true));
     assert!(after > before, "a changed proc-macro source answer must judge again");
     let (before, after) = stores_after_changing(|f| {

@@ -10,8 +10,8 @@ Per lint wall time from the engine's `MOCKSPACE_TIMINGS=1` table on the large re
 
 | lint | calls | ms |
 |---|---|---|
-| `no-superseded-citation` (pack repo lint) | 1 | 10303 |
-| `no-source-include-in-test` (pack repo lint) | 1 | 4859 |
+| `a-citation-lint` (pack repo lint) | 1 | 10303 |
+| `a-test-include-lint` (pack repo lint) | 1 | 4859 |
 | an asset freshness lint (the large repo's own pack) | 1 | 3973 |
 | `design-doc-source-mismatch` (built in, per crate) | 86 | 2860 |
 | `single-source` (built in, workspace) | 1 | 1562 |
@@ -25,7 +25,7 @@ Every lint may declare a reach: `File`, `Crate`, `Workspace` or `Repository`, th
 
 ## What was left out
 
-There is no work set per hook (staged files for pre-commit, pushed commits for pre-push) and no registry-only fast path. A work set only decides which files a lint is shown, and a content digest already makes an unchanged file free whichever hook asks, so a second mechanism would answer the same question twice and could disagree with the first. A registry-only path would skip lints that read code when only the registry moved, which is unsound: `no-superseded-citation` reads code and the registry, and a registry change that marks a row superseded creates a violation in code that did not move. With the code-reading lints saved by digest, a registry-only change already costs what the lints keyed on the registry cost.
+There is no work set per hook (staged files for pre-commit, pushed commits for pre-push) and no registry-only fast path. A work set only decides which files a lint is shown, and a content digest already makes an unchanged file free whichever hook asks, so a second mechanism would answer the same question twice and could disagree with the first. A registry-only path would skip lints that read code when only the registry moved, which is unsound: `a-citation-lint` reads code and the registry, and a registry change that marks a row superseded creates a violation in code that did not move. With the code-reading lints saved by digest, a registry-only change already costs what the lints keyed on the registry cost.
 
 ## The numbers
 
@@ -55,7 +55,7 @@ The last three rows come from lints in packs outside this repository. Without th
 
 ## What a saved verdict is, and what was checked
 
-Equivalence is checked three ways. The lint runners have a test that runs a lint cold, warm and after an edit and compares each against an uncached run (`lint-rules/src/saving_tests.rs`). The declared reach of every built in lint is checked by moving one thing the lint claims not to read and comparing findings (`reach_check`, `reach_tests.rs`), and the test fails for any saved lint that finds nothing on its corpus, since a lint with nothing to say would pass trivially. That check found one real defect: `no-duplicate-fn` listed its findings in hash order, so a replay would have differed from a fresh run. And `tests/an_incremental_run_equals_a_full_one_over_a_history.rs` walks the first parent history of a repository, running the full and the incremental gate at each commit with one store shared by all of them, and compares the reports from the lint section on. It ran over the last eight commits of the large repository and six each of the other two, and the reports were identical; `walks.tsv` records the commits compared and the verdicts replayed. The test fails when nothing was replayed after the first commit, and it replaces every saved verdict with a wrong one at the end and fails if the report does not change.
+Equivalence is checked three ways. The lint runners have a test that runs a lint cold, warm and after an edit and compares each against an uncached run (`lint-rules/src/saving_tests.rs`). The declared reach of every built in lint is checked by moving one thing the lint claims not to read and comparing findings (`reach_check`, `reach_tests.rs`), and the test fails for any saved lint that finds nothing on its corpus, since a lint with nothing to say would pass trivially. That check found one real defect: `no-duplicate-fn` listed its findings in hash order, so a replay would have differed from a fresh run. And `tests/an_incremental_run_equals_a_full_one_over_a_history.rs` walks the first parent history of a repository, running the full and the incremental gate at each commit with one store shared by all of them, and compares the reports from the lint section on. It ran over the last eight commits of the large repository and six each of the other two, and the reports were identical; `walks.tsv` records, per repository, how many commits were compared and the result; the reports themselves are not kept, since they are the private repositories' lint output. The test fails when nothing was replayed after the first commit, and it replaces every saved verdict with a wrong one at the end and fails if the report does not change.
 
 An undeclared lint is never saved, so a pack that does nothing is exactly as correct as before. A declaration narrower than what the lint reads can replay a stale answer, which is why the declaration has a test that fails when it is.
 

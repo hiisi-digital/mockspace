@@ -11,8 +11,10 @@
 //! [`VerdictCache`]. Keeping the hash out of here means a lint pack, which links this crate, gains
 //! no dependency from the cache.
 //!
-//! **A key is exact or it is not a key.** Every input a verdict can depend on is in it, so a hit
-//! replays what a run would have found and a miss runs the lint. The severity a project configures
+//! **A key holds what the lint declared it reads, and no more.** For a lint whose declared reach is
+//! honest, that is every input its verdict can depend on, so a hit replays what a run would have
+//! found and a miss runs the lint. Honesty of a declaration is sampled by `reach_check`, which moves
+//! the inputs a lint claims not to read; it is not proved. The severity a project configures
 //! is not an input: it is applied to findings after the lint ran, by the runner, to a replayed
 //! finding exactly as to a fresh one, so changing it never invalidates anything.
 
@@ -152,12 +154,14 @@ pub(crate) fn crate_digest(cache: &dyn VerdictCache, ctx: &LintContext) -> Strin
     deps.sort_unstable();
     let deps = deps.join("\0");
     let all_crates = ctx.all_crates.iter().map(String::as_str).collect::<Vec<_>>().join("\0");
+    let proc_macro_crates = ctx.proc_macro_crates.join("\0");
 
     let mut parts: Vec<&[u8]> = vec![
         b"crate-digest",
         scalars.as_bytes(),
         deps.as_bytes(),
         all_crates.as_bytes(),
+        proc_macro_crates.as_bytes(),
         ctx.design_doc.unwrap_or("\u{1}absent").as_bytes(),
         ctx.all_doc_content.as_bytes(),
         ctx.shame_doc.unwrap_or("\u{1}absent").as_bytes(),

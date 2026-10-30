@@ -170,6 +170,8 @@ fn the_crate_digest_moves_with_every_input_a_crate_lint_can_see() {
         ("the doc templates", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_doc_content("d")),
         ("the SHAME template", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_shame_doc("s")),
         ("the prefix", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_crate_prefix("zz")),
+        ("the proc-macro crate list", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_proc_macro_crates(&["other"])),
+        ("the short name alone", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_crate_name("test-crate", "other-short")),
         ("the crate name", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_crate_name("renamed", "renamed")),
         ("the proc-macro answer", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_lint_proc_macro_source(true)),
         ("an introduced primitive", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_primitive_introductions(std::collections::BTreeMap::from([("test-crate".to_string(), vec!["u8".to_string()])]))),

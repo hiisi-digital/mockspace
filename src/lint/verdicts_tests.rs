@@ -76,3 +76,30 @@ fn a_file_digest_is_the_content_and_not_the_name() {
     assert_ne!(file_digest(&a), file_digest(&c));
     assert_eq!(file_digest(&dir.path().join("missing")), None);
 }
+
+#[test]
+fn the_sweep_leaves_alone_what_the_store_did_not_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path(), "");
+    // a directory the user shares with other things: a non-shard directory and a non-key file in a
+    // shard-looking one, both a month old
+    fs::create_dir_all(dir.path().join("notes")).unwrap();
+    fs::write(dir.path().join("notes/keep.txt"), "mine").unwrap();
+    fs::create_dir_all(dir.path().join("ab")).unwrap();
+    fs::write(dir.path().join("ab/keep.txt"), "mine").unwrap();
+    let long_ago = SystemTime::now() - Duration::from_secs(30 * 24 * 60 * 60);
+    let times = fs::FileTimes::new().set_accessed(long_ago).set_modified(long_ago);
+    for f in ["notes/keep.txt", "ab/keep.txt"] {
+        fs::File::options().write(true).open(dir.path().join(f)).unwrap().set_times(times).unwrap();
+    }
+    // the control: one of the store's own entries of the same age is swept
+    let own = s.digest(&[b"own"]);
+    s.remember(&own, "own");
+    fs::File::options().write(true).open(s.path_of(&own)).unwrap().set_times(times).unwrap();
+    fs::remove_file(s.dir.join(".swept")).unwrap();
+
+    let again = store(dir.path(), "");
+    assert_eq!(again.replay(&own), None, "the control: the store's own old entry is swept");
+    assert!(dir.path().join("notes/keep.txt").exists(), "a file outside a shard directory is not ours");
+    assert!(dir.path().join("ab/keep.txt").exists(), "a file in a shard that is not a key is not ours");
+}

@@ -22,8 +22,8 @@ large	warm-progress/plus-shader-lint-per-shader	26.65	warm run on the same tree 
 large	warm-progress/plus-citation-lint-per-file	16.28	warm run on the same tree as each piece landed
 large	warm-progress/plus-asset-and-include-lints	5.60	warm run on the same tree as each piece landed
 large	warm-progress/nothing-saved	48.71	store off, the tree the built-in lints were saved on
-large	lint-ms/no-superseded-citation	10302.5	calls=1, morning tree, nothing saved
-large	lint-ms/no-source-include-in-test	4858.8	calls=1, morning tree, nothing saved
+large	lint-ms/a-citation-lint	10302.5	calls=1, morning tree, nothing saved
+large	lint-ms/a-test-include-lint	4858.8	calls=1, morning tree, nothing saved
 large	lint-ms/an-asset-freshness-lint	3972.6	calls=1, morning tree, nothing saved
 large	lint-ms/design-doc-source-mismatch	2859.8	calls=86, morning tree, nothing saved
 large	lint-ms/single-source	1562.0	calls=1, morning tree, nothing saved
