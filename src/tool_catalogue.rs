@@ -153,6 +153,16 @@ pub fn render_table(listings: &[Listing]) -> String {
     s
 }
 
+/// Only the tools this project declares, the one group of the table that differs
+/// between repositories. The builtin subcommands are the same in every one and
+/// `mock tools` answers them live, so a generated rule has no reason to carry them.
+#[must_use]
+pub fn render_project_table(listings: &[Listing]) -> String {
+    let mut s = String::new();
+    render_group(&mut s, "PROJECT TOOLS", listings, Source::Project);
+    s
+}
+
 fn render_group(out: &mut String, heading: &str, listings: &[Listing], source: Source) {
     let group: Vec<&Listing> = listings.iter().filter(|l| l.source == source).collect();
     out.push_str(heading);
