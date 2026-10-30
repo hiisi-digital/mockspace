@@ -23,6 +23,10 @@ const PRIMITIVE_KEY_TYPES: &[&str] = &[
 pub struct NoPrimitiveKey;
 
 impl Lint for NoPrimitiveKey {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::File
+    }
+
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }

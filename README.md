@@ -113,7 +113,7 @@ cargo mock lock                  # transition: DOC -> DRAFT, or IMPL -> CLOSED
 cargo mock close                 # archive a CLOSED round
 cargo mock test                  # cargo test across every tree mockspace owns, the benches when they moved (or are asked for)
 cargo mock tools                 # every subcommand and project tool, with usage
-cargo mock lints                 # every lint, its severity here, and where the two disagree
+cargo mock lints                 # every lint, its severity here, its reach, and where the two disagree
 mock locate                      # where this repo keeps its mockspace, shell-assignable
 ```
 
@@ -142,6 +142,8 @@ Three sources contribute rules:
 - **Built-in lints** in `mockspace-lint-rules`. Universal quality checks (file size, undocumented types, no empty crate) and the design-round lints that hold the phases above to their transitions.
 - **Consumer lints** in `mock/lints/<name>.rs`. Each file exports a Rust function returning a lint trait object. The engine discovers them and compiles them, together with any imported packs, into one lint library it loads at run time. The generated crate and its build do not live in the worktree. They sit in a store shared by every worktree of the repository, under `$CARGO_TARGET_DIR/mockspace-lints/` when that is set and under `$XDG_CACHE_HOME/mockspace/lints/` (or `~/.cache/mockspace/lints/`) otherwise, in a directory keyed by the repository's origin url, the mock directory below its root, the engine's lint-rules revision and the resolved revision of each pack. Worktrees at the same revisions share one dependency build; `<mock>/target/mockspace-lints/shared-dir` names the directory a worktree used. `cargo mock clean` leaves the store alone, and each run removes the directories whose worktree is gone or that nothing has used for fourteen days. A machine with none of `CARGO_TARGET_DIR`, `XDG_CACHE_HOME` and `HOME` set is refused, since the crate is built and loaded and cannot sit in a directory every user can write to.
 - **Config-driven rules** under `[lints.<rule-name>]` in the same `mockspace.toml`. The `forbidden-imports` rule covers the common case of "this scope must not import these paths".
+
+A lint declares how much it reads (one file, one crate, the workspace, or the whole repository), and a run saves what each of the narrower ones found and replays it while nothing it reads has moved. The store is one directory for the machine, `MOCKSPACE_NO_VERDICTS=1` switches it off for a run and `MOCKSPACE_TIMINGS=1` prints where the run spent its time; the usage guide has the rest.
 
 A check that cannot run at a gate is a tool instead, and so is anything that writes files rather than judging them; tools have a section of their own below.
 

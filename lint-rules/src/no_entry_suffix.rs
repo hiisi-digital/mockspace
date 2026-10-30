@@ -14,6 +14,10 @@ use crate::{CrateLint, Lint, LintContext, LintError};
 pub struct NoEntrySuffix;
 
 impl Lint for NoEntrySuffix {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::File
+    }
+
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }

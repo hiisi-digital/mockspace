@@ -65,6 +65,10 @@ const MACRO_OWNERS: &[(&str, &[&str])] = &[
 pub struct NoSelfDefine;
 
 impl Lint for NoSelfDefine {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::File
+    }
+
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }

@@ -43,6 +43,10 @@ const FORBIDDEN_IMPLS: &[(&str, &str)] = &[
 pub struct NoManualImpl;
 
 impl Lint for NoManualImpl {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::File
+    }
+
     fn name(&self) -> &'static str {
         "no-manual-impl"
     }

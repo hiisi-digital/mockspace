@@ -38,6 +38,10 @@ const EXEMPT_MACROS: &[&str] = &[
 pub struct RegistrableCompleteness;
 
 impl Lint for RegistrableCompleteness {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::Crate
+    }
+
     /// Crate-scoped. Completeness is a property of the crate's registrations taken together.
     fn per_file(&self) -> bool {
         false
