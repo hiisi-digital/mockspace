@@ -169,6 +169,51 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let dr = design_rounds_dir(cfg);
     let phase = changelist_helpers::current_phase(&dr);
 
+    // A stub beside a locked changelist of its kind is what holds a round open whatever phase it
+    // reads as, and it is the one thing `deprecate` is asked to retire there.
+    let all_strays = changelist_helpers::stray_active_changelists(&dr);
+    // Only a stub is retired unread. One with text may be the round's live work beside the locks of
+    // an earlier round, and renaming it would keep the dead locks and lose the work.
+    let (strays, written): (Vec<_>, Vec<_>) = all_strays
+        .into_iter()
+        .partition(|cl| lint_rules::says_nothing(&dr.join(&cl.filename)));
+    if !written.is_empty() {
+        for cl in &written {
+            eprintln!(
+                "error: {} holds text and sits beside a locked changelist of its kind",
+                cl.filename
+            );
+        }
+        eprintln!("  it may be this round's work and the lock an earlier round's, so it is not retired unread");
+        eprintln!("  read both; `cargo mock unlock` reopens the round, or `git rm` the one that is not this round's");
+        return ExitCode::FAILURE;
+    }
+    if !strays.is_empty() {
+        let mut touched = Vec::new();
+        for cl in &strays {
+            match rename_cl(&dr, cl, ClStatus::Deprecated) {
+                Ok(r) => {
+                    eprintln!(
+                        "deprecated {} changelist beside a locked one: {} → {}",
+                        if cl.kind == ClKind::Doc { "doc" } else { "src" },
+                        cl.filename,
+                        r.new_name
+                    );
+                    touched.push(r.old_path);
+                    touched.push(r.new_path);
+                },
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::FAILURE;
+                },
+            }
+        }
+        let names: Vec<&str> = strays.iter().map(|cl| cl.filename.as_str()).collect();
+        let msg = format!("chore: deprecate stray changelist {}", names.join(", "));
+        commit_or_suggest(cfg, opts, &touched, &msg);
+        return ExitCode::SUCCESS;
+    }
+
     match phase {
         Phase::Doc => {
             let cl = match changelist_helpers::find_active_doc_cl(&dr) {
@@ -362,6 +407,11 @@ pub fn cmd_unlock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
 // ---------------------------------------------------------------------------
 
 pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
+    cmd_close_taking(cfg, opts, &[])
+}
+
+/// `close`, taking the flat files named in `take` into the round as well.
+pub fn cmd_close_taking(cfg: &Config, opts: &SubcmdOpts, take: &[String]) -> ExitCode {
     let dr = design_rounds_dir(cfg);
     let phase = changelist_helpers::current_phase(&dr);
 
@@ -389,7 +439,7 @@ pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let all_cls = changelist_helpers::find_changelists(&dr);
     let round_name = determine_round_name(&all_cls);
 
-    perform_archive(cfg, opts, &dr, &round_name, ArchiveKind::Closed)
+    perform_archive(cfg, opts, &dr, &round_name, ArchiveKind::Closed, take)
 }
 
 pub fn cmd_archive(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
@@ -425,6 +475,7 @@ pub fn cmd_archive(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
         &dr,
         &format!("{round_name}-abandoned"),
         ArchiveKind::Abandoned,
+        &[],
     )
 }
 
