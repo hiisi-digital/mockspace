@@ -25,6 +25,7 @@ use mockspace_lint_rules::{
     LintMode,
     LintPack,
     RepoContext,
+    timing,
 };
 
 use crate::model::CrateMap;
@@ -192,19 +193,19 @@ pub fn run_lints(
             Err(_) => continue,
         };
 
-        let tree = match parser.parse(&source, None) {
+        let tree = match timing::time("parse:crate-root", || parser.parse(&source, None)) {
             Some(t) => t,
             None => continue,
         };
 
         // Read every .rs file under src/ so lints can scan module files
         // (bits.rs, prim.rs, impl.rs, ...) in addition to lib.rs.
-        let all_sources = collect_crate_sources(&crate_dir);
-
-        let design_doc = std::fs::read_to_string(crate_dir.join("DESIGN.md.tmpl")).ok();
-
-        // Read ALL doc templates and concatenate
-        let all_doc_content = collect_all_docs(&crate_dir);
+        let (all_sources, design_doc, all_doc_content) = timing::time("phase:read-crate-files", || {
+            let all_sources = collect_crate_sources(&crate_dir);
+            let design_doc = std::fs::read_to_string(crate_dir.join("DESIGN.md.tmpl")).ok();
+            // Read ALL doc templates and concatenate
+            (all_sources, design_doc, collect_all_docs(&crate_dir))
+        });
 
         // Read SHAME.md.tmpl if it exists, matching the exact spelling the
         // phase gates match. See `read_shame_template`.
@@ -339,6 +340,10 @@ pub fn run_lints(
             eprintln!("{err}");
         }
         eprintln!();
+    }
+
+    if timing::enabled() {
+        eprintln!("\n{}", timing::report());
     }
 
     // Only errors block; info and warnings are informational

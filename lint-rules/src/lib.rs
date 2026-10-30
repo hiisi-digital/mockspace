@@ -88,6 +88,7 @@ mod registrable_completeness;
 mod repr_c_abi_safety;
 mod single_source;
 pub mod src_layout;
+pub mod timing;
 pub mod testkit;
 pub mod the_mock_toolchain_matches_the_root;
 pub mod tool;
@@ -2101,7 +2102,7 @@ pub fn check_crate_with_extra(
     let mut errors = Vec::new();
 
     // One parse per file, shared by every per-file lint below.
-    let parsed = parse_sources(ctx.all_sources);
+    let parsed = timing::time("parse:crate-files", || parse_sources(ctx.all_sources));
 
     for lint in lints
         .iter()
@@ -2229,7 +2230,11 @@ fn run_with_overrides(
         return;
     }
 
-    let mut lint_errors = run();
+    let mut lint_errors = if timing::enabled() {
+        timing::time(&format!("lint:{}", lint.name()), run)
+    } else {
+        run()
+    };
 
     if let Some(cfg) = overrides {
         for err in &mut lint_errors {
