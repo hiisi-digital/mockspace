@@ -267,11 +267,11 @@ fn extract_h3_headers_lowercase(content: &str) -> Vec<String> {
 
 /// Whether the changelist that replaces a deprecated one owes the comparison section.
 ///
-/// A locked replacement cannot gain a section, and a deprecated changelist holding nothing but a bare
-/// title was a stub retired beside a changelist that was already the round's record, so it was
-/// replaced by nothing and there is nothing to compare.
-fn owes_a_comparison(deprecated_text: &str, replacement: ClStatus) -> bool {
-    !(replacement == ClStatus::Locked && crate::changelist_seal::is_bare_title(deprecated_text))
+/// A deprecated changelist holding nothing but a bare title was a stub retired beside a changelist
+/// that was already the round's record, so it was replaced by nothing and has no headers or names to
+/// compare. That holds whatever the status of the changelist beside it, which `unlock` can reopen.
+fn owes_a_comparison(deprecated_text: &str, _replacement: ClStatus) -> bool {
+    !crate::changelist_seal::is_bare_title(deprecated_text)
 }
 
 #[cfg(test)]
@@ -286,7 +286,10 @@ mod tests {
     fn a_deprecated_changelist_with_content_still_owes_one() {
         use super::*;
         assert!(owes_a_comparison("# src changelist: x\n\nreal\n", ClStatus::Locked));
-        assert!(owes_a_comparison("# src changelist\n\n", ClStatus::Active));
+        assert!(
+            !owes_a_comparison("# src changelist\n\n", ClStatus::Active),
+            "the lock beside the stub may be reopened by `unlock`, and the stub is still no replaced draft"
+        );
     }
 
     use std::fs;

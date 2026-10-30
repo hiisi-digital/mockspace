@@ -361,7 +361,7 @@ fn a_committed_transition_keeps_unrelated_staged_work_staged() {
     assert_eq!(status(repo.path()), "M  mock/README.md.tmpl\n");
 }
 
-// A stub changelist beside a locked one of its kind (a bare title, or a draft nobody went on with)
+// A stub changelist beside a locked one of its kind (a bare title)
 // holds the round open: `changelist-seal` refuses the lock, `changelist-immutability` refuses
 // deleting an unlocked changelist outside its window, and `deprecate` answered "both CLs locked" in
 // the phase the stub made, so the only way out was unlock, relock and a fresh changelist
@@ -470,4 +470,25 @@ fn deprecate_does_not_retire_a_changelist_with_text_beside_a_lock() {
         ExitCode::FAILURE
     );
     assert_eq!(listed(dir.path()), [DOC_LOCK, SRC_LOCK, STUB], "nothing moved");
+}
+
+#[test]
+fn a_doc_stub_beside_a_doc_lock_is_retired_while_a_src_changelist_is_active() {
+    let dir = mock(&[
+        ("202610301702_changelist.doc.lock.md", "# doc changelist: x\n"),
+        ("202610301702_changelist.src.md", "# src changelist: live\n\nedits\n"),
+        ("202610301710_changelist.doc.md", "# doc changelist\n\n"),
+    ]);
+    assert_eq!(
+        cmd_deprecate(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(
+        listed(dir.path()),
+        [
+            "202610301702_changelist.doc.lock.md",
+            "202610301702_changelist.src.md",
+            "202610301710_changelist.doc.deprecated.md"
+        ]
+    );
 }

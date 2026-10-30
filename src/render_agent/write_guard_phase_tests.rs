@@ -575,3 +575,26 @@ fn a_locked_changelist_is_never_named_as_the_place_to_write() {
     assert!(refused(&out), "{out}");
     assert!(!out.contains("Write to"), "the refusal pointed at a frozen file: {out}");
 }
+
+#[test]
+fn a_stub_beside_both_locks_is_answered_with_deprecate_not_with_the_stub() {
+    // CLOSED, with a committed stub: writing a new src changelist must be pointed at the command
+    // that retires the stub, since the stub itself is frozen in that phase.
+    let repo = repo_with_rounds(
+        "stub-closed",
+        &[
+            "202610301702_changelist.doc.lock.md",
+            "202610301702_changelist.src.lock.md",
+            "202610301710_changelist.src.md",
+        ],
+    );
+    let guard = guard_for(&repo);
+    let out = run_from(
+        &repo,
+        &guard,
+        &write_to_round(&repo, "202610301720_changelist.src.md"),
+    );
+    assert!(refused(&out), "{out}");
+    assert!(out.contains("cargo mock deprecate"), "the refusal should name the remedy: {out}");
+    assert!(!out.contains("Write to"), "{out}");
+}

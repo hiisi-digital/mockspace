@@ -184,7 +184,7 @@ pub fn find_locked_src_cl(design_rounds: &Path) -> Option<ParsedChangelist> {
 /// The active changelists that sit beside a locked one of their kind.
 ///
 /// A round has one changelist of each kind, so an unlocked one next to a locked one is not the
-/// round's record: a stub, or a draft nobody went on with. They are what `changelist-seal` names,
+/// round's record: a stub, which `deprecate` retires when it is a bare title. They are what `changelist-seal` names,
 /// and what `deprecate` retires whatever the phase says.
 pub fn stray_active_changelists(design_rounds: &Path) -> Vec<ParsedChangelist> {
     let cls = find_changelists(design_rounds);

@@ -736,6 +736,10 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 let subcmd_opts = design_round::SubcmdOpts {
                     auto_commit: auto_commit_wanted(&args),
                 };
+                if subcmd != "close" && !take_names(&args).is_empty() {
+                    eprintln!("error: --take belongs to `cargo mock close` and `{subcmd}` takes no such flag");
+                    return ExitCode::from(2);
+                }
                 return match subcmd {
                     "lock" => design_round::cmd_lock(&cfg, &subcmd_opts),
                     "deprecate" => design_round::cmd_deprecate(&cfg, &subcmd_opts),

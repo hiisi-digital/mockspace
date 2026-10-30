@@ -151,14 +151,14 @@ pub(crate) fn left_notice(left: &[String]) -> Option<String> {
         return None;
     }
     let mut out = String::from(
-        "left flat, not this round's (no id of its changelists, named by none of them):",
+        "left flat (no id of its changelists, named by none of them):",
     );
     for name in left {
         out.push_str(&format!("\n  {name}"));
     }
     out.push_str(
-        "\n  one of this round's, left because nothing names it: it stays flat and lands flat. \
-         Next time `cargo mock close --take <file>` archives it with the round",
+        "\n  a file of this round's among them lands flat unless it is named: `cargo mock close --take <file>` \
+         archives it with the round, on the close that comes next",
     );
     Some(out)
 }
