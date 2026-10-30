@@ -10,8 +10,8 @@ const FORBIDDEN_IMPORTS_LINT: &str = "forbidden-imports";
 
 /// Generate agent rules and hooks derived from lint configuration.
 ///
-/// For each `forbidden-imports` rule at error/build-gate severity,
-/// generates:
+/// For each `forbidden-imports` rule the repository declares (the hook does not look at
+/// the lint's severity; the engine answers for that on every edit), generates:
 /// - An agent rule file per scope (tells the agent what's forbidden)
 /// - One agent hook, named after the lint, that asks the lint about each edit
 ///
@@ -230,6 +230,8 @@ pub(crate) fn generate_lint_derived_content(
          set -uo pipefail\n\
          __INPUT=$(cat)\n\
          {{{{HOOK_HELPERS}}}}\n\
+         command -v jq >/dev/null 2>&1 \\\n\
+             || deny \"the forbidden-imports gate cannot run: jq is not installed, so the edit cannot be read and a verdict would be a guess.\"\n\
          FILE_PATH=$(_extract \"file_path\")\n\
          COMMAND=\"\"\n\
          _scope_or_allow\n\

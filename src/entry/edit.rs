@@ -199,12 +199,18 @@ mod tests {
 /// which have no process to read it from.
 #[cfg(test)]
 pub(crate) fn run_for_test(cfg: &Config, lint: &str, file: &Path) -> u8 {
+    run_for_test_at(cfg, lint, file, LintMode::Commit)
+}
+
+/// As [`run_for_test`], under the severities of `mode`.
+#[cfg(test)]
+pub(crate) fn run_for_test_at(cfg: &Config, lint: &str, file: &Path, mode: LintMode) -> u8 {
     exit_of(cfg, &LintPack::default(), &Request {
         lint,
         file,
         text: std::fs::read_to_string(file).unwrap_or_default(),
         replacing: None,
         all: false,
-        mode: LintMode::Commit,
+        mode: mode,
     })
 }

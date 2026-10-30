@@ -625,3 +625,72 @@ fn a_path_spelled_with_dots_is_the_same_file_and_a_relative_one_is_refused() {
         2
     );
 }
+
+#[test]
+fn a_lint_allow_marker_is_honoured_by_the_hook_as_by_the_gate() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo_with_crates(tmp.path(), "std::*");
+    let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    let allowed = "use std::fmt; // lint:allow(forbidden-imports) reason: test\n";
+    assert!(edit_verdict(&cfg, &file, allowed).is_empty());
+    assert_eq!(gate_verdict(&cfg, "sim-core", &file, allowed), 0);
+    // The control: the same import without the marker is refused by both.
+    let bare = "use std::fmt;\n";
+    assert_eq!(edit_verdict(&cfg, &file, bare).len(), 1);
+    assert_eq!(gate_verdict(&cfg, "sim-core", &file, bare), 1);
+}
+
+#[test]
+fn the_gate_picked_by_the_request_decides_what_blocks() {
+    use mockspace_lint_rules::{Level, Severity};
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cfg = repo_with_crates(tmp.path(), "std::*");
+    let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    fs::write(&file, "use std::fmt;\n").unwrap();
+    // Warns on commit, blocks on push.
+    cfg.lint_overrides.base.insert(
+        "forbidden-imports".to_string(),
+        Severity::new(Level::Warn, Level::Error, Level::Error),
+    );
+    assert_eq!(crate::entry::edit::run_for_test(&cfg, "forbidden-imports", &file), 0);
+    // The control: the same file under the push gate blocks.
+    assert_eq!(crate::entry::edit::run_for_test_at(
+        &cfg,
+        "forbidden-imports",
+        &file,
+        mockspace_lint_rules::LintMode::Push
+    ), 1);
+}
+
+#[test]
+fn without_jq_the_hook_refuses_rather_than_reading_nothing_and_passing() {
+    let tmp = tempfile::tempdir().unwrap();
+    derive(tmp.path(), &cfg_with_rule(tmp.path()));
+    let script = tmp.path().join(".claude/hooks/forbidden-imports.sh");
+    let bin = tmp.path().join("nojq");
+    fs::create_dir_all(&bin).unwrap();
+    for tool in ["bash", "cat", "env", "sed", "tr", "grep", "dirname", "basename", "mktemp", "rm"] {
+        if let Ok(found) = std::process::Command::new("sh").args(["-c", &format!("command -v {tool}")]).output() {
+            let p = String::from_utf8_lossy(&found.stdout).trim().to_string();
+            if !p.is_empty() {
+                let _ = std::os::unix::fs::symlink(p, bin.join(tool));
+            }
+        }
+    }
+    let run = |path: &str| {
+        let mut child = std::process::Command::new(bin.join("bash"))
+            .arg(&script)
+            .current_dir(tmp.path())
+            .env("PATH", path)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let payload = tool_call("Write", serde_json::json!({"file_path": "/x/src/a.rs", "content": "x"}));
+        std::io::Write::write_all(&mut child.stdin.take().unwrap(), payload.to_string().as_bytes()).unwrap();
+        String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).to_string()
+    };
+    let out = run(bin.to_str().unwrap());
+    assert!(refused(&out) && out.contains("jq is not installed"), "a hook that could not read the edit passed it: {out}");
+}

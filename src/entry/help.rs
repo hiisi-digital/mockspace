@@ -193,7 +193,8 @@ const COMMANDS: &[Cmd] = &[
                   blocking findings in the target file and exits 1 if there are \
                   any, 2 when the request cannot be answered: no per-crate lint \
                   answers to the name (a lint judging the crate as a whole is one), a \
-                  required argument is missing, or an input cannot be read. --gate \
+                  required argument is missing, --file is not an absolute path, or an \
+                  input cannot be read. --gate \
                   selects commit, push or build severities, commit by default, and \
                   anything else is refused. \
                   This is how an agent hook named after a lint reaches the lint.",

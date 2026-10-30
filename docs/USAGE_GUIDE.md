@@ -130,7 +130,7 @@ Those are the transitions. The subcommands that are not transitions:
 | `cargo mock status` | The current round, its phase, and what may be edited right now |
 | `cargo mock check` | Readiness report: git state, phase, build, tests, lints |
 | `cargo mock check-message` | Lint one commit message, pull request body or comment against the configured policy, and for a commit with its author and committer (`--author`, `--committer`) |
-| `cargo mock check-edit` | Ask one per-crate lint (`--lint`) whether a Rust file (`--file`) would be clean once an edit is made: stdin is the new text, or with `--replace <file>` the text that replaces the one in that file. Exits 0 clean, 1 with the lint's blocking findings, 2 when the request cannot be answered. The generated `forbidden-imports` hook calls it |
+| `cargo mock check-edit` | Ask one per-crate lint (`--lint`) whether a Rust file (`--file`) would be clean once an edit is made: stdin is the new text, or with `--replace <file>` the text that replaces the one in that file. Exits 0 clean, 1 with the lint's blocking findings, 2 when the request cannot be answered (an unknown lint or gate, a lint judging the whole crate, a relative `--file`). The generated `forbidden-imports` hook calls it |
 | `cargo mock query` | Query the registry |
 | `cargo mock bench` | Run the bench harness |
 | `cargo mock test` | Run the tests of every tree mockspace owns, the members and the benches only where something they depend on changed, or the benches when `--benches`, `--full` or `--no-cache` asks (`[test]` below) |
