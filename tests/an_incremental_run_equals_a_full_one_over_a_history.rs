@@ -39,17 +39,16 @@ fn git(dir: &Path, args: &[&str]) -> String {
 /// What two runs of one tree must agree on: the report without its timings and its build chatter.
 fn report(text: &str) -> String {
     let mut out = String::new();
+    let mut reached = false;
     for line in text.lines() {
         if line.starts_with("--- timings") {
             break;
         }
+        // What comes before the lints is the first run of a version building its engine and
+        // writing what generation writes once, which the run after it does not repeat.
+        reached |= line.starts_with("--- running lints ---");
         let t = line.trim_start();
-        if t.starts_with("Compiling")
-            || t.starts_with("Finished")
-            || t.starts_with("Updating")
-            || t.starts_with("Locking")
-            || t.starts_with("Fresh")
-        {
+        if !reached || t.starts_with("generated ") {
             continue;
         }
         out.push_str(line);
@@ -133,7 +132,7 @@ fn an_incremental_run_equals_a_full_one_over_a_history() {
 
 #[test]
 fn the_report_drops_the_timings_and_the_build_chatter_and_keeps_findings() {
-    let text = "   Compiling x v1\n--- running lints ---\n  [a] f.rs:1: [error] x\n--- timings (ms) ---\n  3.0 1 lint:a\n";
+    let text = "mock: building the engine\n   Compiling x v1\n--- running lints ---\n  generated 1 schema files\n  [a] f.rs:1: [error] x\n--- timings (ms) ---\n  3.0 1 lint:a\n";
     assert_eq!(report(text), "--- running lints ---\n  [a] f.rs:1: [error] x\n");
     assert_ne!(
         report(text),
