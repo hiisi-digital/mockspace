@@ -175,7 +175,7 @@ pub(crate) fn generate_lint_derived_content(
         );
         let _ = writeln!(
             body,
-            "Violations are caught by the `forbidden-imports` lint at error level.\n"
+            "Violations are reported by the `forbidden-imports` lint, at the severity `mock lints` shows for it in this repository.\n"
         );
         for (forbidden, reason) in rules {
             let _ = writeln!(body, "- `{forbidden}`: {reason}");
@@ -261,7 +261,7 @@ pub(crate) fn generate_lint_derived_content(
          _extract_to old_string \"$WORK/old\"\n\
          _extract_to new_string \"$WORK/new\"\n\
          if [[ ! -s \"$WORK/old\" && ! -s \"$WORK/new\" ]]; then _extract_to content \"$WORK/new\"; fi\n\
-         ARGS=(check-edit --lint {FORBIDDEN_IMPORTS_LINT} --file \"$FILE_PATH\")\n\
+         ARGS=(check-edit --lint {FORBIDDEN_IMPORTS_LINT} --file \"$FILE_PATH\" --lint-only)\n\
          _extract_to edits \"$WORK/edits\"\n\
          if [[ \"$(head -c 1 \"$WORK/edits\")\" == \"[\" ]]; then\n\
              ARGS+=(--edits \"$WORK/edits\")\n\

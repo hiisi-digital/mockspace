@@ -370,6 +370,7 @@ fn a_write_hands_the_engine_the_whole_text_and_names_the_lint() {
     let run = run_against_stub(tmp.path(), &call, 0, true);
     let args = run.args.expect("the engine was asked");
     assert_eq!(&args[..5], ["check-edit", "--lint", "forbidden-imports", "--file", &target.display().to_string()]);
+    assert!(args.iter().any(|a| a == "--lint-only"), "the hook runs the check without the gate's setup: {args:?}");
     assert!(!args.iter().any(|a| a == "--replace" || a == "--all"), "{args:?}");
     assert_eq!(run.stdin.as_deref(), Some("fn f() {}"));
     assert!(!refused(&run.stdout), "a pass was refused: {}", run.stdout);

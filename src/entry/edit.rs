@@ -86,8 +86,7 @@ fn after(req: &Request, on_disk: impl FnOnce() -> Option<String>) -> Option<Stri
 }
 
 /// `path` with its `.` and `..` components resolved lexically, or `None` when it is not
-/// absolute. A symlink is not followed: a source directory reached through one is the
-/// caller's spelling to fix.
+/// absolute. Symlinks are not looked at here; [`through_directory_links`] follows them.
 fn normalised(path: &Path) -> Option<std::path::PathBuf> {
     use std::path::Component;
     if !path.is_absolute() {
@@ -104,6 +103,36 @@ fn normalised(path: &Path) -> Option<std::path::PathBuf> {
         }
     }
     Some(out)
+}
+
+/// `path` with every symlink in its directories followed and its last component kept.
+///
+/// A source directory reached through a symlinked one names no crate under the real
+/// source directories, and the edit would pass unjudged. The file itself is not
+/// followed: a symlinked source is read by the gate at the place it sits in the crate,
+/// so it is judged there. The deepest directory that exists is resolved and the rest
+/// appended, since the file, or its directories, may be what the edit creates.
+fn through_directory_links(path: &Path) -> std::path::PathBuf {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return path.to_path_buf();
+    };
+    let mut rest = Vec::new();
+    let mut probe = parent;
+    let resolved = loop {
+        match probe.canonicalize() {
+            Ok(real) => break real,
+            Err(_) => match (probe.parent(), probe.file_name()) {
+                (Some(up), Some(last)) => {
+                    rest.push(last.to_os_string());
+                    probe = up;
+                },
+                _ => break probe.to_path_buf(),
+            },
+        }
+    };
+    let mut out = resolved;
+    out.extend(rest.iter().rev());
+    out.join(name)
 }
 
 /// Ask. Exit success when the lint blocks nothing in `req.file`, failure with the
@@ -153,14 +182,23 @@ fn exit_of(cfg: &Config, pack: &LintPack, req: &Request) -> u8 {
         return 2;
     };
 
+    // Followed through directory symlinks, and the source directories the same way, so
+    // both sides of the comparison are real paths.
+    let file = through_directory_links(&file);
+    let src_dirs: Vec<std::path::PathBuf> = cfg
+        .src_dirs
+        .iter()
+        .map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()))
+        .collect();
+
     let Some(text) = after(req, || std::fs::read_to_string(&file).ok()) else {
         return 0;
     };
 
-    let crates = crate::parse::discover_crates_in(&cfg.src_dirs, &cfg.crate_prefix);
+    let crates = crate::parse::discover_crates_in(&src_dirs, &cfg.crate_prefix);
     let Some(found) = crate::lint::lint_edit(
         &crates,
-        &cfg.src_dirs,
+        &src_dirs,
         &cfg.mock_dir,
         &cfg.proc_macro_crates,
         cfg.lint_proc_macro_source,
