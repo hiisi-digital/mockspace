@@ -479,7 +479,8 @@ fn generate_copilot_hooks(repo_root: &Path, all_hooks: &[HookMeta], mut count: u
                 .unwrap_or_default();
             kept.extend(generated);
             events.insert("preToolUse".into(), serde_json::Value::Array(kept));
-            doc.insert("version".into(), serde_json::json!(1));
+            // A version the file already carries is not ours to change.
+            doc.entry("version").or_insert_with(|| serde_json::json!(1));
             doc.insert("hooks".into(), serde_json::Value::Object(events));
 
             let body = serde_json::to_string_pretty(&serde_json::Value::Object(doc))

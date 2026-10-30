@@ -186,7 +186,8 @@ const COMMANDS: &[Cmd] = &[
         help:    "Asks the per-crate lint named by --lint about the file named by \
                   --file, as the file would read after an edit, through the same \
                   pass the gate gives every crate: the same configuration, binding, \
-                  filters and lint:allow markers. Stdin is the text the edit \
+                  filters and lint:allow markers. The generated hook adds --lint-only, which \
+                  skips the gate's own setup and changes no verdict. Stdin is the text the edit \
                   writes; with --replace <file> it replaces the text in that file \
                   in the target (every occurrence with --all, else the one), and \
                   without it it is the target's whole new text. --edits <file> is \

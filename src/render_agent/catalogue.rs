@@ -24,7 +24,7 @@ pub(crate) fn body(cfg: &Config, pack: &LintPack) -> String {
     let set_here = crate::lint_catalogue::render_set_here(&lints, &absent);
     format!(
         "## What is available here, and what is checking you\n\n\
-         `mock tools` and `mock lints` list everything here, with the severities that govern; below is only what this repository declares.\n\n\
+         `mock tools` and `mock lints` list everything here, with the severities that govern, including what arrives through `lint-crates`; below is only what this repository declares, as of the last `cargo mock`.\n\n\
          ```\n{tools}\n{set_here}```\n"
     )
 }
