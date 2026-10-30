@@ -86,7 +86,9 @@ const COMMANDS: &[Cmd] = &[
         args:    &[],
         help:    "Supersedes the active changelist rather than deleting it, so it \
                   stays as an audit trail. In IMPL this also unlocks the doc \
-                  changelist. Accepts --auto-commit.",
+                  changelist. A stub (a bare title) beside a locked changelist \
+                  of its kind is retired instead, in any phase, and nothing \
+                  else happens on that run; one with text is refused. Accepts --auto-commit.",
     },
     Cmd {
         name:    "close",
@@ -95,8 +97,9 @@ const COMMANDS: &[Cmd] = &[
         help:    "Archives a finished round (both changelists locked) into \
                   design_rounds/<id>/ with .meta and .history. Takes the \
                   changelists, the files that start with the id of one, and \
-                  the files one names; any other flat file stays and is \
-                  listed. Valid only from CLOSED. Accepts --auto-commit.",
+                  the files one names, and any flat file given as \
+                  --take <file> (repeatable); any other flat file stays and \
+                  is listed. Valid only from CLOSED. Accepts --auto-commit.",
     },
     Cmd {
         name:    "archive",

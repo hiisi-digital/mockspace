@@ -474,3 +474,127 @@ fn a_topic_in_a_repository_with_no_commit_yet_can_be_written() {
         "a topic in a repository with no commits was refused: {out}"
     );
 }
+
+// A second changelist of a kind written while the first is only in the working tree. The phase is
+// read from what git tracks, so an untracked first changelist leaves the phase where it was, the
+// guard sees no changelist of the kind and allows another, and a commit that takes everything
+// carries both in (kaski, 30 October, a stub `# src changelist` beside the round's own).
+
+fn write_to_round(repo: &std::path::Path, name: &str) -> String {
+    write_payload(&repo.join("mock/design_rounds").join(name))
+}
+
+#[test]
+fn a_first_src_changelist_is_allowed_once_the_doc_one_is_locked() {
+    let repo = repo_with_rounds("src-first", &["202610301702_changelist.doc.lock.md"]);
+    let guard = guard_for(&repo);
+    let out = run_from(
+        &repo,
+        &guard,
+        &write_to_round(&repo, "202610301702_changelist.src.md"),
+    );
+    assert!(!refused(&out), "the round's src changelist was refused: {out}");
+}
+
+#[test]
+fn a_second_src_changelist_beside_an_uncommitted_first_is_refused() {
+    let repo = repo_with_rounds("src-second", &["202610301702_changelist.doc.lock.md"]);
+    std::fs::write(
+        repo.join("mock/design_rounds/202610301702_changelist.src.md"),
+        "# src changelist\n\nstarted\n",
+    )
+    .unwrap();
+    let guard = guard_for(&repo);
+    let out = run_from(
+        &repo,
+        &guard,
+        &write_to_round(&repo, "202610301710_changelist.src.md"),
+    );
+    assert!(
+        refused(&out),
+        "a second src changelist was allowed beside the first: {out}"
+    );
+    assert!(
+        out.contains("202610301702_changelist.src.md"),
+        "the refusal should name the changelist already there: {out}"
+    );
+}
+
+#[test]
+fn rewriting_the_one_src_changelist_is_not_a_second_one() {
+    let repo = repo_with_rounds("src-rewrite", &["202610301702_changelist.doc.lock.md"]);
+    std::fs::write(
+        repo.join("mock/design_rounds/202610301702_changelist.src.md"),
+        "# src changelist\n",
+    )
+    .unwrap();
+    let guard = guard_for(&repo);
+    let out = run_from(
+        &repo,
+        &guard,
+        &write_to_round(&repo, "202610301702_changelist.src.md"),
+    );
+    assert!(!refused(&out), "the same file was taken for a second one: {out}");
+}
+
+#[test]
+fn a_second_doc_changelist_beside_an_uncommitted_first_is_refused() {
+    let repo = repo_with_rounds("doc-second", &["202610301702_topic.a.md"]);
+    std::fs::write(
+        repo.join("mock/design_rounds/202610301702_changelist.doc.md"),
+        "# doc changelist\n\nstarted\n",
+    )
+    .unwrap();
+    let guard = guard_for(&repo);
+    let out = run_from(
+        &repo,
+        &guard,
+        &write_to_round(&repo, "202610301710_changelist.doc.md"),
+    );
+    assert!(refused(&out), "a second doc changelist was allowed: {out}");
+    assert!(out.contains("202610301702_changelist.doc.md"), "{out}");
+}
+
+#[test]
+fn a_locked_changelist_is_never_named_as_the_place_to_write() {
+    // CLOSED: the phase refuses a new src changelist, and the refusal must not send the writer to
+    // the frozen lock.
+    let repo = repo_with_rounds(
+        "closed-new",
+        &[
+            "202610301702_changelist.doc.lock.md",
+            "202610301702_changelist.src.lock.md",
+        ],
+    );
+    let guard = guard_for(&repo);
+    let out = run_from(
+        &repo,
+        &guard,
+        &write_to_round(&repo, "202610301710_changelist.src.md"),
+    );
+    assert!(refused(&out), "{out}");
+    assert!(!out.contains("Write to"), "the refusal pointed at a frozen file: {out}");
+}
+
+#[test]
+fn a_stub_beside_both_locks_is_answered_with_deprecate_not_with_the_stub() {
+    // CLOSED, with a committed stub: writing a new src changelist must be pointed at the command
+    // that retires the stub, since the stub itself is frozen in that phase.
+    let repo = repo_with_rounds(
+        "stub-closed",
+        &[
+            "202610301702_changelist.doc.lock.md",
+            "202610301702_changelist.src.lock.md",
+            "202610301710_changelist.src.md",
+        ],
+    );
+    let guard = guard_for(&repo);
+    let out = run_from(
+        &repo,
+        &guard,
+        &write_to_round(&repo, "202610301720_changelist.src.md"),
+    );
+    assert!(refused(&out), "{out}");
+    assert!(out.contains("cargo mock deprecate"), "the refusal should name the remedy: {out}");
+    assert!(!out.contains("Write to"), "{out}");
+}

@@ -96,9 +96,9 @@ Transitions are subcommands, not manual renames:
 |---------------------------|-------------------------------------------------------------------|-------------------------|
 | `cargo mock lock`         | Lock the active changelist (`DOC -> DRAFT`, `IMPL -> CLOSED`)     | `DOC`, `IMPL`           |
 | `cargo mock unlock`       | Deprecate src CL and unlock doc CL (destructive; source unchanged) | `DRAFT`, `IMPL`, `CLOSED` |
-| `cargo mock deprecate`    | Deprecate the active CL; in `IMPL` also unlocks doc CL            | `DOC`, `IMPL`           |
-| `cargo mock close`        | Archive the round into a `<round-id>/` subdir with `.meta` + `.history`; takes the changelists, the files carrying the id of one, and the files one names, and lists the flat files it leaves | `CLOSED` only       |
-| `cargo mock archive`      | Archive an abandoned round into a `<round-id>-abandoned/` subdir; with changelists it takes what `close` takes and is named by their id, and in the TOPIC phase, with none, it takes every flat file and is named by the earliest | any                     |
+| `cargo mock deprecate`    | Deprecate the active CL; in `IMPL` also unlocks doc CL; a stub changelist (bare title) beside a locked one of its kind is retired instead, in any phase | `DOC`, `IMPL`, or any with a stub |
+| `cargo mock close`        | Archive the round into a `<round-id>/` subdir with `.meta` + `.history`; takes the changelists, the files carrying the id of one, the files one names, any flat file given as `--take <file>`, and lists the flat files it leaves | `CLOSED` only       |
+| `cargo mock archive`      | Archive an abandoned round into a `<round-id>-abandoned/` subdir; with changelists it takes what `close` takes (without `--take`) and is named by their id, and in the TOPIC phase, with none, it takes every flat file and is named by the earliest | any                     |
 | `cargo mock migrate`      | Rename legacy `YYYY-MM-DD_*.md` files to the compact format       | any                     |
 | `cargo mock round-id`     | Print a fresh round id, `YYYYMMDDHHMM-tttt`                       | any                     |
 | `cargo mock rename-round <old> [<new>]` | Give a round a new id: directory, files, `.meta`, local tags | any                     |

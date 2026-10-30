@@ -104,10 +104,11 @@ pub fn active_round_findings(design_rounds: &Path) -> Vec<String> {
             findings.push(format!(
                 "`design_rounds/{active}` is unlocked beside `design_rounds/{lock}`, \
                  a locked changelist of the same kind, so one of them is not this \
-                 round's record. `cargo mock unlock` deprecates the src changelists \
-                 and unlocks the doc changelist; carry the text into the changelist \
-                 of that kind which is left or opened next, and lock back up to \
-                 where the round was.",
+                 round's record. `cargo mock deprecate` retires the unlocked one and \
+                 leaves the locked changelists as they are; where its text was meant \
+                 for the round, `cargo mock unlock` deprecates the src changelists \
+                 and unlocks the doc changelist, and the text is carried into the \
+                 changelist of that kind which is opened next.",
                 active = active.filename,
                 lock = lock.filename,
             ));
@@ -177,7 +178,7 @@ pub fn says_nothing(path: &Path) -> bool {
 /// itself. So is a subject after a colon: `# doc changelist: none` is a round
 /// declaring it has no doc edits, which is a statement, where `# src changelist`
 /// is a template nobody wrote into.
-fn is_bare_title(text: &str) -> bool {
+pub(crate) fn is_bare_title(text: &str) -> bool {
     let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
     match (lines.next(), lines.next()) {
         (None, _) => true,

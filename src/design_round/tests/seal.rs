@@ -360,3 +360,135 @@ fn a_committed_transition_keeps_unrelated_staged_work_staged() {
     assert_eq!(cmd_lock(&Config::from_dir(&mock), &AUTO), ExitCode::SUCCESS);
     assert_eq!(status(repo.path()), "M  mock/README.md.tmpl\n");
 }
+
+// A stub changelist beside a locked one of its kind (a bare title)
+// holds the round open: `changelist-seal` refuses the lock, `changelist-immutability` refuses
+// deleting an unlocked changelist outside its window, and `deprecate` answered "both CLs locked" in
+// the phase the stub made, so the only way out was unlock, relock and a fresh changelist
+// (kaski, 30 October).
+
+const DOC_LOCK: &str = "202610301702_changelist.doc.lock.md";
+const SRC_LOCK: &str = "202610301702_changelist.src.lock.md";
+const STUB: &str = "202610301710_changelist.src.md";
+const STUB_DEPRECATED: &str = "202610301710_changelist.src.deprecated.md";
+
+#[test]
+fn deprecate_retires_a_stub_beside_a_locked_changelist_of_its_kind() {
+    let dir = mock(&[
+        (DOC_LOCK, "# doc changelist: x\n"),
+        (SRC_LOCK, "# src changelist: x\n"),
+        (STUB, "# src changelist\n\n"),
+    ]);
+    let code = cmd_deprecate(&Config::from_dir(dir.path()), &OPTS);
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(
+        listed(dir.path()),
+        [DOC_LOCK, SRC_LOCK, STUB_DEPRECATED],
+        "the stub is deprecated and the round's own locks are untouched"
+    );
+}
+
+#[test]
+fn deprecate_with_a_stub_leaves_the_round_sealed_enough_to_close() {
+    let dir = mock(&[
+        (DOC_LOCK, "# doc changelist: x\n"),
+        (SRC_LOCK, "# src changelist: x\n"),
+        (STUB, "# src changelist\n\n"),
+    ]);
+    assert_eq!(
+        cmd_close(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::FAILURE,
+        "the stub keeps the round from closing"
+    );
+    assert_eq!(
+        cmd_deprecate(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(
+        cmd_close(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::SUCCESS,
+        "once the stub is deprecated the round closes"
+    );
+}
+
+#[test]
+fn deprecate_without_a_stub_in_a_closed_round_still_refuses() {
+    let dir = mock(&[
+        (DOC_LOCK, "# doc changelist: x\n"),
+        (SRC_LOCK, "# src changelist: x\n"),
+    ]);
+    assert_eq!(
+        cmd_deprecate(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::FAILURE
+    );
+    assert_eq!(listed(dir.path()), [DOC_LOCK, SRC_LOCK]);
+}
+
+#[test]
+fn reading_the_phase_writes_nothing() {
+    // Nothing in the phase, status or finding readers may create or change a file: a changelist
+    // stub that appeared "from a status call" would be one of them.
+    use mockspace_lint_rules::changelist_helpers as h;
+    let dir = mock(&[
+        (DOC_LOCK, "# doc changelist: x\n"),
+        (SRC_LOCK, "# src changelist: x\n"),
+        (STUB, "# src changelist\n\n"),
+    ]);
+    let dr = dir.path().join("design_rounds");
+    let snapshot = |d: &Path| -> Vec<(String, String)> {
+        let mut v: Vec<_> = std::fs::read_dir(d)
+            .unwrap()
+            .flatten()
+            .map(|e| {
+                (
+                    e.file_name().to_string_lossy().to_string(),
+                    std::fs::read_to_string(e.path()).unwrap(),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    let before = snapshot(&dr);
+    let _ = h::current_phase(&dr);
+    let _ = h::find_changelists(&dr);
+    let _ = h::stray_active_changelists(&dr);
+    let _ = mockspace_lint_rules::active_round_findings(&dr);
+    assert_eq!(snapshot(&dr), before);
+}
+
+#[test]
+fn deprecate_does_not_retire_a_changelist_with_text_beside_a_lock() {
+    // The lock may be the leftover of an earlier round and the unlocked file the live work.
+    let dir = mock(&[
+        (DOC_LOCK, "# doc changelist: x\n"),
+        (SRC_LOCK, "# src changelist: x\n"),
+        (STUB, "# src changelist: the live work\n\nreal edits\n"),
+    ]);
+    assert_eq!(
+        cmd_deprecate(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::FAILURE
+    );
+    assert_eq!(listed(dir.path()), [DOC_LOCK, SRC_LOCK, STUB], "nothing moved");
+}
+
+#[test]
+fn a_doc_stub_beside_a_doc_lock_is_retired_while_a_src_changelist_is_active() {
+    let dir = mock(&[
+        ("202610301702_changelist.doc.lock.md", "# doc changelist: x\n"),
+        ("202610301702_changelist.src.md", "# src changelist: live\n\nedits\n"),
+        ("202610301710_changelist.doc.md", "# doc changelist\n\n"),
+    ]);
+    assert_eq!(
+        cmd_deprecate(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(
+        listed(dir.path()),
+        [
+            "202610301702_changelist.doc.lock.md",
+            "202610301702_changelist.src.md",
+            "202610301710_changelist.doc.deprecated.md"
+        ]
+    );
+}
