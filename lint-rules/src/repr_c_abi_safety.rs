@@ -50,6 +50,10 @@ const ABI_UNSAFE_TYPES: &[(&str, &str)] = &[
 pub struct ReprCAbiSafety;
 
 impl Lint for ReprCAbiSafety {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::File
+    }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }

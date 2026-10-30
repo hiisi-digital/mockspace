@@ -34,6 +34,10 @@ const LINT_NAME: &str = "undocumented-type";
 pub struct UndocumentedType;
 
 impl Lint for UndocumentedType {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::Workspace
+    }
+
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::BUILD_GATE
     }

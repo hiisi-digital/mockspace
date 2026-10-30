@@ -276,6 +276,7 @@ mod tests {
                 canon_paths: &[],
                 open_panels: &[],
                 registry:    &Default::default(),
+                verdicts:    None,
             })
         };
 
@@ -401,6 +402,7 @@ mod fmt_only_exemption {
             canon_paths: &[],
             open_panels: &[],
             registry:    &Default::default(),
+            verdicts:    None,
         };
         ChangelistRequired.check_repo(&ctx)
     }
@@ -523,6 +525,7 @@ mod fmt_only_judges_the_committed_content {
             canon_paths: &[],
             open_panels: &[],
             registry:    &Default::default(),
+            verdicts:    None,
         })
     }
 

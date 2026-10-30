@@ -1,0 +1,30 @@
+repo	step	value	note
+large	full	79.31	first run of the series, includes launcher and engine start at the pin
+large	cold	51.88	
+large	warm	6.02	
+large	edit	7.43	
+large	editfull	53.59	steady full run, store off, same tree as edit
+small	full	130.50	first run of the series, includes launcher and engine start at the pin
+small	cold	1.47	
+small	warm	0.49	
+small	edit	0.40	
+small	editfull	1.04	steady full run, store off, same tree as edit
+docs-only	full	0.12	
+docs-only	cold	0.13	
+docs-only	warm	0.13	
+docs-only	edit	0.12	
+docs-only	editfull	0.13	steady full run, store off, same tree as edit
+large	before-warm	32.24	morning tree, nothing saved, before this work
+large	before-cold-build	206.70	engine and packs built cold at the pin
+small	before-cold-build	113.62	engine and packs built cold at the pin
+large	warm-progress/built-in-lints	40.39	warm run on the same tree as each piece landed
+large	warm-progress/plus-shader-lint-per-shader	26.65	warm run on the same tree as each piece landed
+large	warm-progress/plus-citation-lint-per-file	16.28	warm run on the same tree as each piece landed
+large	warm-progress/plus-asset-and-include-lints	5.60	warm run on the same tree as each piece landed
+large	warm-progress/nothing-saved	48.71	store off, the tree the built-in lints were saved on
+large	lint-ms/a-citation-lint	10302.5	calls=1, morning tree, nothing saved
+large	lint-ms/a-test-include-lint	4858.8	calls=1, morning tree, nothing saved
+large	lint-ms/an-asset-freshness-lint	3972.6	calls=1, morning tree, nothing saved
+large	lint-ms/design-doc-source-mismatch	2859.8	calls=86, morning tree, nothing saved
+large	lint-ms/single-source	1562.0	calls=1, morning tree, nothing saved
+large	lint-ms/a-shader-freshness-lint	14033.7	calls=1, store off, shader compiler on the path (5 ms without it)

@@ -1,0 +1,4 @@
+repo	commits_compared	result	controls
+large	8	incremental report equals full report at every commit	replays above zero after the first commit; planted verdicts change the report
+small	6	incremental report equals full report at every commit	replays above zero after the first commit; planted verdicts change the report
+docs-only	6	incremental report equals full report at every commit	replays above zero after the first commit; planted verdicts change the report

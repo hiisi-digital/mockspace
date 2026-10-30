@@ -15,6 +15,8 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+pub mod verdicts;
+
 use mockspace_lint_rules::{
     self,
     CrateSourceFile,
@@ -25,6 +27,7 @@ use mockspace_lint_rules::{
     LintMode,
     LintPack,
     RepoContext,
+    timing,
 };
 
 use crate::model::CrateMap;
@@ -69,7 +72,7 @@ impl ParsedCrate {
     ) -> Option<Self> {
         // Read every .rs file under src/ so lints can scan module files
         // (bits.rs, prim.rs, impl.rs, ...) in addition to lib.rs.
-        let mut all_sources = collect_crate_sources(crate_dir);
+        let mut all_sources = timing::time("phase:read-crate-files", || collect_crate_sources(crate_dir));
         if let Some((rel_path, text)) = replacing {
             match all_sources.iter_mut().find(|s| s.rel_path == rel_path) {
                 Some(file) => file.text = text.to_string(),
@@ -90,7 +93,7 @@ impl ParsedCrate {
             .find(|s| s.rel_path == Path::new("src/lib.rs"))?
             .text
             .clone();
-        let tree = parser.parse(&source, None)?;
+        let tree = timing::time("parse:crate-root", || parser.parse(&source, None))?;
         Some(Self {
             crate_name: crate_name.to_string(),
             short_name: info.short_name.clone(),
@@ -99,7 +102,7 @@ impl ParsedCrate {
             tree,
             all_sources,
             design_doc: std::fs::read_to_string(crate_dir.join("DESIGN.md.tmpl")).ok(),
-            all_doc_content: collect_all_docs(crate_dir),
+            all_doc_content: timing::time("phase:read-crate-files", || collect_all_docs(crate_dir)),
             // The exact spelling the phase gates match. See `read_shame_template`.
             shame_doc: mockspace_lint_rules::read_shame_template(crate_dir),
         })
@@ -343,6 +346,13 @@ pub fn run_lints(
     let mut parser = mockspace_lint_rules::make_parser();
     let mut all_errors: Vec<LintError> = Vec::new();
 
+    // Saved verdicts: a lint declaring a reach is answered from the store when what it depends
+    // on did not move. None when switched off or when the machine has nowhere to keep them.
+    let verdicts = timing::time("phase:open-verdict-store", || {
+        verdicts::DiskVerdicts::open(&pack.identity)
+    });
+    let saved = verdicts.as_ref().map(|v| v as &dyn mockspace_lint_rules::verdict::VerdictCache);
+
     let mut parsed: Vec<ParsedCrate> = Vec::new();
 
     let overrides = if lint_overrides.is_empty() { None } else { Some(lint_overrides) };
@@ -370,11 +380,12 @@ pub fn run_lints(
         };
 
         // Per-crate lint pass
-        all_errors.extend(mockspace_lint_rules::check_crate_with_extra(
+        all_errors.extend(mockspace_lint_rules::check_crate_saving(
             &krate.context(&env),
             doc_only,
             overrides,
             &pack.crate_lints,
+            saved,
         ));
 
         parsed.push(krate);
@@ -391,11 +402,12 @@ pub fn run_lints(
         .map(|(name, ctx)| (*name, ctx))
         .collect();
 
-    all_errors.extend(mockspace_lint_rules::check_workspace_with_extra(
+    all_errors.extend(mockspace_lint_rules::check_workspace_saving(
         &cross_refs,
         doc_only,
         overrides,
         &pack.workspace_lints,
+        saved,
     ));
 
     // Repo lints take no crates at all, so they run even when the workspace has
@@ -410,6 +422,7 @@ pub fn run_lints(
         canon_paths,
         open_panels,
         registry,
+        verdicts: saved,
     };
     all_errors.extend(mockspace_lint_rules::check_repo_with_extra(
         &repo_ctx,
@@ -452,6 +465,10 @@ pub fn run_lints(
             eprintln!("{err}");
         }
         eprintln!();
+    }
+
+    if timing::enabled() {
+        eprintln!("\n{}", timing::report());
     }
 
     // Only errors block; info and warnings are informational

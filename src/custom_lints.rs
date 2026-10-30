@@ -731,6 +731,15 @@ unsafe fn collect(dylib: &Path) -> Result<LoadedLints, String> {
         // identical trait source, separate compilation, same toolchain).
         unsafe { collect(&mut pack) };
     }
+    // Which code these lints are, for the verdicts saved under them. A library that cannot be
+    // read back gets an identity no other run shares, so what it saves is never found again
+    // rather than found by a different pack with the same empty name.
+    pack.identity = crate::lint::verdicts::file_digest(dylib).unwrap_or_else(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        format!("unreadable-{}-{nanos}", std::process::id())
+    });
     Ok(LoadedLints {
         pack,
         _lib: lib,

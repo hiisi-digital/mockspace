@@ -1077,7 +1077,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         //     reports `unknown-provenance-root`, which is a false positive rather
         //     than a weaker check.
         if lint_only {
-            let registry_errors = registry_gate(&cfg, &lint_registry, &[], mode);
+            let registry_errors = mockspace_lint_rules::timing::time("phase:registry-gate", || registry_gate(&cfg, &lint_registry, &[], mode));
             if registry_errors > 0 {
                 eprintln!("registry check failed: {registry_errors} error(s)");
                 return ExitCode::FAILURE;
