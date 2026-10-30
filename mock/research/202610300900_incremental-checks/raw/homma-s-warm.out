@@ -1,0 +1,55 @@
+    Finished `release` profile [optimized] target(s) in 0.26s
+--- cargo check skipped (lint-only mode) ---
+--- parsing crates ---
+--- running lints ---
+--- registry ---
+  0 rows across 0 namespaces
+  schema check passed
+
+--- lint warnings (5) ---
+  [file-size] homma-api:1: [warn] src/config.rs has 594 non-blank, non-comment lines (limit: 500). Split into modules.
+  [file-size] homma-api:1: [warn] src/denied.rs has 655 non-blank, non-comment lines (limit: 500). Split into modules.
+  [file-size] homma-core:1: [warn] src/hooks/install.rs has 502 non-blank, non-comment lines (limit: 500). Split into modules.
+  [file-size] homma-core:1: [warn] src/local_tests.rs has 518 non-blank, non-comment lines (limit: 500). Split into modules.
+  [file-size] homma-org:1: [warn] src/provision.rs has 551 non-blank, non-comment lines (limit: 500). Split into modules.
+
+--- timings (ms, calls, label) ---
+      23.5      1 phase:registry-gate
+      15.0      1 lint:changelist-doc-gate
+      10.9      1 lint:changelist-required
+       7.4      1 phase:open-verdict-store
+       6.1      1 lint:changelist-seal
+       5.8      4 parse:crate-root
+       2.0      4 lint:actionable-errors
+       2.0      4 lint:no-manual-impl
+       2.0      4 lint:repr-c-abi-safety
+       1.9      4 lint:no-todo
+       1.8      4 phase:read-crate-files
+       1.1      4 lint:no-empty-crate
+       1.1      1 lint:no-duplicate-fn
+       0.1      1 lint:deprecation-comparison
+       0.1      1 lint:changelist-immutability
+       0.1      1 lint:changelist-lock
+       0.1      1 lint:the-mock-toolchain-matches-the-root
+       0.1      4 lint:file-size
+       0.0      4 lint:design-doc-source-mismatch
+       0.0      4 lint:registrable-completeness
+       0.0      4 lint:export-count
+       0.0      1 lint:single-source
+       0.0      1 lint:undocumented-type
+       0.0      1 lint:canon-not-while-panel-open
+       0.0    101 hit:actionable-errors
+       0.0      4 hit:design-doc-source-mismatch
+       0.0      4 hit:export-count
+       0.0      4 hit:file-size
+       0.0      1 hit:no-duplicate-fn
+       0.0      4 hit:no-empty-crate
+       0.0    101 hit:no-manual-impl
+       0.0    101 hit:no-todo
+       0.0      4 hit:registrable-completeness
+       0.0    101 hit:repr-c-abi-safety
+       0.0      1 hit:single-source
+       0.0      1 hit:undocumented-type
+
+  all lints passed
+--- lint-only mode, skipping generation ---

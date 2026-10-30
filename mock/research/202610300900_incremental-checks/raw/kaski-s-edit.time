@@ -1,0 +1,1 @@
+wall_s=7.43 exit=1 cmd=/home/user/target/release/cargo-mock --lint-only --commit

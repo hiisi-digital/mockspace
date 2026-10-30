@@ -1,0 +1,44 @@
+    Finished `release` profile [optimized] target(s) in 0.26s
+--- cargo check skipped (lint-only mode) ---
+--- parsing crates ---
+--- running lints ---
+--- registry ---
+  0 rows across 0 namespaces
+  schema check passed
+
+--- lint warnings (5) ---
+  [file-size] homma-api:1: [warn] src/config.rs has 594 non-blank, non-comment lines (limit: 500). Split into modules.
+  [file-size] homma-api:1: [warn] src/denied.rs has 655 non-blank, non-comment lines (limit: 500). Split into modules.
+  [file-size] homma-core:1: [warn] src/hooks/install.rs has 502 non-blank, non-comment lines (limit: 500). Split into modules.
+  [file-size] homma-core:1: [warn] src/local_tests.rs has 518 non-blank, non-comment lines (limit: 500). Split into modules.
+  [file-size] homma-org:1: [warn] src/provision.rs has 551 non-blank, non-comment lines (limit: 500). Split into modules.
+
+--- timings (ms, calls, label) ---
+     190.0      4 lint:no-manual-impl
+     171.7      1 lint:single-source
+     158.1    101 parse:crate-files
+      84.4      4 lint:design-doc-source-mismatch
+      49.7      4 lint:no-todo
+      40.5      4 lint:repr-c-abi-safety
+      21.6      1 phase:registry-gate
+      13.7      1 lint:changelist-doc-gate
+      11.4      1 lint:changelist-required
+       9.0      1 lint:changelist-seal
+       5.0      4 lint:no-empty-crate
+       3.4      4 parse:crate-root
+       2.8      4 lint:actionable-errors
+       1.8      4 lint:file-size
+       1.5      4 phase:read-crate-files
+       1.1      1 lint:undocumented-type
+       0.8      4 lint:registrable-completeness
+       0.1      1 lint:deprecation-comparison
+       0.1      1 lint:changelist-lock
+       0.1      1 lint:changelist-immutability
+       0.1      1 lint:no-duplicate-fn
+       0.1      4 lint:export-count
+       0.1      1 lint:the-mock-toolchain-matches-the-root
+       0.0      1 phase:open-verdict-store
+       0.0      1 lint:canon-not-while-panel-open
+
+  all lints passed
+--- lint-only mode, skipping generation ---

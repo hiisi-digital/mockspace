@@ -1,0 +1,161 @@
+    Finished `release` profile [optimized] target(s) in 0.09s
+--- cargo check skipped (lint-only mode) ---
+--- parsing crates ---
+--- running lints ---
+--- registry ---
+  12801 rows across 9 namespaces
+  schema check passed
+
+--- lint warnings (54) ---
+  [hunting-handles-no-bleed-out] kaski-hunting/crates/kaski-hunting/src/afield.rs:155: [warn] `crates/kaski-hunting/src/afield.rs` handles a bleed-out itself, `kaski_life::wake::BLEED_OUT,`: the quarry's goes through the wake `kaski-life` handles (`C1-192`, `C1-194`)
+  [hunting-handles-no-bleed-out] kaski-hunting/crates/kaski-hunting/src/afield.rs:203: [warn] `crates/kaski-hunting/src/afield.rs` handles a bleed-out itself, `pub fn bleed(`: the quarry's goes through the wake `kaski-life` handles (`C1-192`, `C1-194`)
+  [hunting-handles-no-bleed-out] kaski-hunting/crates/kaski-hunting/src/afield.rs:218: [warn] `crates/kaski-hunting/src/afield.rs` handles a bleed-out itself, `if due.kind == kaski_life::wake::BLEED_OUT`: the quarry's goes through the wake `kaski-life` handles (`C1-192`, `C1-194`)
+  [hunting-handles-no-bleed-out] kaski-hunting/crates/kaski-hunting/src/chase.rs:235: [warn] `crates/kaski-hunting/src/chase.rs` handles a bleed-out itself, `kaski_ground::wake::at_being(kaski_life::wake::BLEED_OUT, quarry),`: the quarry's goes through the wake `kaski-life` handles (`C1-192`, `C1-194`)
+  [assets-read-in-the-style] kaski/content/kaski/apron_dress_icon:0: [warn] asset `apron_dress_icon` breaks `no_lone_pixels`: `apron_dress_icon.aseprite` has 8 lone pixels, a tone or a fold one pixel across inside its region, the first at (28, 12); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/apron_dress_icon:0: [warn] asset `apron_dress_icon` breaks `tone_clusters`: `apron_dress_icon.aseprite` has 3 tone clusters smaller than 3 pixels, the first at (17, 5); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/arrow_icon:0: [warn] asset `arrow_icon` breaks `tone_clusters`: `arrow_icon.aseprite` has 1 tone clusters smaller than 3 pixels, the first at (27, 5); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/arrow_icon:0: [warn] asset `arrow_icon` breaks `silhouette_holds`: `arrow_icon.aseprite` covers 92 texels, outside 120 to 720; the rule is that the silhouette falls into at most two pieces, none under four pixels, the largest holding nine in ten of what is covered, and it covers between 120 and 720 of the tile's texels. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/bark_icon:0: [warn] asset `bark_icon` breaks `silhouette_holds`: `bark_icon.aseprite` holds only 167 of its 320 pixels in its largest piece; the rule is that the silhouette falls into at most two pieces, none under four pixels, the largest holding nine in ten of what is covered, and it covers between 120 and 720 of the tile's texels. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/basket_icon:0: [warn] asset `basket_icon` breaks `no_lone_pixels`: `basket_icon.aseprite` has 4 lone pixels, a tone or a fold one pixel across inside its region, the first at (11, 3); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/basket_icon:0: [warn] asset `basket_icon` breaks `tone_clusters`: `basket_icon.aseprite` has 8 tone clusters smaller than 3 pixels, the first at (27, 10); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/basket_icon:0: [warn] asset `basket_icon` breaks `clean_steps`: `basket_icon.aseprite` has 4 stair steps on its outline two or more pixels longer or shorter than both their neighbours; the rule is that along every diagonal and curve of the silhouette, no stair step between two others is two or more pixels longer or shorter than both of them. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/belt_icon:0: [warn] asset `belt_icon` breaks `no_lone_pixels`: `belt_icon.aseprite` has 4 lone pixels, a tone or a fold one pixel across inside its region, the first at (2, 11); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/boots_icon:0: [warn] asset `boots_icon` breaks `tone_clusters`: `boots_icon.aseprite` has 1 tone clusters smaller than 3 pixels, the first at (12, 11); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/bow_icon:0: [warn] asset `bow_icon` breaks `tone_clusters`: `bow_icon.aseprite` has 1 tone clusters smaller than 3 pixels, the first at (10, 11); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/bronze_tip_icon:0: [warn] asset `bronze_tip_icon` breaks `silhouette_holds`: `bronze_tip_icon.aseprite` holds only 118 of its 236 pixels in its largest piece; the rule is that the silhouette falls into at most two pieces, none under four pixels, the largest holding nine in ten of what is covered, and it covers between 120 and 720 of the tile's texels. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/cane_icon:0: [warn] asset `cane_icon` breaks `silhouette_holds`: `cane_icon.aseprite` falls into 3 pieces; the rule is that the silhouette falls into at most two pieces, none under four pixels, the largest holding nine in ten of what is covered, and it covers between 120 and 720 of the tile's texels. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/cane_icon:0: [warn] asset `cane_icon` breaks `silhouette_holds`: `cane_icon.aseprite` holds only 48 of its 140 pixels in its largest piece; the rule is that the silhouette falls into at most two pieces, none under four pixels, the largest holding nine in ten of what is covered, and it covers between 120 and 720 of the tile's texels. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/chest_icon:0: [warn] asset `chest_icon` breaks `no_lone_pixels`: `chest_icon.aseprite` has 4 lone pixels, a tone or a fold one pixel across inside its region, the first at (3, 16); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/chest_icon:0: [warn] asset `chest_icon` breaks `tone_clusters`: `chest_icon.aseprite` has 4 tone clusters smaller than 3 pixels, the first at (8, 18); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/cloak_icon:0: [warn] asset `cloak_icon` breaks `shade_on_faces`: `cloak_icon.aseprite` lays 58 of region 3's 67 darkest pixels along its edge, a bevel rather than a shaded face; the rule is that in every tinted region of 24 pixels or more with 8 two pixels or more inside its edge, at least a quarter of the pixels in its darkest tone lie inside the region rather than on its edge; a lit rim may stay one pixel wide. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/earring_icon:0: [warn] asset `earring_icon` breaks `no_lone_pixels`: `earring_icon.aseprite` has 6 lone pixels, a tone or a fold one pixel across inside its region, the first at (19, 4); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/earring_icon:0: [warn] asset `earring_icon` breaks `tone_clusters`: `earring_icon.aseprite` has 2 tone clusters smaller than 3 pixels, the first at (11, 7); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/egg_icon:0: [warn] asset `egg_icon` breaks `no_lone_pixels`: `egg_icon.aseprite` has 1 lone pixels, a tone or a fold one pixel across inside its region, the first at (18, 15); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/feathers_icon:0: [warn] asset `feathers_icon` breaks `no_lone_pixels`: `feathers_icon.aseprite` has 3 lone pixels, a tone or a fold one pixel across inside its region, the first at (22, 5); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/feathers_icon:0: [warn] asset `feathers_icon` breaks `tone_clusters`: `feathers_icon.aseprite` has 2 tone clusters smaller than 3 pixels, the first at (14, 4); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/flint_tip_icon:0: [warn] asset `flint_tip_icon` breaks `silhouette_holds`: `flint_tip_icon.aseprite` holds only 108 of its 216 pixels in its largest piece; the rule is that the silhouette falls into at most two pieces, none under four pixels, the largest holding nine in ten of what is covered, and it covers between 120 and 720 of the tile's texels. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/hood_icon:0: [warn] asset `hood_icon` breaks `no_lone_pixels`: `hood_icon.aseprite` has 1 lone pixels, a tone or a fold one pixel across inside its region, the first at (10, 19); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/knife_icon:0: [warn] asset `knife_icon` breaks `shade_on_faces`: `knife_icon.aseprite` lays 15 of region 3's 17 darkest pixels along its edge, a bevel rather than a shaded face; the rule is that in every tinted region of 24 pixels or more with 8 two pixels or more inside its edge, at least a quarter of the pixels in its darkest tone lie inside the region rather than on its edge; a lit rim may stay one pixel wide. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/log_icon:0: [warn] asset `log_icon` breaks `no_lone_pixels`: `log_icon.aseprite` has 1 lone pixels, a tone or a fold one pixel across inside its region, the first at (20, 11); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/meat_icon:0: [warn] asset `meat_icon` breaks `tone_clusters`: `meat_icon.aseprite` has 2 tone clusters smaller than 3 pixels, the first at (24, 3); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/meat_icon:0: [warn] asset `meat_icon` breaks `clean_steps`: `meat_icon.aseprite` has 1 stair steps on its outline two or more pixels longer or shorter than both their neighbours; the rule is that along every diagonal and curve of the silhouette, no stair step between two others is two or more pixels longer or shorter than both of them. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/pack_icon:0: [warn] asset `pack_icon` breaks `no_lone_pixels`: `pack_icon.aseprite` has 6 lone pixels, a tone or a fold one pixel across inside its region, the first at (30, 18); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/pack_icon:0: [warn] asset `pack_icon` breaks `tone_clusters`: `pack_icon.aseprite` has 5 tone clusters smaller than 3 pixels, the first at (27, 11); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/pelt_icon:0: [warn] asset `pelt_icon` breaks `no_lone_pixels`: `pelt_icon.aseprite` has 3 lone pixels, a tone or a fold one pixel across inside its region, the first at (13, 6); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/pelt_icon:0: [warn] asset `pelt_icon` breaks `tone_clusters`: `pelt_icon.aseprite` has 5 tone clusters smaller than 3 pixels, the first at (27, 1); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/pouch_icon:0: [warn] asset `pouch_icon` breaks `tone_clusters`: `pouch_icon.aseprite` has 3 tone clusters smaller than 3 pixels, the first at (14, 6); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/sack_icon:0: [warn] asset `sack_icon` breaks `no_lone_pixels`: `sack_icon.aseprite` has 4 lone pixels, a tone or a fold one pixel across inside its region, the first at (21, 7); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/sack_icon:0: [warn] asset `sack_icon` breaks `tone_clusters`: `sack_icon.aseprite` has 6 tone clusters smaller than 3 pixels, the first at (8, 6); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/scarf_icon:0: [warn] asset `scarf_icon` breaks `no_lone_pixels`: `scarf_icon.aseprite` has 3 lone pixels, a tone or a fold one pixel across inside its region, the first at (4, 12); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/scarf_icon:0: [warn] asset `scarf_icon` breaks `tone_clusters`: `scarf_icon.aseprite` has 1 tone clusters smaller than 3 pixels, the first at (4, 13); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/shaft_icon:0: [warn] asset `shaft_icon` breaks `silhouette_holds`: `shaft_icon.aseprite` falls into 3 pieces; the rule is that the silhouette falls into at most two pieces, none under four pixels, the largest holding nine in ten of what is covered, and it covers between 120 and 720 of the tile's texels. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/shaft_icon:0: [warn] asset `shaft_icon` breaks `silhouette_holds`: `shaft_icon.aseprite` holds only 48 of its 140 pixels in its largest piece; the rule is that the silhouette falls into at most two pieces, none under four pixels, the largest holding nine in ten of what is covered, and it covers between 120 and 720 of the tile's texels. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/spear_icon:0: [warn] asset `spear_icon` breaks `clean_steps`: `spear_icon.aseprite` has 2 stair steps on its outline two or more pixels longer or shorter than both their neighbours; the rule is that along every diagonal and curve of the silhouette, no stair step between two others is two or more pixels longer or shorter than both of them. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/timber_icon:0: [warn] asset `timber_icon` breaks `no_lone_pixels`: `timber_icon.aseprite` has 1 lone pixels, a tone or a fold one pixel across inside its region, the first at (8, 16); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/trousers_icon:0: [warn] asset `trousers_icon` breaks `no_lone_pixels`: `trousers_icon.aseprite` has 7 lone pixels, a tone or a fold one pixel across inside its region, the first at (28, 9); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/tunic_icon:0: [warn] asset `tunic_icon` breaks `no_lone_pixels`: `tunic_icon.aseprite` has 9 lone pixels, a tone or a fold one pixel across inside its region, the first at (15, 9); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/tunic_icon:0: [warn] asset `tunic_icon` breaks `tone_clusters`: `tunic_icon.aseprite` has 2 tone clusters smaller than 3 pixels, the first at (19, 3); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/tunic_icon:0: [warn] asset `tunic_icon` breaks `shade_on_faces`: `tunic_icon.aseprite` lays 61 of region 3's 71 darkest pixels along its edge, a bevel rather than a shaded face; the rule is that in every tinted region of 24 pixels or more with 8 two pixels or more inside its edge, at least a quarter of the pixels in its darkest tone lie inside the region rather than on its edge; a lit rim may stay one pixel wide. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/undershirt_icon:0: [warn] asset `undershirt_icon` breaks `no_lone_pixels`: `undershirt_icon.aseprite` has 4 lone pixels, a tone or a fold one pixel across inside its region, the first at (5, 12); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/undershirt_icon:0: [warn] asset `undershirt_icon` breaks `tone_clusters`: `undershirt_icon.aseprite` has 1 tone clusters smaller than 3 pixels, the first at (3, 10); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/undershirt_icon:0: [warn] asset `undershirt_icon` breaks `shade_on_faces`: `undershirt_icon.aseprite` lays 58 of region 3's 74 darkest pixels along its edge, a bevel rather than a shaded face; the rule is that in every tinted region of 24 pixels or more with 8 two pixels or more inside its edge, at least a quarter of the pixels in its darkest tone lie inside the region rather than on its edge; a lit rim may stay one pixel wide. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/wood_icon:0: [warn] asset `wood_icon` breaks `no_lone_pixels`: `wood_icon.aseprite` has 1 lone pixels, a tone or a fold one pixel across inside its region, the first at (22, 19); the rule is that no pixel differs in tone or fold from all eight of its neighbours of the same region, unless it is a whole region on its own, a rivet or a buckle. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+  [assets-read-in-the-style] kaski/content/kaski/wood_icon:0: [warn] asset `wood_icon` breaks `tone_clusters`: `wood_icon.aseprite` has 1 tone clusters smaller than 3 pixels, the first at (23, 17); the rule is that every cluster of one region and one tone or fold, its pixels joined through their eight neighbours, has at least three pixels, unless it is a whole region on its own. Compare the worked example `mock asset-rules item_icon` prints, or write one with `mock asset-new item_icon <dir>`.
+
+--- lint errors (2) ---
+  [changelist-required] kaski-asset-lints:0: [error] source file `crates/kaski-asset-lints/src/lints.rs` (unstaged) cannot be modified: phase TOPIC: only topic files allowed. Create a doc changelist, lock it, then create a src changelist to open the source window. Revert this change before committing.
+  [changelist-required] kaski-sound:0: [error] source file `crates/kaski-sound/src/backend.rs` (unstaged) cannot be modified: phase TOPIC: only topic files allowed. Create a doc changelist, lock it, then create a src changelist to open the source window. Revert this change before committing.
+
+
+--- timings (ms, calls, label) ---
+    1491.4      1 lint:single-source
+    1154.0      1 phase:registry-gate
+     758.6      1 lint:a-retired-word-stays-out
+     340.7      1 lint:every-fixme-names-a-ticket
+     335.6      1 lint:slang-fresh
+     238.0      1 lint:no-superseded-citation
+     213.7      1 lint:no-direct-print
+     208.0      1 lint:writing-style
+     201.2     86 lint:the-flat-ground-stays-gone
+     196.4      1 lint:catalogue-ignore
+     179.0      1 lint:a-backticked-law-name-names-a-row-or-an-item
+     161.4     86 lint:time-units-belong-to-the-clock-and-the-sky
+     136.6      1 lint:a-ticket-graph-holds
+     136.4      1 lint:no-source-include-in-test
+     126.7      1 lint:changelist-required
+     107.3     86 lint:digest-tags-are-derived-and-distinct
+      78.3      1 lint:substreams-are-named-and-distinct
+      57.8     86 lint:design-doc-source-mismatch
+      40.7      1 lint:assets-read-in-the-style
+      40.0     86 parse:crate-root
+      39.4      1 lint:assets-pass-their-rules
+      38.6      1 lint:bundles-are-fresh
+      36.5      1 lint:every-law-is-stamped-by-its-macro
+      34.3     86 phase:read-crate-files
+      32.3      1 lint:one-concept-one-owner
+      30.9      1 lint:a-tenet-cites-what-its-words-name
+      29.5      1 lint:changelist-doc-gate
+      25.3     86 lint:no-manual-impl
+      24.8     86 lint:lint-allow-requires-task-id
+      24.2      1 lint:a-tenet-names-a-subject
+      23.3      1 lint:undocumented-type
+      23.0     86 lint:actionable-errors
+      22.8     86 lint:no-todo
+      22.3     86 lint:repr-c-abi-safety
+      22.1      1 lint:changelist-seal
+      21.6     86 lint:store-is-written-only-by-the-applier
+      19.7     86 lint:no-runtime-content-key
+      19.3      1 lint:a-live-row-names-no-replaced-row-without-lineage
+      14.8      1 lint:no-duplicate-fn
+      14.2     86 lint:no-empty-crate
+      13.8     86 lint:sim-reads-the-sky-in-whole-numbers
+      11.4      1 lint:a-relation-adds-what-the-words-do-not
+      10.9     86 lint:no-content-panic
+      10.3      1 lint:the-motion-names-no-species
+       9.4     86 lint:raw-input-is-read-once
+       7.5      1 phase:open-verdict-store
+       6.4      1 lint:content-keys-are-idents
+       4.6     86 lint:sky-math-is-deterministic
+       3.3      1 lint:a-crate-carries-one-of-the-three-licences
+       2.4     86 lint:no-modulo-pick
+       1.7     86 lint:every-pipeline-is-built-by-the-spec
+       1.4      1 lint:every-manifest-is-a-member
+       1.2     76 lint:file-size
+       1.0      1 lint:the-model-names-no-device
+       0.8     86 lint:registrable-completeness
+       0.8      1 lint:hunting-handles-no-bleed-out
+       0.8      1 parse:crate-files
+       0.7     71 lint:export-count
+       0.2      1 lint:changelist-lock
+       0.2      1 lint:changelist-immutability
+       0.2      1 lint:deprecation-comparison
+       0.0      1 lint:the-sound-feature-is-gated
+       0.0      1 lint:the-slang-hash-takes-the-noises-multipliers
+       0.0      1 lint:the-style-rules-cite-the-row-that-binds
+       0.0      1 lint:the-mock-toolchain-matches-the-root
+       0.0      1 lint:canon-not-while-panel-open
+       0.0   1887 hit:actionable-errors
+       0.0     85 hit:design-doc-source-mismatch
+       0.0     70 hit:export-count
+       0.0     75 hit:file-size
+       0.0   1887 hit:lint-allow-requires-task-id
+       0.0     85 hit:no-empty-crate
+       0.0   1887 hit:no-manual-impl
+       0.0   1887 hit:no-todo
+       0.0     85 hit:registrable-completeness
+       0.0   1887 hit:repr-c-abi-safety
+       0.0      1 miss:actionable-errors
+       0.0      1 miss:design-doc-source-mismatch
+       0.0      1 miss:export-count
+       0.0      1 miss:file-size
+       0.0      1 miss:lint-allow-requires-task-id
+       0.0      1 miss:no-duplicate-fn
+       0.0      1 miss:no-empty-crate
+       0.0      1 miss:no-manual-impl
+       0.0      1 miss:no-todo
+       0.0      1 miss:registrable-completeness
+       0.0      1 miss:repr-c-abi-safety
+       0.0      1 miss:single-source
+       0.0      1 miss:undocumented-type
+
+lint check failed: 2 violation(s)
