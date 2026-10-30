@@ -112,6 +112,28 @@ fn first_positional(args: &[String]) -> Option<&str> {
     None
 }
 
+/// The tool this run is of, when it is a run of one project tool and nothing
+/// else: the first positional names a directory under `tools_dir` that holds a
+/// `Cargo.toml` and is not a builtin's name.
+///
+/// Such a run needs that tool's crate and none of the lints, since a tool is
+/// handed paths and arguments and no pack (`ToolContext`). Building the lints
+/// and every other tool first is what a ticket add waited minutes on, and it
+/// also made the add depend on every private dependency of every other tool.
+/// A builtin's name is never cut, because `tool_is_shadowed_by_a_builtin`
+/// answers for it against the whole pack.
+fn scoped_tool<'a>(args: &'a [String], tools_dir: &Path) -> Option<&'a str> {
+    let name = first_positional(args)?;
+    if super::tool::builtin_collision(name) || name.contains(['/', '\\']) || name.starts_with('.') {
+        return None;
+    }
+    tools_dir
+        .join(name)
+        .join("Cargo.toml")
+        .is_file()
+        .then_some(name)
+}
+
 /// Every argument that follows `subcmd`, **flags included**.
 ///
 /// `positional_args` exists to FIND the subcommand, so it drops every flag.
@@ -315,7 +337,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     let mut loaded = if pack_is_empty(pack) {
         match arg_value(&args, "--mockspace-lint-rules-dep") {
             Some(dep) => {
-                match crate::custom_lints::load(&cfg, &cfg.config_path, &dep) {
+                let built = match scoped_tool(&args, &cfg.mock_dir.join("tools")) {
+                    Some(tool) => {
+                        crate::custom_lints::load_tool(&cfg, &cfg.config_path, &dep, tool)
+                    },
+                    None => crate::custom_lints::load(&cfg, &cfg.config_path, &dep),
+                };
+                match built {
                     Ok(l) => l,
                     // A pack that will not build is a blocking failure, not a
                     // warning. Reporting it and carrying on runs every remaining
@@ -2124,4 +2152,60 @@ fn registry_gate(
         },
     }
     errors
+}
+
+#[cfg(test)]
+mod scoped_tool_tests {
+    use super::*;
+
+    fn args(rest: &[&str]) -> Vec<String> {
+        std::iter::once("mock".to_string())
+            .chain(rest.iter().map(|s| s.to_string()))
+            .collect()
+    }
+
+    fn tools(names: &[&str]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for n in names {
+            let t = dir.path().join(n);
+            std::fs::create_dir_all(&t).unwrap();
+            std::fs::write(t.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn a_run_of_a_tool_directory_is_cut_to_that_tool() {
+        let t = tools(&["ticket-add", "asset-new"]);
+        let a = args(&["ticket-add", "x", "--kind", "task"]);
+        assert_eq!(scoped_tool(&a, t.path()), Some("ticket-add"));
+        // the name is read past a value global, as the dispatcher reads it
+        let b = args(&["--dir", "mock", "asset-new"]);
+        assert_eq!(scoped_tool(&b, t.path()), Some("asset-new"));
+    }
+
+    #[test]
+    fn nothing_that_lints_is_cut() {
+        // the controls: a builtin, a name no directory carries, a bare run,
+        // and a directory without a manifest are all the whole build
+        let t = tools(&["ticket-add"]);
+        std::fs::create_dir_all(t.path().join("no-manifest")).unwrap();
+        for a in [
+            args(&["check"]),
+            args(&["unknown-thing"]),
+            args(&[]),
+            args(&["no-manifest"]),
+            args(&["--lint-only", "--commit"]),
+        ] {
+            assert_eq!(scoped_tool(&a, t.path()), None, "{a:?}");
+        }
+    }
+
+    #[test]
+    fn a_tool_named_like_a_builtin_is_not_cut() {
+        // `tool_is_shadowed_by_a_builtin` reports that one against the whole
+        // pack, and it must still see the pack
+        let t = tools(&["check"]);
+        assert_eq!(scoped_tool(&args(&["check"]), t.path()), None);
+    }
 }

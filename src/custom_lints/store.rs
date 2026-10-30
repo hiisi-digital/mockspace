@@ -108,11 +108,16 @@ fn base_from(
 /// rev of its tip (see [`resolve_packs`]). A changed rev is a new key and so a
 /// separate build; the same revs from any worktree are the same cargo package,
 /// which is the sharing. Pure apart from reading the repo's git config.
+///
+/// `scope` is the one tool a build is cut to (`None` for the whole content),
+/// and it is part of the key: a build of one tool is not the build of every
+/// lint and tool, and the two must not overwrite each other's generated crate.
 pub(crate) fn lints_manifest_path(
     base: &Path,
     cfg: &Config,
     lint_rules_dep: &str,
     packs: &[(String, String)],
+    scope: Option<&str>,
 ) -> PathBuf {
     let mock_rel = cfg
         .mock_dir
@@ -123,6 +128,7 @@ pub(crate) fn lints_manifest_path(
         mock_rel,
         lint_rules_dep,
         packs,
+        scope,
     );
     base.join(format!("{key:016x}")).join("Cargo.toml")
 }
@@ -156,10 +162,16 @@ fn lint_crate_key(
     mock_rel: &Path,
     lint_rules_dep: &str,
     packs: &[(String, String)],
+    scope: Option<&str>,
 ) -> u64 {
     let mut text = format!("{identity}\n{}\n{lint_rules_dep}\n", mock_rel.display());
     for (name, spec) in packs {
         text.push_str(&format!("{name}={spec}\n"));
+    }
+    // Appended only when set, so the key of every whole build is the key it
+    // always had and no existing build is orphaned.
+    if let Some(tool) = scope {
+        text.push_str(&format!("scope={tool}\n"));
     }
     crate::pack_pin::fnv1a(text.as_bytes())
 }

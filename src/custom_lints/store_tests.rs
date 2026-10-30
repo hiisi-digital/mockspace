@@ -67,7 +67,7 @@ fn path_of(
     resolve: &dyn Fn(&str, &str) -> Result<String, String>,
 ) -> PathBuf {
     let packs = resolve_packs(packs, &base.join(".pack-pins"), resolve);
-    lints_manifest_path(base, &Config::from_dir(mock), dep, &packs)
+    lints_manifest_path(base, &Config::from_dir(mock), dep, &packs, None)
 }
 
 fn no_remote(_: &str, _: &str) -> Result<String, String> {
@@ -552,5 +552,22 @@ fn a_run_stamps_its_key_as_used() {
     assert!(
         !abandoned(&dir, SystemTime::now(), STALE_AFTER),
         "a key a run has just used is not abandoned"
+    );
+}
+
+#[test]
+fn a_tool_scoped_build_has_a_manifest_path_of_its_own() {
+    let c = consumer("ssh://git@example.invalid/o/consumer.git");
+    let cfg = Config::from_dir(&c.main.join("mock"));
+    let base = Path::new("/shared");
+    let whole = lints_manifest_path(base, &cfg, DEP, &[], None);
+    let add = lints_manifest_path(base, &cfg, DEP, &[], Some("ticket-add"));
+    let mv = lints_manifest_path(base, &cfg, DEP, &[], Some("ticket-move"));
+    assert_ne!(whole, add, "a scoped build must not overwrite the whole one");
+    assert_ne!(add, mv, "two scopes are two builds");
+    assert_eq!(
+        add,
+        lints_manifest_path(base, &cfg, DEP, &[], Some("ticket-add")),
+        "the same scope from the same repo is one build"
     );
 }
