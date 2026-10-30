@@ -67,11 +67,37 @@ const MAX_PERMUTED_PARENTS: usize = 4;
 pub(crate) enum Verdict {
     /// Nothing the parents did not carry, in order.
     Recombines,
-    /// A line was typed, repeated, deleted or moved.
-    Authored,
+    /// A line was typed, repeated, deleted or moved, and which test said so.
+    Authored(Why),
     /// The order test would take longer than [`TIME_CAP`] allows, so the file
     /// is not judged inherited.
     TooLarge,
+}
+
+/// Which line test found a merge authored, so the refusal can say it.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum Why {
+    /// A line no parent carries, a repeat past the bound, or a line every
+    /// parent carries that is gone.
+    Counted,
+    /// Two lines the parents share stand in an order no parent has them in.
+    Order,
+    /// The lines do not split into one subsequence per parent.
+    Sequence,
+}
+
+impl Why {
+    /// The sentence a refusal prints for it.
+    pub(crate) const fn says(self) -> &'static str {
+        match self {
+            Why::Counted => {
+                "a line neither parent carries, a line repeated beyond what the parents carry \
+                 together, or a line every parent carries that is gone"
+            },
+            Why::Order => "two lines the parents share, put in an order no parent has them in",
+            Why::Sequence => "lines that do not keep each parent's own order",
+        }
+    }
 }
 
 /// Whether `staged` only recombines the lines of `parents`, per the module doc.
@@ -92,12 +118,15 @@ pub(crate) fn recombines<'a>(
         .iter()
         .map(|p| p.iter().map(|l| id_of(*l)).collect())
         .collect();
-    if !counted(&staged, &parents, &base) || !anchors_keep_their_order(&staged, &parents) {
-        return Verdict::Authored;
+    if !counted(&staged, &parents, &base) {
+        return Verdict::Authored(Why::Counted);
+    }
+    if !anchors_keep_their_order(&staged, &parents) {
+        return Verdict::Authored(Why::Order);
     }
     match in_sequence(&staged, &parents) {
         Ok(true) => Verdict::Recombines,
-        Ok(false) => Verdict::Authored,
+        Ok(false) => Verdict::Authored(Why::Sequence),
         Err(TooLarge) => Verdict::TooLarge,
     }
 }
@@ -147,8 +176,31 @@ fn anchors_keep_their_order(staged: &[u32], parents: &[Vec<u32>]) -> bool {
         lines.iter().copied().filter(|l| anchors.contains_key(l)).collect()
     };
     let spine = ordered(staged);
-    parents.iter().all(|p| ordered(p) == spine)
+    if parents.iter().all(|p| ordered(p) == spine) {
+        return true;
+    }
+    // The parents can disagree on the order of lines they share, where one side
+    // moved a line the other kept. A conflict there asks for a choice between
+    // the sides, so each pair of anchors may stand in the order some parent has
+    // it, and a pair in an order no parent has is the swap this test exists to
+    // refuse. Pairs are quadratic, so past the cap the file is refused rather
+    // than passed unchecked, as the sequence test does.
+    if spine.len() > MAX_DISAGREEING_ANCHORS {
+        return false;
+    }
+    let at: Vec<HashMap<u32, usize>> = parents
+        .iter()
+        .map(|p| ordered(p).into_iter().enumerate().map(|(i, l)| (l, i)).collect())
+        .collect();
+    spine.iter().enumerate().all(|(i, first)| {
+        spine[i + 1 ..]
+            .iter()
+            .all(|later| at.iter().any(|pos| pos[first] < pos[later]))
+    })
 }
+
+/// The most anchors the pairwise order test takes where the parents disagree.
+const MAX_DISAGREEING_ANCHORS: usize = 4_000;
 
 /// The sequence test would pass [`TIME_CAP`].
 struct TooLarge;
@@ -355,6 +407,49 @@ mod tests {
         assert_eq!(
             verdict(&format!("{reversed}{b}"), "", &[&a, &b]),
             Verdict::TooLarge
+        );
+    }
+
+
+    #[test]
+    fn a_consolidation_taking_one_sides_order_where_the_sides_disagree_is_inherited() {
+        // trunk re-sorted two imports the base had and the branch kept, and the
+        // branch added a line. Taking trunk's order and the branch's line is the
+        // merge git would make with trunk's hunk; before this it read as
+        // authored, since the shared lines' order could equal only one parent.
+        let base = "use a;\nuse c;\nbody\n";
+        let parents = ["use a;\nuse c;\nbody\nmine\n", "use c;\nuse a;\nbody\n"];
+        assert!(ok("use c;\nuse a;\nbody\nmine\n", base, &parents));
+        assert!(ok("use a;\nuse c;\nbody\nmine\n", base, &parents), "the branch's order too");
+    }
+
+    #[test]
+    fn a_swap_of_two_lines_no_parent_swapped_is_still_refused_where_the_sides_disagree_elsewhere() {
+        // the negative beside it: the sides disagree on a and c, and both keep
+        // x before y, so putting y first is an edit nobody made
+        let base = "use a;\nuse c;\nx\ny\n";
+        let parents = ["use a;\nuse c;\nx\ny\nmine\n", "use c;\nuse a;\nx\ny\n"];
+        assert!(ok("use c;\nuse a;\nx\ny\nmine\n", base, &parents), "the control");
+        assert!(!ok("use c;\nuse a;\ny\nx\nmine\n", base, &parents));
+    }
+
+
+    #[test]
+    fn a_refusal_names_the_test_that_refused_it() {
+        // a merge refused with no reason left a helper unable to tell a typed
+        // line from a moved one, so each test answers for itself
+        let base = "h\nx\ny\n";
+        let parents = ["h\nx\ny\nours\n", "h\nx\ny\ntheirs\n"];
+        assert_eq!(verdict("h\nx\ny\nours\ntheirs\n", base, &parents), Verdict::Recombines, "the control");
+        assert_eq!(
+            verdict("h\nx\ny\nours\ntheirs\nmine\n", base, &parents),
+            Verdict::Authored(Why::Counted)
+        );
+        assert_eq!(verdict("h\ny\nx\nours\ntheirs\n", base, &parents), Verdict::Authored(Why::Order));
+        // a and b repeat, so no line anchors them, and only the sequence test sees the swap
+        assert_eq!(
+            verdict("x\nb\nb\na\na\n", "", &["x\na\na\nb\nb\n", "y"]),
+            Verdict::Authored(Why::Sequence)
         );
     }
 

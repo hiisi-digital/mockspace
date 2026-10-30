@@ -173,7 +173,14 @@ impl Merge {
         };
         match crate::merge_lines::recombines(&lines_of(&staged), &parents, &lines_of(&base)) {
             Verdict::Recombines => true,
-            Verdict::Authored => false,
+            Verdict::Authored(why) => {
+                eprintln!(
+                    "mockspace: {file} is not excused as a merge, since it holds {}, so it is \
+                     gated as an authored change",
+                    why.says()
+                );
+                false
+            },
             Verdict::TooLarge => {
                 eprintln!(
                     "mockspace: {file} is too large for the merge line test to check in time, so \
