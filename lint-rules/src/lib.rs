@@ -1531,6 +1531,45 @@ pub struct RepoContext<'a> {
     /// Empty where the project declares no registry, which is legitimate and
     /// which every accessor answers without a special case.
     pub registry:    &'a crate::RegistryView,
+    /// The store saved verdicts live in, absent when the run keeps none. A lint reads it through
+    /// [`RepoContext::remembered`] and never directly.
+    pub verdicts:    Option<&'a dyn verdict::VerdictCache>,
+}
+
+impl RepoContext<'_> {
+    /// `compute`'s findings for the item named by `parts`, replayed from the store when the same
+    /// parts were judged before.
+    ///
+    /// **A repo lint is the widest reach there is and is never cached whole**, so one that spends
+    /// its time on separable items (a shader compiled, a file hashed against a table) decomposes
+    /// itself and asks here per item. `parts` is everything the item's verdict depends on, and
+    /// nothing else: the item's bytes, whatever it imports, the version of any tool it runs. A part
+    /// left out makes a stale verdict replay as fresh, which is why a decomposing lint is covered by
+    /// the same kind of test as a declared reach. `lint` is the lint's name, mixed into the key so
+    /// two lints asking with the same bytes do not share an answer.
+    pub fn remembered(
+        &self,
+        lint: &str,
+        parts: &[&[u8]],
+        compute: impl FnOnce() -> Vec<LintError>,
+    ) -> Vec<LintError> {
+        let Some(cache) = self.verdicts else {
+            return compute();
+        };
+        let mut all: Vec<&[u8]> = Vec::with_capacity(parts.len() + 2);
+        all.push(b"remembered-v1");
+        all.push(lint.as_bytes());
+        all.extend_from_slice(parts);
+        let key = cache.digest(&all);
+        if let Some(found) = cache.replay(&key).as_deref().and_then(verdict::decode) {
+            timing::count(|| format!("hit:{lint}"));
+            return found;
+        }
+        timing::count(|| format!("miss:{lint}"));
+        let found = compute();
+        cache.remember(&key, &verdict::encode(&found));
+        found
+    }
 }
 
 /// A lint handed an authored message rather than anything in the worktree.
@@ -2607,6 +2646,7 @@ mod pack_configuration_tests {
             canon_paths: &[],
             open_panels: &[],
             registry:    Box::leak(Box::new(Default::default())),
+            verdicts:    None,
         }
     }
 
@@ -2837,6 +2877,7 @@ mod repo_lint_tests {
             canon_paths: &[],
             open_panels: &[],
             registry:    &Default::default(),
+            verdicts:    None,
         };
 
         let extra: Vec<Box<dyn RepoLint>> = vec![Box::new(AlwaysReports)];
@@ -2954,6 +2995,7 @@ mod repo_lint_tests {
             canon_paths: &[],
             open_panels: &[],
             registry:    &Default::default(),
+            verdicts:    None,
         };
         let extra: Vec<Box<dyn RepoLint>> = vec![lint];
         let errors = check_repo_with_extra(&ctx, false, cfg, &extra);

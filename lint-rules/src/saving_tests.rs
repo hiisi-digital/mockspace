@@ -138,7 +138,7 @@ fn a_saved_run_gives_the_findings_a_full_run_gives() {
 fn editing_one_file_judges_only_that_file_for_a_file_reach_lint() {
     let store = Memory::default();
     let (lint, runs) = Counting::boxed(Reach::File);
-    let mut run = |root: &str, module: &str| {
+    let run = |root: &str, module: &str| {
         let fixture = crate_of(root, module);
         let before = runs.load(Ordering::SeqCst);
         let found = check_crate_saving(&fixture.ctx(), false, None, &lint, Some(&store));
@@ -160,7 +160,7 @@ fn editing_one_file_judges_only_that_file_for_a_file_reach_lint() {
 fn a_crate_reach_lint_reruns_when_any_file_of_the_crate_moves() {
     let store = Memory::default();
     let (lint, runs) = Counting::boxed(Reach::Crate);
-    let mut run = |module: &str| {
+    let run = |module: &str| {
         let fixture = crate_of(ROOT, module);
         let before = runs.load(Ordering::SeqCst);
         let _ = check_crate_saving(&fixture.ctx(), false, None, &lint, Some(&store));
@@ -224,4 +224,68 @@ fn a_lint_parameter_is_part_of_the_key() {
         store.stores.load(Ordering::SeqCst) > stores,
         "a configured parameter must judge the lint again"
     );
+}
+
+fn with_repo_context<R>(verdicts: Option<&dyn VerdictCache>, f: impl FnOnce(&crate::RepoContext) -> R) -> R {
+    let crates = std::collections::BTreeSet::new();
+    let registry = Default::default();
+    let ctx = crate::RepoContext {
+        mock_dir: std::path::Path::new("/mock"),
+        repo_root: std::path::Path::new("/"),
+        all_crates: &crates,
+        src_dirs: &[],
+        invocation: None,
+        canon_paths: &[],
+        open_panels: &[],
+        registry: &registry,
+        verdicts,
+    };
+    f(&ctx)
+}
+
+#[test]
+fn a_repo_lint_asks_the_store_per_item_and_a_changed_part_asks_again() {
+    let store = Memory::default();
+    let computed = AtomicUsize::new(0);
+    let judge = |ctx: &crate::RepoContext, item: &[u8]| {
+        ctx.remembered("per-item", &[item], || {
+            computed.fetch_add(1, Ordering::SeqCst);
+            vec![LintError::error("kaski".to_string(), 0, "per-item", "stale".to_string())]
+        })
+    };
+    with_repo_context(Some(&store), |ctx| {
+        let first = judge(ctx, b"shader-a");
+        assert_eq!(computed.load(Ordering::SeqCst), 1, "the control: a cold item is computed");
+        assert_eq!(lines(&judge(ctx, b"shader-a")), lines(&first), "a replay gives the findings that were saved");
+        assert_eq!(computed.load(Ordering::SeqCst), 1, "and does not compute again");
+        judge(ctx, b"shader-b");
+        assert_eq!(computed.load(Ordering::SeqCst), 2, "a different item is its own verdict");
+    });
+}
+
+#[test]
+fn a_repo_lint_without_a_store_computes_every_time() {
+    let computed = AtomicUsize::new(0);
+    with_repo_context(None, |ctx| {
+        for _ in 0 .. 2 {
+            ctx.remembered("per-item", &[b"x"], || {
+                computed.fetch_add(1, Ordering::SeqCst);
+                Vec::new()
+            });
+        }
+    });
+    assert_eq!(computed.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn two_repo_lints_with_the_same_bytes_do_not_share_an_answer() {
+    let store = Memory::default();
+    with_repo_context(Some(&store), |ctx| {
+        let a = ctx.remembered("lint-a", &[b"same"], || {
+            vec![LintError::error("p".to_string(), 0, "lint-a", "a".to_string())]
+        });
+        let b = ctx.remembered("lint-b", &[b"same"], Vec::new);
+        assert_eq!(a.len(), 1);
+        assert!(b.is_empty(), "lint-b must not receive lint-a's findings");
+    });
 }

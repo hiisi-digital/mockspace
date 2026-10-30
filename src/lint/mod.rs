@@ -309,6 +309,7 @@ pub fn run_lints(
         canon_paths,
         open_panels,
         registry,
+        verdicts: saved,
     };
     all_errors.extend(mockspace_lint_rules::check_repo_with_extra(
         &repo_ctx,

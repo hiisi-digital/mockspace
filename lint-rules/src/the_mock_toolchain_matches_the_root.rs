@@ -431,6 +431,7 @@ mod tests {
             canon_paths: &[],
             open_panels: &[],
             registry:    &registry,
+            verdicts:    None,
         };
         TheMockToolchainMatchesTheRoot.check_repo(&ctx)
     }

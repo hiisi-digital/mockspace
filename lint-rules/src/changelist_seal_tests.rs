@@ -63,6 +63,7 @@ fn check_in(mock: &Path, root: &Path) -> Vec<LintError> {
         canon_paths: &[],
         open_panels: &[],
         registry:    &Default::default(),
+        verdicts:    None,
     })
 }
 
