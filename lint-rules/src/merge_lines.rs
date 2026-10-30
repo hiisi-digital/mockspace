@@ -428,6 +428,13 @@ mod tests {
         let three = ["a\nb\nc\n", "b\nc\na\n", "c\na\nb\n"];
         assert_eq!(verdict("b\nc\na\n", base, &three), Verdict::Recombines, "the control");
         assert_eq!(verdict("c\nb\na\n", base, &three), Verdict::Authored(Why::Order));
+        // each side moved a different shared line: a recombination, refused on
+        // purpose, so that widening the rule to a three-way merge of the orders is
+        // a choice somebody makes and not a drift
+        let moved_apart = ["b\na\nc\nd\n", "a\nb\nd\nc\n"];
+        let base4 = "a\nb\nc\nd\n";
+        assert_eq!(verdict("b\na\nc\nd\n", base4, &moved_apart), Verdict::Recombines, "the control");
+        assert_eq!(verdict("b\na\nd\nc\n", base4, &moved_apart), Verdict::Authored(Why::Order));
     }
 
     #[test]
