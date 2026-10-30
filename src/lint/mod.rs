@@ -66,9 +66,6 @@ impl ParsedCrate {
         crate_dir: &Path,
         parser: &mut tree_sitter::Parser,
         replacing: Option<(&Path, &str)>,
-        // A crate whose `src/lib.rs` is not written yet is read with an empty one, which is
-        // what the gate reads of it once that file exists, so its other files are judged too.
-        empty_root: bool,
     ) -> Option<Self> {
         // Read every .rs file under src/ so lints can scan module files
         // (bits.rs, prim.rs, impl.rs, ...) in addition to lib.rs.
@@ -87,12 +84,6 @@ impl ParsedCrate {
                     });
                 },
             }
-        }
-        if empty_root && !all_sources.iter().any(|s| s.rel_path == Path::new("src/lib.rs")) {
-            all_sources.insert(0, CrateSourceFile {
-                rel_path: PathBuf::from("src/lib.rs"),
-                text:     String::new(),
-            });
         }
         let source = all_sources
             .iter()
@@ -177,27 +168,19 @@ pub fn lint_edit(
     }
     let crate_name = crate_dir.file_name()?.to_str()?;
     let mut parser = mockspace_lint_rules::make_parser();
-    // A crate with no `src/lib.rs` yet has no entry in discovery. Its root is built from
-    // the text about to be written when that is the root, and is empty otherwise, which is
-    // what the gate reads once the root exists, so a module file written first is judged
-    // as it will be at commit and not passed for want of a crate.
+    // Discovery takes a real crate directory holding a `src/lib.rs`, and nothing else is a
+    // crate to the gate. A crate with no root yet has no entry; the edit that writes the root
+    // makes it one, built from the text about to be written. Any other file of a directory
+    // the gate does not read is judged by nothing, as at commit.
     let new_root;
-    let empty_root = !crates.contains_key(crate_name);
-    if empty_root {
-        // Discovery takes a real directory with a `src/lib.rs`, so the gate never reads a crate
-        // directory that is a link, nor a crate that has only a binary root. What it will read
-        // once the root exists is judged; what it never reads is not.
-        let is_link = std::fs::symlink_metadata(&crate_dir).is_ok_and(|m| m.file_type().is_symlink());
-        let binary_only = rel_path != Path::new("src/lib.rs") && crate_dir.join("src/main.rs").exists();
-        if is_link || binary_only {
-            return None;
-        }
-    }
     let info = match crates.get(crate_name) {
         Some(info) => info,
         None => {
-            let root = if rel_path == Path::new("src/lib.rs") { text } else { "" };
-            new_root = crate::parse::crate_info(&mut parser, &crate_dir, crate_name, root, crate_prefix);
+            let is_link = std::fs::symlink_metadata(&crate_dir).is_ok_and(|m| m.file_type().is_symlink());
+            if is_link || rel_path != Path::new("src/lib.rs") {
+                return None;
+            }
+            new_root = crate::parse::crate_info(&mut parser, &crate_dir, crate_name, text, crate_prefix);
             &new_root
         },
     };
@@ -215,7 +198,7 @@ pub fn lint_edit(
     let overrides = if lint_overrides.is_empty() { None } else { Some(lint_overrides) };
     // The crate root's findings carry no path, and a module file's carry its own.
     let here = rel_path.to_string_lossy();
-    let krate = ParsedCrate::load(crate_name, info, &crate_dir, &mut parser, Some((&rel_path, text)), empty_root)?;
+    let krate = ParsedCrate::load(crate_name, info, &crate_dir, &mut parser, Some((&rel_path, text)))?;
     let found = mockspace_lint_rules::check_crate_named(
         &krate.context(&env),
         lint_name,
@@ -382,7 +365,7 @@ pub fn run_lints(
         else {
             continue;
         };
-        let Some(krate) = ParsedCrate::load(crate_name, info, &crate_dir, &mut parser, None, false) else {
+        let Some(krate) = ParsedCrate::load(crate_name, info, &crate_dir, &mut parser, None) else {
             continue;
         };
 

@@ -97,6 +97,10 @@ fn normalised(path: &Path) -> Option<std::path::PathBuf> {
         match c {
             Component::CurDir => {},
             Component::ParentDir => {
+                // Against where the prefix really is, as the filesystem reads `..`.
+                if let Ok(real) = out.canonicalize() {
+                    out = real;
+                }
                 out.pop();
             },
             other => out.push(other.as_os_str()),
@@ -109,19 +113,24 @@ fn normalised(path: &Path) -> Option<std::path::PathBuf> {
 type GateDir = (std::path::PathBuf, std::path::PathBuf);
 
 /// `dir` and every directory under it, followed through links the way the gate's own walk
-/// follows them, each recorded once under the first spelling that reached it.
-fn walk_dirs(dir: &Path, out: &mut Vec<GateDir>, seen: &mut std::collections::BTreeSet<std::path::PathBuf>) {
+/// follows them. A directory reached by several places is recorded at each, since the gate
+/// lints its files in every crate that reaches them; only a directory that is its own
+/// ancestor, a cycle, is not entered again.
+fn walk_dirs(dir: &Path, out: &mut Vec<GateDir>, ancestors: &mut Vec<std::path::PathBuf>) {
     let Ok(real) = dir.canonicalize() else { return };
-    if !seen.insert(real.clone()) {
+    if ancestors.contains(&real) {
         return;
     }
-    out.push((real, dir.to_path_buf()));
-    let Ok(read) = std::fs::read_dir(dir) else { return };
-    for entry in read.flatten() {
-        if entry.path().is_dir() {
-            walk_dirs(&entry.path(), out, seen);
+    out.push((real.clone(), dir.to_path_buf()));
+    ancestors.push(real);
+    if let Ok(read) = std::fs::read_dir(dir) {
+        for entry in read.flatten() {
+            if entry.path().is_dir() {
+                walk_dirs(&entry.path(), out, ancestors);
+            }
         }
     }
+    ancestors.pop();
 }
 
 /// Every directory the gate reads Rust from: the source directories, each crate directory
@@ -129,7 +138,6 @@ fn walk_dirs(dir: &Path, out: &mut Vec<GateDir>, seen: &mut std::collections::BT
 /// everything under a crate's `src`.
 fn gate_directories(src_dirs: &[std::path::PathBuf]) -> Vec<GateDir> {
     let mut out = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
     for root in src_dirs {
         if let Ok(real) = root.canonicalize() {
             out.push((real, root.to_path_buf()));
@@ -139,24 +147,24 @@ fn gate_directories(src_dirs: &[std::path::PathBuf]) -> Vec<GateDir> {
             if let Ok(real) = entry.path().canonicalize() {
                 out.push((real, entry.path()));
             }
-            walk_dirs(&entry.path().join("src"), &mut out, &mut seen);
+            walk_dirs(&entry.path().join("src"), &mut out, &mut Vec::new());
         }
     }
     out
 }
 
-/// `path` spelled the way the gate reaches the same file: its directory taken to the
+/// `path` spelled every way the gate reaches the same file: its directory taken to each
 /// place in a crate that really is that directory, and its last component kept.
 ///
 /// An edit written through a link, to a source directory or into a crate's linked `src` or
 /// module directory, names no crate when read lexically and would pass unjudged, while the
-/// gate lints the file at its place in the crate. The deepest directory of the path that
-/// exists is resolved, the rest is appended as spelled, since the file or its directories may
-/// be what the edit creates. A path that reaches none of the gate's directories comes back as
-/// it was.
-fn through_directory_links(path: &Path, src_dirs: &[std::path::PathBuf]) -> std::path::PathBuf {
+/// gate lints the file at its place in every crate that reaches it. The deepest directory of
+/// the path that exists is resolved, the rest is appended as spelled, since the file or its
+/// directories may be what the edit creates. A path that reaches none of the gate's
+/// directories comes back as it was.
+fn through_directory_links(path: &Path, src_dirs: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-        return path.to_path_buf();
+        return vec![path.to_path_buf()];
     };
     let mut rest = Vec::new();
     let mut probe = parent;
@@ -168,16 +176,20 @@ fn through_directory_links(path: &Path, src_dirs: &[std::path::PathBuf]) -> std:
                     rest.push(last.to_os_string());
                     probe = up;
                 },
-                _ => return path.to_path_buf(),
+                _ => return vec![path.to_path_buf()],
             },
         }
     };
-    let Some((_, place)) = gate_directories(src_dirs).into_iter().find(|(r, _)| *r == real) else {
-        return path.to_path_buf();
-    };
-    let mut out = place;
-    out.extend(rest.iter().rev());
-    out.join(name)
+    let places: Vec<_> = gate_directories(src_dirs)
+        .into_iter()
+        .filter(|(r, _)| *r == real)
+        .map(|(_, place)| {
+            let mut out = place;
+            out.extend(rest.iter().rev());
+            out.join(name)
+        })
+        .collect();
+    if places.is_empty() { vec![path.to_path_buf()] } else { places }
 }
 
 /// Ask. Exit success when the lint blocks nothing in `req.file`, failure with the
@@ -234,39 +246,39 @@ fn exit_of(cfg: &Config, pack: &LintPack, req: &Request) -> u8 {
         .iter()
         .map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()))
         .collect();
-    let file = through_directory_links(&file, &src_dirs);
-
-    let Some(text) = after(req, || std::fs::read_to_string(&file).ok()) else {
-        return 0;
-    };
+    let places = through_directory_links(&file, &src_dirs);
 
     let crates = crate::parse::discover_crates_in(&src_dirs, &cfg.crate_prefix);
-    let Some(found) = crate::lint::lint_edit(
-        &crates,
-        &src_dirs,
-        &cfg.mock_dir,
-        &cfg.proc_macro_crates,
-        cfg.lint_proc_macro_source,
-        &cfg.crate_prefix,
-        &cfg.lint_overrides,
-        &cfg.primitive_introductions,
-        pack,
-        req.lint,
-        &file,
-        &text,
-    ) else {
-        // In no crate of this repository, so no lint here is about it.
-        return 0;
-    };
-
-    let blocking: Vec<_> = found
-        .iter()
-        .filter(|e| e.severity.effective(req.mode) == Level::Error)
-        .collect();
-    for e in &blocking {
-        eprintln!("{e}");
+    // The gate lints a file once in every crate that reaches it, so the edit is refused when
+    // any of those places would block.
+    let mut blocked = false;
+    for file in &places {
+        let Some(text) = after(req, || std::fs::read_to_string(file).ok()) else {
+            continue;
+        };
+        let Some(found) = crate::lint::lint_edit(
+            &crates,
+            &src_dirs,
+            &cfg.mock_dir,
+            &cfg.proc_macro_crates,
+            cfg.lint_proc_macro_source,
+            &cfg.crate_prefix,
+            &cfg.lint_overrides,
+            &cfg.primitive_introductions,
+            pack,
+            req.lint,
+            file,
+            &text,
+        ) else {
+            // In no crate of this repository, so no lint here is about it.
+            continue;
+        };
+        for e in found.iter().filter(|e| e.severity.effective(req.mode) == Level::Error) {
+            eprintln!("{e}");
+            blocked = true;
+        }
     }
-    if blocking.is_empty() { 0 } else { 1 }
+    u8::from(blocked)
 }
 
 #[cfg(test)]

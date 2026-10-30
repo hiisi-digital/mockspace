@@ -190,7 +190,8 @@ fn edit_verdict(cfg: &Config, file: &Path, text: &str) -> Vec<mockspace_lint_rul
         file,
         text,
     )
-    .expect("the file is in a crate of the repository")
+    // No verdict at all, a file in no crate the gate reads, comes back as no findings.
+    .unwrap_or_default()
 }
 
 /// What the gate says of the same text once it is on disk: the blocking count of
@@ -718,20 +719,22 @@ fn a_new_crates_first_lib_rs_gets_the_verdict_the_gate_gives_it_once_written() {
 }
 
 #[test]
-fn a_module_file_written_before_a_crates_root_is_judged_as_it_will_be_at_commit() {
+fn a_module_file_in_a_crate_with_no_root_has_no_verdict_until_the_root_exists() {
+    // Discovery takes a directory holding `src/lib.rs` and nothing else, so the gate reads no
+    // crate here and the hook has nothing to say about a file in one.
     let tmp = tempfile::tempdir().unwrap();
     let cfg = repo_with_crates(tmp.path(), "std::*");
     let dir = tmp.path().join("mock/crates/sim-fresh");
     let extra = dir.join("src/extra.rs");
     let text = "use std::fmt;\n";
-    let hook = edit_verdict(&cfg, &extra, text).len();
-    assert!(hook > 0, "a violation in a rootless crate's module file was passed");
-    // Once the root exists, the gate reads the module file the hook was asked about.
+    assert!(edit_verdict(&cfg, &extra, text).is_empty(), "a rootless crate's module file was refused");
+    // The edit that writes the root makes the crate one, and is judged on its text.
+    assert!(!edit_verdict(&cfg, &dir.join("src/lib.rs"), text).is_empty());
+    // The control: with the root on disk, the same module file is the gate's business.
     fs::create_dir_all(dir.join("src")).unwrap();
-    fs::write(&extra, text).unwrap();
-    let gate = gate_verdict(&cfg, "sim-fresh", &dir.join("src/lib.rs"), "pub fn f() {}\n");
+    fs::write(dir.join("src/lib.rs"), "pub fn f() {}\n").unwrap();
+    let hook = edit_verdict(&cfg, &extra, text).len();
+    let gate = gate_verdict(&cfg, "sim-fresh", &extra, text);
+    assert!(hook > 0);
     assert_eq!(hook, gate, "the hook and the gate disagree");
-    // The control: a clean module file in a rootless crate is passed.
-    fs::remove_dir_all(&dir).unwrap();
-    assert!(edit_verdict(&cfg, &extra, "pub fn g() {}\n").is_empty());
 }

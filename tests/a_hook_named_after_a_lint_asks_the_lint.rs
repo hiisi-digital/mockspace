@@ -499,6 +499,119 @@ fn a_crate_the_gate_never_reads_is_not_refused_by_the_hook() {
     assert!(!refused(&hook_says(&repo, &through, "use std::fmt;\n")), "a crate directory that is a link");
 }
 
+/// Whether the commit gate reports a `forbidden-imports` error for what is on disk. The
+/// scratch repository trips other lints the hook is not about, so the lint is read off the
+/// gate's findings and not its exit status.
+fn gate_refuses(repo: &Repo) -> bool {
+    let out = repo
+        .cmd(common::BIN)
+        .current_dir(repo.root.join("mock"))
+        .args(["--lint-only", "--commit"])
+        .output()
+        .unwrap();
+    let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    said.lines().any(|l| l.contains("[forbidden-imports/") && l.contains("[error]"))
+}
+
+#[test]
+fn the_hook_and_the_gate_give_one_verdict_on_the_same_text_in_every_layout() {
+    // The invariant: the same text gets the same answer typed into an editor and checked at
+    // commit. Each layout is built, the violation is written where the case names, the gate
+    // is run on it, and the hook is asked about the same text at the same path.
+    type Layout = fn(&Repo) -> std::path::PathBuf;
+    let cases: &[(&str, Layout)] = &[
+        ("a plain lib.rs", |r| r.root.join("mock/crates/fixture-sim/src/lib.rs")),
+        ("a new crate with only src/main.rs", |r| {
+            let d = r.root.join("mock/crates/fixture-bin");
+            write(&d.join("Cargo.toml"), "[package]\nname = \"fixture-bin\"\nversion = \"0.0.0\"\n");
+            d.join("src/main.rs")
+        }),
+        ("a new crate with only src/bin/x.rs", |r| {
+            let d = r.root.join("mock/crates/fixture-bin");
+            write(&d.join("Cargo.toml"), "[package]\nname = \"fixture-bin\"\nversion = \"0.0.0\"\n");
+            d.join("src/bin/x.rs")
+        }),
+        ("a crate directory with no root", |r| {
+            let d = r.root.join("mock/crates/fixture-notes");
+            write(&d.join("Cargo.toml"), "[package]\nname = \"fixture-notes\"\nversion = \"0.0.0\"\n");
+            d.join("src/scratch.rs")
+        }),
+        ("a new crate's first lib.rs", |r| {
+            let d = r.root.join("mock/crates/fixture-new");
+            write(&d.join("Cargo.toml"), "[package]\nname = \"fixture-new\"\nversion = \"0.0.0\"\n");
+            d.join("src/lib.rs")
+        }),
+        ("a module directory linked into two crates, written through the second", |r| {
+            let shared = r.root.join("shared");
+            write(&shared.join("mod.rs"), "pub fn g() {}\n");
+            for k in ["fixture-sim", "fixture-ui"] {
+                std::os::unix::fs::symlink(&shared, r.root.join("mock/crates").join(k).join("src/gen")).unwrap();
+            }
+            r.root.join("mock/crates/fixture-ui/src/gen/mod.rs")
+        }),
+        ("a module directory linked into two crates, written at its real path", |r| {
+            let shared = r.root.join("shared");
+            write(&shared.join("mod.rs"), "pub fn g() {}\n");
+            for k in ["fixture-sim", "fixture-ui"] {
+                std::os::unix::fs::symlink(&shared, r.root.join("mock/crates").join(k).join("src/gen")).unwrap();
+            }
+            shared.join("mod.rs")
+        }),
+    ];
+    for (name, layout) in cases {
+        let repo = fixture();
+        // Both crates in scope, so a file in either is the lint's business.
+        write(&repo.root.join("mock/mockspace.toml"), &CONFIG.replace("scope = \"fixture-sim\"", "scope = \"fixture-*\""));
+        let path = layout(&repo);
+        let text = "use std::fmt;\n";
+        let before = path.exists().then(|| fs::read_to_string(&path).unwrap());
+        write(&path, text);
+        let gate = gate_refuses(&repo);
+        match before {
+            Some(b) => write(&path, &b),
+            None => fs::remove_file(&path).unwrap(),
+        }
+        let hook = refused(&hook_says(&repo, &path, text));
+        assert_eq!(hook, gate, "{name}: the hook said {hook} and the gate said {gate}");
+    }
+}
+
+#[test]
+fn an_edit_in_a_module_linked_into_two_crates_is_refused_when_either_would_block() {
+    // The gate lints the file once in each crate that reaches it, so one crate out of scope
+    // does not make the edit pass while the other refuses it.
+    let repo = fixture();
+    let shared = repo.root.join("shared");
+    write(&shared.join("mod.rs"), "pub fn g() {}\n");
+    for k in ["fixture-ui", "fixture-sim"] {
+        std::os::unix::fs::symlink(&shared, repo.root.join("mock/crates").join(k).join("src/gen")).unwrap();
+    }
+    for p in [
+        repo.root.join("mock/crates/fixture-ui/src/gen/mod.rs"),
+        repo.root.join("mock/crates/fixture-sim/src/gen/mod.rs"),
+        shared.join("mod.rs"),
+    ] {
+        assert!(refused(&hook_says(&repo, &p, "use std::fmt;\n")), "{}", p.display());
+    }
+}
+
+#[test]
+fn an_edit_spelled_with_a_parent_component_is_judged_where_the_filesystem_reads_it() {
+    // `hop` links to a directory two levels down, so `hop/..` is not the directory `hop` sits in.
+    let repo = fixture();
+    let far = repo.root.join("far");
+    fs::create_dir_all(far.join("deep")).unwrap();
+    std::os::unix::fs::symlink(&far, repo.root.join("mock/crates/fixture-sim/src/hop")).unwrap();
+    // `src/hop` is `far`, so `src/hop/..` is the repository root, and the path reaches the
+    // crate's real `lib.rs`; read lexically it would be under the crate's `src` and name no file.
+    let path = repo.root.join("mock/crates/fixture-sim/src/hop/../mock/crates/fixture-sim/src/lib.rs");
+    let out = hook_says(&repo, &path, "use std::fmt;\n");
+    assert!(refused(&out), "a path the filesystem sends to a crate's lib.rs was passed: {out}");
+    // The control: the same text at a path that reaches no crate is not refused.
+    let outside = repo.root.join("mock/crates/fixture-sim/src/hop/../elsewhere.rs");
+    assert!(!refused(&hook_says(&repo, &outside, "use std::fmt;\n")));
+}
+
 #[test]
 fn an_existing_hooks_file_version_is_kept() {
     let repo = fixture();
