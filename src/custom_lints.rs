@@ -107,6 +107,12 @@ fn discover(cfg: &Config, config_path: &Path) -> Option<Content> {
 /// A tool is handed the repo's paths and its arguments and nothing of the lint
 /// pack (`ToolContext`), so the lints and the packs add nothing to a run of
 /// one, and compiling them is what a run of it waits on.
+///
+/// Leaving the packs out means a name a pack also registers is not met here: it
+/// is a stale local copy of a tool the pack ships, refused with exit 2 by every
+/// whole run (`mock check`, `mock tools`) through `duplicate_tool_names`. A pack
+/// cannot be asked what it registers without building it, which is the cost
+/// this exists to avoid, so the refusal belongs to the runs that load it.
 fn discover_scoped(cfg: &Config, config_path: &Path, tool: &str) -> Option<Content> {
     let mut content = discover(cfg, config_path)?;
     content.tools.retain(|t| t.dir == tool);
@@ -205,7 +211,7 @@ fn build_and_load(
         lint_rules_dep,
         cfg,
     )?;
-    store::record_owner(&gen_dir, &cfg.mock_dir)?;
+    store::record_owner(&gen_dir, &cfg.mock_dir, scope)?;
     store::touch_used(&gen_dir)?;
     #[cfg(test)]
     store::knobs::pause_between_write_and_build(&gen_dir);

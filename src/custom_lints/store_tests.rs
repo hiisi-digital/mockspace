@@ -317,9 +317,9 @@ fn the_crate_is_tested_only_by_the_worktree_that_last_wrote_it() {
         Generated::Absent,
         "nothing generated yet"
     );
-    record_owner(&gen_dir, &one).unwrap();
+    record_owner(&gen_dir, &one, None).unwrap();
     assert_eq!(generated_dir_of(&one), Generated::Yours(gen_dir.clone()));
-    record_owner(&gen_dir, &two).unwrap();
+    record_owner(&gen_dir, &two, None).unwrap();
     assert_eq!(generated_dir_of(&two), Generated::Yours(gen_dir.clone()));
     assert_eq!(
         generated_dir_of(&one),
@@ -565,9 +565,47 @@ fn a_tool_scoped_build_has_a_manifest_path_of_its_own() {
     let mv = lints_manifest_path(base, &cfg, DEP, &[], Some("ticket-move"));
     assert_ne!(whole, add, "a scoped build must not overwrite the whole one");
     assert_ne!(add, mv, "two scopes are two builds");
+}
+
+#[test]
+fn a_scoped_build_never_moves_the_pointer_the_test_run_reads() {
+    // `mock test` takes the lints tree from the pointer. A one-tool crate behind it has no lint modules, so
+    // the run would be green over nothing, the outcome entry/test.rs refuses. Mutation: the scoped build
+    // records the pointer like the whole one, and the second assertion names the one-tool directory.
+    let tmp = tempfile::tempdir().unwrap();
+    let whole = tmp.path().join("shared").join("whole");
+    let scoped = tmp.path().join("shared").join("scoped");
+    for d in [&whole, &scoped] {
+        std::fs::create_dir_all(d).unwrap();
+        std::fs::write(d.join("Cargo.toml"), "").unwrap();
+    }
+    let mock = tmp.path().join("one").join("mock");
+    record_owner(&whole, &mock, None).unwrap();
+    record_owner(&scoped, &mock, Some("ticket-add")).unwrap();
     assert_eq!(
-        add,
-        lints_manifest_path(base, &cfg, DEP, &[], Some("ticket-add")),
-        "the same scope from the same repo is one build"
+        generated_dir_of(&mock),
+        Generated::Yours(whole.clone()),
+        "the tests still run the whole build's lints"
+    );
+    // the control: the scoped directory is still owned and stamped, so the reaper and a later build see it
+    assert_eq!(
+        std::fs::read_to_string(scoped.join(OWNER)).unwrap(),
+        mock.display().to_string()
     );
 }
+
+#[test]
+fn a_whole_build_keeps_the_key_it_always_had() {
+    // The key names a directory that outlives the binary. A golden value, so a change to the text it hashes
+    // is a failure here and not a quietly orphaned build per repository. Packs are present, since the
+    // scope line is appended after them.
+    let packs = vec![(
+        "some-pack".to_string(),
+        r#"{ git = "https://example.invalid/pack.git", rev = "1111111" }"#.to_string(),
+    )];
+    let key = lint_crate_key("remote:example.invalid/o/consumer", Path::new("mock"), DEP, &packs, None);
+    assert_eq!(format!("{key:016x}"), GOLDEN_WHOLE_KEY);
+    let scoped = lint_crate_key("remote:example.invalid/o/consumer", Path::new("mock"), DEP, &packs, Some("t"));
+    assert_ne!(key, scoped);
+}
+const GOLDEN_WHOLE_KEY: &str = "3040726b2cef6a9f"; // fnv1a of the original key text, computed apart from the code

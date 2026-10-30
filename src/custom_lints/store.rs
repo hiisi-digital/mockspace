@@ -329,8 +329,19 @@ fn is_the_file_at(_file: &File, path: &Path) -> bool {
 
 /// Record which worktree last wrote the shared crate, and where, so `mock test`
 /// in a worktree can tell the crate is its own.
-pub(crate) fn record_owner(gen_dir: &Path, mock_dir: &Path) -> Result<(), String> {
+///
+/// A build cut to one tool (`scope`) records its owner, which the reaper reads, and never the pointer: `mock
+/// test` takes the lints it runs from the pointer, and a crate of one tool has none, so a pointer moved to it
+/// is a green test run over no lints.
+pub(crate) fn record_owner(
+    gen_dir: &Path,
+    mock_dir: &Path,
+    scope: Option<&str>,
+) -> Result<(), String> {
     super::write_if_changed(&gen_dir.join(OWNER), &mock_dir.display().to_string())?;
+    if scope.is_some() {
+        return Ok(());
+    }
     let local = crate::build_dir::ensure_under_target(mock_dir, &[crate::build_dir::LINT_CRATE]);
     super::write_if_changed(&local.join(POINTER), &gen_dir.display().to_string())
 }

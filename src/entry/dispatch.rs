@@ -2251,3 +2251,44 @@ mod scoped_tool_tests {
         assert_eq!(scoped_tool(&args(&["check"]), t.path()), None);
     }
 }
+
+#[cfg(test)]
+mod scoped_tool_law_tests {
+    use super::*;
+
+    #[test]
+    fn no_builtin_and_no_help_spelling_is_ever_cut_whatever_directory_shadows_it() {
+        // The law over every name a builtin answers to, with a tool directory present for each: a sampled
+        // `check` would pass a rule that only knew that one.
+        let mut names: Vec<&str> = super::super::help::known_commands();
+        names.extend(["help", "--help", "-h", "-?"]);
+        let dir = tempfile::tempdir().unwrap();
+        for n in names.iter().filter(|n| !n.starts_with('-')) {
+            let t = dir.path().join(n);
+            std::fs::create_dir_all(&t).unwrap();
+            std::fs::write(t.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        }
+        assert!(names.len() > 10, "the law ran over the builtins, not over nothing");
+        for n in &names {
+            let a = vec!["mock".to_string(), (*n).to_string()];
+            assert_eq!(scoped_tool(&a, dir.path()), None, "`{n}` is a builtin's name");
+        }
+    }
+
+    #[test]
+    fn a_value_flag_names_no_tool_even_with_that_directory_present() {
+        // `--scope ticket-add` is a value, not a subcommand, and the run is a lint run.
+        let dir = tempfile::tempdir().unwrap();
+        let t = dir.path().join("ticket-add");
+        std::fs::create_dir_all(&t).unwrap();
+        std::fs::write(t.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        let a: Vec<String> = ["mock", "--lint-only", "--commit", "--scope", "ticket-add"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(scoped_tool(&a, dir.path()), None);
+        // the control: the same directory and name as a subcommand is cut
+        let b: Vec<String> = ["mock", "ticket-add"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(scoped_tool(&b, dir.path()), Some("ticket-add"));
+    }
+}
