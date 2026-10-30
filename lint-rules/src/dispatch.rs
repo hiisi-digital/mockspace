@@ -162,25 +162,17 @@ pub(crate) fn check_every_file_saving(
                     s.scalars.as_bytes(),
                     file.text.as_bytes(),
                 ]);
-                match s.cache.replay(&key).and_then(|t| verdict::decode(&t)) {
-                    Some(found) => {
-                        s.cache.tally(true, lint.name());
-                        any_judged = true;
-                        found
-                    },
-                    None => {
-                        let Some(tree) = parsed.tree(i) else { continue };
-                        any_judged = true;
-                        s.cache.tally(false, lint.name());
-                        let found = lint.check(&LintContext {
-                            source: &file.text,
-                            tree,
-                            ..*ctx
-                        });
-                        s.cache.remember(&key, &verdict::encode(&found));
-                        found
-                    },
-                }
+                let judged = verdict::replay_or(s.cache, &key, lint.name(), || {
+                    let tree = parsed.tree(i)?;
+                    Some(lint.check(&LintContext {
+                        source: &file.text,
+                        tree,
+                        ..*ctx
+                    }))
+                });
+                let Some(found) = judged else { continue };
+                any_judged = true;
+                found
             },
             None => {
                 let Some(tree) = parsed.tree(i) else { continue };

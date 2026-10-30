@@ -13,8 +13,10 @@
 //! **Declaring none is declaring the widest.** [`Lint::reach`](crate::Lint::reach) defaults to
 //! [`Reach::Repository`], which the engine never caches, so a lint written without knowing this
 //! exists, a pack lint included, is run on every gate as it always was. Narrowing is the lint's
-//! choice and the test in `reach_tests` holds it to the promise: a lint that reads outside what it
-//! declared gives different findings when only that outside input moves, and the test fails.
+//! choice, and [`reach_check`](crate::reach_check) samples the promise: a lint that reads outside
+//! what it declared gives different findings when only that outside input moves, and the check
+//! fails. A sample is not a proof, which is why a lint that finds nothing on its corpus fails the
+//! built-in test instead of passing it.
 
 /// How far a lint reads, from one file to the whole repository.
 ///

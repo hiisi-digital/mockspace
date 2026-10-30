@@ -385,3 +385,97 @@ fn a_workspace_lint_replays_until_a_bound_crate_moves() {
     assert!(saved.iter().any(|f| f.message == "2 crates, 2 fixme"), "{saved:?}");
     assert_eq!(runs.load(Ordering::SeqCst) - before, 2, "a moved crate runs the lint again");
 }
+
+fn stores_after_changing(change: impl FnOnce(LintFixture) -> LintFixture) -> (usize, usize) {
+    let store = Memory::default();
+    let before = crate_of(ROOT, MODULE);
+    let _ = check_crate_saving(&before.ctx(), false, None, &[], Some(&store));
+    let saved = store.stores.load(Ordering::SeqCst);
+    let after = change(crate_of(ROOT, MODULE));
+    let _ = check_crate_saving(&after.ctx(), false, None, &[], Some(&store));
+    (saved, store.stores.load(Ordering::SeqCst))
+}
+
+#[test]
+fn a_changed_crate_scalar_judges_the_file_lints_again() {
+    let (control_before, control_after) = stores_after_changing(|f| f);
+    assert_eq!(control_before, control_after, "the control: the same crate judges nothing new");
+
+    let (before, after) = stores_after_changing(|f| f.with_crate_prefix("other"));
+    assert!(after > before, "a changed crate prefix must judge again");
+    let (before, after) = stores_after_changing(|f| f.with_crate_name("renamed", "renamed"));
+    assert!(after > before, "a changed crate name must judge again");
+    let (before, after) = stores_after_changing(|f| f.with_lint_proc_macro_source(true));
+    assert!(after > before, "a changed proc-macro source answer must judge again");
+    let (before, after) = stores_after_changing(|f| {
+        f.with_primitive_introductions(std::collections::BTreeMap::from([(
+            "test-crate".to_string(),
+            vec!["u8".to_string()],
+        )]))
+    });
+    assert!(after > before, "a changed introduced primitive must judge again");
+}
+
+#[test]
+fn a_changed_path_filter_judges_the_lint_again() {
+    let store = Memory::default();
+    let fixture = crate_of(ROOT, MODULE);
+    let ctx = fixture.ctx();
+    let _ = check_crate_saving(&ctx, false, None, &[], Some(&store));
+    let saved = store.stores.load(Ordering::SeqCst);
+    let _ = check_crate_saving(&ctx, false, None, &[], Some(&store));
+    assert_eq!(store.stores.load(Ordering::SeqCst), saved, "the control: nothing moved");
+
+    let mut cfg = LintConfig::empty();
+    cfg.paths.insert(
+        "no-todo".to_string(),
+        crate::path_filter::PathFilter { include: vec!["src/m.rs".to_string()], exclude: Vec::new() },
+    );
+    let _ = check_crate_saving(&ctx, false, Some(&cfg), &[], Some(&store));
+    assert!(store.stores.load(Ordering::SeqCst) > saved, "a path filter must judge the lint again");
+}
+
+/// A repo lint whose verdict depends on a parameter it holds itself.
+struct Tunable {
+    runs: Arc<AtomicUsize>,
+}
+
+impl Lint for Tunable {
+    fn name(&self) -> &'static str {
+        "tunable"
+    }
+}
+
+impl crate::RepoLint for Tunable {
+    fn check_repo(&self, ctx: &crate::RepoContext) -> Vec<LintError> {
+        ctx.remembered("tunable", &[b"item"], || {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            Vec::new()
+        })
+    }
+}
+
+#[test]
+fn a_repo_lints_configuration_is_part_of_what_it_remembers() {
+    let store = Memory::default();
+    let runs = Arc::new(AtomicUsize::new(0));
+    let params = |max: &str| {
+        let mut cfg = LintConfig::empty();
+        cfg.params.insert(
+            "tunable".to_string(),
+            HashMap::from([("max".to_string(), max.to_string())]),
+        );
+        cfg
+    };
+    let run = |cfg: &LintConfig| {
+        with_repo_context(Some(&store), |ctx| {
+            let extra: Vec<Box<dyn crate::RepoLint>> = vec![Box::new(Tunable { runs: Arc::clone(&runs) })];
+            crate::check_repo_with_extra(ctx, false, Some(cfg), &extra)
+        })
+    };
+    run(&params("3"));
+    run(&params("3"));
+    assert_eq!(runs.load(Ordering::SeqCst), 1, "the control: the same configuration replays");
+    run(&params("5"));
+    assert_eq!(runs.load(Ordering::SeqCst), 2, "a changed parameter must not replay the old verdict");
+}

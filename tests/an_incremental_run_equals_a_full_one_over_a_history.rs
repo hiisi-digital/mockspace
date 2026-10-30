@@ -36,6 +36,36 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// How many verdicts a run answered from the store: the counts of its `hit:` rows in the timing table.
+fn replayed(text: &str) -> usize {
+    let Some((_, table)) = text.split_once("--- timings") else { return 0 };
+    table
+        .lines()
+        .filter_map(|l| {
+            let mut cols = l.split_whitespace();
+            let (_ms, count, label) = (cols.next()?, cols.next()?, cols.next()?);
+            label.starts_with("hit:").then(|| count.parse::<usize>().ok()).flatten()
+        })
+        .sum()
+}
+
+/// Every file the store holds, which is where a planted verdict goes.
+fn stored(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            out.extend(stored(&path));
+        } else {
+            out.push(path);
+        }
+    }
+    out
+}
+
 /// What two runs of one tree must agree on: the report without its timings and its build chatter.
 fn report(text: &str) -> String {
     let mut out = String::new();
@@ -113,11 +143,16 @@ fn an_incremental_run_equals_a_full_one_over_a_history() {
     let store = tempfile::tempdir().unwrap();
 
     let mut differing = Vec::new();
-    for sha in &commits {
+    let mut replays = 0;
+    for (i, sha) in commits.iter().enumerate() {
         git(&tree, &["checkout", "-q", "--detach", "-f", sha]);
         repoint(&tree, &pin, &packs);
         let full = report(&run(&launcher, &tree, None));
-        let incremental = report(&run(&launcher, &tree, Some(store.path())));
+        let raw = run(&launcher, &tree, Some(store.path()));
+        let incremental = report(&raw);
+        if i > 0 {
+            replays += replayed(&raw);
+        }
         // the control: a run that reported nothing at all would agree with anything
         assert!(
             full.contains("--- running lints ---"),
@@ -128,6 +163,21 @@ fn an_incremental_run_equals_a_full_one_over_a_history() {
         }
     }
     assert!(differing.is_empty(), "{} of {} commits differ:\n{}", differing.len(), commits.len(), differing.join("\n"));
+    // the control: a walk where nothing was ever replayed compares a full run with a cold one
+    assert!(replays > 0, "no verdict was replayed after the first commit, so the walk tested nothing");
+
+    // the control that the comparison can fail: every saved verdict replaced by a wrong one must
+    // show up as a different report at the last commit.
+    let planted = "verdict-v2 1\nplanted\t1\tplanted\tEEE\t~\t~\tplanted by the test\n";
+    for file in stored(store.path()) {
+        std::fs::write(file, planted).unwrap();
+    }
+    let last = commits.last().unwrap();
+    git(&tree, &["checkout", "-q", "--detach", "-f", last]);
+    repoint(&tree, &pin, &packs);
+    let full = report(&run(&launcher, &tree, None));
+    let wrong = report(&run(&launcher, &tree, Some(store.path())));
+    assert_ne!(full, wrong, "replaced verdicts went unnoticed, so the comparison cannot fail");
 }
 
 #[test]
@@ -139,4 +189,11 @@ fn the_report_drops_the_timings_and_the_build_chatter_and_keeps_findings() {
         report("--- running lints ---\n  [a] f.rs:2: [error] x\n"),
         "a different finding must be a different report"
     );
+}
+
+#[test]
+fn replays_are_counted_from_the_hit_rows_only() {
+    let text = "--- running lints ---\n--- timings (ms) ---\n   0.0     86 hit:a\n   0.0      3 miss:a\n   9.0      1 lint:a\n   0.0      2 hit:b\n";
+    assert_eq!(replayed(text), 88);
+    assert_eq!(replayed("--- running lints ---\n"), 0, "no table is no replays");
 }

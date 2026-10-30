@@ -41,10 +41,41 @@ pub trait VerdictCache {
     fn tally(&self, _hit: bool, _lint: &str) {}
 }
 
+/// A store that mixes one lint's behaviour material into every digest it makes, so a verdict a repo
+/// lint saves through [`crate::RepoContext::remembered`] is keyed on how that lint was configured
+/// without the lint having to say so.
+pub(crate) struct Salted<'a> {
+    /// The store behind.
+    pub inner: &'a dyn VerdictCache,
+    /// What goes in front of every digest's parts.
+    pub salt:  String,
+}
+
+impl VerdictCache for Salted<'_> {
+    fn digest(&self, parts: &[&[u8]]) -> String {
+        let mut all: Vec<&[u8]> = Vec::with_capacity(parts.len() + 1);
+        all.push(self.salt.as_bytes());
+        all.extend_from_slice(parts);
+        self.inner.digest(&all)
+    }
+
+    fn replay(&self, key: &str) -> Option<String> {
+        self.inner.replay(key)
+    }
+
+    fn remember(&self, key: &str, encoded: &str) {
+        self.inner.remember(key, encoded);
+    }
+
+    fn tally(&self, hit: bool, lint: &str) {
+        self.inner.tally(hit, lint);
+    }
+}
+
 /// Where a lint came from, which is part of what it is: two lints of one kind can share a name when a
 /// pack declares one a built-in does, and they must not share a verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Origin {
+pub(crate) enum Origin {
     /// Shipped in this crate.
     BuiltIn,
     /// Handed over by a pack.
@@ -65,7 +96,7 @@ impl Origin {
 /// Its parameters, and the path filter that decides which files it is shown. Not its severity
 /// (applied afterwards) and not which crates it binds (decides whether it runs, not what it finds).
 #[must_use]
-pub fn behaviour_material(lint_name: &str, origin: Origin, cfg: Option<&LintConfig>) -> String {
+pub(crate) fn behaviour_material(lint_name: &str, origin: Origin, cfg: Option<&LintConfig>) -> String {
     let mut out = format!("lint\0{}\0{lint_name}\0", origin.label());
     let Some(cfg) = cfg else { return out };
     if let Some(params) = cfg.params.get(lint_name) {
@@ -91,7 +122,7 @@ pub fn behaviour_material(lint_name: &str, origin: Origin, cfg: Option<&LintConf
 /// The scalars `Reach::File` is allowed to read: the crate's name and short name, the prefix, the
 /// two proc-macro answers, and the primitives this crate introduces. Nothing else of the context.
 #[must_use]
-pub fn file_scalars(ctx: &LintContext) -> String {
+pub(crate) fn file_scalars(ctx: &LintContext) -> String {
     let mut introduced: Vec<&str> = ctx
         .primitive_introductions
         .get(ctx.crate_name)
@@ -115,7 +146,7 @@ pub fn file_scalars(ctx: &LintContext) -> String {
 /// SHAME template, the dependency list, the names of every crate in the workspace, and the
 /// scalars a file-reach lint sees. Computed once per crate per run and shared by every lint.
 #[must_use]
-pub fn crate_digest(cache: &dyn VerdictCache, ctx: &LintContext) -> String {
+pub(crate) fn crate_digest(cache: &dyn VerdictCache, ctx: &LintContext) -> String {
     let scalars = file_scalars(ctx);
     let mut deps: Vec<&str> = ctx.deps.iter().map(String::as_str).collect();
     deps.sort_unstable();
@@ -147,12 +178,33 @@ pub fn crate_digest(cache: &dyn VerdictCache, ctx: &LintContext) -> String {
 // Findings, written down
 // ---------------------------------------------------------------------------
 
+/// The findings saved under `key`, or what `compute` finds, saved for next time.
+///
+/// The one place a verdict is replayed or remembered, so the counts reported for a lint and the
+/// rule that an unreadable entry is a miss are the same for a file, a crate, a workspace and a repo
+/// item. `compute` answers `None` when there is nothing to judge, which saves and counts nothing.
+pub(crate) fn replay_or(
+    cache: &dyn VerdictCache,
+    key: &str,
+    lint: &str,
+    compute: impl FnOnce() -> Option<Vec<LintError>>,
+) -> Option<Vec<LintError>> {
+    if let Some(found) = cache.replay(key).as_deref().and_then(decode) {
+        cache.tally(true, lint);
+        return Some(found);
+    }
+    let found = compute()?;
+    cache.tally(false, lint);
+    cache.remember(key, &encode(&found));
+    Some(found)
+}
+
 /// The version line of the encoding. A reader that does not know it finds nothing.
 const FORMAT: &str = "verdict-v2";
 
 /// Findings as text, one per line, readable by [`decode`].
 #[must_use]
-pub fn encode(findings: &[LintError]) -> String {
+pub(crate) fn encode(findings: &[LintError]) -> String {
     let mut out = format!("{FORMAT} {}\n", findings.len());
     for f in findings {
         let sev = [f.severity.on_commit, f.severity.on_build, f.severity.on_push]
@@ -179,7 +231,7 @@ pub fn encode(findings: &[LintError]) -> String {
 /// Never a partial list: the first line says how many findings follow, so a file cut at a line
 /// boundary, or edited by hand, is a miss and costs a rerun and never a missing finding.
 #[must_use]
-pub fn decode(text: &str) -> Option<Vec<LintError>> {
+pub(crate) fn decode(text: &str) -> Option<Vec<LintError>> {
     let mut lines = text.lines();
     let (format, count) = lines.next()?.split_once(' ')?;
     if format != FORMAT {

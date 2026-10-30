@@ -1453,8 +1453,8 @@ pub trait Lint {
     ///
     /// **The default is the widest**, [`Reach::Repository`], which is never saved: a lint that
     /// says nothing is run on every gate as it always was. Declaring a narrower reach is a promise
-    /// that the lint reads nothing outside it, held by the `reach_tests` the engine runs over
-    /// every declaring lint.
+    /// that the lint reads nothing outside it. The `reach_tests` hold the built-in lints to it by
+    /// sampling, and a pack puts its own lints through [`reach_check`] in its own tests.
     fn reach(&self) -> Reach {
         Reach::Repository
     }
@@ -1561,14 +1561,7 @@ impl RepoContext<'_> {
         all.push(lint.as_bytes());
         all.extend_from_slice(parts);
         let key = cache.digest(&all);
-        if let Some(found) = cache.replay(&key).as_deref().and_then(verdict::decode) {
-            cache.tally(true, lint);
-            return found;
-        }
-        cache.tally(false, lint);
-        let found = compute();
-        cache.remember(&key, &verdict::encode(&found));
-        found
+        verdict::replay_or(cache, &key, lint, || Some(compute())).unwrap_or_default()
     }
 }
 
@@ -2101,18 +2094,10 @@ pub fn check_crate_saving(
                             .get_or_init(|| verdict::crate_digest(cache, ctx))
                             .as_bytes(),
                     ]);
-                    match cache.replay(&key).and_then(|t| verdict::decode(&t)) {
-                        Some(found) => {
-                            cache.tally(true, lint.name());
-                            found
-                        },
-                        None => {
-                            cache.tally(false, lint.name());
-                            let found = check_every_file(lint, ctx, &parsed, filter);
-                            cache.remember(&key, &verdict::encode(&found));
-                            found
-                        },
-                    }
+                    verdict::replay_or(cache, &key, lint.name(), || {
+                        Some(check_every_file(lint, ctx, &parsed, filter))
+                    })
+                    .unwrap_or_default()
                 },
                 _ => check_every_file(lint, ctx, &parsed, filter),
             };
@@ -2319,18 +2304,8 @@ pub fn check_workspace_saving(
                         parts.push(digests[*name].as_bytes());
                     }
                     let key = cache.digest(&parts);
-                    match cache.replay(&key).and_then(|t| verdict::decode(&t)) {
-                        Some(found) => {
-                            cache.tally(true, lint.name());
-                            found
-                        },
-                        None => {
-                            cache.tally(false, lint.name());
-                            let found = lint.check_all(&bound);
-                            cache.remember(&key, &verdict::encode(&found));
-                            found
-                        },
-                    }
+                    verdict::replay_or(cache, &key, lint.name(), || Some(lint.check_all(&bound)))
+                        .unwrap_or_default()
                 },
                 _ => lint.check_all(&bound),
             };
@@ -2392,14 +2367,27 @@ pub fn check_repo_with_extra(
         overrides,
     );
     let mut errors = Vec::new();
-    for lint in lints
-        .iter()
-        .map(Box::as_ref)
-        .chain(extra_lints.iter().map(Box::as_ref))
-    {
-        run_with_overrides(lint, doc_only, overrides, &mut errors, || {
-            lint.check_repo(ctx)
+    let built_in = lints.iter().map(|l| (verdict::Origin::BuiltIn, l.as_ref()));
+    let packed = extra_lints.iter().map(|l| (verdict::Origin::Pack, l.as_ref()));
+    for (origin, lint) in built_in.chain(packed) {
+        // What the lint was configured with is part of every verdict it saves. It lives in the
+        // lint and not in the context, so the store each lint is handed carries it.
+        let salted = ctx.verdicts.map(|inner| verdict::Salted {
+            inner,
+            salt: verdict::behaviour_material(lint.name(), origin, overrides),
         });
+        let own = RepoContext {
+            mock_dir:    ctx.mock_dir,
+            repo_root:   ctx.repo_root,
+            all_crates:  ctx.all_crates,
+            src_dirs:    ctx.src_dirs,
+            invocation:  ctx.invocation,
+            canon_paths: ctx.canon_paths,
+            open_panels: ctx.open_panels,
+            registry:    ctx.registry,
+            verdicts:    salted.as_ref().map(|s| s as &dyn verdict::VerdictCache),
+        };
+        run_with_overrides(lint, doc_only, overrides, &mut errors, || lint.check_repo(&own));
     }
     errors
 }
