@@ -41,9 +41,9 @@ pub(crate) fn history_driver_command(launcher: &str) -> String {
 }
 
 /// Register the driver in the clone's config. Idempotent.
-pub(crate) fn register_history_driver(repo_root: &Path, launcher: &str, actions: &mut Vec<String>) {
+pub(crate) fn register_history_driver(target: &ConfigTarget, launcher: &str, actions: &mut Vec<String>) {
     register_engine_driver(
-        repo_root,
+        target,
         HISTORY_DRIVER,
         "mockspace test history",
         &history_driver_command(launcher),

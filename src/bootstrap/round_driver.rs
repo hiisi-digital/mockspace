@@ -43,9 +43,9 @@ pub(crate) fn round_driver_command(launcher: &str) -> String {
 }
 
 /// Register the driver in the clone's config. Idempotent.
-pub(crate) fn register_round_driver(repo_root: &Path, launcher: &str, actions: &mut Vec<String>) {
+pub(crate) fn register_round_driver(target: &ConfigTarget, launcher: &str, actions: &mut Vec<String>) {
     register_engine_driver(
-        repo_root,
+        target,
         ROUND_DRIVER,
         "mockspace closed rounds",
         &round_driver_command(launcher),

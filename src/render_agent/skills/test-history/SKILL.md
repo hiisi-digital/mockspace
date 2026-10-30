@@ -8,7 +8,7 @@ fingerprint each test binary passed at (`bins`), and the timing and result of ea
 ## Merging
 
 `.gitattributes` sends every `.json` under `{mock_dir}/test-history/` to the `mockspace-test-history`
-merge driver, which `cargo mock` registers in the clone and which runs `cargo mock
+merge driver, which `cargo mock` registers in the clone's git config (and, with `cargo mock register-drivers --global`, in the user's) and which runs `cargo mock
 merge-test-history`. Two branches that both reran a member do not conflict:
 
 - a green record, and a binary's recorded pass, is kept where both sides hold the same one or only
