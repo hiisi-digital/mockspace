@@ -346,6 +346,7 @@ fn an_object_valued_tool_args_is_read_as_well_as_a_string() {
     assert!(run(args), "an object toolArgs was allowed unread");
 }
 
+#[test]
 fn a_multi_edit_creating_a_file_is_judged_on_its_text() {
     let repo = fixture();
     let fresh = repo.root.join("mock/crates/fixture-sim/src/fresh.rs");
@@ -443,4 +444,40 @@ fn a_copilot_apply_patch_adding_a_violation_is_refused() {
     );
     let out = copilot_says(&repo, "apply_patch", serde_json::Value::String(patch));
     assert!(refused(&out.1), "a patch adding a violation was let through: {out:?}");
+}
+
+#[test]
+fn a_symlink_inside_a_crate_is_judged_where_the_gate_reads_it() {
+    // The gate follows a linked `src` or module directory and lints what is in it at the
+    // place it sits in the crate, so an edit through that place is judged there too.
+    let repo = fixture();
+    let elsewhere = repo.root.join("elsewhere");
+    write(&elsewhere.join("src/lib.rs"), "pub fn f() {}\n");
+    let sim = repo.root.join("mock/crates/fixture-sim");
+    fs::remove_dir_all(sim.join("src")).unwrap();
+    std::os::unix::fs::symlink(elsewhere.join("src"), sim.join("src")).unwrap();
+    let out = hook_says(&repo, &sim.join("src/lib.rs"), "use std::fmt;\npub fn f() {}\n");
+    assert!(refused(&out), "a violation in a crate whose src is a link was passed: {out}");
+
+    let shared = repo.root.join("sharedgen");
+    write(&shared.join("mod.rs"), "pub fn g() {}\n");
+    let ui = repo.root.join("mock/crates/fixture-sim/../fixture-ui");
+    std::os::unix::fs::symlink(&shared, ui.join("src/gen")).unwrap();
+    let out = hook_says(&repo, &ui.join("src/gen/mod.rs"), "use std::fmt;\n");
+    // fixture-ui is outside the rule's scope, so a violation there is the lint's to pass; the
+    // control is that the path is read as in the crate and not dropped as outside every one.
+    assert!(!refused(&out), "{out}");
+    let out = hook_says(&repo, &sim.join("src/gen/mod.rs"), "use std::fmt;\n");
+    assert!(refused(&out), "{out}");
+}
+
+#[test]
+#[ignore = "catalogue: the hooks reference lists str_replace_editor as an edit tool, its argument names are not in the reference, and the wiring does not fire the hook for it"]
+fn a_copilot_str_replace_editor_edit_adding_a_violation_is_refused() {
+    let repo = fixture();
+    let path = repo.root.join("mock/crates/fixture-sim/src/lib.rs").display().to_string();
+    let out = copilot_says(&repo, "str_replace_editor", serde_json::json!({
+        "command": "str_replace", "path": path, "old_str": "pub fn f() {}", "new_str": "use std::fmt;"
+    }));
+    assert!(refused(&out.1), "an edit through str_replace_editor was let through: {out:?}");
 }

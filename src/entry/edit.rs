@@ -105,34 +105,30 @@ fn normalised(path: &Path) -> Option<std::path::PathBuf> {
     Some(out)
 }
 
-/// `path` with every symlink in its directories followed and its last component kept.
+/// `path` with the directory symlink that leads to a source directory followed, and
+/// everything below that point left as it is spelled.
 ///
-/// A source directory reached through a symlinked one names no crate under the real
-/// source directories, and the edit would pass unjudged. The file itself is not
-/// followed: a symlinked source is read by the gate at the place it sits in the crate,
-/// so it is judged there. The deepest directory that exists is resolved and the rest
-/// appended, since the file, or its directories, may be what the edit creates.
-fn through_directory_links(path: &Path) -> std::path::PathBuf {
-    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-        return path.to_path_buf();
-    };
-    let mut rest = Vec::new();
-    let mut probe = parent;
-    let resolved = loop {
-        match probe.canonicalize() {
-            Ok(real) => break real,
-            Err(_) => match (probe.parent(), probe.file_name()) {
-                (Some(up), Some(last)) => {
-                    rest.push(last.to_os_string());
-                    probe = up;
-                },
-                _ => break probe.to_path_buf(),
-            },
+/// An edit written through a link to a source directory names no crate under the real
+/// ones and would pass unjudged. The ancestors are walked from the root: the first one
+/// that exists and resolves to a source directory, or below one, is replaced by what it
+/// resolves to. Links inside a crate are left alone, since the gate reads a symlinked
+/// `src` or module directory at the place it sits in the crate and the edit has to be
+/// judged there. `src_dirs` are the canonical ones. A path through no source directory
+/// comes back as it was.
+fn through_directory_links(path: &Path, src_dirs: &[std::path::PathBuf]) -> std::path::PathBuf {
+    let mut prefix = std::path::PathBuf::new();
+    let mut comps = path.components();
+    while let Some(c) = comps.next() {
+        prefix.push(c.as_os_str());
+        let Ok(real) = prefix.canonicalize() else {
+            // Nothing past a directory that does not exist can be a link.
+            break;
+        };
+        if src_dirs.iter().any(|d| real.starts_with(d)) {
+            return real.join(comps.as_path());
         }
-    };
-    let mut out = resolved;
-    out.extend(rest.iter().rev());
-    out.join(name)
+    }
+    path.to_path_buf()
 }
 
 /// Ask. Exit success when the lint blocks nothing in `req.file`, failure with the
@@ -182,14 +178,14 @@ fn exit_of(cfg: &Config, pack: &LintPack, req: &Request) -> u8 {
         return 2;
     };
 
-    // Followed through directory symlinks, and the source directories the same way, so
-    // both sides of the comparison are real paths.
-    let file = through_directory_links(&file);
+    // The source directories as they really are, and the file reached through a link to one
+    // taken to the real directory, so both sides of the comparison are real paths.
     let src_dirs: Vec<std::path::PathBuf> = cfg
         .src_dirs
         .iter()
         .map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()))
         .collect();
+    let file = through_directory_links(&file, &src_dirs);
 
     let Some(text) = after(req, || std::fs::read_to_string(&file).ok()) else {
         return 0;
