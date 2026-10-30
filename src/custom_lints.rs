@@ -48,6 +48,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use mockspace_lint_rules::LintPack;
+use mockspace_lint_rules::tool::duplicate_tool_names;
 
 use crate::bootstrap::{
     ToolCrate,
@@ -57,6 +58,7 @@ use crate::bootstrap::{
     scan_lint_functions,
 };
 use crate::config::Config;
+pub(crate) use store::ScopedPlan;
 
 pub(crate) mod store;
 
@@ -100,6 +102,50 @@ fn discover(cfg: &Config, config_path: &Path) -> Option<Content> {
     })
 }
 
+/// What a run of the one tool `tool` does: refuse it, take the whole build, or build the tool alone, from the
+/// record the last whole build left.
+pub(crate) fn scoped_plan(cfg: &Config, tool: &str) -> store::ScopedPlan {
+    store::plan_scoped(store::duplicates_of(&cfg.mock_dir), tool)
+}
+
+/// The content of a build cut to the one tool in `<mock>/tools/<tool>`: that
+/// crate and its own path dependencies, no lint file and no pack. `None` when
+/// `tool` is no tool directory, so the caller falls back to the whole build.
+///
+/// A tool is handed the repo's paths and its arguments and nothing of the lint
+/// pack (`ToolContext`), so the lints and the packs add nothing to a run of
+/// one, and compiling them is what a run of it waits on.
+///
+/// Leaving the packs out means a name a pack also registers is not met here. The
+/// last whole build recorded such names (`store::record_duplicates`), and
+/// `scoped_plan` refuses a run of one of them with exit 2 before this is called,
+/// or takes the whole build once when nothing is recorded yet.
+fn discover_scoped(cfg: &Config, config_path: &Path, tool: &str) -> Option<Content> {
+    let mut content = discover(cfg, config_path)?;
+    content.tools.retain(|t| t.dir == tool);
+    if content.tools.is_empty() {
+        return None;
+    }
+    content.lint_files.clear();
+    content.packs.clear();
+    Some(content)
+}
+
+/// [`load`] cut to the one tool `tool`, falling back to the whole build where
+/// `tool` names no tool directory.
+pub fn load_tool(
+    cfg: &Config,
+    config_path: &Path,
+    lint_rules_dep: &str,
+    tool: &str,
+) -> Result<Option<LoadedLints>, String> {
+    let Some(content) = discover_scoped(cfg, config_path, tool) else {
+        return load(cfg, config_path, lint_rules_dep);
+    };
+    let base = store::shared_base(&cfg.repo_root)?;
+    build_and_load(&base, cfg, &content, lint_rules_dep, Some(tool))
+}
+
 /// Build and load this repo's custom lints, if it has any. Returns `None` when
 /// the repo declares none. `lint_rules_dep` is the cargo dependency *value*
 /// for `mockspace-lint-rules`, pin-matched to the running engine, e.g.
@@ -116,7 +162,7 @@ pub fn load(
         return Ok(None);
     };
     let base = store::shared_base(&cfg.repo_root)?;
-    build_and_load(&base, cfg, &content, lint_rules_dep)
+    build_and_load(&base, cfg, &content, lint_rules_dep, None)
 }
 
 /// [`load`] against a store at `base`, for a caller that owns where the
@@ -129,7 +175,7 @@ pub fn load_in(
     lint_rules_dep: &str,
 ) -> Result<Option<LoadedLints>, String> {
     match discover(cfg, config_path) {
-        Some(content) => build_and_load(base, cfg, &content, lint_rules_dep),
+        Some(content) => build_and_load(base, cfg, &content, lint_rules_dep, None),
         None => Ok(None),
     }
 }
@@ -139,6 +185,7 @@ fn build_and_load(
     cfg: &Config,
     content: &Content,
     lint_rules_dep: &str,
+    scope: Option<&str>,
 ) -> Result<Option<LoadedLints>, String> {
     // The generated crate lives outside the worktree, at a path keyed by the
     // repo's identity and the revs it builds against, so every worktree of one
@@ -152,7 +199,7 @@ fn build_and_load(
         &base.join(".pack-pins"),
         &crate::pack_pin::ls_remote_head,
     );
-    let manifest = store::lints_manifest_path(base, cfg, lint_rules_dep, &packs);
+    let manifest = store::lints_manifest_path(base, cfg, lint_rules_dep, &packs, scope);
     let gen_dir = manifest
         .parent()
         .map(Path::to_path_buf)
@@ -171,7 +218,7 @@ fn build_and_load(
         lint_rules_dep,
         cfg,
     )?;
-    store::record_owner(&gen_dir, &cfg.mock_dir)?;
+    store::record_owner(&gen_dir, &cfg.mock_dir, scope)?;
     store::touch_used(&gen_dir)?;
     #[cfg(test)]
     store::knobs::pause_between_write_and_build(&gen_dir);
@@ -183,6 +230,13 @@ fn build_and_load(
     // The returned boxes borrow their vtables from `lib`, so `lib` is stored
     // in `LoadedLints` and outlives them.
     let loaded = built.and_then(|dylib| unsafe { collect(&dylib) }.map(Some));
+    // Every whole build leaves the names its packs and local tools register twice, which a run of one tool
+    // cannot ask for without building the packs.
+    if scope.is_none() {
+        if let Ok(Some(l)) = &loaded {
+            store::record_duplicates(&cfg.mock_dir, &duplicate_tool_names(&l.pack.tools))?;
+        }
+    }
     // Released only once the library is mapped. The mapping outlives a later
     // rebuild by another worktree, and holding the lock for the whole lint run
     // would serialise every worktree on it.
@@ -805,6 +859,61 @@ mod tests {
         assert!(cdylib_artifact("not json at all", "mockspace-lints-40d923802ebb4e36").is_none());
         let rlib = ARTIFACT.replace(".dylib", ".rlib");
         assert!(cdylib_artifact(&rlib, "mockspace-lints-40d923802ebb4e36").is_none());
+    }
+
+    /// A repo with a lint, a pack and two tools, so a scope has something to
+    /// leave out.
+    fn repo_with_lints_packs_and_tools() -> (tempfile::TempDir, crate::config::Config) {
+        let dir = tempfile::tempdir().unwrap();
+        let mock = dir.path().join("mock");
+        std::fs::create_dir_all(mock.join("lints")).unwrap();
+        std::fs::write(
+            mock.join("lints").join("foo.rs"),
+            "pub fn lint() -> Box<dyn mockspace::Lint> { todo!() }\n",
+        )
+        .unwrap();
+        for tool in ["ticket-add", "asset-new"] {
+            let t = mock.join("tools").join(tool);
+            std::fs::create_dir_all(&t).unwrap();
+            std::fs::write(
+                t.join("Cargo.toml"),
+                format!("[package]\nname = \"{tool}\"\nversion = \"0.0.0\"\n"),
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            dir.path().join("mockspace.toml"),
+            "[lint-crates]\nsome-pack = \"1\"\n",
+        )
+        .unwrap();
+        let cfg = crate::config::Config::from_dir(&mock);
+        (dir, cfg)
+    }
+
+    #[test]
+    fn a_tool_scope_carries_the_one_tool_and_no_lints_or_packs() {
+        let (dir, cfg) = repo_with_lints_packs_and_tools();
+        let path = dir.path().join("mockspace.toml");
+        // control: the whole content is all of it, so the scope below is
+        // leaving something out rather than there being nothing to leave
+        let whole = discover(&cfg, &path).unwrap();
+        assert_eq!(whole.lint_files, ["foo"]);
+        assert_eq!(whole.packs.len(), 1);
+        assert_eq!(whole.tools.len(), 2);
+
+        let scoped = discover_scoped(&cfg, &path, "ticket-add").unwrap();
+        assert!(scoped.lint_files.is_empty(), "no lint builds for a tool");
+        assert!(scoped.packs.is_empty(), "no pack builds for a tool");
+        let tools: Vec<&str> = scoped.tools.iter().map(|t| t.dir.as_str()).collect();
+        assert_eq!(tools, ["ticket-add"]);
+    }
+
+    #[test]
+    fn a_name_that_is_no_tool_directory_scopes_to_nothing() {
+        let (dir, cfg) = repo_with_lints_packs_and_tools();
+        let path = dir.path().join("mockspace.toml");
+        assert!(discover_scoped(&cfg, &path, "foo").is_none());
+        assert!(discover_scoped(&cfg, &path, "some-pack").is_none());
     }
 
     #[test]
