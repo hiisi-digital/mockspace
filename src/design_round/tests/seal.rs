@@ -360,3 +360,66 @@ fn a_committed_transition_keeps_unrelated_staged_work_staged() {
     assert_eq!(cmd_lock(&Config::from_dir(&mock), &AUTO), ExitCode::SUCCESS);
     assert_eq!(status(repo.path()), "M  mock/README.md.tmpl\n");
 }
+
+// A stub changelist beside a locked one of its kind (a bare title, or a draft nobody went on with)
+// holds the round open: `changelist-seal` refuses the lock, `changelist-immutability` refuses
+// deleting an unlocked changelist outside its window, and `deprecate` answered "both CLs locked" in
+// the phase the stub made, so the only way out was unlock, relock and a fresh changelist
+// (kaski, 30 October).
+
+const DOC_LOCK: &str = "202610301702_changelist.doc.lock.md";
+const SRC_LOCK: &str = "202610301702_changelist.src.lock.md";
+const STUB: &str = "202610301710_changelist.src.md";
+const STUB_DEPRECATED: &str = "202610301710_changelist.src.deprecated.md";
+
+#[test]
+fn deprecate_retires_a_stub_beside_a_locked_changelist_of_its_kind() {
+    let dir = mock(&[
+        (DOC_LOCK, "# doc changelist: x\n"),
+        (SRC_LOCK, "# src changelist: x\n"),
+        (STUB, "# src changelist\n\n"),
+    ]);
+    let code = cmd_deprecate(&Config::from_dir(dir.path()), &OPTS);
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(
+        listed(dir.path()),
+        [DOC_LOCK, SRC_LOCK, STUB_DEPRECATED],
+        "the stub is deprecated and the round's own locks are untouched"
+    );
+}
+
+#[test]
+fn deprecate_with_a_stub_leaves_the_round_sealed_enough_to_close() {
+    let dir = mock(&[
+        (DOC_LOCK, "# doc changelist: x\n"),
+        (SRC_LOCK, "# src changelist: x\n"),
+        (STUB, "# src changelist\n\n"),
+    ]);
+    assert_eq!(
+        cmd_close(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::FAILURE,
+        "the stub keeps the round from closing"
+    );
+    assert_eq!(
+        cmd_deprecate(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(
+        cmd_close(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::SUCCESS,
+        "once the stub is deprecated the round closes"
+    );
+}
+
+#[test]
+fn deprecate_without_a_stub_in_a_closed_round_still_refuses() {
+    let dir = mock(&[
+        (DOC_LOCK, "# doc changelist: x\n"),
+        (SRC_LOCK, "# src changelist: x\n"),
+    ]);
+    assert_eq!(
+        cmd_deprecate(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::FAILURE
+    );
+    assert_eq!(listed(dir.path()), [DOC_LOCK, SRC_LOCK]);
+}

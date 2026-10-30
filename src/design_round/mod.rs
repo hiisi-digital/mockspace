@@ -169,6 +169,35 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let dr = design_rounds_dir(cfg);
     let phase = changelist_helpers::current_phase(&dr);
 
+    // A stub beside a locked changelist of its kind is what holds a round open whatever phase it
+    // reads as, and it is the one thing `deprecate` is asked to retire there.
+    let strays = changelist_helpers::stray_active_changelists(&dr);
+    if !strays.is_empty() {
+        let mut touched = Vec::new();
+        for cl in &strays {
+            match rename_cl(&dr, cl, ClStatus::Deprecated) {
+                Ok(r) => {
+                    eprintln!(
+                        "deprecated {} changelist beside a locked one: {} → {}",
+                        if cl.kind == ClKind::Doc { "doc" } else { "src" },
+                        cl.filename,
+                        r.new_name
+                    );
+                    touched.push(r.old_path);
+                    touched.push(r.new_path);
+                },
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::FAILURE;
+                },
+            }
+        }
+        let names: Vec<&str> = strays.iter().map(|cl| cl.filename.as_str()).collect();
+        let msg = format!("chore: deprecate stray changelist {}", names.join(", "));
+        commit_or_suggest(cfg, opts, &touched, &msg);
+        return ExitCode::SUCCESS;
+    }
+
     match phase {
         Phase::Doc => {
             let cl = match changelist_helpers::find_active_doc_cl(&dr) {
