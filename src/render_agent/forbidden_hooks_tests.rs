@@ -696,3 +696,42 @@ fn without_jq_the_hook_refuses_rather_than_reading_nothing_and_passing() {
     let with_jq = run(&format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()));
     assert!(!with_jq.contains("jq is not installed"), "{with_jq}");
 }
+
+#[test]
+fn a_new_crates_first_lib_rs_gets_the_verdict_the_gate_gives_it_once_written() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo_with_crates(tmp.path(), "std::*");
+    let dir = tmp.path().join("mock/crates/sim-fresh");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("Cargo.toml"), "[package]\nname = \"sim-fresh\"\n").unwrap();
+    let file = dir.join("src/lib.rs");
+    let text = "use std::fmt;\npub fn f() {}\n";
+    assert!(!file.exists(), "the premise: the crate has no root yet");
+    assert!(
+        !edit_verdict(&cfg, &file, text).is_empty(),
+        "the hook let through an import in a crate's first lib.rs that the gate refuses"
+    );
+    assert!(gate_verdict(&cfg, "sim-fresh", &file, text) > 0, "the control: the gate refuses it");
+    // Control for the other direction: a clean first root is passed, and a first
+    // module file in a rootless crate is still in no crate's view.
+    fs::remove_file(&file).unwrap();
+    assert!(edit_verdict(&cfg, &file, "pub fn f() {}\n").is_empty());
+    let crates = crate::parse::discover_crates_in(&cfg.src_dirs, &cfg.crate_prefix);
+    assert!(
+        crate::lint::lint_edit(
+            &crates,
+            &cfg.src_dirs,
+            &cfg.mock_dir,
+            &cfg.proc_macro_crates,
+            cfg.lint_proc_macro_source,
+            &cfg.crate_prefix,
+            &cfg.lint_overrides,
+            &cfg.primitive_introductions,
+            &LintPack::default(),
+            "forbidden-imports",
+            &dir.join("src/extra.rs"),
+            "use std::fmt;\n",
+        )
+        .is_none()
+    );
+}
