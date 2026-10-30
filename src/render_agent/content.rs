@@ -74,7 +74,9 @@ pub(crate) fn generate_lint_derived_content(
         .get("forbidden-imports")
         .cloned()
         .unwrap_or_default();
-    let mut rules_by_name: Map<String, (String, String, String)> = Map::new(); // name -> (scope, forbidden, reason)
+    // name -> (scope, forbidden, reason, disabled). A rule naming no scope applies to every
+    // crate, as the lint reads it (`*`), so it gets the hook and a rule file like any other.
+    let mut rules_by_name: Map<String, (String, String, String, bool)> = Map::new();
 
     for (key, value) in &params {
         if !key.starts_with("rule.") {
@@ -90,22 +92,20 @@ pub(crate) fn generate_lint_derived_content(
 
         let entry = rules_by_name
             .entry(rule_name)
-            .or_insert_with(|| (String::new(), String::new(), String::new()));
+            .or_insert_with(|| ("*".to_string(), String::new(), String::new(), false));
         match field {
             "scope" => entry.0 = value.clone(),
             "forbidden" => entry.1 = value.clone(),
             "reason" => entry.2 = value.clone(),
-            "enabled" if value == "false" => {
-                entry.0 = "__disabled__".to_string();
-            },
+            "enabled" if value == "false" => entry.3 = true,
             _ => {},
         }
     }
 
     // Group by scope
     let mut by_scope: Map<String, Vec<(String, String)>> = Map::new(); // scope -> [(forbidden, reason)]
-    for (_name, (scope, forbidden, reason)) in &rules_by_name {
-        if scope == "__disabled__" || scope.is_empty() || forbidden.is_empty() {
+    for (_name, (scope, forbidden, reason, disabled)) in &rules_by_name {
+        if *disabled || scope.is_empty() || forbidden.is_empty() {
             continue;
         }
         by_scope

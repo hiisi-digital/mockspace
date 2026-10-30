@@ -560,7 +560,11 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 let mode = match arg_value(&args, "--gate").as_deref() {
                     Some("push") => LintMode::Push,
                     Some("build") => LintMode::Build,
-                    _ => LintMode::Commit,
+                    Some("commit") | None => LintMode::Commit,
+                    Some(other) => {
+                        eprintln!("mock check-edit: unknown --gate `{other}`; expected commit, push or build.");
+                        return ExitCode::from(2);
+                    },
                 };
                 return edit::run(&cfg, pack, &edit::Request {
                     lint: &lint_name,

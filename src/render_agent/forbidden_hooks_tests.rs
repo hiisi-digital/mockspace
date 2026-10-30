@@ -525,8 +525,9 @@ fn a_file_holding_two_violations_can_be_mended_one_edit_at_a_time() {
     assert!(
         edit_verdict(&cfg, &file, "use std::fmt;\nuse std::io;\npub fn g() {}\n").is_empty()
     );
-    // The controls: an edit that adds a third is refused, and one that swaps a violation for
-    // another of a different message is, since the old one is gone and a new one is there.
+    // The controls: an edit that adds a third is refused, and so is one that adds a duplicate
+    // of a message the file already holds (every `std` import shares one message, so
+    // it is the count that rises).
     assert_eq!(
         edit_verdict(&cfg, &file, "use std::fmt;\nuse std::io;\nuse std::fs;\npub fn f() {}\n")
             .len(),
@@ -606,4 +607,27 @@ fn a_render_with_no_rules_left_takes_the_hook_it_wrote_before_with_it() {
     derive(tmp.path(), &empty);
     assert!(!hook.exists(), "the generated hook outlived its rules");
     assert!(theirs.is_file(), "a hook this renderer did not write is not its to remove");
+}
+
+#[test]
+fn a_rule_naming_no_scope_gets_the_hook_because_the_lint_reads_it_as_every_crate() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cfg = cfg_with_rule(tmp.path());
+    let rule: std::collections::HashMap<String, String> =
+        [("rule.no-fmt.forbidden", "std::fmt"), ("rule.no-fmt.reason", "no fmt")]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+    cfg.lint_overrides.params.insert("forbidden-imports".to_string(), rule);
+    let (_, hooks) = derive(tmp.path(), &cfg);
+    assert!(hooks.iter().any(|h| h.name == "forbidden-imports.sh"));
+    // The control: with the rule disabled there is nothing to ask about.
+    cfg.lint_overrides
+        .params
+        .get_mut("forbidden-imports")
+        .unwrap()
+        .insert("rule.no-fmt.enabled".to_string(), "false".to_string());
+    let fresh = tempfile::tempdir().unwrap();
+    let (_, none) = derive(fresh.path(), &cfg);
+    assert!(none.iter().all(|h| h.name != "forbidden-imports.sh"));
 }

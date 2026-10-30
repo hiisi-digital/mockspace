@@ -191,8 +191,11 @@ const COMMANDS: &[Cmd] = &[
                   (every occurrence with --all, else the first) in the target, and \
                   without it it is the target's whole new text. Prints the lint's \
                   blocking findings in the target file and exits 1 if there are \
-                  any, 2 if no per-crate lint answers to the name. --gate selects \
-                  which gate's severities decide what blocks, commit by default. \
+                  any, 2 when the request cannot be answered: no per-crate lint \
+                  answers to the name (a lint judging the crate as a whole is one), a \
+                  required argument is missing, or an input cannot be read. --gate \
+                  selects commit, push or build severities, commit by default, and \
+                  anything else is refused. \
                   This is how an agent hook named after a lint reaches the lint.",
     },
     Cmd {

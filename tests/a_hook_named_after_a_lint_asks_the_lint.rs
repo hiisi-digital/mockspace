@@ -15,6 +15,8 @@ use std::io::Write;
 use std::path::Path;
 use std::process::Stdio;
 
+#[path = "common/ambient.rs"]
+mod ambient;
 mod common;
 use common::{Repo, write};
 
