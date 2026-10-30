@@ -67,7 +67,7 @@ fn path_of(
     resolve: &dyn Fn(&str, &str) -> Result<String, String>,
 ) -> PathBuf {
     let packs = resolve_packs(packs, &base.join(".pack-pins"), resolve);
-    lints_manifest_path(base, &Config::from_dir(mock), dep, &packs)
+    lints_manifest_path(base, &Config::from_dir(mock), dep, &packs, None)
 }
 
 fn no_remote(_: &str, _: &str) -> Result<String, String> {
@@ -317,9 +317,9 @@ fn the_crate_is_tested_only_by_the_worktree_that_last_wrote_it() {
         Generated::Absent,
         "nothing generated yet"
     );
-    record_owner(&gen_dir, &one).unwrap();
+    record_owner(&gen_dir, &one, None).unwrap();
     assert_eq!(generated_dir_of(&one), Generated::Yours(gen_dir.clone()));
-    record_owner(&gen_dir, &two).unwrap();
+    record_owner(&gen_dir, &two, None).unwrap();
     assert_eq!(generated_dir_of(&two), Generated::Yours(gen_dir.clone()));
     assert_eq!(
         generated_dir_of(&one),
@@ -553,4 +553,84 @@ fn a_run_stamps_its_key_as_used() {
         !abandoned(&dir, SystemTime::now(), STALE_AFTER),
         "a key a run has just used is not abandoned"
     );
+}
+
+#[test]
+fn a_tool_scoped_build_has_a_manifest_path_of_its_own() {
+    let c = consumer("ssh://git@example.invalid/o/consumer.git");
+    let cfg = Config::from_dir(&c.main.join("mock"));
+    let base = Path::new("/shared");
+    let whole = lints_manifest_path(base, &cfg, DEP, &[], None);
+    let add = lints_manifest_path(base, &cfg, DEP, &[], Some("ticket-add"));
+    let mv = lints_manifest_path(base, &cfg, DEP, &[], Some("ticket-move"));
+    assert_ne!(whole, add, "a scoped build must not overwrite the whole one");
+    assert_ne!(add, mv, "two scopes are two builds");
+}
+
+#[test]
+fn a_scoped_build_never_moves_the_pointer_the_test_run_reads() {
+    // `mock test` takes the lints tree from the pointer. A one-tool crate behind it has no lint modules, so
+    // the run would be green over nothing, the outcome entry/test.rs refuses. Mutation: the scoped build
+    // records the pointer like the whole one, and the second assertion names the one-tool directory.
+    let tmp = tempfile::tempdir().unwrap();
+    let whole = tmp.path().join("shared").join("whole");
+    let scoped = tmp.path().join("shared").join("scoped");
+    for d in [&whole, &scoped] {
+        std::fs::create_dir_all(d).unwrap();
+        std::fs::write(d.join("Cargo.toml"), "").unwrap();
+    }
+    let mock = tmp.path().join("one").join("mock");
+    record_owner(&whole, &mock, None).unwrap();
+    record_owner(&scoped, &mock, Some("ticket-add")).unwrap();
+    assert_eq!(
+        generated_dir_of(&mock),
+        Generated::Yours(whole.clone()),
+        "the tests still run the whole build's lints"
+    );
+    // the control: the scoped directory is still owned and stamped, so the reaper and a later build see it
+    assert_eq!(
+        std::fs::read_to_string(scoped.join(OWNER)).unwrap(),
+        mock.display().to_string()
+    );
+}
+
+#[test]
+fn a_whole_build_keeps_the_key_it_always_had() {
+    // The key names a directory that outlives the binary. A golden value, so a change to the text it hashes
+    // is a failure here and not a quietly orphaned build per repository. Packs are present, since the
+    // scope line is appended after them.
+    let packs = vec![(
+        "some-pack".to_string(),
+        r#"{ git = "https://example.invalid/pack.git", rev = "1111111" }"#.to_string(),
+    )];
+    let key = lint_crate_key("remote:example.invalid/o/consumer", Path::new("mock"), DEP, &packs, None);
+    assert_eq!(format!("{key:016x}"), GOLDEN_WHOLE_KEY);
+    let scoped = lint_crate_key("remote:example.invalid/o/consumer", Path::new("mock"), DEP, &packs, Some("t"));
+    assert_ne!(key, scoped);
+}
+const GOLDEN_WHOLE_KEY: &str = "3040726b2cef6a9f"; // fnv1a of the original key text, computed apart from the code
+
+#[test]
+fn a_whole_build_records_its_duplicate_tool_names_beside_the_pointer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mock = tmp.path().join("mock");
+    assert_eq!(duplicates_of(&mock), None, "nothing is recorded before a whole build");
+    record_duplicates(&mock, &["audit".to_string(), "sweep".to_string()]).unwrap();
+    assert_eq!(duplicates_of(&mock), Some(vec!["audit".to_string(), "sweep".to_string()]));
+    // the control: a whole build with none is a record of none, which is not the absent file
+    record_duplicates(&mock, &[]).unwrap();
+    assert_eq!(duplicates_of(&mock), Some(Vec::new()));
+}
+
+#[test]
+fn a_scoped_run_refuses_a_recorded_duplicate_and_builds_the_rest_alone() {
+    let rec = Some(vec!["audit".to_string()]);
+    assert_eq!(plan_scoped(rec.clone(), "audit"), ScopedPlan::Refuse(vec!["audit".to_string()]));
+    assert_eq!(plan_scoped(rec, "ticket-add"), ScopedPlan::OneTool);
+    assert_eq!(plan_scoped(Some(Vec::new()), "audit"), ScopedPlan::OneTool);
+}
+
+#[test]
+fn a_scoped_run_with_no_record_takes_the_whole_build_once() {
+    assert_eq!(plan_scoped(None, "ticket-add"), ScopedPlan::Whole);
 }

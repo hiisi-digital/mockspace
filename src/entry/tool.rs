@@ -119,6 +119,17 @@ pub(crate) fn why_not_found(pack: &LintPack, dep_supplied: bool) -> NotFound {
 /// Run the tool named `name`, having already established that a directory of
 /// that name exists, and that its name does not collide with a builtin (the
 /// dispatcher refuses that before this is ever called).
+/// The refusal of a tool name registered more than once, shared by the whole run and the one-tool run.
+pub(crate) fn refuse_duplicates(dupes: &[String]) -> ExitCode {
+    eprintln!(
+        "mock: {} tool name(s) registered more than once: {}",
+        dupes.len(),
+        dupes.join(", ")
+    );
+    eprintln!("  `mock <name>` would run whichever loaded first, so this is refused.");
+    ExitCode::from(2)
+}
+
 pub(crate) fn run(
     cfg: &Config,
     pack: &LintPack,
@@ -128,13 +139,7 @@ pub(crate) fn run(
 ) -> ExitCode {
     let dupes = duplicate_tool_names(&pack.tools);
     if !dupes.is_empty() {
-        eprintln!(
-            "mock: {} tool name(s) registered more than once: {}",
-            dupes.len(),
-            dupes.join(", ")
-        );
-        eprintln!("  `mock <name>` would run whichever loaded first, so this is refused.");
-        return ExitCode::from(2);
+        return refuse_duplicates(&dupes);
     }
 
     let Some(tool) = pack.tools.iter().find(|t| t.name() == name) else {
