@@ -585,6 +585,21 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
         fi
         allow
     fi
+    # A round has one changelist of each kind. The phase reads tracked files, so a first one that is
+    # only in the working tree leaves the phase where it was and a second would pass the checks
+    # below, then be committed beside it by whatever commits everything.
+    if $IS_CHANGELIST && ! $IS_LOCKED && ! $IS_DEPRECATED; then
+        CL_KIND=doc
+        if $IS_SRC_CHANGELIST; then CL_KIND=src; fi
+        OTHER_CL=$(ls "${{REPO_ROOT}}/${{MOCK_ROOT}}/design_rounds" 2>/dev/null \
+            | grep -E "_changelist\.${{CL_KIND}}\.md$" | grep -vxF "$BASENAME" | head -n 1 || true)
+        if [[ -n "$OTHER_CL" ]] && ls "${{REPO_ROOT}}/${{MOCK_ROOT}}/design_rounds" 2>/dev/null | grep -qE "_changelist\\.${{CL_KIND}}\\.lock\\.md$"; then
+            deny "BLOCKED: cannot create ${{CL_KIND}} changelist '${{BASENAME}}' -- '${{OTHER_CL}}' sits unlocked beside a locked ${{CL_KIND}} changelist.\\n\\nThat is a stray, and it is frozen from here. Run \`cargo mock deprecate\` to retire it (a bare title only), then write to the locked round's record or reopen the round with \`cargo mock unlock\`.\\n\\nPhase: ${{PHASE}}."
+        fi
+        if [[ -n "$OTHER_CL" ]]; then
+            deny "BLOCKED: cannot create ${{CL_KIND}} changelist '${{BASENAME}}' -- '${{OTHER_CL}}' is already this round's.\\n\\nA round has one changelist of each kind, and a second beside it is what changelist-seal refuses at the lock.\\nWrite to '${{OTHER_CL}}' instead.\\n\\nPhase: ${{PHASE}}."
+        fi
+    fi
     if $IS_DOC_CHANGELIST && ! $IS_LOCKED && ! $IS_DEPRECATED; then
         if [[ "$PHASE" != "TOPIC" ]]; then
             deny "BLOCKED: cannot create doc changelist '${{BASENAME}}' -- one already exists or phase is wrong.\\n\\nPhase: ${{PHASE}}."

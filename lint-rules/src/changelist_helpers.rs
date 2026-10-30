@@ -181,6 +181,29 @@ pub fn find_locked_src_cl(design_rounds: &Path) -> Option<ParsedChangelist> {
         .find(|cl| cl.kind == ClKind::Src && cl.status == ClStatus::Locked)
 }
 
+/// The active changelists that sit beside a locked one of their kind.
+///
+/// A round has one changelist of each kind, so an unlocked one next to a locked one is not the
+/// round's record: a stub, which `deprecate` retires when it is a bare title. They are what `changelist-seal` names,
+/// and what `deprecate` retires whatever the phase says.
+pub fn stray_active_changelists(design_rounds: &Path) -> Vec<ParsedChangelist> {
+    let cls = find_changelists(design_rounds);
+    let locked = |kind: ClKind| {
+        cls.iter()
+            .any(|cl| cl.kind == kind && cl.status == ClStatus::Locked)
+    };
+    let (doc_locked, src_locked) = (locked(ClKind::Doc), locked(ClKind::Src));
+    cls.into_iter()
+        .filter(|cl| {
+            cl.status == ClStatus::Active
+                && match cl.kind {
+                    ClKind::Doc => doc_locked,
+                    ClKind::Src => src_locked,
+                }
+        })
+        .collect()
+}
+
 /// Whether any non-deprecated changelist exists.
 pub fn has_any_changelist(design_rounds: &Path) -> bool {
     find_changelists(design_rounds)
