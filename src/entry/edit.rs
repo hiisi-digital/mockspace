@@ -125,8 +125,15 @@ fn walk_dirs(dir: &Path, out: &mut Vec<GateDir>, ancestors: &mut Vec<std::path::
     ancestors.push(real);
     if let Ok(read) = std::fs::read_dir(dir) {
         for entry in read.flatten() {
-            if entry.path().is_dir() {
-                walk_dirs(&entry.path(), out, ancestors);
+            let path = entry.path();
+            if path.is_dir() {
+                walk_dirs(&path, out, ancestors);
+            } else if entry.file_type().is_ok_and(|t| t.is_symlink()) {
+                // A file linked into a crate is read where it is linked, so it is a place for
+                // its target too.
+                if let Ok(target) = path.canonicalize() {
+                    out.push((target, path));
+                }
             }
         }
     }
@@ -180,15 +187,23 @@ fn through_directory_links(path: &Path, src_dirs: &[std::path::PathBuf]) -> Vec<
             },
         }
     };
-    let places: Vec<_> = gate_directories(src_dirs)
-        .into_iter()
+    let gate = gate_directories(src_dirs);
+    let mut places: Vec<_> = gate
+        .iter()
         .filter(|(r, _)| *r == real)
         .map(|(_, place)| {
-            let mut out = place;
+            let mut out = place.clone();
             out.extend(rest.iter().rev());
             out.join(name)
         })
         .collect();
+    // The file itself may be what a crate links to: an edit at its real path is the crate's
+    // file at every place it is linked.
+    if rest.is_empty() {
+        if let Ok(real_file) = path.canonicalize() {
+            places.extend(gate.iter().filter(|(r, p)| *r == real_file && p.is_file()).map(|(_, p)| p.clone()));
+        }
+    }
     if places.is_empty() { vec![path.to_path_buf()] } else { places }
 }
 

@@ -414,20 +414,20 @@ fn the_hook_refuses_exactly_when_the_engine_does_and_carries_its_words() {
 }
 
 #[test]
-fn a_file_that_is_not_rust_or_not_this_repos_never_reaches_the_engine() {
+fn a_file_that_is_not_rust_never_reaches_the_engine_and_a_path_outside_the_repository_does() {
     let tmp = tempfile::tempdir().unwrap();
-    for path in [
-        tmp.path().join("mock/crates/sim-core/Cargo.toml"),
-        std::path::PathBuf::from("/somewhere/else/src/lib.rs"),
-    ] {
-        let call = tool_call(
-            "Write",
-            serde_json::json!({ "file_path": path.display().to_string(), "content": "x" }),
-        );
-        let run = run_against_stub(tmp.path(), &call, 1, true);
-        assert!(run.args.is_none(), "{} reached the engine", path.display());
-        assert!(!refused(&run.stdout));
-    }
+    let call = |path: &Path| {
+        tool_call("Write", serde_json::json!({ "file_path": path.display().to_string(), "content": "x" }))
+    };
+    let manifest = tmp.path().join("mock/crates/sim-core/Cargo.toml");
+    let run = run_against_stub(tmp.path(), &call(&manifest), 1, true);
+    assert!(run.args.is_none(), "a manifest reached the engine");
+    assert!(!refused(&run.stdout));
+    // A Rust file outside the repository may be a crate's through a link, so the engine is the
+    // one to say; here the stub says it is not.
+    let run = run_against_stub(tmp.path(), &call(Path::new("/somewhere/else/src/lib.rs")), 0, true);
+    assert!(run.args.is_some(), "a path outside the repository was passed unread");
+    assert!(!refused(&run.stdout));
 }
 
 #[test]

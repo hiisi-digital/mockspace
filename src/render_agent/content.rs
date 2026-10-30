@@ -241,7 +241,9 @@ pub(crate) fn generate_lint_derived_content(
              || deny \"the forbidden-imports gate cannot run: jq is not installed, so the edit cannot be read and a verdict would be a guess.\"\n\
          FILE_PATH=$(_extract \"file_path\")\n\
          COMMAND=\"\"\n\
-         _scope_or_allow\n\
+         # No scope test on the path here: a file reached through a link out of the repository,\n\
+         # or by an alias to it, lies outside the repository's prefix and is still read by the\n\
+         # gate. The engine says whether the path is in a crate, and passes it when it is not.\n\
          case \"$FILE_PATH\" in *.rs) ;; *) allow ;; esac\n\
          # A field goes to a file byte for byte. `$(...)` strips trailing newlines, and an\n\
          # old_string that is only newlines, or a new_string ending in one, would then name a\n\

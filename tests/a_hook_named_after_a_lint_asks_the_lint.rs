@@ -596,6 +596,26 @@ fn an_edit_in_a_module_linked_into_two_crates_is_refused_when_either_would_block
 }
 
 #[test]
+fn a_file_linked_into_a_crate_and_a_directory_linked_from_outside_the_repository_are_judged() {
+    let repo = fixture();
+    let sim = repo.root.join("mock/crates/fixture-sim");
+    let violation = "use std::fmt;\n";
+    // A file the crate links to, edited at its real path.
+    let real = repo.root.join("shared/foo.rs");
+    write(&real, "pub fn g() {}\n");
+    std::os::unix::fs::symlink(&real, sim.join("src/foo.rs")).unwrap();
+    assert!(refused(&hook_says(&repo, &real, violation)), "a linked file edited at its real path");
+    assert!(!refused(&hook_says(&repo, &real, "pub fn g() {}\n")));
+    // A module directory outside the repository, linked in, edited at its real path.
+    let outside = tempfile::tempdir().unwrap();
+    write(&outside.path().join("mod.rs"), "pub fn h() {}\n");
+    std::os::unix::fs::symlink(outside.path(), sim.join("src/ext")).unwrap();
+    let gate_text = outside.path().join("mod.rs");
+    assert!(refused(&hook_says(&repo, &gate_text, violation)), "a directory linked from outside the repository");
+    assert!(!refused(&hook_says(&repo, &gate_text, "pub fn h() {}\n")));
+}
+
+#[test]
 fn an_edit_spelled_with_a_parent_component_is_judged_where_the_filesystem_reads_it() {
     // `hop` links to a directory two levels down, so `hop/..` is not the directory `hop` sits in.
     let repo = fixture();
