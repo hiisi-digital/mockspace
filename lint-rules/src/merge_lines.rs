@@ -30,8 +30,10 @@
 //!   lines of one parent, which no side wrote, is not inherited. Sections of
 //!   the two sides in either order are, since neither side's own order moved.
 //! - **Anchored.** A line the staged content and every parent carry exactly once
-//!   keeps its place among the others such lines, in the order every parent has
-//!   them. The interleaving above alone cannot see a swap of two lines the
+//!   keeps its place among the others such lines, in the whole order of one
+//!   parent: the one order the parents share, or either side's where one side
+//!   moved a shared line and the other kept it, never a mix of the two. The
+//!   interleaving above alone cannot see a swap of two lines the
 //!   parents share, because either parent could be said to have supplied either.
 //!
 //! **Bounds of the sequence test, and none of them lets a file through
@@ -80,7 +82,7 @@ pub(crate) enum Why {
     /// A line no parent carries, a repeat past the bound, or a line every
     /// parent carries that is gone.
     Counted,
-    /// Two lines the parents share stand in an order no parent has them in.
+    /// The lines the parents share stand in an order no single parent has.
     Order,
     /// The lines do not split into one subsequence per parent.
     Sequence,
@@ -94,7 +96,7 @@ impl Why {
                 "a line neither parent carries, a line repeated beyond what the parents carry \
                  together, or a line every parent carries that is gone"
             },
-            Why::Order => "two lines the parents share, put in an order no parent has them in",
+            Why::Order => "the lines the parents share, in an order no single parent has them in",
             Why::Sequence => "lines that do not keep each parent's own order",
         }
     }
@@ -158,9 +160,14 @@ fn counted(staged: &[u32], parents: &[Vec<u32>], base: &[u32]) -> bool {
 }
 
 /// Whether the lines every parent and the staged content carry exactly once
-/// stand in the order every parent has them. Without it a swap of two lines the
-/// parents share would pass, since either parent could be said to have supplied
-/// either line.
+/// stand in the order some parent has them, the whole of that order. Without it
+/// a swap of two lines the parents share would pass, since either parent could
+/// be said to have supplied either line. Where the parents agree that order is
+/// theirs; where one side moved a line the other kept, the conflict asks for a
+/// choice between the sides, so either side's order stands. A mix of the two is
+/// refused, since stitching orders pair by pair puts a line where no side had
+/// it, and so is a conflicted merge where each side moved different shared
+/// lines, which is the safe direction.
 fn anchors_keep_their_order(staged: &[u32], parents: &[Vec<u32>]) -> bool {
     let once = |lines: &[u32]| {
         let mut t = tally(lines);
@@ -176,31 +183,8 @@ fn anchors_keep_their_order(staged: &[u32], parents: &[Vec<u32>]) -> bool {
         lines.iter().copied().filter(|l| anchors.contains_key(l)).collect()
     };
     let spine = ordered(staged);
-    if parents.iter().all(|p| ordered(p) == spine) {
-        return true;
-    }
-    // The parents can disagree on the order of lines they share, where one side
-    // moved a line the other kept. A conflict there asks for a choice between
-    // the sides, so each pair of anchors may stand in the order some parent has
-    // it, and a pair in an order no parent has is the swap this test exists to
-    // refuse. Pairs are quadratic, so past the cap the file is refused rather
-    // than passed unchecked, as the sequence test does.
-    if spine.len() > MAX_DISAGREEING_ANCHORS {
-        return false;
-    }
-    let at: Vec<HashMap<u32, usize>> = parents
-        .iter()
-        .map(|p| ordered(p).into_iter().enumerate().map(|(i, l)| (l, i)).collect())
-        .collect();
-    spine.iter().enumerate().all(|(i, first)| {
-        spine[i + 1 ..]
-            .iter()
-            .all(|later| at.iter().any(|pos| pos[first] < pos[later]))
-    })
+    parents.iter().any(|p| ordered(p) == spine)
 }
-
-/// The most anchors the pairwise order test takes where the parents disagree.
-const MAX_DISAGREEING_ANCHORS: usize = 4_000;
 
 /// The sequence test would pass [`TIME_CAP`].
 struct TooLarge;
@@ -410,7 +394,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn a_consolidation_taking_one_sides_order_where_the_sides_disagree_is_inherited() {
         // trunk re-sorted two imports the base had and the branch kept, and the
@@ -433,6 +416,19 @@ mod tests {
         assert!(!ok("use c;\nuse a;\ny\nx\nmine\n", base, &parents));
     }
 
+    #[test]
+    fn where_the_sides_disagree_the_shared_lines_take_one_sides_order_whole_and_never_a_mix() {
+        // trunk moved c to the top. Putting c between a and b is a place no
+        // side had it, though each pair of the three is in some side's order.
+        let base = "a\nb\nc\n";
+        let parents = ["a\nb\nc\nmine\n", "c\na\nb\n"];
+        assert_eq!(verdict("c\na\nb\nmine\n", base, &parents), Verdict::Recombines, "the control");
+        assert_eq!(verdict("a\nc\nb\nmine\n", base, &parents), Verdict::Authored(Why::Order));
+        // three parents covering every pair between them, and a reversal none has
+        let three = ["a\nb\nc\n", "b\nc\na\n", "c\na\nb\n"];
+        assert_eq!(verdict("b\nc\na\n", base, &three), Verdict::Recombines, "the control");
+        assert_eq!(verdict("c\nb\na\n", base, &three), Verdict::Authored(Why::Order));
+    }
 
     #[test]
     fn a_refusal_names_the_test_that_refused_it() {
