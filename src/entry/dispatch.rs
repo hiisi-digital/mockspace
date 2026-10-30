@@ -740,7 +740,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     "lock" => design_round::cmd_lock(&cfg, &subcmd_opts),
                     "deprecate" => design_round::cmd_deprecate(&cfg, &subcmd_opts),
                     "unlock" => design_round::cmd_unlock(&cfg, &subcmd_opts),
-                    "close" => design_round::cmd_close(&cfg, &subcmd_opts),
+                    "close" => design_round::cmd_close_taking(&cfg, &subcmd_opts, &take_names(&args)),
                     "archive" => design_round::cmd_archive(&cfg, &subcmd_opts),
                     "migrate" => design_round::cmd_migrate(&cfg, &subcmd_opts),
                     _ => unreachable!(),
@@ -1873,6 +1873,44 @@ mod tests {
 // the hooks and the signature happen, which risks the pre-commit gate refusing
 // the very transition that is changing the phase it reads; or keep the
 // plumbing and say in the help text and the guide that this path skips both.
+/// The files named by `--take <file>` or `--take=<file>`, in the order given.
+fn take_names(args: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        if arg == "--take" {
+            if let Some(name) = it.next() {
+                out.push(name.clone());
+            }
+        } else if let Some(name) = arg.strip_prefix("--take=") {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod take_tests {
+    use super::take_names;
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn take_reads_both_spellings_in_order_and_nothing_else() {
+        assert_eq!(
+            take_names(&args(&["mock", "close", "--take", "a.md", "--take=b.md", "--auto-commit"])),
+            vec!["a.md".to_string(), "b.md".to_string()]
+        );
+        assert!(take_names(&args(&["mock", "close"])).is_empty());
+        assert!(
+            take_names(&args(&["mock", "close", "--take"])).is_empty(),
+            "a --take with no file names nothing"
+        );
+    }
+}
+
 fn auto_commit_wanted(args: &[String]) -> bool {
     args.iter().any(|a| a == "--auto-commit")
 }

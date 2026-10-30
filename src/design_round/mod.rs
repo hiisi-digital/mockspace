@@ -362,6 +362,11 @@ pub fn cmd_unlock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
 // ---------------------------------------------------------------------------
 
 pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
+    cmd_close_taking(cfg, opts, &[])
+}
+
+/// `close`, taking the flat files named in `take` into the round as well.
+pub fn cmd_close_taking(cfg: &Config, opts: &SubcmdOpts, take: &[String]) -> ExitCode {
     let dr = design_rounds_dir(cfg);
     let phase = changelist_helpers::current_phase(&dr);
 
@@ -389,7 +394,7 @@ pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let all_cls = changelist_helpers::find_changelists(&dr);
     let round_name = determine_round_name(&all_cls);
 
-    perform_archive(cfg, opts, &dr, &round_name, ArchiveKind::Closed)
+    perform_archive(cfg, opts, &dr, &round_name, ArchiveKind::Closed, take)
 }
 
 pub fn cmd_archive(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
@@ -425,6 +430,7 @@ pub fn cmd_archive(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
         &dr,
         &format!("{round_name}-abandoned"),
         ArchiveKind::Abandoned,
+        &[],
     )
 }
 

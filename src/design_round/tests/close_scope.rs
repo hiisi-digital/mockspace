@@ -428,3 +428,66 @@ fn close_of_an_untagged_round_leaves_a_file_with_a_dash_after_the_minute_flat() 
     );
     assert_eq!(names_in(&dr), sorted(&[PARKED_OLDER, stray]));
 }
+
+// A topic filed a minute before its round's changelists is the round's own, yet nothing in its
+// name or any changelist says so, and a locked changelist can no longer be edited to name it. It
+// stayed flat, landed on the trunk as a flat file, and put every branch that merged it back in the
+// TOPIC phase. `--take` is the close-time way to say it belongs.
+
+const OWN_EARLIER_TOPIC: &str = "202610230519_topic.filed-a-minute-before-the-changelists.md";
+
+#[test]
+fn close_takes_a_flat_file_it_is_told_to_take() {
+    let dir = closable(&[(OWN_EARLIER_TOPIC, "own\n"), (PARKED_OLDER, "parked\n")]);
+    let dr = dir.path().join("design_rounds");
+    assert_eq!(
+        cmd_close_taking(
+            &Config::from_dir(dir.path()),
+            &OPTS,
+            &[OWN_EARLIER_TOPIC.to_string()]
+        ),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(
+        names_in(&dr.join("202610230520")),
+        sorted(&[DOC_LOCK, SRC_LOCK, OWN_EARLIER_TOPIC]),
+        "the file named with --take is archived with the round"
+    );
+    assert_eq!(
+        names_in(&dr),
+        sorted(&[PARKED_OLDER]),
+        "a flat file not named stays where it was"
+    );
+}
+
+#[test]
+fn close_without_take_still_leaves_that_topic_flat() {
+    let dir = closable(&[(OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    assert_eq!(
+        cmd_close(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(names_in(&dr), sorted(&[OWN_EARLIER_TOPIC]));
+}
+
+#[test]
+fn close_refuses_a_take_naming_no_flat_file_and_moves_nothing() {
+    let dir = closable(&[(OWN_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    assert_eq!(
+        cmd_close_taking(
+            &Config::from_dir(dir.path()),
+            &OPTS,
+            &["202610230519_topic.typo.md".to_string()]
+        ),
+        ExitCode::FAILURE,
+        "a name that is no flat file is a typo, and a close that went on would leave the file it \
+         was meant for flat"
+    );
+    assert_eq!(
+        names_in(&dr),
+        sorted(&[DOC_LOCK, SRC_LOCK, OWN_TOPIC]),
+        "nothing moved"
+    );
+}

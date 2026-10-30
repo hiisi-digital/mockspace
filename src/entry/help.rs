@@ -95,8 +95,9 @@ const COMMANDS: &[Cmd] = &[
         help:    "Archives a finished round (both changelists locked) into \
                   design_rounds/<id>/ with .meta and .history. Takes the \
                   changelists, the files that start with the id of one, and \
-                  the files one names; any other flat file stays and is \
-                  listed. Valid only from CLOSED. Accepts --auto-commit.",
+                  the files one names, and any flat file given as \
+                  --take <file> (repeatable); any other flat file stays and \
+                  is listed. Valid only from CLOSED. Accepts --auto-commit.",
     },
     Cmd {
         name:    "archive",

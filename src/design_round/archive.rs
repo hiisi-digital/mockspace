@@ -156,7 +156,10 @@ pub(crate) fn left_notice(left: &[String]) -> Option<String> {
     for name in left {
         out.push_str(&format!("\n  {name}"));
     }
-    out.push_str("\n  to close one with the round, name it in a changelist before the lock");
+    out.push_str(
+        "\n  one of this round's: `cargo mock close --take <file>` (a flat file left on the trunk \
+         puts every branch that merges it back in TOPIC)",
+    );
     Some(out)
 }
 
@@ -171,7 +174,21 @@ pub(crate) fn perform_archive(
     dr: &Path,
     archive_dir_name: &str,
     kind: ArchiveKind,
+    take: &[String],
 ) -> ExitCode {
+    // Before anything is created or moved: a `--take` naming no flat file is a typo, and going on
+    // would leave the file it was meant for flat.
+    let unknown: Vec<&String> = take
+        .iter()
+        .filter(|n| *n == "README.md" || !dr.join(n.as_str()).is_file())
+        .collect();
+    if !unknown.is_empty() {
+        for name in unknown {
+            eprintln!("error: --take {name}: no such flat file in design_rounds/");
+        }
+        return ExitCode::FAILURE;
+    }
+
     // Disambiguate a colliding archive dir within this tree. The round id is
     // the earliest changelist's id (determine_round_name); ids made by
     // `cargo mock round-id` carry a tag and do not repeat, but a bare minute
@@ -217,7 +234,16 @@ pub(crate) fn perform_archive(
             left:  Vec::new(),
         }
     } else {
-        files_of_round(&flat, |name| fs::read_to_string(dr.join(name)).ok())
+        let mut files = files_of_round(&flat, |name| fs::read_to_string(dr.join(name)).ok());
+        // What the caller said belongs to the round: a topic stamped before its changelists,
+        // which nothing in a locked changelist can be edited to name any more.
+        for name in take {
+            if let Some(at) = files.left.iter().position(|n| n == name) {
+                files.taken.push(files.left.remove(at));
+            }
+        }
+        files.taken.sort();
+        files
     };
 
     let mut touched = Vec::new();
