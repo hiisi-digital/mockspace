@@ -968,9 +968,17 @@ fn catalogues_rule_embeds_a_live_snapshot_not_a_fixed_string() {
         "the declared project tool must appear in the generated snapshot:\n{}",
         rule.body
     );
+    // The builtin subcommands are the same in every repository and `mock tools`
+    // answers them live, so the rule does not carry them. A real builtin's name
+    // is the control for the claim, and `mock tools` is what it points to instead.
     assert!(
-        rule.body.contains("mock lock"),
-        "a builtin must appear too:\n{}",
+        !rule.body.contains("registry-append"),
+        "a builtin subcommand must not be listed:\n{}",
+        rule.body
+    );
+    assert!(
+        rule.body.contains("`mock tools`"),
+        "and the live command must be named:\n{}",
         rule.body
     );
 
@@ -1046,9 +1054,20 @@ fn a_renamed_builtin_rule_takes_its_old_file_with_it() {
 /// switching it off for the reason the name gave would now be silently dropping
 /// the lint half too. The rename is the fix and this is what holds it: if the
 /// lint half ever stops rendering, the key is wrong again and says so here.
+///
+/// The lint half lists the lints the repository set itself, so the fixture sets
+/// one. Every other builtin lint runs at the pack's default and is not a row.
 #[test]
-fn the_catalogues_rule_carries_the_lints_as_well_as_the_tools() {
-    let cfg = crate::config::Config::from_dir(&skill_fixture(None));
+fn the_catalogues_rule_carries_the_lints_the_repository_set_as_well_as_the_tools() {
+    let mut cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let all = mockspace_lint_rules::all_lints();
+    let set = all
+        .first()
+        .expect("the engine ships at least one crate lint")
+        .name();
+    cfg.lint_overrides
+        .base
+        .insert(set.to_string(), mockspace_lint_rules::Severity::HARD_ERROR);
     let builtins = generate_builtin_templates(&cfg, &pack_with_stub_tool());
     let rule = builtins
         .rules
@@ -1061,23 +1080,62 @@ fn the_catalogues_rule_carries_the_lints_as_well_as_the_tools() {
         rule.body
     );
     assert!(
-        rule.body.contains("mock lints"),
+        rule.body.contains("`mock lints`"),
         "and the lint half, which the old key's name did not cover:\n{}",
         rule.body
     );
-    // A lint's own name, not the group heading. `render_group` emits `CRATE
-    // LINTS` whether or not anything is under it, so asserting the heading was
-    // satisfied by four empty headers, which was the state the code was in.
-    let a_builtin = mockspace_lint_rules::all_lints();
-    let name = a_builtin
+    let row = |name: &str| rule.body.lines().any(|l| l.starts_with(&format!("    {name} ")));
+    // A lint's own row, not the group heading: a heading is emitted whether or
+    // not anything is under it.
+    assert!(
+        row(set),
+        "a lint the repository set has to be listed, and `{set}` is one:\n{}",
+        rule.body
+    );
+    // The controls. A listing carrying every lint passes the assertion above too.
+    let rows_of_others: Vec<&str> = all
+        .iter()
+        .map(|l| l.name())
+        .filter(|n| *n != set && row(n))
+        .collect();
+    assert!(
+        rows_of_others.is_empty(),
+        "lints at the pack's default are `mock lints`' to list, not this rule's: {rows_of_others:?}"
+    );
+}
+
+/// A lint the repository set to off is not a row: it checks nothing here.
+#[test]
+fn a_lint_the_repository_turned_off_is_not_in_the_catalogues_rule() {
+    let mut cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let name = mockspace_lint_rules::all_lints()
         .first()
         .expect("the engine ships at least one crate lint")
         .name();
+    cfg.lint_overrides
+        .base
+        .insert(name.to_string(), mockspace_lint_rules::Severity::OFF);
+    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
+    let rule = builtins.rules.iter().find(|r| r.name == "catalogues").unwrap();
     assert!(
-        rule.body.contains(name),
-        "the listing has to carry a lint somebody is actually checked by, and `{name}` is one:\n{}",
+        !rule.body.lines().any(|l| l.starts_with(&format!("    {name} "))),
+        "{}",
         rule.body
     );
+}
+
+/// What a repository that set nothing pays. The rule loads on the first file read
+/// there, in every session, so for a repository with no tools and no lints of its
+/// own it is the pointer and nothing else. The ceiling is a tripwire for the
+/// prose growing back, and the lower bound the control that something generated.
+#[test]
+fn the_catalogues_rule_for_a_repository_that_set_nothing_is_a_pointer() {
+    let cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
+    let rule = builtins.rules.iter().find(|r| r.name == "catalogues").unwrap();
+    let size = rule.body.len();
+    assert!(size < 1_500, "{size} bytes for a repository that set nothing:\n{}", rule.body);
+    assert!(size > 300, "{size} bytes: the pointer to the two commands is missing:\n{}", rule.body);
 }
 
 #[test]

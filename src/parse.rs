@@ -79,40 +79,45 @@ pub fn discover_crates(crates_dir: &Path, crate_prefix: &str) -> CrateMap {
         .set_language(&tree_sitter_rust::LANGUAGE.into())
         .expect("failed to set rust language");
 
-    let prefix_dash = format!("{crate_prefix}-");
-
     for entry in entries {
         let dir_name = entry.file_name().to_string_lossy().to_string();
         let librs = entry.path().join("src/lib.rs");
-        let cargo_toml = entry.path().join("Cargo.toml");
         if !librs.exists() {
             continue;
         }
-
-        let short = if dir_name == crate_prefix {
-            crate_prefix.to_string()
-        } else {
-            dir_name
-                .strip_prefix(&prefix_dash)
-                .unwrap_or(&dir_name)
-                .to_string()
-        };
-
         let source = fs::read_to_string(&librs).unwrap_or_default();
-        let cargo = fs::read_to_string(&cargo_toml).unwrap_or_default();
-
-        let items = parse_items(&mut parser, &source);
-        let macro_generated = parse_macro_invocations(&source, crate_prefix);
-        let deps = extract_deps(&cargo, &dir_name, crate_prefix);
-
-        result.insert(dir_name, CrateInfo {
-            short_name: short,
-            items,
-            deps,
-            macro_generated,
-        });
+        let info = crate_info(&mut parser, &entry.path(), &dir_name, &source, crate_prefix);
+        result.insert(dir_name, info);
     }
     result
+}
+
+/// One package's [`CrateInfo`] from its `lib.rs` text and the `Cargo.toml` beside it.
+///
+/// The single place a package's info is built, so a package found on disk and one
+/// whose `lib.rs` is only about to be written are read the same way.
+pub fn crate_info(
+    parser: &mut Parser,
+    crate_dir: &Path,
+    dir_name: &str,
+    source: &str,
+    crate_prefix: &str,
+) -> CrateInfo {
+    let short = if dir_name == crate_prefix {
+        crate_prefix.to_string()
+    } else {
+        dir_name
+            .strip_prefix(&format!("{crate_prefix}-"))
+            .unwrap_or(dir_name)
+            .to_string()
+    };
+    let cargo = fs::read_to_string(crate_dir.join("Cargo.toml")).unwrap_or_default();
+    CrateInfo {
+        short_name: short,
+        items: parse_items(parser, source),
+        deps: extract_deps(&cargo, dir_name, crate_prefix),
+        macro_generated: parse_macro_invocations(source, crate_prefix),
+    }
 }
 
 /// Sibling crates this crate depends on, by directory name.

@@ -2031,7 +2031,7 @@ pub fn check_crate_with_extra(
     overrides: Option<&LintConfig>,
     extra_lints: &[Box<dyn CrateLint>],
 ) -> Vec<LintError> {
-    check_crate_saving(ctx, doc_only, overrides, extra_lints, None)
+    check_crate_selected(ctx, doc_only, overrides, extra_lints, None, None)
 }
 
 /// [`check_crate_with_extra`], answering from saved verdicts where `saved` is given.
@@ -2048,6 +2048,40 @@ pub fn check_crate_saving(
     overrides: Option<&LintConfig>,
     extra_lints: &[Box<dyn CrateLint>],
     saved: Option<&dyn verdict::VerdictCache>,
+) -> Vec<LintError> {
+    check_crate_selected(ctx, doc_only, overrides, extra_lints, saved, None)
+}
+
+/// Run the one per-crate lint answering to `name`, through the same path
+/// [`check_crate_with_extra`] takes every lint through: the same configuration,
+/// the same binding to crates, the same file filters, the same `lint:allow`
+/// markers. An agent hook that is named after a lint calls this, so its verdict
+/// is the lint's and not a second implementation of it.
+///
+/// It takes no store: the run is always fresh, neither reading a saved verdict
+/// nor writing one, so a saved verdict can never answer differently from the
+/// hook's run, and the hook cannot put a one-file view of a crate into a store
+/// that keys whole-crate verdicts.
+///
+/// Empty when no per-crate lint answers to `name`, which is also what a lint that
+/// found nothing returns; a caller that must tell the two apart asks
+/// [`all_lints`] and the pack first.
+pub fn check_crate_named(
+    ctx: &LintContext,
+    name: &str,
+    overrides: Option<&LintConfig>,
+    extra_lints: &[Box<dyn CrateLint>],
+) -> Vec<LintError> {
+    check_crate_selected(ctx, false, overrides, extra_lints, None, Some(name))
+}
+
+fn check_crate_selected(
+    ctx: &LintContext,
+    doc_only: bool,
+    overrides: Option<&LintConfig>,
+    extra_lints: &[Box<dyn CrateLint>],
+    saved: Option<&dyn verdict::VerdictCache>,
+    only: Option<&str>,
 ) -> Vec<LintError> {
     let mut lints = all_lints();
     configure_all(
@@ -2067,6 +2101,7 @@ pub fn check_crate_saving(
         .iter()
         .map(|l| (verdict::Origin::BuiltIn, l.as_ref()))
         .chain(extra_lints.iter().map(|l| (verdict::Origin::Pack, l.as_ref())))
+        .filter(|(_, lint)| only.is_none_or(|name| lint.name() == name))
     {
         // A lint bound to other crates is not run here at all, rather than run and
         // silenced: the crate is outside what the configuration says the lint is

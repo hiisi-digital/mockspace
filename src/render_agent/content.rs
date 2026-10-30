@@ -5,12 +5,15 @@
 
 use super::*;
 
+/// The lint the generated forbidden-imports hook is named after and asks.
+const FORBIDDEN_IMPORTS_LINT: &str = "forbidden-imports";
+
 /// Generate agent rules and hooks derived from lint configuration.
 ///
-/// For each `forbidden-imports` rule at error/build-gate severity,
-/// generates:
+/// For each `forbidden-imports` rule the repository declares (the hook does not look at
+/// the lint's severity; the engine answers for that on every edit), generates:
 /// - An agent rule file per scope (tells the agent what's forbidden)
-/// - An agent hook per scope (blocks writes containing forbidden patterns)
+/// - One agent hook, named after the lint, that asks the lint about each edit
 ///
 /// Returns how many files were written and the metadata of each hook, which the
 /// settings step needs to register it under the tools it guards. A hook written
@@ -71,7 +74,9 @@ pub(crate) fn generate_lint_derived_content(
         .get("forbidden-imports")
         .cloned()
         .unwrap_or_default();
-    let mut rules_by_name: Map<String, (String, String, String)> = Map::new(); // name -> (scope, forbidden, reason)
+    // name -> (scope, forbidden, reason, disabled). A rule naming no scope applies to every
+    // crate, as the lint reads it (`*`), so it gets the hook and a rule file like any other.
+    let mut rules_by_name: Map<String, (String, String, String, bool)> = Map::new();
 
     for (key, value) in &params {
         if !key.starts_with("rule.") {
@@ -87,22 +92,20 @@ pub(crate) fn generate_lint_derived_content(
 
         let entry = rules_by_name
             .entry(rule_name)
-            .or_insert_with(|| (String::new(), String::new(), String::new()));
+            .or_insert_with(|| ("*".to_string(), String::new(), String::new(), false));
         match field {
             "scope" => entry.0 = value.clone(),
             "forbidden" => entry.1 = value.clone(),
             "reason" => entry.2 = value.clone(),
-            "enabled" if value == "false" => {
-                entry.0 = "__disabled__".to_string();
-            },
+            "enabled" if value == "false" => entry.3 = true,
             _ => {},
         }
     }
 
     // Group by scope
     let mut by_scope: Map<String, Vec<(String, String)>> = Map::new(); // scope -> [(forbidden, reason)]
-    for (_name, (scope, forbidden, reason)) in &rules_by_name {
-        if scope == "__disabled__" || scope.is_empty() || forbidden.is_empty() {
+    for (_name, (scope, forbidden, reason, disabled)) in &rules_by_name {
+        if *disabled || scope.is_empty() || forbidden.is_empty() {
             continue;
         }
         by_scope
@@ -111,7 +114,25 @@ pub(crate) fn generate_lint_derived_content(
             .push((forbidden.clone(), reason.clone()));
     }
 
+    // The per-scope hooks an earlier render wrote are gone either way, and a
+    // render with no rules left would otherwise leave them registered under no
+    // lint that still stands behind them.
+    for dir in [claude_hooks_dir, copilot_hooks_dir] {
+        sweep_orphan_generated_files(dir, "lint-forbidden-", ".sh", &Set::new());
+    }
+
     if by_scope.is_empty() {
+        // With no rule left the hook has nothing to ask about. Only one this
+        // renderer wrote is taken: a hook of the same name some other hand wrote
+        // is not ours to remove.
+        for dir in [claude_hooks_dir, copilot_hooks_dir] {
+            let path = dir.join(format!("{FORBIDDEN_IMPORTS_LINT}.sh"));
+            let ours = fs::read_to_string(&path)
+                .is_ok_and(|t| t.contains(&format!("Auto-generated: the `{FORBIDDEN_IMPORTS_LINT}` lint")));
+            if ours {
+                let _ = fs::remove_file(&path);
+            }
+        }
         return (0, Vec::new());
     }
 
@@ -123,7 +144,6 @@ pub(crate) fn generate_lint_derived_content(
     }
 
     let src_dirs_repo = src_dirs_from_repo(cfg);
-    let dirs_grep = ere_group(&src_dirs_repo);
     for (scope, rules) in &by_scope {
         let apply_to_globs: Vec<String> = src_dirs_repo
             .iter()
@@ -155,7 +175,7 @@ pub(crate) fn generate_lint_derived_content(
         );
         let _ = writeln!(
             body,
-            "Violations are caught by the `forbidden-imports` lint at error level.\n"
+            "Violations are reported by the `forbidden-imports` lint, at the severity `mock lints` shows for it in this repository.\n"
         );
         for (forbidden, reason) in rules {
             let _ = writeln!(body, "- `{forbidden}`: {reason}");
@@ -180,84 +200,6 @@ pub(crate) fn generate_lint_derived_content(
         let copilot_path = copilot_instructions_dir.join(format!("{rule_name}.instructions.md"));
         render_design::write_generated_ok(&copilot_path, &copilot_content);
         count += 1;
-
-        // --- Agent Hook ---
-        // Generate a hook that blocks writes containing forbidden patterns
-        let mut forbidden_patterns: Vec<String> = Vec::new();
-        for (forbidden, _) in rules {
-            for pat in forbidden.split(',') {
-                let pat = pat.trim();
-                if !pat.is_empty() {
-                    // Convert pattern to grep-able regex
-                    let grep_pat = pat.replace("::", "::").replace("*", "");
-                    forbidden_patterns.push(grep_pat);
-                }
-            }
-        }
-
-        if forbidden_patterns.is_empty() {
-            continue;
-        }
-
-        // Build the scope match pattern for the hook
-        let scope_grep = scope.replace('*', ".*").replace(',', "|");
-        let patterns_grep = forbidden_patterns
-            .iter()
-            .map(|p| format!("\"{}\"", p.replace('"', "\\\"")))
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        let hook_body = format!(
-            "#!/usr/bin/env bash\n\
-             # Auto-generated from [lints.forbidden-imports]: scope: {scope}\n\
-             set -uo pipefail\n\
-             __INPUT=$(cat)\n\
-             {{{{HOOK_HELPERS}}}}\n\
-             FILE_PATH=$(_extract \"file_path\")\n\
-             COMMAND=\"\"\n\
-             _scope_or_allow\n\
-             TARGET=\"$FILE_PATH\"\n\
-             CONTENT=$(_extract \"new_string\")\n\
-             if [[ -z \"$CONTENT\" ]]; then CONTENT=$(_extract \"content\"); fi\n\
-             # Only check crates matching scope\n\
-             if ! echo \"$TARGET\" | grep -qE \"{dirs_grep}/({scope_grep})/\"; then allow; fi\n\
-             # Check for forbidden patterns\n\
-             for PAT in {patterns_grep}; do\n\
-                 if echo \"$CONTENT\" | grep -qF \"$PAT\"; then\n\
-                     deny \"Forbidden import/type '$PAT' in scope '{scope}'. See lint config.\"\n\
-                 fi\n\
-             done\n"
-        );
-
-        let hook_name = format!("lint-forbidden-{slug}.sh");
-
-        let repo_root_str = cfg.repo_root.to_string_lossy();
-        let claude_hook = super::wire::with_generated_marker(
-            &hook_body
-                .replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS)
-                .replace("{{REPO_ROOT}}", &repo_root_str),
-        );
-        let copilot_hook = super::wire::with_generated_marker(
-            &hook_body
-                .replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS)
-                .replace("{{REPO_ROOT}}", &repo_root_str),
-        );
-
-        let claude_hook_path = claude_hooks_dir.join(&hook_name);
-        write_executable(&claude_hook_path, &claude_hook)
-            .expect("failed to write forbidden-imports claude hook");
-
-        let copilot_hook_path = copilot_hooks_dir.join(&hook_name);
-        write_executable(&copilot_hook_path, &copilot_hook)
-            .expect("failed to write forbidden-imports copilot hook");
-        count += 2;
-
-        // The hook reads the text being written (`new_string` or `content`), so
-        // it guards the tools that write, and Bash is not one of them.
-        hook_metas.push(HookMeta {
-            name:     hook_name,
-            matchers: vec!["Write".into(), "Edit".into()],
-        });
     }
 
     // Sweep orphan rendered files. When a scope is removed from
@@ -273,8 +215,88 @@ pub(crate) fn generate_lint_derived_content(
         ".instructions.md",
         &active_slugs,
     );
-    sweep_orphan_generated_files(claude_hooks_dir, P, ".sh", &active_slugs);
-    sweep_orphan_generated_files(copilot_hooks_dir, P, ".sh", &active_slugs);
+
+    // One hook, named after the lint, replaces the per-scope hooks the slugs
+    // named: the lint holds the scopes itself, so a hook per scope ran the whole
+    // lint once for each of them.
+    let hook_name = format!("{FORBIDDEN_IMPORTS_LINT}.sh");
+    let launcher_lookup = super::helpers::find_launcher(
+        "the forbidden-imports gate cannot run: no mockspace launcher on PATH. The verdict is the lint's and the engine gives it, so guessing a weaker rule here would contradict it. Install with: cargo install cargo-mock",
+    );
+    let hook_body = format!(
+        "#!/usr/bin/env bash\n\
+         # Auto-generated: the `{FORBIDDEN_IMPORTS_LINT}` lint, asked about this edit.\n\
+         # The verdict is the lint's, from `mock check-edit`; nothing here judges the text.\n\
+         set -uo pipefail\n\
+         __INPUT=$(cat)\n\
+         {{{{HOOK_HELPERS}}}}\n\
+         # Without jq the path cannot be read, so a payload that never mentions a Rust file is\n\
+         # passed unread and one that does is refused, even where the mention is only text inside\n\
+         # a file that is not Rust. That over-refuses on a machine without jq and never passes\n\
+         # what the lint would refuse.\n\
+         # Claude carries the path as raw JSON and Copilot inside a JSON-encoded string, where\n\
+         # the quote after `.rs` is escaped, so both spellings are the same file.\n\
+         case \"$__INPUT\" in *'.rs\"'* | *'.rs\\\"'*) ;; *) allow ;; esac\n\
+         command -v jq >/dev/null 2>&1 \\\n\
+             || deny \"the forbidden-imports gate cannot run: jq is not installed, so the edit cannot be read and a verdict would be a guess.\"\n\
+         FILE_PATH=$(_extract \"file_path\")\n\
+         COMMAND=\"\"\n\
+         # No scope test on the path here: a file reached through a link out of the repository,\n\
+         # or by an alias to it, lies outside the repository's prefix and is still read by the\n\
+         # gate. The engine says whether the path is in a crate, and passes it when it is not.\n\
+         case \"$FILE_PATH\" in *.rs) ;; *) allow ;; esac\n\
+         # A field goes to a file byte for byte. `$(...)` strips trailing newlines, and an\n\
+         # old_string that is only newlines, or a new_string ending in one, would then name a\n\
+         # different file than the one the edit makes. `_extract` ends with the one newline\n\
+         # jq adds, which is the only one removed.\n\
+         _extract_to() {{\n\
+             local v\n\
+             v=$(_extract \"$1\"; printf x)\n\
+             v=${{v%x}}\n\
+             printf '%s' \"${{v%$'\\n'}}\" > \"$2\"\n\
+         }}\n\
+         {launcher_lookup}\
+         [ -d \"$__HOOK_REPO_ROOT\" ] \\\n\
+             || deny \"the forbidden-imports gate cannot run: its repository $__HOOK_REPO_ROOT is not there. Regenerate the hooks with cargo mock from where the repository now is.\"\n\
+         WORK=$(mktemp -d) || deny \"the forbidden-imports gate cannot run: no temporary directory.\"\n\
+         trap 'rm -rf \"$WORK\"' EXIT\n\
+         _extract_to old_string \"$WORK/old\"\n\
+         _extract_to new_string \"$WORK/new\"\n\
+         if [[ ! -s \"$WORK/old\" && ! -s \"$WORK/new\" ]]; then _extract_to content \"$WORK/new\"; fi\n\
+         ARGS=(check-edit --lint {FORBIDDEN_IMPORTS_LINT} --file \"$FILE_PATH\" --lint-only)\n\
+         _extract_to edits \"$WORK/edits\"\n\
+         if [[ \"$(head -c 1 \"$WORK/edits\")\" == \"[\" ]]; then\n\
+             ARGS+=(--edits \"$WORK/edits\")\n\
+         elif [[ -s \"$WORK/old\" ]]; then\n\
+             ARGS+=(--replace \"$WORK/old\")\n\
+             if [[ \"$(_extract replace_all)\" == \"true\" ]]; then ARGS+=(--all); fi\n\
+         fi\n\
+         _OUT=$(cd \"$__HOOK_REPO_ROOT\" 2>/dev/null && \"$launcher\" \"${{ARGS[@]}}\" < \"$WORK/new\" 2>&1)\n\
+         _RC=$?\n\
+         if [ \"$_RC\" -eq 0 ]; then allow; fi\n\
+         deny \"$_OUT\"\n"
+    );
+    let repo_root_str = cfg.repo_root.to_string_lossy();
+    for (hooks_dir, helpers, who) in [
+        (claude_hooks_dir, CLAUDE_HOOK_HELPERS, "claude"),
+        (copilot_hooks_dir, COPILOT_HOOK_HELPERS, "copilot"),
+    ] {
+        let marked = super::wire::with_generated_marker(
+            &hook_body
+                .replace("{{HOOK_HELPERS}}", helpers)
+                .replace("{{REPO_ROOT}}", &repo_root_str),
+        );
+        let hook_path = hooks_dir.join(&hook_name);
+        write_executable(&hook_path, &marked)
+            .unwrap_or_else(|e| panic!("failed to write forbidden-imports {who} hook: {e}"));
+        count += 1;
+    }
+    // It reads the text being written, so it guards the tools that write, and
+    // Bash is not one of them.
+    hook_metas.push(HookMeta {
+        name:     hook_name,
+        matchers: vec!["Write".into(), "Edit".into(), "MultiEdit".into()],
+    });
 
     (count, hook_metas)
 }

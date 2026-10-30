@@ -15,7 +15,7 @@ use crate::testkit::LintFixture;
 use crate::verdict::{self, VerdictCache};
 use crate::{
     CrateLint, Lint, LintConfig, LintContext, LintError, Reach, Severity, check_crate_saving,
-    check_crate_with_extra,
+    check_crate_named, check_crate_with_extra,
 };
 
 /// An in-memory store that counts what is asked of it.
@@ -482,4 +482,34 @@ fn a_repo_lints_configuration_is_part_of_what_it_remembers() {
     assert_eq!(runs.load(Ordering::SeqCst), 1, "the control: the same configuration replays");
     run(&params("5"));
     assert_eq!(runs.load(Ordering::SeqCst), 2, "a changed parameter must not replay the old verdict");
+}
+
+#[test]
+fn a_named_run_judges_afresh_and_never_touches_a_store() {
+    let fixture = crate_of(ROOT, MODULE);
+    let ctx = fixture.ctx();
+    let (pack, runs) = Counting::boxed(Reach::File);
+
+    let first = check_crate_named(&ctx, "counting", None, &pack);
+    assert!(!first.is_empty(), "the control: the lint has a finding to return");
+    let after_first = runs.load(Ordering::SeqCst);
+    assert!(after_first > 0, "the named lint must have run");
+
+    // The same call again: a replayed verdict would leave the counter where it was.
+    let second = check_crate_named(&ctx, "counting", None, &pack);
+    assert_eq!(lines(&second), lines(&first));
+    assert_eq!(
+        runs.load(Ordering::SeqCst),
+        after_first * 2,
+        "a named run must judge afresh each time, there being no store for it to read"
+    );
+
+    // A store holding this crate's saved verdicts does not change what it answers.
+    let store = Memory::default();
+    let _ = check_crate_saving(&ctx, false, None, &pack, Some(&store));
+    let saved_before = store.saved.borrow().len();
+    let fresh = check_crate_named(&ctx, "counting", None, &pack);
+    assert_eq!(lines(&fresh), lines(&first));
+    assert_eq!(store.saved.borrow().len(), saved_before, "a named run must write nothing");
+    assert!(check_crate_named(&ctx, "no-such-lint", None, &pack).is_empty());
 }

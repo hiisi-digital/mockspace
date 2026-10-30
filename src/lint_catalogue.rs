@@ -312,6 +312,46 @@ pub fn render_table(listings: &[Listing], absent: &[String]) -> String {
     s
 }
 
+/// The lints this project decided about and that run, and the names it configured
+/// that govern nothing.
+///
+/// What `mock lints` prints, less the rows that say nothing about this repository:
+/// a lint at the pack's default is the same lint at the same severity everywhere,
+/// and one that does not run checks nothing. A lint the project named and that
+/// runs is a decision somebody made here, which is what a session reading this
+/// needs to know. Empty groups are left out, and a line says how many lints run
+/// at the default, so the omission is stated and not silent.
+#[must_use]
+pub fn render_set_here(listings: &[Listing], absent: &[String]) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::new();
+    let set: Vec<Listing> = listings
+        .iter()
+        .filter(|l| l.is_configured() && l.runs())
+        .cloned()
+        .collect();
+    for kind in [Kind::Crate, Kind::Workspace, Kind::Repo, Kind::Message] {
+        if set.iter().any(|l| l.kind == kind) {
+            render_group(&mut s, kind, &set);
+            s.push('\n');
+        }
+    }
+    let _ = writeln!(
+        s,
+        "{} of {} lints are set by this repository; the rest run at the pack's default or not at all.",
+        set.len(),
+        listings.len()
+    );
+    if !absent.is_empty() {
+        let _ = writeln!(
+            s,
+            "\nConfigured, and matching no lint that runs here, so governing nothing: {}.",
+            absent.join(", ")
+        );
+    }
+    s
+}
+
 fn render_group(out: &mut String, kind: Kind, listings: &[Listing]) {
     let group: Vec<&Listing> = listings.iter().filter(|l| l.kind == kind).collect();
     out.push_str(kind.label());
