@@ -531,34 +531,18 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             body: "## Per-crate documentation templates\nREADME.md.tmpl files are SHORT (3-10 lines). They contain the crate's purpose, what it depends on, and what depends on it. They are inserted into the generated DESIGN.md via {{crate_summaries}}. Do not put detailed design information here -- that goes in DESIGN.md.tmpl or DEEPDIVE_*.md.tmpl.".to_string(),
     });
 
-    // On by default, from `mock/agent/config.toml`. A generated snapshot of
-    // `mock tools`, with the live command named as the thing to trust once
-    // this snapshot is older than the last change to what tools exist. See
-    // `crate::tool_catalogue` for why a snapshot rather than only the
-    // instruction to run the command: this project's own convention
-    // (`reference-syntax`, above) already generates a live-at-render-time
-    // answer the same way, and an immediate answer beats a mandatory extra
-    // command for the common case where nothing has changed since the last
-    // `cargo mock`.
+    // On by default, from `mock/agent/config.toml`. A generated snapshot of what
+    // this repository itself declares: its project tools and the lints it set,
+    // with `mock tools` and `mock lints` named as the live answer once the
+    // snapshot is older than the last change. What is the same in every repository
+    // is left to those commands, because this rule loads on the first file read
+    // and every session there pays for its size. See `crate::tool_catalogue` for
+    // why a snapshot rather than only the instruction to run the commands.
     if cfg.agent.catalogues {
-        let snapshot = crate::tool_catalogue::render_table(&crate::tool_catalogue::enumerate(pack));
-        let lints = crate::lint_catalogue::render_table(
-            &crate::lint_catalogue::enumerate(pack, &cfg.lint_overrides),
-            &crate::lint_catalogue::configured_but_absent(pack, &cfg.lint_overrides),
-        );
         rules.push(BuiltinRule {
             name: "catalogues".to_string(),
             apply_to: vec!["**".to_string()],
-            body: format!(
-                "## What is available here, and what is checking you\n\n{}\n\n{}\n\n{}\n\n```\n{}```\n\n{}\n\n{}\n\n```\n{}```\n",
-                "Two commands answer this and neither answer is guessable. `mock tools` lists every subcommand and every project tool with its kind, with `mock tools --long` or `mock help <name>` for what a tool is held to, its declared arguments and full help. A tool is one of two kinds: a `check` that cannot be a lint, which declares one of the two reasons a lint cannot cover it, or a `make`, which writes files, declares the paths it writes, with a fixed root for any argument a path starts with, and fails its run on an argument outside its root or a write outside the paths, and whose findings never block: a gating judgement is a check or a lint. `mock lints` lists every lint with the severity that actually governs it. Never hand-write either list from memory, and never conclude from a directory listing that a repository has no tools.",
-                "**A tool does not have to live in this repository.** Tools arrive through `lint-crates` in `mockspace.toml` exactly as lints do, on the same cdylib, so a project whose `<mock>/tools/` is empty can still have several, and looking in that directory is the search that finds nothing and reports it as an absence. The command reads the loaded pack, which is the only place both populations are actually known.",
-                "The listing below is a snapshot taken at the last `cargo mock` run. It goes stale the moment a tool is added, renamed, or removed without a fresh run, which is why the live command is named above rather than only this list. Prefer `mock tools` over this snapshot whenever the two might disagree.",
-                snapshot,
-                "**Before writing a check, run both.** The common failure is not disagreeing with what exists, it is not knowing it does: a plan whose first step is building a mechanism is the tell, and the mechanism is usually already here. Where a check belongs is a separate question with a fixed answer, and `mock/lints/` and `mock/tools/` are the only two homes it has. The same holds before writing a generator or any other script that writes files: it is a maker in `mock/tools/`, declaring what it writes, not a script beside the harness.",
-                "For lints the same snapshot argument applies, with one thing worth reading rather than skimming: the right-hand column says whether a severity was chosen here or inherited from the pack's default. A lint this project never named still runs, at a default nobody here picked, and a severity configured for a name no lint answers to governs nothing while reading exactly like a live decision. Both are reported below and neither is automatically a fault.",
-                lints
-            ),
+            body: super::catalogue::body(cfg, pack),
         });
     }
 

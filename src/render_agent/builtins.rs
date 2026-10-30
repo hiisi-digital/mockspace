@@ -44,6 +44,9 @@ pub(crate) fn builtin_check_message(cfg: &Config) -> String {
         .to_string_lossy()
         .to_string();
     let _ = mock_rel;
+    let launcher_lookup = super::helpers::find_launcher(&format!(
+        "the message gate cannot run: no mockspace launcher on PATH. Policy is configured in {mock_rel}/agent/config.toml and enforced by the engine, so guessing a weaker rule here would contradict it. Install with: cargo install cargo-mock"
+    ));
     format!(
         r##"#!/usr/bin/env bash
 # @matchers: *
@@ -320,13 +323,7 @@ if _V=$(_cached_verdict); then
     deny "message policy rejected this ${{DOMAIN}} (cached within ${{_CACHE_TTL}}s). Run the command again after fixing it to re-check."
 fi
 
-launcher=""
-if command -v mock >/dev/null 2>&1; then launcher="mock"
-elif command -v cargo-mock >/dev/null 2>&1; then launcher="cargo-mock"
-fi
-if [ -z "$launcher" ]; then
-    deny "the message gate cannot run: no mockspace launcher on PATH. Policy is configured in {mock_rel}/agent/config.toml and enforced by the engine, so guessing a weaker rule here would contradict it. Install with: cargo install cargo-mock"
-fi
+{launcher_lookup}
 
 # From this repository's root, never from wherever the shell stands. The engine
 # finds its policy and its pin by walking up from its cwd, so a call scoped here

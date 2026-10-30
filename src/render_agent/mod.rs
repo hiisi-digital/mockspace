@@ -50,6 +50,7 @@ mod builtins;
 pub(crate) use builtins::*;
 mod wire;
 pub(crate) use wire::*;
+mod catalogue;
 mod content;
 pub(crate) use content::*;
 mod templates;

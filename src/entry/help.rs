@@ -180,6 +180,32 @@ const COMMANDS: &[Cmd] = &[
                   own pair, which is how the pre-push hook sends them.",
     },
     Cmd {
+        name:    "check-edit",
+        summary: "ask one crate lint whether an edit not yet made would leave its file clean",
+        args:    &[],
+        help:    "Asks the per-crate lint named by --lint about the file named by \
+                  --file, as the file would read after an edit, through the same \
+                  pass the gate gives every crate: the same configuration, binding, \
+                  filters and lint:allow markers. The generated hook adds --lint-only, which \
+                  skips the gate's own setup and changes no verdict. Stdin is the text the edit \
+                  writes; with --replace <file> it replaces the text in that file \
+                  in the target (every occurrence with --all, else the one), and \
+                  without it it is the target's whole new text. --edits <file> is \
+                  a JSON list of {old_string, new_string, replace_all} applied in \
+                  order, a first empty old_string creating the file, and stands in \
+                  for stdin, --replace and --all. An edit whose old text is absent \
+                  from the file, or occurs more than once without --all, is one the \
+                  editing tool refuses itself, so it gets no verdict and exits 0. \
+                  Prints the lint's blocking findings in the target file and exits \
+                  1 if there are any, 2 when the request cannot be answered: no \
+                  per-crate lint answers to the name (a lint judging the crate as a \
+                  whole is one), a required argument is missing, --file is not an \
+                  absolute path, or an input cannot be read. --gate \
+                  selects commit, push or build severities, commit by default, and \
+                  anything else is refused. \
+                  This is how an agent hook named after a lint reaches the lint.",
+    },
+    Cmd {
         name:    "query",
         summary: "query the registry",
         args:    &[],

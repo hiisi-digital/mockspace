@@ -160,50 +160,44 @@ fn a_forbidden_imports_rule_reaches_a_crate_under_each_source_directory() {
 }
 
 #[test]
-fn the_forbidden_imports_hook_scopes_to_each_source_directory() {
+fn the_forbidden_imports_check_reaches_a_crate_under_each_source_directory() {
+    // The hook hands the edit to the engine, and the engine finds the crate under
+    // whichever declared directory holds the file.
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = forbidden_imports_cfg(tmp.path());
-    let (_, hooks) = generate_forbidden(tmp.path(), &cfg);
-    let hook = fs::read_dir(&hooks)
+    let repo = tmp.path();
+    let mut cfg = forbidden_imports_cfg(repo);
+    cfg.crate_prefix = "console".to_string();
+    cfg.lint_overrides
+        .params
+        .get_mut("forbidden-imports")
         .unwrap()
-        .map(|e| e.unwrap().path())
-        .find(|p| {
-            p.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("lint-forbidden-")
-        })
-        .expect("a forbidden-imports hook was written");
-    let text = fs::read_to_string(hook).unwrap();
-    // the pattern the hook asks `grep -qE`, which is the behaviour and not its spelling
-    let pattern = text
-        .lines()
-        .find_map(|l| l.split("grep -qE \"").nth(1))
-        .and_then(|r| r.split('"').next())
-        .expect("the hook scopes by a pattern")
-        .to_string();
-    let hits = |target: &str| {
-        std::process::Command::new("grep")
-            .args(["-qE", &pattern])
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .and_then(|mut c| {
-                use std::io::Write;
-                c.stdin.take().unwrap().write_all(target.as_bytes())?;
-                c.wait()
-            })
-            .unwrap()
-            .success()
+        .insert("rule.no-dyn.forbidden".to_string(), "std::*".to_string());
+    for krate in ["mock/applets/console/crates/console-core", "mock/crates/console-sim", "mock/crates/other"] {
+        write(&repo.join(krate).join("Cargo.toml"), "[package]\nname = \"x\"\n");
+        write(&repo.join(krate).join("src/lib.rs"), "pub fn f() {}\n");
+    }
+    let crates = crate::parse::discover_crates_in(&cfg.src_dirs, &cfg.crate_prefix);
+    let blocked = |file: &str| {
+        crate::lint::lint_edit(
+            &crates,
+            &cfg.src_dirs,
+            &cfg.mock_dir,
+            &cfg.proc_macro_crates,
+            cfg.lint_proc_macro_source,
+            &cfg.crate_prefix,
+            &cfg.lint_overrides,
+            &cfg.primitive_introductions,
+            &mockspace_lint_rules::LintPack::default(),
+            "forbidden-imports",
+            &repo.join(file),
+            "use std::fmt;\n",
+        )
+        .map(|found| !found.is_empty())
     };
-    assert!(
-        hits("/r/mock/applets/console/crates/console-core/src/lib.rs"),
-        "{pattern}"
-    );
-    assert!(hits("/r/mock/crates/console-sim/src/lib.rs"), "{pattern}");
-    assert!(
-        !hits("/r/mock/crates/other/src/lib.rs"),
-        "out of scope: {pattern}"
-    );
+    assert_eq!(blocked("mock/applets/console/crates/console-core/src/lib.rs"), Some(true));
+    assert_eq!(blocked("mock/crates/console-sim/src/lib.rs"), Some(true));
+    assert_eq!(blocked("mock/crates/other/src/lib.rs"), Some(false), "out of scope");
+    assert_eq!(blocked("mock/elsewhere/crates/x/src/lib.rs"), None, "in no declared directory");
 }
 
 /// A source file under the second directory is phase-gated like one under the
