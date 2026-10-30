@@ -31,6 +31,7 @@ use crate::{
 
 pub(crate) mod cargo_gate;
 mod dispatch;
+pub(crate) mod edit;
 pub(crate) mod escape_hatch;
 mod graph_picture;
 pub(crate) mod help;
