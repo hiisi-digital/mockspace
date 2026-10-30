@@ -121,6 +121,8 @@ fn the_engine_command_exits_by_the_lints_verdict_and_names_a_missing_lint() {
         ask("forbidden-imports", &["--replace", &old], "pub fn g() {}").status.code(),
         Some(0)
     );
+    // A gate the engine does not know is refused, not read as the commit gate.
+    assert_eq!(ask("forbidden-imports", &["--gate", "nope"], "pub fn g() {}\n").status.code(), Some(2));
     fs::write(&old, "text the file does not hold").unwrap();
     assert_eq!(
         ask("forbidden-imports", &["--replace", &old], "use std::fmt;").status.code(),
@@ -169,21 +171,20 @@ fn hook_edit_says(repo: &Repo, path: &Path, old: &str, new: &str) -> String {
 }
 
 #[test]
-fn an_edit_is_judged_on_what_it_adds_through_the_real_engine() {
+fn an_edit_is_judged_as_the_file_it_leaves_through_the_real_engine() {
     let repo = fixture();
     let sim = repo.root.join("mock/crates/fixture-sim/src/lib.rs");
     fs::write(&sim, "use std::fmt;\nuse std::io;\npub fn f() {}\n\n\n").unwrap();
 
-    // Mending one of two violations, and an edit beside both, add nothing.
+    // The lint's verdict on the file as the edit leaves it: one violation remains.
     let out = hook_edit_says(&repo, &sim, "use std::io;\n", "");
-    assert!(!refused(&out), "removing a violation was refused: {out}");
-    let out = hook_edit_says(&repo, &sim, "pub fn f", "pub fn g");
-    assert!(!refused(&out), "an unrelated edit was refused for what the file already had: {out}");
-
-    // The controls: an edit that adds one is refused, including one whose old text is only
-    // newlines and whose new text ends in one, which a shell variable would have mangled.
-    let out = hook_edit_says(&repo, &sim, "pub fn f() {}", "pub fn f() {}\nuse std::fs;");
-    assert!(refused(&out), "an added violation was let through: {out}");
+    assert!(refused(&out), "a file still holding a violation was passed: {out}");
+    // The control: an edit that leaves none is passed.
+    let out = hook_edit_says(&repo, &sim, "use std::fmt;\nuse std::io;\n", "");
+    assert!(!refused(&out), "a clean result was refused: {out}");
+    // Old text that is only newlines, with new text ending in one, reaches the engine whole,
+    // which a shell variable would have mangled.
+    fs::write(&sim, "pub fn f() {}\n\n\n").unwrap();
     let out = hook_edit_says(&repo, &sim, "\n\n\n", "\nuse std::fs;\n");
     assert!(refused(&out), "an added violation behind newline-only old text was let through: {out}");
 }

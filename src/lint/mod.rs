@@ -126,13 +126,12 @@ impl ParsedCrate {
     }
 }
 
-/// One edit's verdict from one named crate lint: the findings the edit adds.
+/// One edit's verdict from one named crate lint.
 ///
 /// The findings of lint `lint_name` in `file` as the crate would stand with `file`
-/// reading `text`, less the ones `file` already has on disk. A finding elsewhere in
-/// the crate is the crate's, and one the file already had is not the edit's, and
-/// blocking for either would refuse every write to a file that already has one,
-/// including the writes that mend it.
+/// reading `text`. A finding elsewhere in the crate is the crate's and not this
+/// file's, so only the ones naming `file` are returned. Nothing is subtracted for
+/// what the file already holds: the verdict is the lint's, as the gate would give it.
 ///
 /// This is the same pass [`run_lints`] gives the crate, through
 /// [`mockspace_lint_rules::check_crate_named`], so the verdict is the lint's and
@@ -182,46 +181,17 @@ pub fn lint_edit(
     let overrides = if lint_overrides.is_empty() { None } else { Some(lint_overrides) };
     // The crate root's findings carry no path, and a module file's carry its own.
     let here = rel_path.to_string_lossy();
-    let mut findings_of = |replacing: Option<(&Path, &str)>| -> Option<Vec<LintError>> {
-        let krate = ParsedCrate::load(crate_name, info, &crate_dir, &mut parser, replacing)?;
-        let found = mockspace_lint_rules::check_crate_named(
-            &krate.context(&env),
-            lint_name,
-            overrides,
-            &pack.crate_lints,
-        );
-        Some(
-            found
-                .into_iter()
-                .filter(|e| e.path.as_deref().unwrap_or("src/lib.rs") == here)
-                .collect(),
-        )
-    };
-
-    let after = findings_of(Some((&rel_path, text)))?;
-    // What the file already had is not the edit's. An edit that removes one of two
-    // violations, or touches a line beside them, adds nothing and must not be refused
-    // for the rest, or a file holding two violations could not be mended one edit at a
-    // time. A finding is the same finding when its lint, kind and message are, wherever
-    // it now sits, and a file holding it twice is allowed it twice.
-    let mut before: Vec<(&'static str, Option<&'static str>, String)> = findings_of(None)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|e| (e.lint_name, e.finding_kind, e.message))
-        .collect();
+    let krate = ParsedCrate::load(crate_name, info, &crate_dir, &mut parser, Some((&rel_path, text)))?;
+    let found = mockspace_lint_rules::check_crate_named(
+        &krate.context(&env),
+        lint_name,
+        overrides,
+        &pack.crate_lints,
+    );
     Some(
-        after
+        found
             .into_iter()
-            .filter(|e| {
-                let key = (e.lint_name, e.finding_kind, e.message.clone());
-                match before.iter().position(|b| *b == key) {
-                    Some(i) => {
-                        before.swap_remove(i);
-                        false
-                    },
-                    None => true,
-                }
-            })
+            .filter(|e| e.path.as_deref().unwrap_or("src/lib.rs") == here)
             .collect(),
     )
 }

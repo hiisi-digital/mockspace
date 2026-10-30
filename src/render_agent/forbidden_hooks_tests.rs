@@ -511,44 +511,6 @@ fn a_copilot_hook_that_cannot_be_written_fails_loudly() {
     derive(tmp.path(), &cfg);
 }
 
-// --- An edit is judged on what it adds ----------------------------------------------------------
-
-#[test]
-fn a_file_holding_two_violations_can_be_mended_one_edit_at_a_time() {
-    let tmp = tempfile::tempdir().unwrap();
-    let cfg = repo_with_crates(tmp.path(), "std::*");
-    let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
-    fs::write(&file, "use std::fmt;\nuse std::io;\npub fn f() {}\n").unwrap();
-    // Removing one leaves one, which the file had already.
-    assert!(edit_verdict(&cfg, &file, "use std::fmt;\npub fn f() {}\n").is_empty());
-    // An edit beside them adds nothing.
-    assert!(
-        edit_verdict(&cfg, &file, "use std::fmt;\nuse std::io;\npub fn g() {}\n").is_empty()
-    );
-    // The controls: an edit that adds a third is refused, and so is one that adds a duplicate
-    // of a message the file already holds (every `std` import shares one message, so
-    // it is the count that rises).
-    assert_eq!(
-        edit_verdict(&cfg, &file, "use std::fmt;\nuse std::io;\nuse std::fs;\npub fn f() {}\n")
-            .len(),
-        1
-    );
-    assert_eq!(edit_verdict(&cfg, &file, "use std::fmt;\nuse std::io;\nuse std::io;\n").len(), 1);
-}
-
-#[test]
-fn a_violation_the_file_holds_twice_is_allowed_twice_and_no_more() {
-    let tmp = tempfile::tempdir().unwrap();
-    let cfg = repo_with_crates(tmp.path(), "std::*");
-    let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
-    fs::write(&file, "use std::fmt;\nuse std::fmt;\n").unwrap();
-    assert!(edit_verdict(&cfg, &file, "use std::fmt;\nuse std::fmt;\n// x\n").is_empty());
-    assert_eq!(
-        edit_verdict(&cfg, &file, "use std::fmt;\nuse std::fmt;\nuse std::fmt;\n").len(),
-        1
-    );
-}
-
 #[test]
 fn a_lint_that_judges_the_whole_crate_has_no_verdict_on_an_edit() {
     let tmp = tempfile::tempdir().unwrap();
@@ -630,4 +592,36 @@ fn a_rule_naming_no_scope_gets_the_hook_because_the_lint_reads_it_as_every_crate
     let fresh = tempfile::tempdir().unwrap();
     let (_, none) = derive(fresh.path(), &cfg);
     assert!(none.iter().all(|h| h.name != "forbidden-imports.sh"));
+}
+
+// --- The hook's verdict is the lint's, on the file as the edit leaves it ------------------------
+
+#[test]
+fn an_edit_is_refused_while_the_file_it_leaves_still_has_a_violation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo_with_crates(tmp.path(), "std::*");
+    let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    fs::write(&file, "use std::fmt;\nuse std::io;\npub fn f() {}\n").unwrap();
+    // The same verdict as the commit gate gives the same text, one violation or none.
+    let one = "use std::fmt;\npub fn f() {}\n";
+    assert_eq!(edit_verdict(&cfg, &file, one).len(), gate_verdict(&cfg, "sim-core", &file, one));
+    assert_eq!(edit_verdict(&cfg, &file, one).len(), 1);
+    // The control: an edit that mends both is passed.
+    assert!(edit_verdict(&cfg, &file, "pub fn f() {}\n").is_empty());
+}
+
+#[test]
+fn a_path_spelled_with_dots_is_the_same_file_and_a_relative_one_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo_with_crates(tmp.path(), "std::*");
+    let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    fs::write(&file, "use std::fmt;\n").unwrap();
+    let dotted = tmp.path().join("mock/crates/sim-core/../sim-core/src/lib.rs");
+    assert_eq!(crate::entry::edit::run_for_test(&cfg, "forbidden-imports", &dotted), 1);
+    // The control: the plain spelling gives the same answer.
+    assert_eq!(crate::entry::edit::run_for_test(&cfg, "forbidden-imports", &file), 1);
+    assert_eq!(
+        crate::entry::edit::run_for_test(&cfg, "forbidden-imports", Path::new("mock/crates/sim-core/src/lib.rs")),
+        2
+    );
 }

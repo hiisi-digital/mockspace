@@ -58,10 +58,36 @@ fn after(req: &Request, on_disk: impl FnOnce() -> Option<String>) -> Option<Stri
     })
 }
 
+/// `path` with its `.` and `..` components resolved lexically, or `None` when it is not
+/// absolute. A symlink is not followed: a source directory reached through one is the
+/// caller's spelling to fix.
+fn normalised(path: &Path) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    if !path.is_absolute() {
+        return None;
+    }
+    let mut out = std::path::PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {},
+            Component::ParentDir => {
+                out.pop();
+            },
+            other => out.push(other.as_os_str()),
+        }
+    }
+    Some(out)
+}
+
 /// Ask. Exit success when the lint blocks nothing in `req.file`, failure with the
 /// findings printed when it does, and 2 when the lint named is not one that runs
 /// here, so a hook naming a lint that is gone says so instead of passing everything.
 pub(crate) fn run(cfg: &Config, pack: &LintPack, req: &Request) -> ExitCode {
+    ExitCode::from(exit_of(cfg, pack, req))
+}
+
+/// The status `run` exits with.
+fn exit_of(cfg: &Config, pack: &LintPack, req: &Request) -> u8 {
     let builtins = mockspace_lint_rules::all_lints();
     let named = |n: &str| {
         builtins
@@ -76,7 +102,7 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, req: &Request) -> ExitCode {
                 "mock check-edit: no per-crate lint answers to `{}`. `mock lints` lists what does.",
                 req.lint
             );
-            return ExitCode::from(2);
+            return 2;
         },
         Some(false) => {
             eprintln!(
@@ -84,13 +110,24 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, req: &Request) -> ExitCode {
                  no verdict from it.",
                 req.lint
             );
-            return ExitCode::from(2);
+            return 2;
         },
         Some(true) => {},
     }
 
-    let Some(text) = after(req, || std::fs::read_to_string(req.file).ok()) else {
-        return ExitCode::SUCCESS;
+    // A lint reads a file by its place under a source directory, so a path that only
+    // reaches it by `..` or a relative spelling would name no crate and pass. It is
+    // normalised lexically here, and a relative one is refused.
+    let Some(file) = normalised(req.file) else {
+        eprintln!(
+            "mock check-edit: `{}` is not an absolute path, so no crate of this repository can be told from it.",
+            req.file.display()
+        );
+        return 2;
+    };
+
+    let Some(text) = after(req, || std::fs::read_to_string(&file).ok()) else {
+        return 0;
     };
 
     let crates = crate::parse::discover_crates_in(&cfg.src_dirs, &cfg.crate_prefix);
@@ -105,11 +142,11 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, req: &Request) -> ExitCode {
         &cfg.primitive_introductions,
         pack,
         req.lint,
-        req.file,
+        &file,
         &text,
     ) else {
         // In no crate of this repository, so no lint here is about it.
-        return ExitCode::SUCCESS;
+        return 0;
     };
 
     let blocking: Vec<_> = found
@@ -119,7 +156,7 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, req: &Request) -> ExitCode {
     for e in &blocking {
         eprintln!("{e}");
     }
-    if blocking.is_empty() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    if blocking.is_empty() { 0 } else { 1 }
 }
 
 #[cfg(test)]
@@ -162,24 +199,12 @@ mod tests {
 /// which have no process to read it from.
 #[cfg(test)]
 pub(crate) fn run_for_test(cfg: &Config, lint: &str, file: &Path) -> u8 {
-    let code = run(cfg, &LintPack::default(), &Request {
+    exit_of(cfg, &LintPack::default(), &Request {
         lint,
         file,
         text: std::fs::read_to_string(file).unwrap_or_default(),
         replacing: None,
         all: false,
         mode: LintMode::Commit,
-    });
-    let (shown, ok, refused) = (
-        format!("{code:?}"),
-        format!("{:?}", ExitCode::SUCCESS),
-        format!("{:?}", ExitCode::from(2)),
-    );
-    if shown == ok {
-        0
-    } else if shown == refused {
-        2
-    } else {
-        1
-    }
+    })
 }
