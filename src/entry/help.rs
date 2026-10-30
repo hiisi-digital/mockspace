@@ -180,6 +180,22 @@ const COMMANDS: &[Cmd] = &[
                   own pair, which is how the pre-push hook sends them.",
     },
     Cmd {
+        name:    "check-edit",
+        summary: "ask one crate lint whether an edit not yet made would leave its file clean",
+        args:    &[],
+        help:    "Asks the per-crate lint named by --lint about the file named by \
+                  --file, as the file would read after an edit, through the same \
+                  pass the gate gives every crate: the same configuration, binding, \
+                  filters and lint:allow markers. Stdin is the text the edit \
+                  writes; with --replace <file> it replaces the text in that file \
+                  (every occurrence with --all, else the first) in the target, and \
+                  without it it is the target's whole new text. Prints the lint's \
+                  blocking findings in the target file and exits 1 if there are \
+                  any, 2 if no per-crate lint answers to the name. --gate selects \
+                  which gate's severities decide what blocks, commit by default. \
+                  This is how an agent hook named after a lint reaches the lint.",
+    },
+    Cmd {
         name:    "query",
         summary: "query the registry",
         args:    &[],

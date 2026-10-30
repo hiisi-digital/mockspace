@@ -29,16 +29,172 @@ use mockspace_lint_rules::{
 
 use crate::model::CrateMap;
 
+/// What every crate's [`LintContext`] shares, held once so a run and a single
+/// edit's check build their contexts from the same place.
+struct Environment<'a> {
+    all_crates:              BTreeSet<String>,
+    workspace_root:          &'a Path,
+    proc_macro_crates:       &'a [String],
+    lint_proc_macro_source:  bool,
+    crate_prefix:            &'a str,
+    primitive_introductions: &'a std::collections::BTreeMap<String, Vec<String>>,
+}
+
 /// Collected data for a single crate, kept alive for cross-crate pass.
 struct ParsedCrate {
     crate_name:      String,
     short_name:      String,
+    deps:            Vec<String>,
     source:          String,
     tree:            tree_sitter::Tree,
     all_sources:     Vec<CrateSourceFile>,
     design_doc:      Option<String>,
     all_doc_content: String,
     shame_doc:       Option<String>,
+}
+
+impl ParsedCrate {
+    /// Read a crate off disk. `replacing` is a file's crate-relative path and the
+    /// text it is about to have, laid over what is on disk so a lint judges the
+    /// crate as it would stand after an edit that has not happened yet.
+    ///
+    /// `None` when the crate has no readable `src/lib.rs` or it does not parse,
+    /// which a run skips and the compiler reports better.
+    fn load(
+        crate_name: &str,
+        info: &crate::model::CrateInfo,
+        crate_dir: &Path,
+        parser: &mut tree_sitter::Parser,
+        replacing: Option<(&Path, &str)>,
+    ) -> Option<Self> {
+        // Read every .rs file under src/ so lints can scan module files
+        // (bits.rs, prim.rs, impl.rs, ...) in addition to lib.rs.
+        let mut all_sources = collect_crate_sources(crate_dir);
+        if let Some((rel_path, text)) = replacing {
+            match all_sources.iter_mut().find(|s| s.rel_path == rel_path) {
+                Some(file) => file.text = text.to_string(),
+                None => {
+                    all_sources.push(CrateSourceFile {
+                        rel_path: rel_path.to_path_buf(),
+                        text:     text.to_string(),
+                    });
+                    all_sources.sort_by(|a, b| {
+                        let lib = Path::new("src/lib.rs");
+                        (a.rel_path != lib, &a.rel_path).cmp(&(b.rel_path != lib, &b.rel_path))
+                    });
+                },
+            }
+        }
+        let source = all_sources
+            .iter()
+            .find(|s| s.rel_path == Path::new("src/lib.rs"))?
+            .text
+            .clone();
+        let tree = parser.parse(&source, None)?;
+        Some(Self {
+            crate_name: crate_name.to_string(),
+            short_name: info.short_name.clone(),
+            deps: info.deps.clone(),
+            source,
+            tree,
+            all_sources,
+            design_doc: std::fs::read_to_string(crate_dir.join("DESIGN.md.tmpl")).ok(),
+            all_doc_content: collect_all_docs(crate_dir),
+            // The exact spelling the phase gates match. See `read_shame_template`.
+            shame_doc: mockspace_lint_rules::read_shame_template(crate_dir),
+        })
+    }
+
+    fn context<'a>(&'a self, env: &'a Environment<'a>) -> LintContext<'a> {
+        LintContext {
+            crate_name:              &self.crate_name,
+            short_name:              &self.short_name,
+            source:                  &self.source,
+            tree:                    &self.tree,
+            all_sources:             &self.all_sources,
+            deps:                    &self.deps,
+            all_crates:              &env.all_crates,
+            design_doc:              self.design_doc.as_deref(),
+            all_doc_content:         &self.all_doc_content,
+            shame_doc:               self.shame_doc.as_deref(),
+            workspace_root:          env.workspace_root,
+            proc_macro_crates:       env.proc_macro_crates,
+            lint_proc_macro_source:  env.lint_proc_macro_source,
+            crate_prefix:            env.crate_prefix,
+            primitive_introductions: env.primitive_introductions,
+        }
+    }
+}
+
+/// One edit's verdict from one named crate lint.
+///
+/// The findings of lint `lint_name` over the crate holding `file`, as the crate
+/// would stand with `file` reading `text`, kept to those in `file` itself. A
+/// finding elsewhere in the crate is the crate's and not this edit's, and
+/// blocking an edit for it would refuse every write to a crate that already has
+/// one.
+///
+/// This is the same pass [`run_lints`] gives the crate, through
+/// [`mockspace_lint_rules::check_crate_named`], so the verdict is the lint's and
+/// nothing here re-judges it. `None` when `file` is in no crate this repository
+/// has, or the crate has no parseable root.
+#[must_use]
+pub fn lint_edit(
+    crates: &CrateMap,
+    src_dirs: &[PathBuf],
+    mock_dir: &Path,
+    proc_macro_crates: &[String],
+    lint_proc_macro_source: bool,
+    crate_prefix: &str,
+    lint_overrides: &LintConfig,
+    primitive_introductions: &std::collections::BTreeMap<String, Vec<String>>,
+    pack: &LintPack,
+    lint_name: &str,
+    file: &Path,
+    text: &str,
+) -> Option<Vec<LintError>> {
+    // The first component under a source directory names the crate; the rest is
+    // the file's place in it.
+    let (crate_dir, rel_path) = src_dirs.iter().find_map(|d| {
+        let rest = file.strip_prefix(d).ok()?;
+        let mut parts = rest.components();
+        let name = parts.next()?;
+        Some((d.join(name), parts.as_path().to_path_buf()))
+    })?;
+    // Only a crate's Rust sources are what a crate lint reads; any other file in
+    // the crate's directory is not one of them and must not be laid over them.
+    if !rel_path.starts_with("src") || rel_path.extension().is_none_or(|e| e != "rs") {
+        return None;
+    }
+    let crate_name = crate_dir.file_name()?.to_str()?;
+    let info = crates.get(crate_name)?;
+
+    let env = Environment {
+        all_crates: crates.keys().cloned().collect(),
+        workspace_root: mock_dir,
+        proc_macro_crates,
+        lint_proc_macro_source,
+        crate_prefix,
+        primitive_introductions,
+    };
+    let mut parser = mockspace_lint_rules::make_parser();
+    let krate = ParsedCrate::load(crate_name, info, &crate_dir, &mut parser, Some((&rel_path, text)))?;
+
+    let overrides = if lint_overrides.is_empty() { None } else { Some(lint_overrides) };
+    let found = mockspace_lint_rules::check_crate_named(
+        &krate.context(&env),
+        lint_name,
+        overrides,
+        &pack.crate_lints,
+    );
+    // The crate root's findings carry no path, and a module file's carry its own.
+    let here = rel_path.to_string_lossy();
+    Some(
+        found
+            .into_iter()
+            .filter(|e| e.path.as_deref().unwrap_or("src/lib.rs") == here)
+            .collect(),
+    )
 }
 
 /// Walk `crate_dir/src/**/*.rs` and return every file's (rel_path, text),
@@ -158,8 +314,15 @@ pub fn run_lints(
         return duplicates.len();
     }
 
-    let all_crate_names: BTreeSet<String> = crates.keys().cloned().collect();
     let workspace_root = mock_dir;
+    let env = Environment {
+        all_crates: crates.keys().cloned().collect(),
+        workspace_root: mock_dir,
+        proc_macro_crates,
+        lint_proc_macro_source,
+        crate_prefix,
+        primitive_introductions,
+    };
 
     let mut parser = mockspace_lint_rules::make_parser();
     let mut all_errors: Vec<LintError> = Vec::new();
@@ -186,91 +349,25 @@ pub fn run_lints(
         else {
             continue;
         };
-        let librs = crate_dir.join("src/lib.rs");
-        let source = match std::fs::read_to_string(&librs) {
-            Ok(s) => s,
-            Err(_) => continue,
+        let Some(krate) = ParsedCrate::load(crate_name, info, &crate_dir, &mut parser, None) else {
+            continue;
         };
-
-        let tree = match parser.parse(&source, None) {
-            Some(t) => t,
-            None => continue,
-        };
-
-        // Read every .rs file under src/ so lints can scan module files
-        // (bits.rs, prim.rs, impl.rs, ...) in addition to lib.rs.
-        let all_sources = collect_crate_sources(&crate_dir);
-
-        let design_doc = std::fs::read_to_string(crate_dir.join("DESIGN.md.tmpl")).ok();
-
-        // Read ALL doc templates and concatenate
-        let all_doc_content = collect_all_docs(&crate_dir);
-
-        // Read SHAME.md.tmpl if it exists, matching the exact spelling the
-        // phase gates match. See `read_shame_template`.
-        let shame_doc = mockspace_lint_rules::read_shame_template(&crate_dir);
 
         // Per-crate lint pass
-        let ctx = LintContext {
-            crate_name,
-            short_name: &info.short_name,
-            source: &source,
-            tree: &tree,
-            all_sources: &all_sources,
-            deps: &info.deps,
-            all_crates: &all_crate_names,
-            design_doc: design_doc.as_deref(),
-            all_doc_content: &all_doc_content,
-            shame_doc: shame_doc.as_deref(),
-            workspace_root,
-            proc_macro_crates,
-            lint_proc_macro_source,
-            crate_prefix,
-            primitive_introductions,
-        };
-
         all_errors.extend(mockspace_lint_rules::check_crate_with_extra(
-            &ctx,
+            &krate.context(&env),
             doc_only,
             overrides,
             &pack.crate_lints,
         ));
 
-        parsed.push(ParsedCrate {
-            crate_name: crate_name.clone(),
-            short_name: info.short_name.clone(),
-            source,
-            tree,
-            all_sources,
-            design_doc,
-            all_doc_content,
-            shame_doc,
-        });
+        parsed.push(krate);
     }
 
     // Cross-crate lint pass
     let cross_crate_contexts: Vec<(&str, LintContext)> = parsed
         .iter()
-        .map(|p| {
-            let info = &crates[p.crate_name.as_str()];
-            (p.crate_name.as_str(), LintContext {
-                crate_name: &p.crate_name,
-                short_name: &p.short_name,
-                source: &p.source,
-                tree: &p.tree,
-                all_sources: &p.all_sources,
-                deps: &info.deps,
-                all_crates: &all_crate_names,
-                design_doc: p.design_doc.as_deref(),
-                all_doc_content: &p.all_doc_content,
-                shame_doc: p.shame_doc.as_deref(),
-                workspace_root,
-                proc_macro_crates,
-                lint_proc_macro_source,
-                crate_prefix,
-                primitive_introductions,
-            })
-        })
+        .map(|p| (p.crate_name.as_str(), p.context(&env)))
         .collect();
 
     let cross_refs: Vec<(&str, &LintContext)> = cross_crate_contexts
@@ -291,7 +388,7 @@ pub fn run_lints(
     let repo_ctx = RepoContext {
         mock_dir: workspace_root,
         repo_root: workspace_root.parent().unwrap_or(workspace_root),
-        all_crates: &all_crate_names,
+        all_crates: &env.all_crates,
         src_dirs,
         invocation: None,
         canon_paths,

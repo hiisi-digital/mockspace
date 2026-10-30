@@ -262,3 +262,21 @@ pub(crate) fn repo_relative(cfg: &Config, path: &Path) -> String {
         .to_string_lossy()
         .replace('\\', "/")
 }
+
+/// The shell that finds the mockspace launcher for a generated hook, and denies
+/// with `if_missing` when there is none.
+///
+/// A hook that asks the engine anything fails closed without one rather than
+/// falling back to a second policy that can disagree with the first, so every
+/// such hook finds it the same way and only the words of the refusal differ.
+pub(crate) fn find_launcher(if_missing: &str) -> String {
+    format!(
+        "launcher=\"\"\n\
+         if command -v mock >/dev/null 2>&1; then launcher=\"mock\"\n\
+         elif command -v cargo-mock >/dev/null 2>&1; then launcher=\"cargo-mock\"\n\
+         fi\n\
+         if [ -z \"$launcher\" ]; then\n\
+         \x20   deny \"{if_missing}\"\n\
+         fi\n"
+    )
+}

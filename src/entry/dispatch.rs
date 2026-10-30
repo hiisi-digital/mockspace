@@ -530,6 +530,47 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 };
                 return message::run(&cfg, pack, gate, &req);
             },
+            // Ask one crate lint about an edit not yet made. The agent hook named
+            // after a lint calls this, so it gives the lint's verdict and not a
+            // second implementation of it.
+            "check-edit" => {
+                let (Some(lint_name), Some(file)) =
+                    (arg_value(&args, "--lint"), arg_value(&args, "--file"))
+                else {
+                    eprintln!("mock check-edit: --lint <name> and --file <path> are both required");
+                    return ExitCode::from(2);
+                };
+                let replacing = match arg_value(&args, "--replace") {
+                    Some(f) => {
+                        match std::fs::read_to_string(&f) {
+                            Ok(t) => Some(t),
+                            Err(e) => {
+                                eprintln!("mock check-edit: could not read --replace {f}: {e}");
+                                return ExitCode::from(2);
+                            },
+                        }
+                    },
+                    None => None,
+                };
+                let mut text = String::new();
+                if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text) {
+                    eprintln!("mock check-edit: could not read stdin: {e}");
+                    return ExitCode::from(2);
+                }
+                let mode = match arg_value(&args, "--gate").as_deref() {
+                    Some("push") => LintMode::Push,
+                    Some("build") => LintMode::Build,
+                    _ => LintMode::Commit,
+                };
+                return edit::run(&cfg, pack, &edit::Request {
+                    lint: &lint_name,
+                    file: std::path::Path::new(&file),
+                    text,
+                    replacing,
+                    all: args.iter().any(|a| a == "--all"),
+                    mode,
+                });
+            },
             "activate" => {
                 match bootstrap::activate(&cfg.repo_root, &cfg.mock_dir) {
                     Ok(()) => {

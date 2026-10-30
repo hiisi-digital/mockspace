@@ -57,7 +57,7 @@ fn a_forbidden_imports_hook_is_returned_with_the_events_it_guards() {
     let (_, hooks) = derive(tmp.path(), &cfg);
     let hook = hooks
         .iter()
-        .find(|h| h.name.starts_with("lint-forbidden-"))
+        .find(|h| h.name == "forbidden-imports.sh")
         .expect("the generated hook is returned for the settings step");
     // It inspects the text being written, so it guards the writing tools, not Bash.
     assert!(
@@ -96,7 +96,7 @@ fn the_generated_settings_register_a_forbidden_imports_hook_under_an_event() {
             .filter(|e| e["matcher"] == matcher)
             .flat_map(|e| e["hooks"].as_array().into_iter().flatten())
             .filter_map(|h| h["command"].as_str())
-            .find(|c| c.contains("lint-forbidden-"))
+            .find(|c| c.contains("forbidden-imports.sh"))
             .unwrap_or_else(|| panic!("no {matcher} entry runs the hook:\n{settings}"));
         assert!(
             tmp.path().join(script).is_file(),
@@ -117,94 +117,329 @@ fn a_config_without_forbidden_imports_returns_no_hooks() {
     assert_eq!(n, 0);
     assert!(hooks.is_empty());
 }
-
-/// Runs the generated hook the way the editor does, with a Write of `content` to `path`.
-fn run_hook(repo: &Path, hook: &str, path: &Path, content: &str) -> String {
-    let payload = serde_json::json!({
-        "session_id": "t",
-        "transcript_path": "/tmp/t",
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Write",
-        "tool_input": { "file_path": path.display().to_string(), "content": content }
-    })
-    .to_string();
-    let script = fs::read_to_string(repo.join(".claude/hooks").join(hook)).unwrap();
-    super::write_guard_phase_tests::run_from(repo, &script, &payload)
-}
-
 fn generated_hook(repo: &Path) -> String {
     let cfg = cfg_with_rule(repo);
     let (_, hooks) = derive(repo, &cfg);
     hooks
         .into_iter()
-        .find(|h| h.name.starts_with("lint-forbidden-"))
-        .expect("the hook is generated")
+        .find(|h| h.name == "forbidden-imports.sh")
+        .expect("the hook is generated, and is named after the lint it asks")
         .name
 }
 
 #[test]
-fn a_forbidden_import_in_a_scoped_crate_is_denied() {
+fn one_hook_is_written_however_many_scopes_the_rules_name() {
+    // The lint holds the scopes, so a hook per scope ran the whole lint once for
+    // each of them. Two scopes, still one hook, and the legacy per-scope names gone.
     let tmp = tempfile::tempdir().unwrap();
-    let hook = generated_hook(tmp.path());
-    let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
-    let out = run_hook(tmp.path(), &hook, &target, "fn f(x: &dyn Tr) {}\n");
-    assert!(
-        super::write_guard_phase_tests::refused(&out),
-        "the forbidden token was let through: {out}"
+    let mut cfg = cfg_with_rule(tmp.path());
+    let params = cfg.lint_overrides.params.get_mut("forbidden-imports").unwrap();
+    for (k, v) in [
+        ("rule.no-box.scope", "ui-*"),
+        ("rule.no-box.forbidden", "Box"),
+        ("rule.no-box.reason", "no heap"),
+    ] {
+        params.insert(k.to_string(), v.to_string());
+    }
+    // An earlier render's per-scope hook, which is neither the lint's name nor this render's.
+    let legacy = tmp.path().join(".claude/hooks/lint-forbidden-sim-star.sh");
+    fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    fs::write(&legacy, "#!/bin/sh\n").unwrap();
+    let (_, hooks) = derive(tmp.path(), &cfg);
+    assert_eq!(
+        hooks.iter().map(|h| h.name.as_str()).collect::<Vec<_>>(),
+        ["forbidden-imports.sh"]
     );
+    assert!(!legacy.exists(), "the per-scope hook an earlier render wrote must go");
+}
+
+// --- The hook's verdict is the lint's -----------------------------------------------------------
+
+/// A repository with two crates, one in the rule's scope and one outside it.
+fn repo_with_crates(repo: &Path, forbidden: &str) -> Config {
+    for krate in ["sim-core", "other"] {
+        let dir = repo.join("mock/crates").join(krate);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"{krate}\"\n")).unwrap();
+        fs::write(dir.join("src/lib.rs"), "pub fn f() {}\n").unwrap();
+    }
+    let mut cfg = cfg_with_rule(repo);
+    cfg.crate_prefix = "sim".to_string();
+    cfg.lint_overrides
+        .params
+        .get_mut("forbidden-imports")
+        .unwrap()
+        .insert("rule.no-dyn.forbidden".to_string(), forbidden.to_string());
+    cfg
+}
+
+/// What the hook asks the engine: the lint's findings for `text` as the content of `file`.
+fn edit_verdict(cfg: &Config, file: &Path, text: &str) -> Vec<mockspace_lint_rules::LintError> {
+    let crates = crate::parse::discover_crates_in(&cfg.src_dirs, &cfg.crate_prefix);
+    crate::lint::lint_edit(
+        &crates,
+        &cfg.src_dirs,
+        &cfg.mock_dir,
+        &cfg.proc_macro_crates,
+        cfg.lint_proc_macro_source,
+        &cfg.crate_prefix,
+        &cfg.lint_overrides,
+        &cfg.primitive_introductions,
+        &LintPack::default(),
+        "forbidden-imports",
+        file,
+        text,
+    )
+    .expect("the file is in a crate of the repository")
+}
+
+/// What the gate says of the same text once it is on disk: the blocking count of
+/// the pass every crate goes through, scoped to the crate holding `file`.
+fn gate_verdict(cfg: &Config, krate: &str, file: &Path, text: &str) -> usize {
+    fs::write(file, text).unwrap();
+    let crates = crate::parse::discover_crates_in(&cfg.src_dirs, &cfg.crate_prefix);
+    crate::lint::run_lints(
+        &crates,
+        &cfg.src_dirs,
+        &cfg.mock_dir,
+        mockspace_lint_rules::LintMode::Commit,
+        Some(&[krate.to_string()]),
+        false,
+        &cfg.proc_macro_crates,
+        cfg.lint_proc_macro_source,
+        &cfg.crate_prefix,
+        &cfg.lint_overrides,
+        &mockspace_lint_rules::RegistryView::default(),
+        &[],
+        &[],
+        &cfg.primitive_introductions,
+        &LintPack::default(),
+    )
 }
 
 #[test]
-fn the_same_content_in_a_crate_outside_the_scope_is_allowed() {
-    // The control for the deny above: it is the scope that decides, not the content alone.
+fn an_import_the_lint_refuses_is_refused_by_the_hook_too() {
     let tmp = tempfile::tempdir().unwrap();
-    let hook = generated_hook(tmp.path());
-    let target = tmp.path().join("mock/crates/other/src/lib.rs");
-    let out = run_hook(tmp.path(), &hook, &target, "fn f(x: &dyn Tr) {}\n");
+    let cfg = repo_with_crates(tmp.path(), "std::*");
+    let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    let text = "use std::fmt;\npub fn f() {}\n";
     assert!(
-        !super::write_guard_phase_tests::refused(&out),
-        "a crate outside the scope was denied: {out}"
+        !edit_verdict(&cfg, &file, text).is_empty(),
+        "the hook let through an import the lint refuses"
     );
+    assert!(gate_verdict(&cfg, "sim-core", &file, text) > 0, "the control: the gate refuses it");
 }
 
 #[test]
-fn clean_content_in_a_scoped_crate_is_allowed() {
+fn text_the_lint_passes_is_passed_by_the_hook_though_the_old_substring_test_refused_it() {
     let tmp = tempfile::tempdir().unwrap();
-    let hook = generated_hook(tmp.path());
-    let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
-    let out = run_hook(tmp.path(), &hook, &target, "fn f() {}\n");
+    let cfg = repo_with_crates(tmp.path(), "std::*");
+    let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    // A comment naming the path. The hook used to refuse any text containing `std::`.
+    let text = "// no std::fmt in here, by design\npub fn f() {}\n";
+    assert!(text.contains("std::"), "the case must be one the substring test refused");
     assert!(
-        !super::write_guard_phase_tests::refused(&out),
-        "clean content was denied: {out}"
+        edit_verdict(&cfg, &file, text).is_empty(),
+        "the hook refused text the lint passes"
     );
+    assert_eq!(gate_verdict(&cfg, "sim-core", &file, text), 0, "the control: the gate passes it");
 }
 
 #[test]
-fn a_forbidden_import_written_through_an_edit_is_denied() {
-    // An Edit carries the text in `new_string`, not `content`.
+fn a_crate_outside_the_scope_is_the_lints_to_pass_not_the_hooks() {
     let tmp = tempfile::tempdir().unwrap();
-    let hook = generated_hook(tmp.path());
-    let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
-    let payload = |path: &Path| {
-        serde_json::json!({
-            "session_id": "t",
-            "transcript_path": "/tmp/t",
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Edit",
-            "tool_input": {
-                "file_path": path.display().to_string(),
-                "old_string": "fn f() {}",
-                "new_string": "fn f(x: &dyn Tr) {}",
-            }
-        })
-        .to_string()
+    let cfg = repo_with_crates(tmp.path(), "std::*");
+    let file = tmp.path().join("mock/crates/other/src/lib.rs");
+    let text = "use std::fmt;\n";
+    assert!(edit_verdict(&cfg, &file, text).is_empty());
+    assert_eq!(gate_verdict(&cfg, "other", &file, text), 0);
+}
+
+#[test]
+fn a_finding_elsewhere_in_the_crate_does_not_block_an_edit_that_adds_none() {
+    // Blocking every write to a crate that already has a finding would make the crate
+    // unfixable by edits. The gate still counts the one on disk; the edit is judged on its file.
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo_with_crates(tmp.path(), "std::*");
+    let lib = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    fs::write(&lib, "use std::io;\n").unwrap();
+    let other_file = tmp.path().join("mock/crates/sim-core/src/extra.rs");
+    assert!(edit_verdict(&cfg, &other_file, "pub fn g() {}\n").is_empty());
+    assert!(
+        !edit_verdict(&cfg, &other_file, "use std::fmt;\n").is_empty(),
+        "control: a finding in the edited file itself blocks"
+    );
+    assert!(gate_verdict(&cfg, "sim-core", &other_file, "pub fn g() {}\n") > 0);
+}
+
+#[test]
+fn a_file_that_is_not_a_crate_source_is_in_no_lints_view() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo_with_crates(tmp.path(), "std::*");
+    let crates = crate::parse::discover_crates_in(&cfg.src_dirs, &cfg.crate_prefix);
+    let verdict = |file: &Path| {
+        crate::lint::lint_edit(
+            &crates,
+            &cfg.src_dirs,
+            &cfg.mock_dir,
+            &cfg.proc_macro_crates,
+            cfg.lint_proc_macro_source,
+            &cfg.crate_prefix,
+            &cfg.lint_overrides,
+            &cfg.primitive_introductions,
+            &LintPack::default(),
+            "forbidden-imports",
+            file,
+            "use std::fmt;\n",
+        )
     };
-    let script = fs::read_to_string(tmp.path().join(".claude/hooks").join(&hook)).unwrap();
-    let out = super::write_guard_phase_tests::run_from(tmp.path(), &script, &payload(&target));
-    assert!(super::write_guard_phase_tests::refused(&out), "the edit was let through: {out}");
-    let outside = tmp.path().join("mock/crates/other/src/lib.rs");
-    let out = super::write_guard_phase_tests::run_from(tmp.path(), &script, &payload(&outside));
-    assert!(!super::write_guard_phase_tests::refused(&out), "control: out of scope is allowed: {out}");
+    assert!(verdict(&tmp.path().join("mock/crates/sim-core/Cargo.toml")).is_none());
+    assert!(verdict(&tmp.path().join("mock/crates/sim-core/README.md")).is_none());
+    assert!(verdict(&tmp.path().join("elsewhere/src/lib.rs")).is_none());
+    assert!(verdict(&tmp.path().join("mock/crates/sim-core/src/lib.rs")).is_some(), "control");
+}
+
+// --- The generated script hands the lint the edit and carries its verdict back -------------------
+
+/// One run of the hook against a launcher that records what it was asked and answers `rc`.
+struct Run {
+    stdout: String,
+    args:   Option<Vec<String>>,
+    stdin:  Option<String>,
+    old:    Option<String>,
+}
+
+fn run_against_stub(repo: &Path, payload: &serde_json::Value, rc: i32, launcher: bool) -> Run {
+    let hook = generated_hook(repo);
+    let script = repo.join(".claude/hooks").join(hook);
+    let stub = repo.join("stub");
+    fs::create_dir_all(stub.join("bin")).unwrap();
+    for f in ["args", "stdin", "replace"] {
+        let _ = fs::remove_file(stub.join(f));
+    }
+    if launcher {
+        crate::test_exec::write_executable(
+            &stub.join("bin/mock"),
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$STUB_DIR/args\"\ncat > \"$STUB_DIR/stdin\"\nprev=\"\"\nfor a in \"$@\"; do [ \"$prev\" = --replace ] && cp \"$a\" \"$STUB_DIR/replace\"; prev=\"$a\"; done\necho 'the lint says no' >&2\nexit \"$STUB_RC\"\n",
+        );
+    }
+    let mut child = std::process::Command::new("bash")
+        .arg(&script)
+        .current_dir(repo)
+        .env("PATH", format!("{}:/usr/bin:/bin", stub.join("bin").display()))
+        .env("STUB_DIR", &stub)
+        .env("STUB_RC", rc.to_string())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(&mut child.stdin.take().unwrap(), payload.to_string().as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    let read = |f: &str| fs::read_to_string(stub.join(f)).ok();
+    Run {
+        stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+        args:   read("args").map(|a| a.lines().map(String::from).collect()),
+        stdin:  read("stdin"),
+        old:    read("replace"),
+    }
+}
+
+fn tool_call(tool: &str, input: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "session_id": "t",
+        "transcript_path": "/tmp/t",
+        "hook_event_name": "PreToolUse",
+        "tool_name": tool,
+        "tool_input": input,
+    })
+}
+
+fn refused(out: &str) -> bool {
+    super::write_guard_phase_tests::refused(out)
+}
+
+#[test]
+fn a_write_hands_the_engine_the_whole_text_and_names_the_lint() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    let call = tool_call(
+        "Write",
+        serde_json::json!({ "file_path": target.display().to_string(), "content": "fn f() {}" }),
+    );
+    let run = run_against_stub(tmp.path(), &call, 0, true);
+    let args = run.args.expect("the engine was asked");
+    assert_eq!(&args[..5], ["check-edit", "--lint", "forbidden-imports", "--file", &target.display().to_string()]);
+    assert!(!args.iter().any(|a| a == "--replace" || a == "--all"), "{args:?}");
+    assert_eq!(run.stdin.as_deref(), Some("fn f() {}"));
+    assert!(!refused(&run.stdout), "a pass was refused: {}", run.stdout);
+}
+
+#[test]
+fn an_edit_hands_the_engine_what_it_replaces_and_what_replaces_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    let call = tool_call(
+        "Edit",
+        serde_json::json!({
+            "file_path": target.display().to_string(),
+            "old_string": "fn f() {}",
+            "new_string": "fn f(x: &dyn Tr) {}",
+            "replace_all": true,
+        }),
+    );
+    let run = run_against_stub(tmp.path(), &call, 0, true);
+    let args = run.args.expect("the engine was asked");
+    assert!(args.iter().any(|a| a == "--replace"), "{args:?}");
+    assert!(args.iter().any(|a| a == "--all"), "{args:?}");
+    assert_eq!(run.old.as_deref(), Some("fn f() {}"));
+    assert_eq!(run.stdin.as_deref(), Some("fn f(x: &dyn Tr) {}"));
+}
+
+#[test]
+fn the_hook_refuses_exactly_when_the_engine_does_and_carries_its_words() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    let call = tool_call(
+        "Write",
+        serde_json::json!({ "file_path": target.display().to_string(), "content": "x" }),
+    );
+    let run = run_against_stub(tmp.path(), &call, 1, true);
+    assert!(refused(&run.stdout), "the engine refused and the hook did not: {}", run.stdout);
+    assert!(run.stdout.contains("the lint says no"), "{}", run.stdout);
+    let run = run_against_stub(tmp.path(), &call, 2, true);
+    assert!(refused(&run.stdout), "a lint that is gone must not pass everything: {}", run.stdout);
+}
+
+#[test]
+fn a_file_that_is_not_rust_or_not_this_repos_never_reaches_the_engine() {
+    let tmp = tempfile::tempdir().unwrap();
+    for path in [
+        tmp.path().join("mock/crates/sim-core/Cargo.toml"),
+        std::path::PathBuf::from("/somewhere/else/src/lib.rs"),
+    ] {
+        let call = tool_call(
+            "Write",
+            serde_json::json!({ "file_path": path.display().to_string(), "content": "x" }),
+        );
+        let run = run_against_stub(tmp.path(), &call, 1, true);
+        assert!(run.args.is_none(), "{} reached the engine", path.display());
+        assert!(!refused(&run.stdout));
+    }
+}
+
+#[test]
+fn with_no_launcher_the_hook_refuses_rather_than_passing_what_it_cannot_judge() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    let call = tool_call(
+        "Write",
+        serde_json::json!({ "file_path": target.display().to_string(), "content": "x" }),
+    );
+    let run = run_against_stub(tmp.path(), &call, 0, false);
+    assert!(refused(&run.stdout), "{}", run.stdout);
+    assert!(run.stdout.contains("launcher"), "{}", run.stdout);
 }
 
 #[test]
@@ -258,7 +493,7 @@ fn a_full_render_registers_the_forbidden_imports_hooks_under_write_and_edit() {
             .filter(|e| e["matcher"] == matcher)
             .flat_map(|e| e["hooks"].as_array().into_iter().flatten())
             .filter_map(|h| h["command"].as_str())
-            .any(|c| c.contains("lint-forbidden-"));
+            .any(|c| c.contains("forbidden-imports.sh"));
         assert!(registered, "the full render left no {matcher} entry for the hook:\n{settings}");
     }
 }
