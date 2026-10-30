@@ -423,3 +423,36 @@ fn deprecate_without_a_stub_in_a_closed_round_still_refuses() {
     );
     assert_eq!(listed(dir.path()), [DOC_LOCK, SRC_LOCK]);
 }
+
+#[test]
+fn reading_the_phase_writes_nothing() {
+    // Nothing in the phase, status or finding readers may create or change a file: a changelist
+    // stub that appeared "from a status call" would be one of them.
+    use mockspace_lint_rules::changelist_helpers as h;
+    let dir = mock(&[
+        (DOC_LOCK, "# doc changelist: x\n"),
+        (SRC_LOCK, "# src changelist: x\n"),
+        (STUB, "# src changelist\n\n"),
+    ]);
+    let dr = dir.path().join("design_rounds");
+    let snapshot = |d: &Path| -> Vec<(String, String)> {
+        let mut v: Vec<_> = std::fs::read_dir(d)
+            .unwrap()
+            .flatten()
+            .map(|e| {
+                (
+                    e.file_name().to_string_lossy().to_string(),
+                    std::fs::read_to_string(e.path()).unwrap(),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    let before = snapshot(&dr);
+    let _ = h::current_phase(&dr);
+    let _ = h::find_changelists(&dr);
+    let _ = h::stray_active_changelists(&dr);
+    let _ = mockspace_lint_rules::active_round_findings(&dr);
+    assert_eq!(snapshot(&dr), before);
+}
