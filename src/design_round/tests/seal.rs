@@ -456,3 +456,18 @@ fn reading_the_phase_writes_nothing() {
     let _ = mockspace_lint_rules::active_round_findings(&dr);
     assert_eq!(snapshot(&dr), before);
 }
+
+#[test]
+fn deprecate_does_not_retire_a_changelist_with_text_beside_a_lock() {
+    // The lock may be the leftover of an earlier round and the unlocked file the live work.
+    let dir = mock(&[
+        (DOC_LOCK, "# doc changelist: x\n"),
+        (SRC_LOCK, "# src changelist: x\n"),
+        (STUB, "# src changelist: the live work\n\nreal edits\n"),
+    ]);
+    assert_eq!(
+        cmd_deprecate(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::FAILURE
+    );
+    assert_eq!(listed(dir.path()), [DOC_LOCK, SRC_LOCK, STUB], "nothing moved");
+}

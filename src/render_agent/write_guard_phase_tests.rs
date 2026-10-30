@@ -536,3 +536,42 @@ fn rewriting_the_one_src_changelist_is_not_a_second_one() {
     );
     assert!(!refused(&out), "the same file was taken for a second one: {out}");
 }
+
+#[test]
+fn a_second_doc_changelist_beside_an_uncommitted_first_is_refused() {
+    let repo = repo_with_rounds("doc-second", &["202610301702_topic.a.md"]);
+    std::fs::write(
+        repo.join("mock/design_rounds/202610301702_changelist.doc.md"),
+        "# doc changelist\n\nstarted\n",
+    )
+    .unwrap();
+    let guard = guard_for(&repo);
+    let out = run_from(
+        &repo,
+        &guard,
+        &write_to_round(&repo, "202610301710_changelist.doc.md"),
+    );
+    assert!(refused(&out), "a second doc changelist was allowed: {out}");
+    assert!(out.contains("202610301702_changelist.doc.md"), "{out}");
+}
+
+#[test]
+fn a_locked_changelist_is_never_named_as_the_place_to_write() {
+    // CLOSED: the phase refuses a new src changelist, and the refusal must not send the writer to
+    // the frozen lock.
+    let repo = repo_with_rounds(
+        "closed-new",
+        &[
+            "202610301702_changelist.doc.lock.md",
+            "202610301702_changelist.src.lock.md",
+        ],
+    );
+    let guard = guard_for(&repo);
+    let out = run_from(
+        &repo,
+        &guard,
+        &write_to_round(&repo, "202610301710_changelist.src.md"),
+    );
+    assert!(refused(&out), "{out}");
+    assert!(!out.contains("Write to"), "the refusal pointed at a frozen file: {out}");
+}

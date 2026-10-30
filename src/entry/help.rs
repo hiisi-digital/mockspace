@@ -86,9 +86,9 @@ const COMMANDS: &[Cmd] = &[
         args:    &[],
         help:    "Supersedes the active changelist rather than deleting it, so it \
                   stays as an audit trail. In IMPL this also unlocks the doc \
-                  changelist. An unlocked changelist beside a locked one of \
-                  its kind is retired first, in any phase, and the locked \
-                  ones are left as they are. Accepts --auto-commit.",
+                  changelist. A stub (a bare title) beside a locked changelist \
+                  of its kind is retired instead, in any phase, and nothing \
+                  else happens on that run; one with text is refused. Accepts --auto-commit.",
     },
     Cmd {
         name:    "close",

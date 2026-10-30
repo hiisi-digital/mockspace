@@ -592,7 +592,7 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
         CL_KIND=doc
         if $IS_SRC_CHANGELIST; then CL_KIND=src; fi
         OTHER_CL=$(ls "${{REPO_ROOT}}/${{MOCK_ROOT}}/design_rounds" 2>/dev/null \
-            | grep -E "_changelist\.${{CL_KIND}}(\.lock)?\.md$" | grep -vxF "$BASENAME" | head -n 1 || true)
+            | grep -E "_changelist\.${{CL_KIND}}\.md$" | grep -vxF "$BASENAME" | head -n 1 || true)
         if [[ -n "$OTHER_CL" ]]; then
             deny "BLOCKED: cannot create ${{CL_KIND}} changelist '${{BASENAME}}' -- '${{OTHER_CL}}' is already this round's.\\n\\nA round has one changelist of each kind, and a second beside it is what changelist-seal refuses at the lock.\\nWrite to '${{OTHER_CL}}' instead.\\n\\nPhase: ${{PHASE}}."
         fi

@@ -88,6 +88,9 @@ impl WorkspaceLint for DeprecationComparison {
                 Ok(s) => s,
                 Err(_) => continue,
             };
+            if !owes_a_comparison(&dep_content, active_cl.status) {
+                continue;
+            }
             let active_content = match std::fs::read_to_string(&active_path) {
                 Ok(s) => s,
                 Err(_) => continue,
@@ -262,8 +265,30 @@ fn extract_h3_headers_lowercase(content: &str) -> Vec<String> {
         .collect()
 }
 
+/// Whether the changelist that replaces a deprecated one owes the comparison section.
+///
+/// A locked replacement cannot gain a section, and a deprecated changelist holding nothing but a bare
+/// title was a stub retired beside a changelist that was already the round's record, so it was
+/// replaced by nothing and there is nothing to compare.
+fn owes_a_comparison(deprecated_text: &str, replacement: ClStatus) -> bool {
+    !(replacement == ClStatus::Locked && crate::changelist_seal::is_bare_title(deprecated_text))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_stub_retired_beside_a_lock_owes_no_comparison() {
+        use super::*;
+        assert!(!owes_a_comparison("# src changelist\n\n", ClStatus::Locked));
+    }
+
+    #[test]
+    fn a_deprecated_changelist_with_content_still_owes_one() {
+        use super::*;
+        assert!(owes_a_comparison("# src changelist: x\n\nreal\n", ClStatus::Locked));
+        assert!(owes_a_comparison("# src changelist\n\n", ClStatus::Active));
+    }
+
     use std::fs;
 
     use tempfile::TempDir;

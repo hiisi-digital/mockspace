@@ -171,7 +171,23 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
 
     // A stub beside a locked changelist of its kind is what holds a round open whatever phase it
     // reads as, and it is the one thing `deprecate` is asked to retire there.
-    let strays = changelist_helpers::stray_active_changelists(&dr);
+    let all_strays = changelist_helpers::stray_active_changelists(&dr);
+    // Only a stub is retired unread. One with text may be the round's live work beside the locks of
+    // an earlier round, and renaming it would keep the dead locks and lose the work.
+    let (strays, written): (Vec<_>, Vec<_>) = all_strays
+        .into_iter()
+        .partition(|cl| lint_rules::says_nothing(&dr.join(&cl.filename)));
+    if !written.is_empty() {
+        for cl in &written {
+            eprintln!(
+                "error: {} holds text and sits beside a locked changelist of its kind",
+                cl.filename
+            );
+        }
+        eprintln!("  it may be this round's work and the lock an earlier round's, so it is not retired unread");
+        eprintln!("  read both; `cargo mock unlock` reopens the round, or `git rm` the one that is not this round's");
+        return ExitCode::FAILURE;
+    }
     if !strays.is_empty() {
         let mut touched = Vec::new();
         for cl in &strays {

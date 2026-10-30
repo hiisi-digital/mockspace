@@ -491,3 +491,18 @@ fn close_refuses_a_take_naming_no_flat_file_and_moves_nothing() {
         "nothing moved"
     );
 }
+
+#[test]
+fn close_refuses_a_take_that_is_a_path_and_not_a_flat_file_name() {
+    let dir = closable(&[(OWN_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    std::fs::write(dir.path().join("outside.md"), "x\n").unwrap();
+    for bad in ["../outside.md", "202610230520/x.md"] {
+        assert_eq!(
+            cmd_close_taking(&Config::from_dir(dir.path()), &OPTS, &[bad.to_string()]),
+            ExitCode::FAILURE,
+            "{bad}"
+        );
+    }
+    assert_eq!(names_in(&dr), sorted(&[DOC_LOCK, SRC_LOCK, OWN_TOPIC]));
+}

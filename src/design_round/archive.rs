@@ -157,8 +157,8 @@ pub(crate) fn left_notice(left: &[String]) -> Option<String> {
         out.push_str(&format!("\n  {name}"));
     }
     out.push_str(
-        "\n  one of this round's: `cargo mock close --take <file>` (a flat file left on the trunk \
-         puts every branch that merges it back in TOPIC)",
+        "\n  one of this round's, left because nothing names it: it stays flat and lands flat. \
+         Next time `cargo mock close --take <file>` archives it with the round",
     );
     Some(out)
 }
@@ -180,7 +180,11 @@ pub(crate) fn perform_archive(
     // would leave the file it was meant for flat.
     let unknown: Vec<&String> = take
         .iter()
-        .filter(|n| *n == "README.md" || !dr.join(n.as_str()).is_file())
+        .filter(|n| {
+            *n == "README.md"
+                || n.contains('/')
+                || !dr.join(n.as_str()).is_file()
+        })
         .collect();
     if !unknown.is_empty() {
         for name in unknown {

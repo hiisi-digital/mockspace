@@ -1873,6 +1873,10 @@ mod tests {
 // the hooks and the signature happen, which risks the pre-commit gate refusing
 // the very transition that is changing the phase it reads; or keep the
 // plumbing and say in the help text and the guide that this path skips both.
+fn auto_commit_wanted(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--auto-commit")
+}
+
 /// The files named by `--take <file>` or `--take=<file>`, in the order given.
 fn take_names(args: &[String]) -> Vec<String> {
     let mut out = Vec::new();
@@ -1909,10 +1913,6 @@ mod take_tests {
             "a --take with no file names nothing"
         );
     }
-}
-
-fn auto_commit_wanted(args: &[String]) -> bool {
-    args.iter().any(|a| a == "--auto-commit")
 }
 
 #[cfg(test)]

@@ -67,9 +67,7 @@ pub(crate) fn ensure_generated_hooks(
     }
 }
 
-mod flat_round;
 mod layout;
-pub(crate) use flat_round::flat_round_prepush_body;
 pub(crate) use layout::*;
 
 pub(crate) fn gen_hook(
@@ -472,7 +470,6 @@ pub(crate) fn gen_pre_push(mock_rel: &str, layout: &HookLayout, user_hook: &Path
     let chain = chain_user_hook(user_hook, true);
     let layout = src_layout_shell(layout);
     let byline = message_prepush_scan_body();
-    let flat_round = flat_round_prepush_body();
 
     format!(
         r##"#!/usr/bin/env bash
@@ -505,10 +502,6 @@ fi
 # regardless of install state). The commit-msg hook catches bylines at commit
 # time; this catches anything that reached the branch another way.
 {byline}
-
-# A trunk carries no flat round file: a close that left a topic behind would otherwise put the
-# trunk, and every branch that merges it, in the TOPIC phase.
-{flat_round}
 echo "pre-push: running mockspace validation..."
 
 # Compute changed crates between remote and local across every ref being

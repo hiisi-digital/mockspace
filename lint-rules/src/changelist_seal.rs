@@ -178,7 +178,7 @@ pub fn says_nothing(path: &Path) -> bool {
 /// itself. So is a subject after a colon: `# doc changelist: none` is a round
 /// declaring it has no doc edits, which is a statement, where `# src changelist`
 /// is a template nobody wrote into.
-fn is_bare_title(text: &str) -> bool {
+pub(crate) fn is_bare_title(text: &str) -> bool {
     let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
     match (lines.next(), lines.next()) {
         (None, _) => true,
