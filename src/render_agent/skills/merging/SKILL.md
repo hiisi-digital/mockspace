@@ -4,7 +4,7 @@ Merges here are automated as far as git can be taught to do them, and judged by 
 
 ## Files that merge by a driver
 
-`cargo mock` writes the `.gitattributes` lines and registers each driver in the clone, so a merge touching these reports no conflict.
+`cargo mock` writes the `.gitattributes` lines and registers each driver in the clone's git config (and, with `cargo mock register-drivers --global`, in the user's), so a merge touching these reports no conflict.
 
 - **Generated documents.** The top level of `docs/` goes to the `mockspace-generated` driver. It keeps this side's copy of a generated file (read from its header, or from the diagram beside a rendered image) and merges any other file in `docs/` as git does, but only where the hook that regenerates afterwards is installed: `post-merge` for a merge, `post-rewrite` for a rebase, found with `git rev-parse --git-path hooks/<name>`, and generated under `<mock>/target/hooks`, so a fresh worktree needs one `cargo mock` first. A rebase's replayed commits may carry the upstream's copy; the tip does not. The regeneration is a follow-up commit (`chore: regenerate generated files after merge`, or `after rebase`) or, for a merge that stopped, part of the commit that concludes it. The `generated_files_*` tests enforce this.
 - **Registry rows.** Merged by `[[namespace]]` and `id`: additions on both sides stay, only a row changed two ways conflicts.
@@ -14,7 +14,7 @@ A cherry-pick, revert, `git am`, `git checkout -m` or stash application regenera
 
 ## Files that only grow
 
-A list of `mod` lines, a table of strings, a log of known gaps: each changes by someone adding to it and by nobody touching what is already there. `.gitattributes` sends these to the `mockspace-append` merge driver, which `cargo mock` registers in the clone and which runs `cargo mock merge-additions`.
+A list of `mod` lines, a table of strings, a log of known gaps: each changes by someone adding to it and by nobody touching what is already there. `.gitattributes` sends these to the `mockspace-append` merge driver, which `cargo mock` registers in the clone's git config (and, with `cargo mock register-drivers --global`, in the user's) and which runs `cargo mock merge-additions`.
 
 - **Neither side changed or removed a line of the base**: both sides' additions stay, each in the spot it was made in. Where both added at one spot, ours comes first and theirs after it, each in its own order.
 - **Either side edited or removed a base line**, or both added one of the same lines at one spot, or the file has no base or no final newline: the file is merged as text, with conflict markers labelled `ours` and `theirs` and git's exit status. The driver never selects a side.

@@ -119,7 +119,7 @@ that depends on which file it sits in.
 Two branches that each add a row to the same place in a registry file do not
 conflict in a `git merge`. `.gitattributes` sends every `*.toml` under
 `{mock_dir}/registry/` to the `mockspace-registry` merge driver, which `cargo mock`
-registers in the clone and which runs `cargo mock merge-registry`. It keys a row
+registers in the clone's git config (and, with `cargo mock register-drivers --global`, in the user's) and which runs `cargo mock merge-registry`. It keys a row
 by its `[[namespace]]` and `id`, as the loader does, and never by the file it
 sits in or its position:
 

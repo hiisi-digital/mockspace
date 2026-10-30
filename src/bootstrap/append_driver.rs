@@ -138,9 +138,9 @@ pub(crate) fn append_driver_command(launcher: &str) -> String {
 }
 
 /// Register the driver in the clone's config. Idempotent.
-pub(crate) fn register_append_driver(repo_root: &Path, launcher: &str, actions: &mut Vec<String>) {
+pub(crate) fn register_append_driver(target: &ConfigTarget, launcher: &str, actions: &mut Vec<String>) {
     register_engine_driver(
-        repo_root,
+        target,
         APPEND_DRIVER,
         "mockspace append-only files",
         &append_driver_command(launcher),
