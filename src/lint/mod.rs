@@ -72,7 +72,7 @@ impl ParsedCrate {
     ) -> Option<Self> {
         // Read every .rs file under src/ so lints can scan module files
         // (bits.rs, prim.rs, impl.rs, ...) in addition to lib.rs.
-        let mut all_sources = collect_crate_sources(crate_dir);
+        let mut all_sources = timing::time("phase:read-crate-files", || collect_crate_sources(crate_dir));
         if let Some((rel_path, text)) = replacing {
             match all_sources.iter_mut().find(|s| s.rel_path == rel_path) {
                 Some(file) => file.text = text.to_string(),
@@ -93,7 +93,7 @@ impl ParsedCrate {
             .find(|s| s.rel_path == Path::new("src/lib.rs"))?
             .text
             .clone();
-        let tree = parser.parse(&source, None)?;
+        let tree = timing::time("parse:crate-root", || parser.parse(&source, None))?;
         Some(Self {
             crate_name: crate_name.to_string(),
             short_name: info.short_name.clone(),
@@ -102,7 +102,7 @@ impl ParsedCrate {
             tree,
             all_sources,
             design_doc: std::fs::read_to_string(crate_dir.join("DESIGN.md.tmpl")).ok(),
-            all_doc_content: collect_all_docs(crate_dir),
+            all_doc_content: timing::time("phase:read-crate-files", || collect_all_docs(crate_dir)),
             // The exact spelling the phase gates match. See `read_shame_template`.
             shame_doc: mockspace_lint_rules::read_shame_template(crate_dir),
         })

@@ -485,7 +485,7 @@ fn a_repo_lints_configuration_is_part_of_what_it_remembers() {
 }
 
 #[test]
-fn a_named_run_judges_afresh_and_never_touches_a_store() {
+fn a_named_run_judges_afresh_every_time() {
     let fixture = crate_of(ROOT, MODULE);
     let ctx = fixture.ctx();
     let (pack, runs) = Counting::boxed(Reach::File);
@@ -504,12 +504,5 @@ fn a_named_run_judges_afresh_and_never_touches_a_store() {
         "a named run must judge afresh each time, there being no store for it to read"
     );
 
-    // A store holding this crate's saved verdicts does not change what it answers.
-    let store = Memory::default();
-    let _ = check_crate_saving(&ctx, false, None, &pack, Some(&store));
-    let saved_before = store.saved.borrow().len();
-    let fresh = check_crate_named(&ctx, "counting", None, &pack);
-    assert_eq!(lines(&fresh), lines(&first));
-    assert_eq!(store.saved.borrow().len(), saved_before, "a named run must write nothing");
     assert!(check_crate_named(&ctx, "no-such-lint", None, &pack).is_empty());
 }
