@@ -101,11 +101,10 @@ fn crate_of(root: &str, module: &str) -> LintFixture {
     LintFixture::new(root).with_module("src/m.rs", module)
 }
 
-/// Findings as a sorted list of lines, so two runs are compared as the sets they are.
+/// Findings as lines, in the order the run returned them: a replay is compared with a fresh run in
+/// order too, since the order is part of what a project reads and of what makes a replay equal.
 fn lines(found: &[LintError]) -> Vec<String> {
-    let mut l: Vec<String> = verdict::encode(found).lines().skip(1).map(String::from).collect();
-    l.sort();
-    l
+    verdict::encode(found).lines().skip(1).map(String::from).collect()
 }
 
 const ROOT: &str = "pub fn a() { todo!() }\n// FIXME: root\n";
@@ -250,7 +249,7 @@ fn a_repo_lint_asks_the_store_per_item_and_a_changed_part_asks_again() {
     let judge = |ctx: &crate::RepoContext, item: &[u8]| {
         ctx.remembered("per-item", &[item], || {
             computed.fetch_add(1, Ordering::SeqCst);
-            vec![LintError::error("kaski".to_string(), 0, "per-item", "stale".to_string())]
+            vec![LintError::error("alpha".to_string(), 0, "per-item", "stale".to_string())]
         })
     };
     with_repo_context(Some(&store), |ctx| {
@@ -288,4 +287,101 @@ fn two_repo_lints_with_the_same_bytes_do_not_share_an_answer() {
         assert_eq!(a.len(), 1);
         assert!(b.is_empty(), "lint-b must not receive lint-a's findings");
     });
+}
+
+/// A pack lint that shares a built-in's name and reads the same file but finds something else.
+struct Shadow;
+
+impl Lint for Shadow {
+    fn name(&self) -> &'static str {
+        "no-todo"
+    }
+
+    fn reach(&self) -> Reach {
+        Reach::File
+    }
+}
+
+impl CrateLint for Shadow {
+    fn check(&self, ctx: &LintContext) -> Vec<LintError> {
+        ctx.source
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| l.contains("XXX"))
+            .map(|(i, _)| LintError::error(ctx.crate_name.to_string(), i + 1, "no-todo", "shadow".into()))
+            .collect()
+    }
+}
+
+#[test]
+fn a_pack_lint_with_a_built_ins_name_does_not_replay_the_built_ins_verdict() {
+    let fixture = LintFixture::new("pub fn a() { todo!() }\n// XXX\n");
+    let ctx = fixture.ctx();
+    let pack: Vec<Box<dyn CrateLint>> = vec![Box::new(Shadow)];
+    let full = check_crate_with_extra(&ctx, false, None, &pack);
+    assert!(
+        full.iter().any(|f| f.message == "shadow") && full.len() >= 2,
+        "the control: both lints find something: {full:?}"
+    );
+    let store = Memory::default();
+    for run in ["cold", "warm"] {
+        let saved = check_crate_saving(&ctx, false, None, &pack, Some(&store));
+        assert_eq!(lines(&saved), lines(&full), "{run}: the shadowing lint was answered by the other");
+    }
+}
+
+/// A workspace lint that reports the number of crates it was shown, once, and counts its runs.
+struct Census {
+    runs: Arc<AtomicUsize>,
+}
+
+impl Lint for Census {
+    fn name(&self) -> &'static str {
+        "census"
+    }
+
+    fn reach(&self) -> Reach {
+        Reach::Workspace
+    }
+}
+
+impl crate::WorkspaceLint for Census {
+    fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
+        self.runs.fetch_add(1, Ordering::SeqCst);
+        let fixmes: usize = crates.iter().map(|(_, c)| c.source.matches("FIXME").count()).sum();
+        vec![LintError::error("workspace".to_string(), 1, "census", format!("{} crates, {fixmes} fixme", crates.len()))]
+    }
+}
+
+#[test]
+fn a_workspace_lint_replays_until_a_bound_crate_moves() {
+    use crate::check_workspace_saving;
+    let runs = Arc::new(AtomicUsize::new(0));
+    let pack: Vec<Box<dyn crate::WorkspaceLint>> = vec![Box::new(Census { runs: Arc::clone(&runs) })];
+    let store = Memory::default();
+    let one = crate_of(ROOT, MODULE);
+    let two = LintFixture::new("pub fn b() {}\n");
+    let census = |first: &LintFixture, second: &LintFixture| {
+        let (a, b) = (first.ctx(), second.ctx());
+        let crates: [(&str, &LintContext); 2] = [("alpha", &a), ("beta", &b)];
+        let saved = check_workspace_saving(&crates, false, None, &pack, Some(&store));
+        let full = crate::check_workspace_with_extra(&crates, false, None, &pack);
+        (saved, full)
+    };
+
+    let (saved, full) = census(&one, &two);
+    assert_eq!(lines(&saved), lines(&full), "cold");
+    assert!(saved.iter().any(|f| f.message == "2 crates, 1 fixme"), "the control: the lint reported: {saved:?}");
+    // the two calls above ran the lint once saved and once not
+    let before = runs.load(Ordering::SeqCst);
+    let (saved, full) = census(&one, &two);
+    assert_eq!(lines(&saved), lines(&full), "warm");
+    assert_eq!(runs.load(Ordering::SeqCst) - before, 1, "warm: only the unsaved full run executes the lint");
+
+    let edited = LintFixture::new("pub fn b() {}\n// FIXME: new\n");
+    let before = runs.load(Ordering::SeqCst);
+    let (saved, full) = census(&one, &edited);
+    assert_eq!(lines(&saved), lines(&full), "after a crate moved");
+    assert!(saved.iter().any(|f| f.message == "2 crates, 2 fixme"), "{saved:?}");
+    assert_eq!(runs.load(Ordering::SeqCst) - before, 2, "a moved crate runs the lint again");
 }

@@ -32,7 +32,7 @@ impl VerdictCache for Framing {
 
 fn finding(msg: &str) -> LintError {
     LintError {
-        crate_name:   "kaski-life".to_string(),
+        crate_name:   "alpha".to_string(),
         line:         42,
         lint_name:    "no-todo",
         message:      msg.to_string(),
@@ -85,8 +85,13 @@ fn text_that_is_not_exactly_a_verdict_is_a_miss_never_a_partial_list() {
     // a truncated second line
     let cut = &good[.. good.len() - 12];
     assert!(decode(cut).is_none(), "a truncated verdict must not yield its first finding");
+    // cut at a line boundary: every line that is left is whole, and the count says one is missing
+    let first_line_end = good.match_indices('\n').nth(1).map(|(i, _)| i + 1).unwrap();
+    assert!(decode(&good[..first_line_end]).is_none(), "a verdict cut after its first finding is a miss");
+    // a finding added by hand
+    assert!(decode(&format!("{good}{}", good.lines().nth(1).unwrap())).is_none());
     // another version of the format
-    assert!(decode(&good.replace("verdict-v1", "verdict-v2")).is_none());
+    assert!(decode(&good.replace("verdict-v2", "verdict-v3")).is_none());
     // a level letter nobody wrote
     assert!(decode(&good.replace("WEI", "WEX")).is_none());
     // a fourth gate
@@ -108,28 +113,28 @@ fn a_replayed_name_is_the_same_static_string_each_time() {
 
 #[test]
 fn what_a_lint_is_configured_with_is_in_its_material_and_its_severity_is_not() {
-    let plain = behaviour_material("file-size", None);
+    let plain = behaviour_material("file-size", Origin::BuiltIn, None);
 
     let mut cfg = LintConfig::empty();
     cfg.params.insert(
         "file-size".to_string(),
         HashMap::from([("limit".to_string(), "500".to_string())]),
     );
-    let with_param = behaviour_material("file-size", Some(&cfg));
+    let with_param = behaviour_material("file-size", Origin::BuiltIn, Some(&cfg));
     assert_ne!(plain, with_param, "a parameter changes what a lint finds");
 
     cfg.params.get_mut("file-size").unwrap().insert("limit".to_string(), "400".to_string());
-    assert_ne!(with_param, behaviour_material("file-size", Some(&cfg)), "and so does its value");
+    assert_ne!(with_param, behaviour_material("file-size", Origin::BuiltIn, Some(&cfg)), "and so does its value");
 
-    let before = behaviour_material("file-size", Some(&cfg));
+    let before = behaviour_material("file-size", Origin::BuiltIn, Some(&cfg));
     cfg.base.insert("file-size".to_string(), Severity::OFF);
     assert_eq!(
         before,
-        behaviour_material("file-size", Some(&cfg)),
+        behaviour_material("file-size", Origin::BuiltIn, Some(&cfg)),
         "severity is applied after the lint ran, so it is not an input"
     );
     assert_ne!(
-        behaviour_material("other", Some(&cfg)),
+        behaviour_material("other", Origin::BuiltIn, Some(&cfg)),
         before,
         "another lint's parameters are not this lint's"
     );
@@ -138,7 +143,7 @@ fn what_a_lint_is_configured_with_is_in_its_material_and_its_severity_is_not() {
 #[test]
 fn a_path_filter_is_part_of_what_a_lint_is_shown() {
     let mut cfg = LintConfig::empty();
-    let before = behaviour_material("no-todo", Some(&cfg));
+    let before = behaviour_material("no-todo", Origin::BuiltIn, Some(&cfg));
     cfg.paths.insert(
         "no-todo".to_string(),
         crate::path_filter::PathFilter {
@@ -146,7 +151,7 @@ fn a_path_filter_is_part_of_what_a_lint_is_shown() {
             exclude: vec!["src/gen/**".to_string()],
         },
     );
-    assert_ne!(before, behaviour_material("no-todo", Some(&cfg)));
+    assert_ne!(before, behaviour_material("no-todo", Origin::BuiltIn, Some(&cfg)));
 }
 
 #[test]

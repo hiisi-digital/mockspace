@@ -170,7 +170,7 @@ pub fn run_lints(
     // Saved verdicts: a lint declaring a reach is answered from the store when what it depends
     // on did not move. None when switched off or when the machine has nowhere to keep them.
     let verdicts = timing::time("phase:open-verdict-store", || {
-        verdicts::DiskVerdicts::open(mock_dir, &pack.identity)
+        verdicts::DiskVerdicts::open(&pack.identity)
     });
     let saved = verdicts.as_ref().map(|v| v as &dyn mockspace_lint_rules::verdict::VerdictCache);
 

@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use crate::reach_check::{Roots, crate_lint, workspace_lint};
+use crate::reach_check::{DESIGN_ENTRY, Roots, crate_lint, workspace_lint};
 use crate::{
     CrateLint, Lint, LintContext, LintError, Reach, WorkspaceLint, all_lints,
     all_workspace_lints,
@@ -28,6 +28,7 @@ fn corpus() -> Vec<(&'static str, &'static str)> {
             "pub fn exported() { todo!() }\npub struct Bare(pub u32);\nuse std::collections::HashMap;\n\
              pub enum MyError { A }\nimpl Clone for Bare { fn clone(&self) -> Self { Bare(self.0) } }\n",
         ),
+        ("src/stack.rs", STACK_SNIPPET),
     ]
 }
 
@@ -171,7 +172,7 @@ fn the_check_passes_a_lint_that_stays_inside_its_reach() {
     let (populated, empty) = roots(dir.path());
     let roots = Roots { populated: &populated, empty: &empty };
     let found = crate_lint(&HonestFile, &corpus(), &roots);
-    assert_eq!(found, Ok(()), "the control: an honest file-reach lint must pass");
+    assert!(found.is_ok(), "the control: an honest file-reach lint must pass: {found:?}");
 }
 
 #[test]
@@ -241,18 +242,42 @@ fn every_built_in_lint_stays_inside_the_reach_it_declares() {
     let dir = tempfile::tempdir().unwrap();
     let (populated, empty) = roots(dir.path());
     let roots = Roots { populated: &populated, empty: &empty };
-    let corpus = corpus();
+    let corpora = [corpus(), vec![("src/lib.rs", "")], vec![("src/lib.rs", STACK_LIB), (DESIGN_ENTRY, "| `GhostType` | nothing |\n")]];
 
     let mut checked = 0;
-    for lint in all_lints() {
-        crate_lint(lint.as_ref(), &corpus, &roots).unwrap_or_else(|e| panic!("{e}"));
-        checked += usize::from(lint.reach().is_cacheable());
+    let mut silent = Vec::new();
+    for mut lint in all_lints() {
+        if lint.name() == "forbidden-imports" {
+            lint.configure(&std::collections::HashMap::from([
+                ("rule.no-std.scope".to_string(), "*".to_string()),
+                ("rule.no-std.forbidden".to_string(), "std::*".to_string()),
+            ]));
+        }
+        let seen: usize = corpora
+            .iter()
+            .map(|c| crate_lint(lint.as_ref(), c, &roots).unwrap_or_else(|e| panic!("{e}")))
+            .sum();
+        if lint.reach().is_cacheable() {
+            checked += 1;
+            if seen == 0 {
+                silent.push(lint.name());
+            }
+        }
     }
     for lint in all_workspace_lints() {
-        workspace_lint(lint.as_ref(), &corpus, &roots).unwrap_or_else(|e| panic!("{e}"));
-        checked += usize::from(lint.reach().is_cacheable());
+        let seen = workspace_lint(lint.as_ref(), &corpora[0], &roots).unwrap_or_else(|e| panic!("{e}"));
+        if lint.reach().is_cacheable() {
+            checked += 1;
+            if seen == 0 {
+                silent.push(lint.name());
+            }
+        }
     }
     assert!(checked >= 20, "the declarations were not applied: only {checked} lints are saved");
+    assert!(
+        silent.is_empty(),
+        "these lints found nothing on the corpus, so their reach was never tested: {silent:?}"
+    );
 }
 
 #[test]
@@ -277,3 +302,25 @@ fn a_lint_that_declares_nothing_is_the_widest_and_is_never_saved() {
     assert_eq!(Silent.reach(), Reach::Repository);
     assert!(!Silent.reach().is_cacheable());
 }
+
+/// One construct for each lint that binds to the stack's own names, so the reach check has a finding
+/// to compare for it.
+const STACK_SNIPPET: &str = "\
+pub struct WidgetId(u32);
+impl Scope for Widget {}
+fn f() { LoimuError::new(1); }
+define_raw_error!(Oops);
+define_error!(
+    code: 1,
+);
+#[repr(C)]
+pub struct Abi { v: Vec<u8> }
+pub struct WidgetRegistry { n: u8 }
+test_registry::define_registry!(ActionRegistry for Action with ActionEntry);
+define_behavior! {
+    x.pool();
+}
+";
+
+/// A crate root that defines a `define_*` macro and never generates a `Registrable` from it.
+const STACK_LIB: &str = "macro_rules! define_widget { () => {}; }\n";

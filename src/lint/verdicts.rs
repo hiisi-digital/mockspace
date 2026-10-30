@@ -13,8 +13,10 @@
 //!
 //! **The store is local and never committed.** It is content-addressed, so a stale entry is not
 //! wrong, only unreachable: nothing keys on it any more. That is why it can live outside the
-//! worktree and be shared by every checkout of one repository, and why deleting it costs one full
-//! run and nothing else. (`mock test`'s history is committed because a fresh container must not
+//! worktree and be one store for the machine, shared by every checkout and every repository (the
+//! digest holds the content, so two repositories can only share an entry when the answer is the
+//! same), and why deleting it costs one full run and nothing else. The daily sweep covers the
+//! whole of it. (`mock test`'s history is committed because a fresh container must not
 //! rerun a suite; a lint run is cheap enough cold that a committed record is not worth the merge
 //! traffic it would cause.)
 //!
@@ -38,32 +40,28 @@ pub const DIR: &str = "MOCKSPACE_VERDICTS_DIR";
 /// Entries untouched this long are removed by the sweep.
 const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(14 * 24 * 60 * 60);
 
-/// The store for one repository, salted for one engine and one set of packs.
+/// The store, salted for one engine and one set of packs.
 pub struct DiskVerdicts {
     dir:  PathBuf,
     salt: [u8; 32],
 }
 
 impl DiskVerdicts {
-    /// The store for the repository whose mock directory is `mock_dir`, or `None` when the run
-    /// is not to use one: switched off, or nowhere to put it. `pack_identity` is empty when no
-    /// pack is loaded.
+    /// The store, or `None` when the run is not to use one: switched off, or nowhere to put it.
+    /// `pack_identity` is empty when no pack is loaded.
     #[must_use]
-    pub fn open(mock_dir: &Path, pack_identity: &str) -> Option<Self> {
+    pub fn open(pack_identity: &str) -> Option<Self> {
         if std::env::var_os(OFF).is_some_and(|v| !v.is_empty() && v != "0") {
             return None;
         }
-        Self::open_in(&base_dir()?, mock_dir, pack_identity)
+        Self::open_in(&base_dir()?, pack_identity)
     }
 
     /// [`Self::open`] against a store at `base`, for a caller that owns where it goes. The tests use
     /// it to keep their entries inside a directory they delete.
     #[must_use]
-    pub fn open_in(base: &Path, mock_dir: &Path, pack_identity: &str) -> Option<Self> {
-        let mut repo = Sha256::new();
-        repo.update(mock_dir.to_string_lossy().as_bytes());
-        let repo = hex(&repo.finalize());
-        let dir = base.join(&repo[.. 16]);
+    pub fn open_in(base: &Path, pack_identity: &str) -> Option<Self> {
+        let dir = base.to_path_buf();
         fs::create_dir_all(&dir).ok()?;
 
         let mut salt = Sha256::new();
@@ -126,6 +124,10 @@ impl VerdictCache for DiskVerdicts {
 
     fn replay(&self, key: &str) -> Option<String> {
         fs::read_to_string(self.path_of(key)).ok()
+    }
+
+    fn tally(&self, hit: bool, lint: &str) {
+        mockspace_lint_rules::timing::count(|| format!("{}:{lint}", if hit { "hit" } else { "miss" }));
     }
 
     fn remember(&self, key: &str, encoded: &str) {

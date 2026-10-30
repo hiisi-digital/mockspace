@@ -164,14 +164,14 @@ pub(crate) fn check_every_file_saving(
                 ]);
                 match s.cache.replay(&key).and_then(|t| verdict::decode(&t)) {
                     Some(found) => {
-                        timing::count(|| format!("hit:{}", lint.name()));
+                        s.cache.tally(true, lint.name());
                         any_judged = true;
                         found
                     },
                     None => {
                         let Some(tree) = parsed.tree(i) else { continue };
                         any_judged = true;
-                        timing::count(|| format!("miss:{}", lint.name()));
+                        s.cache.tally(false, lint.name());
                         let found = lint.check(&LintContext {
                             source: &file.text,
                             tree,

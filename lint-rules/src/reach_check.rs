@@ -22,8 +22,9 @@
 //! - **File**: every other file in the crate, the design and doc templates, the SHAME template,
 //!   the dependency list, the workspace's crate names, and the directory behind `workspace_root`.
 //!   Held fixed: the file's text and the crate's scalars ([`crate::verdict::file_scalars`]).
-//! - **Crate**: the set of crates the workspace has, other crates' primitive introductions, and the
-//!   directory behind `workspace_root`.
+//! - **Crate**: other crates' primitive introductions and the directory behind `workspace_root`. The
+//!   workspace's crate names are held fixed, because they are part of the crate's key
+//!   ([`crate::verdict::crate_digest`]) and a crate lint may read them.
 //! - **Workspace**: the directory behind `workspace_root`.
 
 use std::collections::BTreeMap;
@@ -57,18 +58,29 @@ fn same(a: &[LintError], b: &[LintError]) -> bool {
     encode(a) == encode(b)
 }
 
+/// The crate identities a file-reach lint is shown each snippet under: lints that bind to a crate by name
+/// (the error-primitives owner, say) only have something to say under that name.
+/// The path a corpus entry takes when it is the crate's design document.
+pub const DESIGN_ENTRY: &str = "DESIGN.md.tmpl";
+
+const IDENTITIES: &[(&str, &str)] = &[("test-crate", "crate"), ("test-error-primitives", "error-primitives")];
+
 /// Check a crate lint's declared reach against `corpus`, a list of `(crate-relative path, text)`
 /// whose first entry is `src/lib.rs`.
 ///
 /// # Errors
 ///
 /// A description of the first input outside the declared reach whose movement changed the
-/// findings. `Ok` for a lint declaring a reach the engine does not save.
-pub fn crate_lint(lint: &dyn CrateLint, corpus: &[(&str, &str)], roots: &Roots) -> Result<(), String> {
+/// findings. On success, the number of findings the lint made across the arms it was compared on, which is the
+/// witness that the comparison was not vacuous: a lint that finds nothing on the corpus passes
+/// trivially, so a caller asserts the number is above zero. `Ok(0)` for a lint declaring a reach the
+/// engine does not save.
+pub fn crate_lint(lint: &dyn CrateLint, corpus: &[(&str, &str)], roots: &Roots) -> Result<usize, String> {
     let reach = lint.reach();
     if !reach.is_cacheable() || reach == Reach::Workspace {
-        return Ok(());
+        return Ok(0);
     }
+    let mut seen = 0;
     if reach == Reach::File && !lint.per_file() {
         return Err(format!(
             "`{}` declares a file reach but judges the whole crate (`per_file` is false), so its \
@@ -76,15 +88,20 @@ pub fn crate_lint(lint: &dyn CrateLint, corpus: &[(&str, &str)], roots: &Roots) 
             lint.name()
         ));
     }
+    // An entry named `DESIGN_ENTRY` is the crate's design document and not a source file.
+    let design_entry = corpus.iter().find(|(p, _)| *p == DESIGN_ENTRY).map(|(_, t)| *t);
+    let corpus: Vec<(&str, &str)> = corpus.iter().copied().filter(|(p, _)| *p != DESIGN_ENTRY).collect();
+    let corpus = &corpus[..];
     let all = sources(corpus);
     let joined: String = corpus.iter().map(|(_, t)| *t).collect::<Vec<_>>().join("\n");
+    let design = design_entry.map_or(joined.clone(), str::to_string);
     let many: Vec<String> = (0 .. 8).map(|i| format!("sibling-{i}")).collect();
 
     // The crate's own inputs, the same in both runs for a crate-reach lint.
     let rich_of = |text: &str| {
         LintFixture::new(text)
             .with_sources(all.clone())
-            .with_design_doc(&joined)
+            .with_design_doc(&design)
             .with_doc_content(&joined)
             .with_shame_doc(&joined)
             .with_deps(&["dep-a", "dep-b"])
@@ -94,15 +111,17 @@ pub fn crate_lint(lint: &dyn CrateLint, corpus: &[(&str, &str)], roots: &Roots) 
 
     match reach {
         Reach::File => {
-            for (rel, text) in corpus {
-                let rich = rich_of(text);
+            for ((rel, text), (name, short)) in corpus.iter().flat_map(|c| IDENTITIES.iter().map(move |i| (c, i))) {
+                let rich = rich_of(text).with_crate_name(name, short);
                 let poor = LintFixture::new(text)
+                    .with_crate_name(name, short)
                     .with_sources(vec![CrateSourceFile {
                         rel_path: PathBuf::from(rel),
                         text:     (*text).to_string(),
                     }])
                     .with_workspace_root(roots.empty);
                 let (a, b) = (lint.check(&rich.ctx()), lint.check(&poor.ctx()));
+                seen += a.len() + b.len();
                 if !same(&a, &b) {
                     return Err(format!(
                         "`{}` declares a file reach, but its findings on `{rel}` changed when \
@@ -121,7 +140,7 @@ pub fn crate_lint(lint: &dyn CrateLint, corpus: &[(&str, &str)], roots: &Roots) 
             let near = rich_of(root_text);
             let far = LintFixture::new(root_text)
                 .with_sources(all.clone())
-                .with_design_doc(&joined)
+                .with_design_doc(&design)
                 .with_doc_content(&joined)
                 .with_shame_doc(&joined)
                 .with_deps(&["dep-a", "dep-b"])
@@ -132,6 +151,7 @@ pub fn crate_lint(lint: &dyn CrateLint, corpus: &[(&str, &str)], roots: &Roots) 
                     vec!["u8".to_string()],
                 )]));
             let (a, b) = (lint.check(&near.ctx()), lint.check(&far.ctx()));
+            seen += a.len() + b.len();
             if !same(&a, &b) {
                 return Err(format!(
                     "`{}` declares a crate reach, but its findings changed when only what is \
@@ -144,9 +164,9 @@ pub fn crate_lint(lint: &dyn CrateLint, corpus: &[(&str, &str)], roots: &Roots) 
                 ));
             }
         },
-        Reach::Workspace | Reach::Repository | Reach::Change => {},
+        Reach::Workspace | Reach::Repository => {},
     }
-    Ok(())
+    Ok(seen)
 }
 
 /// Check a workspace lint's declared reach: it is handed `corpus` as two crates, and the directory
@@ -159,9 +179,9 @@ pub fn workspace_lint(
     lint: &dyn WorkspaceLint,
     corpus: &[(&str, &str)],
     roots: &Roots,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     if lint.reach() != Reach::Workspace {
-        return Ok(());
+        return Ok(0);
     }
     let all = sources(corpus);
     let names = ["alpha", "beta"];
@@ -182,7 +202,7 @@ pub fn workspace_lint(
     };
     let (a, b) = (run(roots.populated), run(roots.empty));
     if same(&a, &b) {
-        Ok(())
+        Ok(a.len() + b.len())
     } else {
         Err(format!(
             "`{}` declares a workspace reach, but its findings changed when only the directory \

@@ -7,14 +7,14 @@ use std::time::{Duration, SystemTime};
 
 use super::*;
 
-fn store(base: &Path, repo: &str, pack: &str) -> DiskVerdicts {
-    DiskVerdicts::open_in(base, Path::new(repo), pack).expect("a store opens in a writable directory")
+fn store(base: &Path, pack: &str) -> DiskVerdicts {
+    DiskVerdicts::open_in(base, pack).expect("a store opens in a writable directory")
 }
 
 #[test]
 fn a_verdict_saved_is_replayed_and_an_unknown_key_is_not() {
     let dir = tempfile::tempdir().unwrap();
-    let s = store(dir.path(), "/repo/mock", "");
+    let s = store(dir.path(), "");
     let key = s.digest(&[b"file", b"text"]);
     assert_eq!(s.replay(&key), None, "the control: nothing is saved yet");
     s.remember(&key, "verdict-v1\n");
@@ -27,7 +27,7 @@ fn a_verdict_saved_is_replayed_and_an_unknown_key_is_not() {
 #[test]
 fn the_same_parts_split_differently_are_different_keys() {
     let dir = tempfile::tempdir().unwrap();
-    let s = store(dir.path(), "/repo/mock", "");
+    let s = store(dir.path(), "");
     assert_ne!(s.digest(&[b"ab", b"c"]), s.digest(&[b"a", b"bc"]), "parts are framed");
     assert_ne!(s.digest(&[b"abc"]), s.digest(&[b"abc", b""]), "and an empty part counts");
 }
@@ -35,31 +35,20 @@ fn the_same_parts_split_differently_are_different_keys() {
 #[test]
 fn a_different_pack_finds_nothing_the_first_saved() {
     let dir = tempfile::tempdir().unwrap();
-    let old = store(dir.path(), "/repo/mock", "pack-a");
+    let old = store(dir.path(), "pack-a");
     let key = old.digest(&[b"x"]);
     old.remember(&key, "saved by pack-a");
 
-    let new = store(dir.path(), "/repo/mock", "pack-b");
+    let new = store(dir.path(), "pack-b");
     assert_ne!(key, new.digest(&[b"x"]), "the pack is part of every key");
     assert_eq!(new.replay(&new.digest(&[b"x"])), None, "a rebuilt pack must not see the old verdicts");
     assert_eq!(old.replay(&key).as_deref(), Some("saved by pack-a"), "the control: the old pack still does");
 }
 
 #[test]
-fn another_repository_has_its_own_store() {
-    let dir = tempfile::tempdir().unwrap();
-    let a = store(dir.path(), "/repo-a/mock", "");
-    let b = store(dir.path(), "/repo-b/mock", "");
-    let key = a.digest(&[b"x"]);
-    a.remember(&key, "a's");
-    assert_eq!(b.replay(&b.digest(&[b"x"])), None);
-    assert_eq!(b.replay(&key), None, "nor can it reach a's entry by the key");
-}
-
-#[test]
 fn the_sweep_removes_what_nothing_has_read_for_two_weeks_and_keeps_the_rest() {
     let dir = tempfile::tempdir().unwrap();
-    let s = store(dir.path(), "/repo/mock", "");
+    let s = store(dir.path(), "");
     let old = s.digest(&[b"old"]);
     let new = s.digest(&[b"new"]);
     s.remember(&old, "old");
@@ -71,7 +60,7 @@ fn the_sweep_removes_what_nothing_has_read_for_two_weeks_and_keeps_the_rest() {
     // a store opened for the first time sweeps; remove the marker the first open left
     fs::remove_file(s.dir.join(".swept")).unwrap();
 
-    let again = store(dir.path(), "/repo/mock", "");
+    let again = store(dir.path(), "");
     assert_eq!(again.replay(&old), None, "a month-old entry is swept");
     assert_eq!(again.replay(&new).as_deref(), Some("new"), "a fresh entry stays");
 }

@@ -1562,10 +1562,10 @@ impl RepoContext<'_> {
         all.extend_from_slice(parts);
         let key = cache.digest(&all);
         if let Some(found) = cache.replay(&key).as_deref().and_then(verdict::decode) {
-            timing::count(|| format!("hit:{lint}"));
+            cache.tally(true, lint);
             return found;
         }
-        timing::count(|| format!("miss:{lint}"));
+        cache.tally(false, lint);
         let found = compute();
         cache.remember(&key, &verdict::encode(&found));
         found
@@ -2068,10 +2068,10 @@ pub fn check_crate_saving(
     // What every crate-reach lint's key shares, hashed once per crate and not once per lint.
     let crate_key = std::cell::OnceCell::new();
 
-    for lint in lints
+    for (origin, lint) in lints
         .iter()
-        .map(Box::as_ref)
-        .chain(extra_lints.iter().map(Box::as_ref))
+        .map(|l| (verdict::Origin::BuiltIn, l.as_ref()))
+        .chain(extra_lints.iter().map(|l| (verdict::Origin::Pack, l.as_ref())))
     {
         // A lint bound to other crates is not run here at all, rather than run and
         // silenced: the crate is outside what the configuration says the lint is
@@ -2086,7 +2086,7 @@ pub fn check_crate_saving(
                 (Some(cache), Reach::File) if lint.per_file() => {
                     let file_cache = dispatch::FileCache {
                         cache,
-                        behaviour: verdict::behaviour_material(lint.name(), overrides),
+                        behaviour: verdict::behaviour_material(lint.name(), origin, overrides),
                         scalars: verdict::file_scalars(ctx),
                     };
                     dispatch::check_every_file_saving(lint, ctx, &parsed, filter, Some(&file_cache))
@@ -2096,18 +2096,18 @@ pub fn check_crate_saving(
                 (Some(cache), Reach::File | Reach::Crate) => {
                     let key = cache.digest(&[
                         b"crate",
-                        verdict::behaviour_material(lint.name(), overrides).as_bytes(),
+                        verdict::behaviour_material(lint.name(), origin, overrides).as_bytes(),
                         crate_key
                             .get_or_init(|| verdict::crate_digest(cache, ctx))
                             .as_bytes(),
                     ]);
                     match cache.replay(&key).and_then(|t| verdict::decode(&t)) {
                         Some(found) => {
-                            timing::count(|| format!("hit:{}", lint.name()));
+                            cache.tally(true, lint.name());
                             found
                         },
                         None => {
-                            timing::count(|| format!("miss:{}", lint.name()));
+                            cache.tally(false, lint.name());
                             let found = check_every_file(lint, ctx, &parsed, filter);
                             cache.remember(&key, &verdict::encode(&found));
                             found
@@ -2287,10 +2287,10 @@ pub fn check_workspace_saving(
         overrides,
     );
     let mut errors = Vec::new();
-    for lint in lints
+    for (origin, lint) in lints
         .iter()
-        .map(Box::as_ref)
-        .chain(extra_lints.iter().map(Box::as_ref))
+        .map(|l| (verdict::Origin::BuiltIn, l.as_ref()))
+        .chain(extra_lints.iter().map(|l| (verdict::Origin::Pack, l.as_ref())))
     {
         // A cross-crate lint sees the crates its filter admits and no others,
         // the same narrowing a crate lint gets one function up. Bound to
@@ -2307,7 +2307,7 @@ pub fn check_workspace_saving(
         run_with_overrides(lint, doc_only, overrides, &mut errors, || {
             let found = match (saved, lint.reach()) {
                 (Some(cache), Reach::Workspace) => {
-                    let behaviour = verdict::behaviour_material(lint.name(), overrides);
+                    let behaviour = verdict::behaviour_material(lint.name(), origin, overrides);
                     let mut parts: Vec<&[u8]> = vec![b"workspace", behaviour.as_bytes()];
                     for (name, c) in &bound {
                         digests
@@ -2321,11 +2321,11 @@ pub fn check_workspace_saving(
                     let key = cache.digest(&parts);
                     match cache.replay(&key).and_then(|t| verdict::decode(&t)) {
                         Some(found) => {
-                            timing::count(|| format!("hit:{}", lint.name()));
+                            cache.tally(true, lint.name());
                             found
                         },
                         None => {
-                            timing::count(|| format!("miss:{}", lint.name()));
+                            cache.tally(false, lint.name());
                             let found = lint.check_all(&bound);
                             cache.remember(&key, &verdict::encode(&found));
                             found

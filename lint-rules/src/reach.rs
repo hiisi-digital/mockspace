@@ -18,8 +18,7 @@
 
 /// How far a lint reads, from one file to the whole repository.
 ///
-/// Ordered narrowest to widest; [`Reach::Change`] sits apart from the others in the order below,
-/// since it is not about files at all.
+/// Ordered narrowest to widest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Reach {
     /// The verdict is a function of one source file's text, the crate's configuration scalars
@@ -35,9 +34,6 @@ pub enum Reach {
     /// The verdict may depend on anything in the repository: the registry, the design rounds,
     /// git state, any file. The engine never saves such a verdict. The default.
     Repository,
-    /// The verdict is about the change being judged (a message, an author, the staged paths)
-    /// rather than about files. It is run on every commit and never saved.
-    Change,
 }
 
 impl Reach {
@@ -55,7 +51,6 @@ impl Reach {
             Self::Crate => "crate",
             Self::Workspace => "workspace",
             Self::Repository => "repository",
-            Self::Change => "change",
         }
     }
 }
@@ -70,6 +65,5 @@ mod tests {
         assert!(Reach::Crate.is_cacheable());
         assert!(Reach::Workspace.is_cacheable());
         assert!(!Reach::Repository.is_cacheable(), "the default must never be saved");
-        assert!(!Reach::Change.is_cacheable(), "a message verdict runs on every commit");
     }
 }

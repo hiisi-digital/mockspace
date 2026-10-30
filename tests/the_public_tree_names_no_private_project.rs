@@ -43,7 +43,7 @@ use std::process::Command;
 /// says so. Deriving it would mean a network call from a test, which is worse;
 /// what is written down instead is that the list is a snapshot of a fact that
 /// can move.
-const PRIVATE: &[&str] = &["clause-dev", "kolli", "ikiuni", "loisto", "loimu", "saalis"];
+const PRIVATE: &[&str] = &["clause-dev", "kolli", "ikiuni", "loisto", "loimu", "saalis", "kaski", "applets"];
 
 /// Where a path on somebody's own machine gives itself away.
 ///

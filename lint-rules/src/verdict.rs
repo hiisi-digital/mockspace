@@ -16,9 +16,6 @@
 //! is not an input: it is applied to findings after the lint ran, by the runner, to a replayed
 //! finding exactly as to a fresh one, so changing it never invalidates anything.
 
-use std::collections::HashSet;
-use std::sync::{Mutex, OnceLock};
-
 use crate::{Level, LintConfig, LintContext, LintError, Severity};
 
 /// Where saved verdicts live. Implemented by the engine.
@@ -36,6 +33,31 @@ pub trait VerdictCache {
     /// Save `encoded` under `key`. A store that cannot write says nothing: a verdict not saved
     /// is a verdict recomputed next run, never a wrong one.
     fn remember(&self, key: &str, encoded: &str);
+
+    /// Note that the lint named `lint` was answered from the store (`hit`) or judged again. The
+    /// engine implements it to feed its timing report; it is a method here and not a call into the
+    /// timing table because a lint pack carries its own copy of this crate, whose table the engine
+    /// never prints.
+    fn tally(&self, _hit: bool, _lint: &str) {}
+}
+
+/// Where a lint came from, which is part of what it is: two lints of one kind can share a name when a
+/// pack declares one a built-in does, and they must not share a verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// Shipped in this crate.
+    BuiltIn,
+    /// Handed over by a pack.
+    Pack,
+}
+
+impl Origin {
+    fn label(self) -> &'static str {
+        match self {
+            Self::BuiltIn => "builtin",
+            Self::Pack => "pack",
+        }
+    }
 }
 
 /// Everything about how a lint is set up that can change what it finds.
@@ -43,8 +65,8 @@ pub trait VerdictCache {
 /// Its parameters, and the path filter that decides which files it is shown. Not its severity
 /// (applied afterwards) and not which crates it binds (decides whether it runs, not what it finds).
 #[must_use]
-pub fn behaviour_material(lint_name: &str, cfg: Option<&LintConfig>) -> String {
-    let mut out = format!("lint\0{lint_name}\0");
+pub fn behaviour_material(lint_name: &str, origin: Origin, cfg: Option<&LintConfig>) -> String {
+    let mut out = format!("lint\0{}\0{lint_name}\0", origin.label());
     let Some(cfg) = cfg else { return out };
     if let Some(params) = cfg.params.get(lint_name) {
         let mut keys: Vec<&String> = params.keys().collect();
@@ -126,13 +148,12 @@ pub fn crate_digest(cache: &dyn VerdictCache, ctx: &LintContext) -> String {
 // ---------------------------------------------------------------------------
 
 /// The version line of the encoding. A reader that does not know it finds nothing.
-const FORMAT: &str = "verdict-v1";
+const FORMAT: &str = "verdict-v2";
 
 /// Findings as text, one per line, readable by [`decode`].
 #[must_use]
 pub fn encode(findings: &[LintError]) -> String {
-    let mut out = String::from(FORMAT);
-    out.push('\n');
+    let mut out = format!("{FORMAT} {}\n", findings.len());
     for f in findings {
         let sev = [f.severity.on_commit, f.severity.on_build, f.severity.on_push]
             .map(level_letter)
@@ -155,14 +176,16 @@ pub fn encode(findings: &[LintError]) -> String {
 
 /// The findings [`encode`] wrote, or `None` if the text is not exactly that.
 ///
-/// Never a partial list: a verdict that cannot be read whole is a miss, so a truncated or edited
-/// file costs a rerun and never a missing finding.
+/// Never a partial list: the first line says how many findings follow, so a file cut at a line
+/// boundary, or edited by hand, is a miss and costs a rerun and never a missing finding.
 #[must_use]
 pub fn decode(text: &str) -> Option<Vec<LintError>> {
     let mut lines = text.lines();
-    if lines.next()? != FORMAT {
+    let (format, count) = lines.next()?.split_once(' ')?;
+    if format != FORMAT {
         return None;
     }
+    let count: usize = count.parse().ok()?;
     let mut out = Vec::new();
     for line in lines {
         let f: Vec<&str> = line.split('\t').collect();
@@ -177,14 +200,14 @@ pub fn decode(text: &str) -> Option<Vec<LintError>> {
         out.push(LintError {
             crate_name: unescape(crate_name)?,
             line: lineno.parse().ok()?,
-            lint_name: intern(&unescape(lint_name)?),
+            lint_name: crate::forbidden_imports::leak_rule_name(&unescape(lint_name)?),
             message: unescape(message)?,
             severity,
-            finding_kind: unoptional(kind)?.map(|k| intern(&k)),
+            finding_kind: unoptional(kind)?.map(|k| crate::forbidden_imports::leak_rule_name(&k)),
             path: unoptional(path)?,
         });
     }
-    Some(out)
+    (out.len() == count).then_some(out)
 }
 
 fn level_letter(l: Level) -> char {
@@ -253,26 +276,6 @@ fn unoptional(s: &str) -> Option<Option<String>> {
         None if s == "~" => Some(None),
         None => None,
     }
-}
-
-/// A `&'static str` for a name read back from a saved verdict.
-///
-/// [`LintError`] carries its lint name and finding kind as `&'static str`, which is right for
-/// the lints that write them as literals. A replayed finding has only text, so it is leaked once
-/// per distinct value. The set is the lints' names and finding kinds, a few hundred strings for
-/// the life of the process.
-fn intern(s: &str) -> &'static str {
-    static SEEN: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
-    let mut seen = SEEN
-        .get_or_init(|| Mutex::new(HashSet::new()))
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    if let Some(known) = seen.get(s) {
-        return known;
-    }
-    let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
-    seen.insert(leaked);
-    leaked
 }
 
 #[cfg(test)]
