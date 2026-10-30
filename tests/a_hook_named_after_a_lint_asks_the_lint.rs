@@ -147,17 +147,7 @@ fn no_per_scope_hook_is_generated_any_more() {
 }
 
 /// The hook for an Edit, through the real engine.
-fn hook_edit_says(repo: &Repo, path: &Path, old: &str, new: &str) -> String {
-    let payload = serde_json::json!({
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Edit",
-        "tool_input": {
-            "file_path": path.display().to_string(),
-            "old_string": old,
-            "new_string": new,
-        },
-    })
-    .to_string();
+fn run_hook(repo: &Repo, payload: serde_json::Value) -> String {
     let mut child = repo
         .cmd("bash")
         .arg(repo.root.join(".claude/hooks/forbidden-imports.sh"))
@@ -166,9 +156,50 @@ fn hook_edit_says(repo: &Repo, path: &Path, old: &str, new: &str) -> String {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(payload.as_bytes()).unwrap();
+    child.stdin.take().unwrap().write_all(payload.to_string().as_bytes()).unwrap();
     String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).to_string()
 }
+
+fn hook_edit_says(repo: &Repo, path: &Path, old: &str, new: &str) -> String {
+    run_hook(repo, serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Edit",
+        "tool_input": {
+            "file_path": path.display().to_string(),
+            "old_string": old,
+            "new_string": new,
+        },
+    }))
+}
+
+fn hook_multiedit_says(repo: &Repo, path: &Path, edits: &[(&str, &str)]) -> String {
+    let edits: Vec<_> = edits
+        .iter()
+        .map(|(old, new)| serde_json::json!({ "old_string": old, "new_string": new }))
+        .collect();
+    run_hook(repo, serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "MultiEdit",
+        "tool_input": { "file_path": path.display().to_string(), "edits": edits },
+    }))
+}
+
+#[test]
+fn a_multi_edit_is_judged_as_the_file_the_whole_sequence_leaves() {
+    let repo = fixture();
+    let sim = repo.root.join("mock/crates/fixture-sim/src/lib.rs");
+    fs::write(&sim, "pub fn f() {}\npub fn g() {}\n").unwrap();
+    // The second edit lays over what the first left, and the result holds a violation.
+    let out = hook_multiedit_says(&repo, &sim, &[("pub fn f", "pub fn h"), ("pub fn g() {}", "use std::fmt;")]);
+    assert!(refused(&out), "a multi-edit adding a violation was let through: {out}");
+    // The control: a sequence that leaves the file clean is passed.
+    let out = hook_multiedit_says(&repo, &sim, &[("pub fn f", "pub fn h"), ("pub fn g", "pub fn i")]);
+    assert!(!refused(&out), "a clean multi-edit was refused: {out}");
+    // An edit the tool would refuse (text the file lacks) is the tool's to refuse.
+    let out = hook_multiedit_says(&repo, &sim, &[("not in the file", "use std::fmt;")]);
+    assert!(!refused(&out), "{out}");
+}
+
 
 #[test]
 fn an_edit_is_judged_as_the_file_it_leaves_through_the_real_engine() {

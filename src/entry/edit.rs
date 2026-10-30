@@ -36,26 +36,43 @@ pub(crate) struct Request<'a> {
     pub replacing: Option<String>,
     /// Whether every occurrence of `replacing` goes, not only the first.
     pub all:     bool,
+    /// A sequence of replacements (old, new, every occurrence) for a multi-edit tool, applied
+    /// in order; when non-empty it is the edit and `replacing`, `text` and `all` are unused.
+    pub edits:   Vec<(String, String, bool)>,
     /// Which gate's severities decide what blocks.
     pub mode:    LintMode,
 }
 
+/// `old` replaced by `new` in `now`, or `None` when the tool would refuse the edit: `old`
+/// is empty, is not there, or is there more than once without `all`.
+fn replaced(now: &str, old: &str, new: &str, all: bool) -> Option<String> {
+    if old.is_empty() {
+        return None;
+    }
+    match now.matches(old).count() {
+        0 => None,
+        1 => Some(now.replacen(old, new, 1)),
+        _ if all => Some(now.replace(old, new)),
+        _ => None,
+    }
+}
+
 /// The file as it would read once the edit is made, or `None` when the edit names
-/// text the file does not hold: the tool refuses that edit itself, and a verdict on
-/// a file that will not exist would be a claim about nothing.
+/// text the file does not hold or holds ambiguously: the tool refuses that edit
+/// itself, and a verdict on a file that will not exist would be a claim about nothing.
 fn after(req: &Request, on_disk: impl FnOnce() -> Option<String>) -> Option<String> {
+    if !req.edits.is_empty() {
+        // A sequence of edits, each laid over what the one before left.
+        let mut now = on_disk()?;
+        for (old, new, all) in &req.edits {
+            now = replaced(&now, old, new, *all)?;
+        }
+        return Some(now);
+    }
     let Some(old) = &req.replacing else {
         return Some(req.text.clone());
     };
-    let now = on_disk()?;
-    if old.is_empty() || !now.contains(old.as_str()) {
-        return None;
-    }
-    Some(if req.all {
-        now.replace(old.as_str(), &req.text)
-    } else {
-        now.replacen(old.as_str(), &req.text, 1)
-    })
+    replaced(&on_disk()?, old, &req.text, req.all)
 }
 
 /// `path` with its `.` and `..` components resolved lexically, or `None` when it is not
@@ -170,6 +187,7 @@ mod tests {
             text: text.to_string(),
             replacing: replacing.map(String::from),
             all,
+            edits: Vec::new(),
             mode: LintMode::Commit,
         }
     }
@@ -183,8 +201,20 @@ mod tests {
     #[test]
     fn an_edit_replaces_the_first_occurrence_unless_all() {
         let disk = || Some("a b a".to_string());
-        assert_eq!(after(&req("X", Some("a"), false), disk).as_deref(), Some("X b a"));
+        assert_eq!(after(&req("X", Some("b"), false), disk).as_deref(), Some("a X a"));
+        // Ambiguous without `all`, as the tool itself refuses it.
+        assert_eq!(after(&req("X", Some("a"), false), disk), None);
         assert_eq!(after(&req("X", Some("a"), true), disk).as_deref(), Some("X b X"));
+    }
+
+    #[test]
+    fn a_sequence_of_edits_is_laid_over_what_each_one_left() {
+        let mut r = req("", None, false);
+        r.edits = vec![("a".into(), "b".into(), false), ("b c".into(), "X".into(), false)];
+        assert_eq!(after(&r, || Some("a c".into())).as_deref(), Some("X"));
+        // One the tool would refuse refuses the sequence.
+        r.edits.push(("zzz".into(), "y".into(), false));
+        assert_eq!(after(&r, || Some("a c".into())), None);
     }
 
     #[test]
@@ -211,6 +241,7 @@ pub(crate) fn run_for_test_at(cfg: &Config, lint: &str, file: &Path, mode: LintM
         text: std::fs::read_to_string(file).unwrap_or_default(),
         replacing: None,
         all: false,
-        mode: mode,
+        edits: Vec::new(),
+        mode,
     })
 }

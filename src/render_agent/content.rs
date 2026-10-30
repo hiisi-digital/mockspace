@@ -230,6 +230,9 @@ pub(crate) fn generate_lint_derived_content(
          set -uo pipefail\n\
          __INPUT=$(cat)\n\
          {{{{HOOK_HELPERS}}}}\n\
+         # Nothing that does not name a Rust file is the lint's to judge, so it needs no jq to\n\
+         # be passed; whatever might, and cannot be read without jq, is refused.\n\
+         case \"$__INPUT\" in *'.rs\"'*) ;; *) allow ;; esac\n\
          command -v jq >/dev/null 2>&1 \\\n\
              || deny \"the forbidden-imports gate cannot run: jq is not installed, so the edit cannot be read and a verdict would be a guess.\"\n\
          FILE_PATH=$(_extract \"file_path\")\n\
@@ -255,7 +258,10 @@ pub(crate) fn generate_lint_derived_content(
          _extract_to new_string \"$WORK/new\"\n\
          if [[ ! -s \"$WORK/old\" && ! -s \"$WORK/new\" ]]; then _extract_to content \"$WORK/new\"; fi\n\
          ARGS=(check-edit --lint {FORBIDDEN_IMPORTS_LINT} --file \"$FILE_PATH\")\n\
-         if [[ -s \"$WORK/old\" ]]; then\n\
+         _extract_to edits \"$WORK/edits\"\n\
+         if [[ \"$(head -c 1 \"$WORK/edits\")\" == \"[\" ]]; then\n\
+             ARGS+=(--edits \"$WORK/edits\")\n\
+         elif [[ -s \"$WORK/old\" ]]; then\n\
              ARGS+=(--replace \"$WORK/old\")\n\
              if [[ \"$(_extract replace_all)\" == \"true\" ]]; then ARGS+=(--all); fi\n\
          fi\n\
@@ -283,7 +289,7 @@ pub(crate) fn generate_lint_derived_content(
     // Bash is not one of them.
     hook_metas.push(HookMeta {
         name:     hook_name,
-        matchers: vec!["Write".into(), "Edit".into()],
+        matchers: vec!["Write".into(), "Edit".into(), "MultiEdit".into()],
     });
 
     (count, hook_metas)

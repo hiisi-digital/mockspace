@@ -90,7 +90,7 @@ fn the_generated_settings_register_a_forbidden_imports_hook_under_an_event() {
     let entries = settings["hooks"]["PreToolUse"]
         .as_array()
         .expect("a PreToolUse list");
-    for matcher in ["Write", "Edit"] {
+    for matcher in ["Write", "Edit", "MultiEdit"] {
         let script = entries
             .iter()
             .filter(|e| e["matcher"] == matcher)
@@ -487,7 +487,7 @@ fn a_full_render_registers_the_forbidden_imports_hooks_under_write_and_edit() {
         serde_json::from_str(&fs::read_to_string(root.join(".claude/settings.json")).unwrap())
             .unwrap();
     let entries = settings["hooks"]["PreToolUse"].as_array().expect("a PreToolUse list");
-    for matcher in ["Write", "Edit"] {
+    for matcher in ["Write", "Edit", "MultiEdit"] {
         let registered = entries
             .iter()
             .filter(|e| e["matcher"] == matcher)
@@ -693,4 +693,7 @@ fn without_jq_the_hook_refuses_rather_than_reading_nothing_and_passing() {
     };
     let out = run(bin.to_str().unwrap());
     assert!(refused(&out) && out.contains("jq is not installed"), "a hook that could not read the edit passed it: {out}");
+    // The control: with jq on the path the refusal is not about jq.
+    let with_jq = run(&format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()));
+    assert!(!with_jq.contains("jq is not installed"), "{with_jq}");
 }

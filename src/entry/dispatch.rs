@@ -552,6 +552,37 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     },
                     None => None,
                 };
+                let edits = match arg_value(&args, "--edits") {
+                    Some(f) => {
+                        let parsed = std::fs::read_to_string(&f)
+                            .map_err(|e| e.to_string())
+                            .and_then(|t| {
+                                serde_json::from_str::<Vec<serde_json::Value>>(&t)
+                                    .map_err(|e| e.to_string())
+                            })
+                            .and_then(|list| {
+                                list.iter()
+                                    .map(|v| {
+                                        let s = |k: &str| v.get(k).and_then(|x| x.as_str());
+                                        Some((
+                                            s("old_string")?.to_string(),
+                                            s("new_string")?.to_string(),
+                                            v.get("replace_all").and_then(|x| x.as_bool()).unwrap_or(false),
+                                        ))
+                                    })
+                                    .collect::<Option<Vec<_>>>()
+                                    .ok_or_else(|| "an edit lacks old_string or new_string".to_string())
+                            });
+                        match parsed {
+                            Ok(v) => v,
+                            Err(e) => {
+                                eprintln!("mock check-edit: could not read --edits {f}: {e}");
+                                return ExitCode::from(2);
+                            },
+                        }
+                    },
+                    None => Vec::new(),
+                };
                 let mut text = String::new();
                 if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text) {
                     eprintln!("mock check-edit: could not read stdin: {e}");
@@ -572,6 +603,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     text,
                     replacing,
                     all: args.iter().any(|a| a == "--all"),
+                    edits,
                     mode,
                 });
             },
