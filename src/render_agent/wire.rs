@@ -256,6 +256,7 @@ pub(crate) fn generate_settings(repo_root: &Path, all_hooks: &[HookMeta]) -> usi
                     "hooks": [{
                         "type": "command",
                         "command": format!("{CLAUDE_HOOK_PREFIX}{name}"),
+                        "timeout": HOOK_TIMEOUT_SEC,
                     }],
                 })
             })
@@ -282,7 +283,7 @@ pub(crate) fn generate_settings(repo_root: &Path, all_hooks: &[HookMeta]) -> usi
                      again.",
                     claude_settings_path.display()
                 );
-                return generate_copilot_hooks(repo_root, &matcher_to_hooks, count);
+                return generate_copilot_hooks(repo_root, all_hooks, count);
             }
             let hooks = settings
                 .entry("hooks")
@@ -315,24 +316,35 @@ pub(crate) fn generate_settings(repo_root: &Path, all_hooks: &[HookMeta]) -> usi
         },
     }
 
-    generate_copilot_hooks(repo_root, &matcher_to_hooks, count)
+    generate_copilot_hooks(repo_root, all_hooks, count)
 }
 
 /// Whether `settings.json` holds a hook shape this cannot merge into.
 ///
 /// `None` means it can. `Some(why)` names what was found, for the warning, and
 /// means the file is left byte for byte as it was.
-/// The same question for `hooks.json`, whose `hooks` is a flat array rather
-/// than an object keyed by event. Without this a `hooks` of any other shape
-/// falls to `unwrap_or_default()` and is silently replaced.
+/// The same question for `hooks.json`, whose `hooks` is an object keyed by event
+/// with an array under `preToolUse`. A `hooks` of any other shape would be silently
+/// replaced, except the flat list of our own entries that earlier renders wrote.
 fn unexpected_copilot_shape(
     doc: &serde_json::Map<String, serde_json::Value>,
+    repo_root: &Path,
 ) -> Option<&'static str> {
     match doc.get("hooks") {
         None => None,
         Some(v) if v.is_null() => Some("a null `hooks`"),
-        Some(v) if !v.is_array() => Some("a `hooks` that is not an array"),
-        Some(_) => None,
+        Some(serde_json::Value::Object(events)) => match events.get("preToolUse") {
+            Some(v) if !v.is_array() => Some("a `preToolUse` that is not an array"),
+            _ => None,
+        },
+        Some(serde_json::Value::Array(entries)) => {
+            if entries.iter().all(|e| is_generated_copilot_entry(e, repo_root)) {
+                None
+            } else {
+                Some("a flat `hooks` list with entries that are not this crate's, a shape Copilot does not read")
+            }
+        },
+        Some(_) => Some("a `hooks` that is neither an object nor a list"),
     }
 }
 
@@ -350,29 +362,86 @@ fn unexpected_shape(settings: &serde_json::Map<String, serde_json::Value>) -> Op
     }
 }
 
-/// The Copilot half, which keys its hooks in a flat list rather than by event.
-fn generate_copilot_hooks(
-    repo_root: &Path,
-    matcher_to_hooks: &BTreeMap<String, Vec<String>>,
-    mut count: usize,
-) -> usize {
+/// Copilot's runtime names for the tools a Claude matcher names.
+///
+/// Copilot tests a hook's `matcher` against its own tool name, as a regex anchored
+/// to the whole name, and its file tools are `create` and `edit` where Claude's are
+/// `Write`, `Edit` and `MultiEdit` (hooks reference, "Claude tool name" table). A
+/// token with no row is passed through, since it may already be a runtime name or a
+/// regex of the author's.
+const COPILOT_TOOL_NAMES: &[(&str, &[&str])] = &[
+    ("Bash", &["bash"]),
+    ("Write", &["create"]),
+    ("Edit", &["edit"]),
+    ("MultiEdit", &["edit"]),
+];
+
+/// A hook's Claude matchers as the one Copilot `matcher` regex, or `None` when the
+/// hook fires on every tool (a `*` token, which Copilot spells by omitting the key).
+fn copilot_matcher(claude: &[String]) -> Option<String> {
+    let mut names: Vec<String> = Vec::new();
+    for token in claude.iter().flat_map(|m| m.split('|')) {
+        let token = token.trim();
+        if token == "*" || token.is_empty() {
+            return None;
+        }
+        let mapped = COPILOT_TOOL_NAMES.iter().find(|(c, _)| *c == token);
+        let runtime: Vec<String> = match mapped {
+            Some((_, runtime)) => runtime.iter().map(|n| (*n).to_string()).collect(),
+            None => vec![token.to_string()],
+        };
+        for name in runtime {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    Some(names.join("|"))
+}
+
+/// How long either agent lets a generated hook run, in seconds, written on every
+/// entry so the figure is ours rather than each side's default (30 on Copilot, per
+/// its hooks reference). A timeout is fail-open on both, so this is what a verdict may
+/// take before the edit goes through unjudged. A warm `check-edit` takes a few tens of
+/// milliseconds; the rest is room for the engine to load a lint pack that went stale.
+const HOOK_TIMEOUT_SEC: u32 = 60;
+
+/// The `preToolUse` entry for one generated hook, in the shape Copilot reads.
+fn copilot_entry(hook: &HookMeta) -> serde_json::Value {
+    let mut entry = serde_json::json!({
+        "type": "command",
+        "bash": format!("{COPILOT_HOOK_PREFIX}{}", hook.name),
+        "timeoutSec": HOOK_TIMEOUT_SEC,
+    });
+    if let Some(matcher) = copilot_matcher(&hook.matchers) {
+        entry["matcher"] = serde_json::Value::String(matcher);
+    }
+    entry
+}
+
+/// Whether a Copilot hook entry is one this crate wrote: it runs a generated script.
+fn is_generated_copilot_entry(entry: &serde_json::Value, repo_root: &Path) -> bool {
+    ["bash", "command"].iter().any(|key| {
+        entry
+            .get(key)
+            .and_then(|c| c.as_str())
+            .is_some_and(|c| names_a_generated_script(c, repo_root, COPILOT_HOOK_PREFIX))
+    })
+}
+
+/// The Copilot half: `.github/hooks/hooks.json` as the hooks reference spells it,
+/// `{"version":1,"hooks":{"preToolUse":[{"type":"command","bash":..,"matcher":..}]}}`.
+///
+/// Earlier renders wrote a flat list of `{name, command, event, tool}` that Copilot
+/// never read. A list holding only entries of ours is that file and is replaced; one
+/// holding anything else is left alone, since there is no telling where the entry
+/// belongs in the new shape.
+fn generate_copilot_hooks(repo_root: &Path, all_hooks: &[HookMeta], mut count: usize) -> usize {
     let copilot_hooks_dir = repo_root.join(".github").join("hooks");
     let _ = fs::create_dir_all(&copilot_hooks_dir);
     let copilot_hooks_path = copilot_hooks_dir.join("hooks.json");
 
-    let generated: Vec<serde_json::Value> = matcher_to_hooks
-        .iter()
-        .flat_map(|(matcher, names)| {
-            names.iter().map(move |name| {
-                serde_json::json!({
-                    "name": name,
-                    "command": format!("{COPILOT_HOOK_PREFIX}{name}"),
-                    "event": "pre_tool_use",
-                    "tool": matcher,
-                })
-            })
-        })
-        .collect();
+    let generated: Vec<serde_json::Value> = all_hooks.iter().map(copilot_entry).collect();
 
     match read_json_object(&copilot_hooks_path) {
         None => {
@@ -382,33 +451,36 @@ fn generate_copilot_hooks(
                 copilot_hooks_path.display()
             );
         },
-        Some(doc) if unexpected_copilot_shape(&doc).is_some() => {
+        Some(doc) if unexpected_copilot_shape(&doc, repo_root).is_some() => {
             eprintln!(
                 "  warning: {} carries {}, which this does not understand, so its hook wiring \
                  was left alone.",
                 copilot_hooks_path.display(),
-                unexpected_copilot_shape(&doc).unwrap_or("an unexpected shape"),
+                unexpected_copilot_shape(&doc, repo_root).unwrap_or("an unexpected shape"),
             );
         },
         Some(mut doc) => {
-            // Flat list here rather than keyed by event, so each entry answers
-            // on its own script rather than on an entry's worth of them.
-            let mut kept: Vec<serde_json::Value> = doc
-                .get("hooks")
+            let mut events = match doc.remove("hooks") {
+                Some(serde_json::Value::Object(events)) => events,
+                _ => serde_json::Map::new(),
+            };
+            // Everything on this event that is not ours, in the order it was
+            // written, then ours after it. Other events are not read and not
+            // touched.
+            let mut kept: Vec<serde_json::Value> = events
+                .get("preToolUse")
                 .and_then(|v| v.as_array())
                 .map(|a| {
                     a.iter()
-                        .filter(|e| {
-                            !e.get("command").and_then(|c| c.as_str()).is_some_and(|c| {
-                                names_a_generated_script(c, repo_root, COPILOT_HOOK_PREFIX)
-                            })
-                        })
+                        .filter(|e| !is_generated_copilot_entry(e, repo_root))
                         .cloned()
                         .collect()
                 })
                 .unwrap_or_default();
             kept.extend(generated);
-            doc.insert("hooks".into(), serde_json::Value::Array(kept));
+            events.insert("preToolUse".into(), serde_json::Value::Array(kept));
+            doc.insert("version".into(), serde_json::json!(1));
+            doc.insert("hooks".into(), serde_json::Value::Object(events));
 
             let body = serde_json::to_string_pretty(&serde_json::Value::Object(doc))
                 .expect("a map of JSON values serialises");
@@ -786,7 +858,12 @@ mod settings_tests {
         // copilot side read `hooks` through `.and_then(|v| v.as_array())` and
         // fell to an empty default for anything else, so an object or a null
         // there was silently replaced rather than left.
-        for odd in ["{\n  \"hooks\": {}\n}", "{\n  \"hooks\": null\n}"] {
+        for odd in [
+            "{\n  \"hooks\": null\n}",
+            "{\n  \"hooks\": 5\n}",
+            "{\n  \"hooks\": {\"preToolUse\": {}}\n}",
+            "{\n  \"hooks\": [{\"name\":\"mine\",\"command\":\"scripts/mine.sh\"}]\n}",
+        ] {
             let d = tempfile::tempdir().unwrap();
             fs::create_dir_all(d.path().join(".github/hooks")).unwrap();
             let path = d.path().join(".github/hooks/hooks.json");
@@ -863,32 +940,104 @@ mod settings_tests {
         );
     }
 
+    fn copilot(root: &Path) -> serde_json::Value {
+        let text = fs::read_to_string(root.join(".github/hooks/hooks.json")).unwrap();
+        serde_json::from_str(&text).unwrap()
+    }
+
+    /// The shape GitHub's hooks reference gives
+    /// (docs.github.com/en/copilot/reference/hooks-reference, read 30 October 2026):
+    /// `version` 1, `hooks` keyed by the camelCase event, each entry a `command` hook
+    /// with `bash`, an optional `matcher` regex over the runtime tool name, and
+    /// `timeoutSec`.
+    #[test]
+    fn the_copilot_file_has_the_shape_the_hooks_reference_gives() {
+        let d = tempfile::tempdir().unwrap();
+        generate_settings(d.path(), &[hook("gate.sh", &["Bash"]), hook("imports.sh", &["Write", "Edit", "MultiEdit"])]);
+        let v = copilot(d.path());
+
+        assert_eq!(v["version"], 1);
+        let entries = v["hooks"]["preToolUse"].as_array().expect("hooks.preToolUse is an array");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["type"], "command");
+        assert_eq!(entries[0]["bash"], ".github/hooks/gate.sh");
+        assert_eq!(entries[0]["matcher"], "bash");
+        assert_eq!(entries[1]["bash"], ".github/hooks/imports.sh");
+        assert_eq!(
+            entries[1]["matcher"], "create|edit",
+            "the file tools are `create` and `edit` there, not Write and Edit"
+        );
+        assert_eq!(entries[1]["timeoutSec"], HOOK_TIMEOUT_SEC);
+        assert!(
+            entries.iter().all(|e| e.get("event").is_none() && e.get("tool").is_none() && e.get("command").is_none()),
+            "the keys of the flat list Copilot never read are gone"
+        );
+        assert!(v["hooks"].is_object(), "the event list is not a flat array");
+    }
+
+    #[test]
+    fn a_hook_for_every_tool_carries_no_matcher() {
+        let d = tempfile::tempdir().unwrap();
+        generate_settings(d.path(), &[hook("all.sh", &["*"])]);
+        let v = copilot(d.path());
+        let entry = &v["hooks"]["preToolUse"][0];
+        assert_eq!(entry["bash"], ".github/hooks/all.sh");
+        assert!(entry.get("matcher").is_none(), "{entry}");
+    }
+
+    #[test]
+    fn a_matcher_with_no_runtime_row_passes_through() {
+        assert_eq!(copilot_matcher(&["Bash|Glob".to_string()]).as_deref(), Some("bash|Glob"));
+        assert_eq!(copilot_matcher(&["Edit".to_string(), "MultiEdit".to_string()]).as_deref(), Some("edit"));
+        assert_eq!(copilot_matcher(&["Write".to_string(), "*".to_string()]), None);
+    }
+
+    #[test]
+    fn the_flat_list_earlier_renders_wrote_is_replaced_by_the_reference_shape() {
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir_all(d.path().join(".github/hooks")).unwrap();
+        fs::write(
+            d.path().join(".github/hooks/hooks.json"),
+            r#"{"version":1,"hooks":[
+                {"name":"stale","command":".github/hooks/stale.sh","event":"pre_tool_use","tool":"Bash"}]}"#,
+        )
+        .unwrap();
+
+        generate_settings(d.path(), &[hook("gate.sh", &["Bash"])]);
+        let v = copilot(d.path());
+        let entries = v["hooks"]["preToolUse"].as_array().unwrap();
+        assert_eq!(entries.len(), 1, "{v}");
+        assert_eq!(entries[0]["bash"], ".github/hooks/gate.sh");
+    }
+
     #[test]
     fn the_copilot_side_merges_on_the_same_terms() {
         let d = tempfile::tempdir().unwrap();
         fs::create_dir_all(d.path().join(".github/hooks")).unwrap();
         fs::write(
             d.path().join(".github/hooks/hooks.json"),
-            r#"{"version":1,"hooks":[
-                {"name":"mine","command":"scripts/mine.sh","event":"pre_tool_use","tool":"Write"},
-                {"name":"stale","command":".github/hooks/stale.sh","event":"pre_tool_use","tool":"Bash"}]}"#,
+            r#"{"version":1,"hooks":{
+                "sessionStart":[{"type":"command","bash":"scripts/start.sh"}],
+                "preToolUse":[
+                {"type":"command","bash":"scripts/mine.sh","matcher":"create"},
+                {"type":"command","bash":".github/hooks/stale.sh","matcher":"bash"}]}}"#,
         )
         .unwrap();
 
         generate_settings(d.path(), &[hook("gate.sh", &["Bash"])]);
-        let text = fs::read_to_string(d.path().join(".github/hooks/hooks.json")).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let v = copilot(d.path());
 
+        assert_eq!(v["version"], 1);
         assert_eq!(
-            v["version"], 1,
-            "a key this does not write is not its to drop"
+            v["hooks"]["sessionStart"][0]["bash"], "scripts/start.sh",
+            "an event this does not write is not its to drop"
         );
-        let names: Vec<&str> = v["hooks"]
+        let bashes: Vec<&str> = v["hooks"]["preToolUse"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|h| h["name"].as_str().unwrap())
+            .map(|h| h["bash"].as_str().unwrap())
             .collect();
-        assert_eq!(names, vec!["mine", "gate.sh"]);
+        assert_eq!(bashes, vec!["scripts/mine.sh", ".github/hooks/gate.sh"]);
     }
 }

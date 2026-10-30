@@ -105,7 +105,9 @@ _extract() {
         new_string) alt=new_str ;;
         content) alt=file_text ;;
     esac
-    echo "$__INPUT" | jq -r --arg alt "$alt" "if .toolArgs then (.toolArgs | fromjson? | (.$1 // (if \$alt != \"\" then .[\$alt] else null end)) // \"\") else \"\" end" 2>/dev/null || echo ""
+    # `toolArgs` is a JSON-encoded string in some Copilot versions and the object itself
+    # in others (the hooks reference types it `unknown`), so both are read.
+    echo "$__INPUT" | jq -r --arg alt "$alt" "if .toolArgs then (.toolArgs | (if type == \"string\" then fromjson? else . end) | (.$1 // (if \$alt != \"\" then .[\$alt] else null end)) // \"\") else \"\" end" 2>/dev/null || echo ""
 }
 
 # Same reason as the Claude side: a reason carries quotes and newlines, and a
