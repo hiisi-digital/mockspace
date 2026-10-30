@@ -148,9 +148,13 @@ fn no_per_scope_hook_is_generated_any_more() {
 
 /// The hook for an Edit, through the real engine.
 fn run_hook(repo: &Repo, payload: serde_json::Value) -> String {
+    run_hook_at(repo, ".claude/hooks/forbidden-imports.sh", payload)
+}
+
+fn run_hook_at(repo: &Repo, hook: &str, payload: serde_json::Value) -> String {
     let mut child = repo
         .cmd("bash")
-        .arg(repo.root.join(".claude/hooks/forbidden-imports.sh"))
+        .arg(repo.root.join(hook))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -230,4 +234,51 @@ fn a_regenerated_consumer_carries_the_short_catalogue() {
     assert!(!rule.contains("registry-append"), "a builtin subcommand was listed: {rule}");
     assert!(!rule.contains("BUILTIN SUBCOMMANDS"), "{rule}");
     assert!(rule.len() < 2_500, "{} bytes", rule.len());
+}
+
+/// Copilot carries a tool's arguments as a JSON-encoded string, so the path and the text
+/// reach the hook escaped inside it.
+fn copilot_says(repo: &Repo, tool: &str, args: serde_json::Value) -> String {
+    run_hook_at(repo, ".github/hooks/forbidden-imports.sh", serde_json::json!({
+        "toolName": tool,
+        "toolArgs": args.to_string(),
+    }))
+}
+
+#[test]
+fn the_copilot_hook_gives_the_lints_verdict_too() {
+    let repo = fixture();
+    let sim = repo.root.join("mock/crates/fixture-sim/src/lib.rs");
+    let path = sim.display().to_string();
+    fs::write(&sim, "pub fn f() {}\npub fn g() {}\n").unwrap();
+    let out = copilot_says(&repo, "edit", serde_json::json!({
+        "file_path": path, "old_string": "pub fn g() {}", "new_string": "use std::fmt;"
+    }));
+    assert!(refused(&out), "the Copilot hook passed what the lint refuses: {out}");
+    // The controls: a clean edit, and a file that is not Rust, are passed.
+    let out = copilot_says(&repo, "edit", serde_json::json!({
+        "file_path": path, "old_string": "pub fn g", "new_string": "pub fn h"
+    }));
+    assert!(!refused(&out), "{out}");
+    let out = copilot_says(&repo, "create", serde_json::json!({
+        "file_path": repo.root.join("notes.md").display().to_string(), "content": "use std::fmt;"
+    }));
+    assert!(!refused(&out), "{out}");
+    // A multi-edit through the same payload shape.
+    let out = copilot_says(&repo, "multiedit", serde_json::json!({
+        "file_path": path,
+        "edits": [{ "old_string": "pub fn f", "new_string": "pub fn h" },
+                  { "old_string": "pub fn g() {}", "new_string": "use std::fmt;" }]
+    }));
+    assert!(refused(&out), "{out}");
+}
+
+#[test]
+fn a_multi_edit_creating_a_file_is_judged_on_its_text() {
+    let repo = fixture();
+    let fresh = repo.root.join("mock/crates/fixture-sim/src/fresh.rs");
+    let out = hook_multiedit_says(&repo, &fresh, &[("", "use std::fmt;\n")]);
+    assert!(refused(&out), "a created file holding a violation was passed: {out}");
+    let out = hook_multiedit_says(&repo, &fresh, &[("", "pub fn k() {}\n")]);
+    assert!(!refused(&out), "{out}");
 }

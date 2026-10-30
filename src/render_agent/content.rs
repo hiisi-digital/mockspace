@@ -232,7 +232,9 @@ pub(crate) fn generate_lint_derived_content(
          {{{{HOOK_HELPERS}}}}\n\
          # Nothing that does not name a Rust file is the lint's to judge, so it needs no jq to\n\
          # be passed; whatever might, and cannot be read without jq, is refused.\n\
-         case \"$__INPUT\" in *'.rs\"'*) ;; *) allow ;; esac\n\
+         # Claude carries the path as raw JSON and Copilot inside a JSON-encoded string, where\n\
+         # the quote after `.rs` is escaped, so both spellings are the same file.\n\
+         case \"$__INPUT\" in *'.rs\"'* | *'.rs\\\"'*) ;; *) allow ;; esac\n\
          command -v jq >/dev/null 2>&1 \\\n\
              || deny \"the forbidden-imports gate cannot run: jq is not installed, so the edit cannot be read and a verdict would be a guess.\"\n\
          FILE_PATH=$(_extract \"file_path\")\n\

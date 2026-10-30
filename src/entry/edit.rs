@@ -63,8 +63,18 @@ fn replaced(now: &str, old: &str, new: &str, all: bool) -> Option<String> {
 fn after(req: &Request, on_disk: impl FnOnce() -> Option<String>) -> Option<String> {
     if !req.edits.is_empty() {
         // A sequence of edits, each laid over what the one before left.
-        let mut now = on_disk()?;
-        for (old, new, all) in &req.edits {
+        // A first edit with an empty old text is how the tool creates a file: its new text
+        // is the whole file, and the tool refuses it when the file is already there.
+        let (mut now, rest) = match req.edits.split_first() {
+            Some(((old, new, _), rest)) if old.is_empty() => {
+                if on_disk().is_some() {
+                    return None;
+                }
+                (new.clone(), rest)
+            },
+            _ => (on_disk()?, req.edits.as_slice()),
+        };
+        for (old, new, all) in rest {
             now = replaced(&now, old, new, *all)?;
         }
         return Some(now);
@@ -215,6 +225,15 @@ mod tests {
         // One the tool would refuse refuses the sequence.
         r.edits.push(("zzz".into(), "y".into(), false));
         assert_eq!(after(&r, || Some("a c".into())), None);
+    }
+
+    #[test]
+    fn a_multi_edit_that_creates_the_file_judges_its_new_text_whole() {
+        let mut r = req("", None, false);
+        r.edits = vec![("".into(), "use a;".into(), false), ("a".into(), "b".into(), false)];
+        assert_eq!(after(&r, || None).as_deref(), Some("use b;"));
+        // The tool refuses creating what is already there.
+        assert_eq!(after(&r, || Some("x".into())), None);
     }
 
     #[test]
