@@ -247,6 +247,11 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         return crate::registry_merge::run(&subcommand_args(&args, "merge-registry"));
     }
 
+    // Registering the drivers in the user's git config needs no project either.
+    if first_positional(&args) == Some("register-drivers") {
+        return crate::bootstrap::run_register_drivers(&subcommand_args(&args, "register-drivers"));
+    }
+
     // The same for the driver that keeps both sides' additions to a file that only grows.
     if first_positional(&args) == Some("merge-additions") {
         return crate::append_merge::run(&subcommand_args(&args, "merge-additions"));

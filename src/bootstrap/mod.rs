@@ -49,6 +49,10 @@ mod history_driver;
 pub(crate) use history_driver::*;
 mod merge_driver;
 pub(crate) use merge_driver::*;
+mod driver_table;
+pub(crate) use driver_table::*;
+#[cfg(test)]
+mod driver_scope_tests;
 mod gitignore;
 pub(crate) use gitignore::*;
 mod shook;
@@ -154,11 +158,7 @@ pub fn ensure_gate(
     // Generated files merge without conflict: the driver `.gitattributes` names
     // lives in the clone's config, so it is registered with the hooks.
     if std::env::var("MOCKSPACE_NO_AUTO_ACTIVATE").is_err() {
-        register_driver(repo_root, &mut actions);
-        register_registry_driver(repo_root, "cargo mock", &mut actions);
-        register_round_driver(repo_root, "cargo mock", &mut actions);
-        register_history_driver(repo_root, "cargo mock", &mut actions);
-        register_append_driver(repo_root, "cargo mock", &mut actions);
+        register_all_drivers(&ConfigTarget::Clone(repo_root), &mut actions);
     }
 
     // Opt-out for CI and sandboxed environments where git config edits are

@@ -34,8 +34,11 @@
 //! hook is (`core.hooksPath` moves it) and keeps ours only if it is there and
 //! ours. See [`super::driver_script`].
 //!
-//! The driver is registered in the clone's config, which is the only place git
-//! accepts one from: a repository cannot carry its own.
+//! The driver is registered in the clone's config, or in the user's with
+//! `mock register-drivers --global`: a repository cannot carry its own. Its command names
+//! no clone, it asks git for the git directory it runs in, so a copy of a clone, a
+//! worktree and a clone that never ran `cargo mock` all find their own script, and fall
+//! back to git's text merge where there is none.
 
 use super::driver_script::driver_script;
 use super::*;
@@ -164,46 +167,32 @@ fn ensure_driver_script(path: &Path) -> bool {
     write_executable(path, script).is_ok()
 }
 
-fn quoted(path: &Path) -> String {
-    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+/// What git runs for a conflicting generated file: the script in the git directory of the clone it is run in,
+/// asked of git rather than written down, so a copy of the clone, a worktree and a clone that never ran
+/// `cargo mock` all find their own. With no script there, git's own text merge, which is what it would have done
+/// with no driver. The script exits 0 for a clean merge and 1 for a conflict, and either is final.
+pub(crate) fn generated_driver_command() -> String {
+    "s=0; f=\"$(git rev-parse --git-common-dir)/mockspace/merge-generated\"; if [ -x \"$f\" ]; then \"$f\" %O %A %B %P %L || s=$?; else git merge-file --marker-size=%L -L ours -L base -L theirs %A %O %B || s=$?; fi; exit $s"
+        .to_string()
 }
 
-/// Register the driver in the clone's config, pointing at the script.
-pub(crate) fn register_driver(repo_root: &Path, actions: &mut Vec<String>) {
-    let script = driver_script_path(repo_root);
-    let wanted = format!("{} %O %A %B %P %L", quoted(&script));
-    let key = format!("merge.{DRIVER}.driver");
-    let current = Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["config", "--local", &key])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    let wrote_script = ensure_driver_script(&script);
-    if current.as_deref() == Some(wanted.as_str()) {
-        if wrote_script {
-            actions.push(format!("rewrote the {DRIVER} merge driver"));
-        }
-        return;
-    }
-    let set = |key: &str, value: &str| {
-        Command::new("git")
-            .arg("-C")
-            .arg(repo_root)
-            .args(["config", "--local", key, value])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+/// Register the driver in the given config. The script it calls is written into the clone's git
+/// directory, which only a clone target has.
+pub(crate) fn register_driver(target: &ConfigTarget, actions: &mut Vec<String>) {
+    let wrote_script = match target {
+        ConfigTarget::Clone(repo_root) => ensure_driver_script(&driver_script_path(repo_root)),
+        ConfigTarget::User(_) => false,
     };
-    if script.is_file()
-        && set(&format!("merge.{DRIVER}.name"), "mockspace generated file")
-        && set(&key, &wanted)
-    {
-        actions.push(format!("registered the {DRIVER} merge driver"));
-    } else {
-        actions.push(format!("could not register the {DRIVER} merge driver"));
+    let before = actions.len();
+    register_engine_driver(
+        target,
+        DRIVER,
+        "mockspace generated file",
+        &generated_driver_command(),
+        actions,
+    );
+    if wrote_script && actions.len() == before {
+        actions.push(format!("rewrote the {DRIVER} merge driver"));
     }
 }
 

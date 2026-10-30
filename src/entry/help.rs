@@ -252,6 +252,17 @@ const COMMANDS: &[Cmd] = &[
                   project and installs nothing: the wiring is done by `cargo mock`.",
     },
     Cmd {
+        name:    "register-drivers",
+        summary: "register the merge drivers in the user's git config",
+        args:    &[],
+        help:    "`register-drivers --global` writes the five merge drivers `cargo mock` \
+                  registers per clone into the user's git config as well, with commands that \
+                  name no clone: a clone made later, a worktree, or a container that never \
+                  ran `cargo mock` there then calls them when its `.gitattributes` names one. \
+                  Idempotent. It writes to the user config and nowhere else, and needs no \
+                  project.",
+    },
+    Cmd {
         name:    "merge-additions",
         summary: "merge a file that only grows, as git's merge driver",
         args:    &[],
