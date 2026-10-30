@@ -39,6 +39,14 @@ pub fn record(label: &str, spent: Duration) {
     slot.1 += 1;
 }
 
+/// Count one event under `label` with no time attached, building the label only when recording
+/// is on so a gate run that is not being measured does not allocate for it.
+pub fn count(label: impl FnOnce() -> String) {
+    if enabled() {
+        record(&label(), Duration::ZERO);
+    }
+}
+
 /// Run `f`, and record its wall time under `label` when recording is on.
 pub fn time<T>(label: &str, f: impl FnOnce() -> T) -> T {
     if !enabled() {

@@ -18,6 +18,10 @@ const TRACKED_MACROS: &[&str] = &["define_error!", "define_warning!", "define_hi
 pub struct ActionableErrors;
 
 impl Lint for ActionableErrors {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::File
+    }
+
     fn name(&self) -> &'static str {
         "actionable-errors"
     }

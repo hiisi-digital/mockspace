@@ -53,6 +53,10 @@ impl ForbiddenImports {
 }
 
 impl Lint for ForbiddenImports {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::File
+    }
+
     fn name(&self) -> &'static str {
         "forbidden-imports"
     }

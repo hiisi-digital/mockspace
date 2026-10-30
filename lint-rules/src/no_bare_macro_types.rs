@@ -47,6 +47,10 @@ const FORBIDDEN_CALLS: &[(&str, &[&str])] = &[
 pub struct NoBareMacroTypes;
 
 impl Lint for NoBareMacroTypes {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::File
+    }
+
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }

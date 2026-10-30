@@ -89,6 +89,16 @@ mod repr_c_abi_safety;
 mod single_source;
 pub mod src_layout;
 pub mod timing;
+mod dispatch;
+pub mod reach;
+pub mod reach_check;
+#[cfg(test)]
+mod reach_tests;
+#[cfg(test)]
+mod saving_tests;
+pub mod verdict;
+
+pub use reach::Reach;
 pub mod testkit;
 pub mod the_mock_toolchain_matches_the_root;
 pub mod tool;
@@ -124,6 +134,8 @@ pub use tool::{
     usage_line,
 };
 use tree_sitter::Tree;
+
+use crate::dispatch::{check_every_file, parse_sources};
 // Re-exported so a consumer whose `mock/lints/*.rs` compile into the
 // generated cdylib can name the grammar types. That cdylib depends on
 // this crate and on the declared packs, so without this there is no
@@ -1435,6 +1447,17 @@ pub trait Lint {
     fn invocation_wanted(&self) -> bool {
         false
     }
+
+    /// What this lint's verdict depends on, which is what lets the engine skip it when none of
+    /// that moved. See [`Reach`].
+    ///
+    /// **The default is the widest**, [`Reach::Repository`], which is never saved: a lint that
+    /// says nothing is run on every gate as it always was. Declaring a narrower reach is a promise
+    /// that the lint reads nothing outside it, held by the `reach_tests` the engine runs over
+    /// every declaring lint.
+    fn reach(&self) -> Reach {
+        Reach::Repository
+    }
 }
 
 /// A lint handed one crate at a time.
@@ -1772,6 +1795,10 @@ pub struct LintPack {
     /// lifetimes to keep straight, to express a distinction the `Tool` trait
     /// already makes.
     pub tools:           Vec<Box<dyn tool::Tool>>,
+    /// Which code this pack's lints are, set by the engine after it loads the library and empty
+    /// for the builtins alone. It is the digest of the library's bytes, and every saved verdict is
+    /// keyed on it, so a rebuilt pack finds nothing saved by the one before. A pack never sets it.
+    pub identity:        String,
 }
 
 impl LintPack {
@@ -1883,128 +1910,6 @@ pub fn all_lints() -> Vec<Box<dyn CrateLint>> {
 }
 
 /// Create a tree-sitter parser configured for Rust.
-/// Run a lint over every source file in the crate, or once over the crate when
-/// it declared itself crate-scoped.
-///
-/// This exists because `LintContext::source` is the crate root and nothing else,
-/// so a lint reading it saw `src/lib.rs` and skipped every module file. In one crate
-/// that was 76 of 101 public items; the gate reported clean while most of the
-/// surface was never looked at. `file_size` had already been fixed by growing
-/// its own loop over `all_sources`, which is the same fix twenty-six more times
-/// and a fresh tree-sitter parse inside each lint.
-///
-/// Doing it here instead means no lint changes at all. The caller parses each
-/// file once and every per-file lint shares the trees; the parse used to live
-/// inside this function, which priced a crate at one parse per file per lint,
-/// a loop on the wrong side of the work.
-/// # Where the path filter gets applied, and why to both dispatch shapes
-///
-/// The filter has to reach the crate-scoped case as well as the per-file one, or it would
-/// be a rule any lint could step around by declaring `per_file = false` and walking
-/// `all_sources` for itself. So a filtered crate-scoped lint gets a context whose
-/// `all_sources` holds only what it may see, and whose `source` and `tree` point at the
-/// first surviving file rather than at a crate root it was configured not to look at.
-///
-/// That costs a clone of each surviving file, paid only by a lint someone actually
-/// configured a filter for: [`LintConfig::filter_for`] hands back `None` for every other
-/// lint and this takes the borrowed path.
-///
-/// A lint whose filter admits nothing is skipped rather than run against an empty crate,
-/// since "nothing to look at" and "looked and found nothing" are different answers and
-/// something like `no-empty-crate` reports on the second.
-fn check_every_file(
-    lint: &dyn CrateLint,
-    ctx: &LintContext,
-    parsed: &[(&CrateSourceFile, Tree)],
-    filter: Option<&PathFilter>,
-) -> Vec<LintError> {
-    let kept: Vec<&(&CrateSourceFile, Tree)> = match filter {
-        None => parsed.iter().collect(),
-        Some(f) => {
-            parsed
-                .iter()
-                .filter(|(file, _)| f.allows(&file.rel_path))
-                .collect()
-        },
-    };
-
-    // `parsed` and `ctx.all_sources` describe the same files for every real
-    // caller, since `check_crate_with_extra` derives the first from the second.
-    // Where they could disagree, `kept` is the one the crate-scoped branch below
-    // reads a root from and `owned` is the one it hands over, so an empty
-    // `parsed` against a non-empty `all_sources` would index nothing. Returning
-    // here rather than falling through keeps that unreachable rather than
-    // relying on the caller to keep it so.
-    if filter.is_some() && kept.is_empty() {
-        return Vec::new();
-    }
-
-    if !lint.per_file() {
-        // an unfiltered crate-scoped lint gets the context untouched, which is the path
-        // every lint took before filters existed
-        let Some(f) = filter else {
-            return lint.check(ctx);
-        };
-        let owned: Vec<CrateSourceFile> = ctx
-            .all_sources
-            .iter()
-            .filter(|s| f.allows(&s.rel_path))
-            .cloned()
-            .collect();
-        if owned.is_empty() {
-            return Vec::new();
-        }
-        let (root_source, root_tree) = (&kept[0].0.text, &kept[0].1);
-        return lint.check(&LintContext {
-            source: root_source,
-            tree: root_tree,
-            all_sources: &owned,
-            ..*ctx
-        });
-    }
-
-    // An empty parse set means a caller built the context without
-    // `all_sources`, so the old behaviour is what it expects rather than no
-    // coverage at all.
-    if parsed.is_empty() {
-        return lint.check(ctx);
-    }
-
-    let mut errors = Vec::new();
-    for (file, tree) in kept {
-        let path = file.rel_path.to_string_lossy();
-        let per_file = LintContext {
-            source: &file.text,
-            tree,
-            ..*ctx
-        };
-        for mut err in lint.check(&per_file) {
-            // The crate root stays bare, because that is where a reader
-            // already looks. Anything else carries its file as a field, and
-            // the renderer turns it into a location that points at something;
-            // folded into the message it made `{crate}:{line}` read as a
-            // location that pointed at nothing.
-            if path != "src/lib.rs" {
-                err.path = Some(path.to_string());
-            }
-            errors.push(err);
-        }
-    }
-    errors
-}
-
-/// Parse every source file once, for the per-file dispatch to share.
-///
-/// A file that will not parse is dropped rather than reported; the compiler
-/// says it better and says it first.
-fn parse_sources(sources: &[CrateSourceFile]) -> Vec<(&CrateSourceFile, Tree)> {
-    let mut parser = make_parser();
-    sources
-        .iter()
-        .filter_map(|f| parser.parse(&f.text, None).map(|t| (f, t)))
-        .collect()
-}
-
 pub fn make_parser() -> tree_sitter::Parser {
     let mut parser = tree_sitter::Parser::new();
     parser
@@ -2093,6 +1998,23 @@ pub fn check_crate_with_extra(
     overrides: Option<&LintConfig>,
     extra_lints: &[Box<dyn CrateLint>],
 ) -> Vec<LintError> {
+    check_crate_saving(ctx, doc_only, overrides, extra_lints, None)
+}
+
+/// [`check_crate_with_extra`], answering from saved verdicts where `saved` is given.
+///
+/// A lint is answered from the store only if it declared a reach that can be saved
+/// ([`Reach::is_cacheable`]); one that declared nothing is the widest and runs as it always did.
+/// A file-reach lint is saved per file, a crate-reach lint per crate. What a hit replays is the
+/// lint's own findings before the runner applies markers and severities, so those are applied to a
+/// replay exactly as to a fresh run.
+pub fn check_crate_saving(
+    ctx: &LintContext,
+    doc_only: bool,
+    overrides: Option<&LintConfig>,
+    extra_lints: &[Box<dyn CrateLint>],
+    saved: Option<&dyn verdict::VerdictCache>,
+) -> Vec<LintError> {
     let mut lints = all_lints();
     configure_all(
         lints.iter_mut().map(|l| l.as_mut() as &mut dyn Lint),
@@ -2101,8 +2023,11 @@ pub fn check_crate_with_extra(
 
     let mut errors = Vec::new();
 
-    // One parse per file, shared by every per-file lint below.
-    let parsed = timing::time("parse:crate-files", || parse_sources(ctx.all_sources));
+    // One parse per file, shared by every per-file lint below, and made only when a lint has
+    // a file it could not answer from the store.
+    let parsed = parse_sources(ctx.all_sources);
+    // What every crate-reach lint's key shares, hashed once per crate and not once per lint.
+    let crate_key = std::cell::OnceCell::new();
 
     for lint in lints
         .iter()
@@ -2118,7 +2043,40 @@ pub fn check_crate_with_extra(
         }
         let filter = overrides.and_then(|cfg| cfg.filter_for(lint.name()));
         run_with_overrides(lint, doc_only, overrides, &mut errors, || {
-            let found = check_every_file(lint, ctx, &parsed, filter);
+            let found = match (saved, lint.reach()) {
+                (Some(cache), Reach::File) if lint.per_file() => {
+                    let file_cache = dispatch::FileCache {
+                        cache,
+                        behaviour: verdict::behaviour_material(lint.name(), overrides),
+                        scalars: verdict::file_scalars(ctx),
+                    };
+                    dispatch::check_every_file_saving(lint, ctx, &parsed, filter, Some(&file_cache))
+                },
+                // A lint declaring a file reach that is not per-file judges the whole crate,
+                // so it is saved at the crate and never at a file.
+                (Some(cache), Reach::File | Reach::Crate) => {
+                    let key = cache.digest(&[
+                        b"crate",
+                        verdict::behaviour_material(lint.name(), overrides).as_bytes(),
+                        crate_key
+                            .get_or_init(|| verdict::crate_digest(cache, ctx))
+                            .as_bytes(),
+                    ]);
+                    match cache.replay(&key).and_then(|t| verdict::decode(&t)) {
+                        Some(found) => {
+                            timing::count(|| format!("hit:{}", lint.name()));
+                            found
+                        },
+                        None => {
+                            timing::count(|| format!("miss:{}", lint.name()));
+                            let found = check_every_file(lint, ctx, &parsed, filter);
+                            cache.remember(&key, &verdict::encode(&found));
+                            found
+                        },
+                    }
+                },
+                _ => check_every_file(lint, ctx, &parsed, filter),
+            };
             if !lint.markers_decide() {
                 return found;
             }
@@ -2267,7 +2225,24 @@ pub fn check_workspace_with_extra(
     overrides: Option<&LintConfig>,
     extra_lints: &[Box<dyn WorkspaceLint>],
 ) -> Vec<LintError> {
+    check_workspace_saving(crates, doc_only, overrides, extra_lints, None)
+}
+
+/// [`check_workspace_with_extra`], answering from saved verdicts where `saved` is given.
+///
+/// Only a lint declaring [`Reach::Workspace`] is saved, keyed on the digest of every crate it is
+/// handed. A change to any one crate therefore reruns it; narrowing that is a lint's own
+/// decomposition, not something the runner can assume.
+pub fn check_workspace_saving(
+    crates: &[(&str, &LintContext)],
+    doc_only: bool,
+    overrides: Option<&LintConfig>,
+    extra_lints: &[Box<dyn WorkspaceLint>],
+    saved: Option<&dyn verdict::VerdictCache>,
+) -> Vec<LintError> {
     let mut lints = all_workspace_lints();
+    // Each crate hashed once however many workspace lints are saved.
+    let mut digests: HashMap<String, String> = HashMap::new();
     configure_all(
         lints.iter_mut().map(|l| l.as_mut() as &mut dyn Lint),
         overrides,
@@ -2291,7 +2266,35 @@ pub fn check_workspace_with_extra(
             continue;
         }
         run_with_overrides(lint, doc_only, overrides, &mut errors, || {
-            let found = lint.check_all(&bound);
+            let found = match (saved, lint.reach()) {
+                (Some(cache), Reach::Workspace) => {
+                    let behaviour = verdict::behaviour_material(lint.name(), overrides);
+                    let mut parts: Vec<&[u8]> = vec![b"workspace", behaviour.as_bytes()];
+                    for (name, c) in &bound {
+                        digests
+                            .entry((*name).to_string())
+                            .or_insert_with(|| verdict::crate_digest(cache, c));
+                    }
+                    for (name, _) in &bound {
+                        parts.push(name.as_bytes());
+                        parts.push(digests[*name].as_bytes());
+                    }
+                    let key = cache.digest(&parts);
+                    match cache.replay(&key).and_then(|t| verdict::decode(&t)) {
+                        Some(found) => {
+                            timing::count(|| format!("hit:{}", lint.name()));
+                            found
+                        },
+                        None => {
+                            timing::count(|| format!("miss:{}", lint.name()));
+                            let found = lint.check_all(&bound);
+                            cache.remember(&key, &verdict::encode(&found));
+                            found
+                        },
+                    }
+                },
+                _ => lint.check_all(&bound),
+            };
             if !lint.markers_decide() {
                 return found;
             }
@@ -2568,6 +2571,7 @@ mod pack_configuration_tests {
             repo_lints:      vec![Box::new(ConfigurableRepo::default())],
             message_lints:   vec![Box::new(ConfigurableMessage::default())],
             tools:           Vec::new(),
+            identity:        String::new(),
         }
     }
 

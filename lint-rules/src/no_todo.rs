@@ -19,6 +19,10 @@ const LINT_NAME: &str = "no-todo";
 pub struct NoTodo;
 
 impl Lint for NoTodo {
+    fn reach(&self) -> crate::Reach {
+        crate::Reach::File
+    }
+
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::PUSH_GATE
     }
