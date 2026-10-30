@@ -510,3 +510,100 @@ fn a_copilot_hook_that_cannot_be_written_fails_loudly() {
     fs::create_dir(&path).unwrap();
     derive(tmp.path(), &cfg);
 }
+
+// --- An edit is judged on what it adds ----------------------------------------------------------
+
+#[test]
+fn a_file_holding_two_violations_can_be_mended_one_edit_at_a_time() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo_with_crates(tmp.path(), "std::*");
+    let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    fs::write(&file, "use std::fmt;\nuse std::io;\npub fn f() {}\n").unwrap();
+    // Removing one leaves one, which the file had already.
+    assert!(edit_verdict(&cfg, &file, "use std::fmt;\npub fn f() {}\n").is_empty());
+    // An edit beside them adds nothing.
+    assert!(
+        edit_verdict(&cfg, &file, "use std::fmt;\nuse std::io;\npub fn g() {}\n").is_empty()
+    );
+    // The controls: an edit that adds a third is refused, and one that swaps a violation for
+    // another of a different message is, since the old one is gone and a new one is there.
+    assert_eq!(
+        edit_verdict(&cfg, &file, "use std::fmt;\nuse std::io;\nuse std::fs;\npub fn f() {}\n")
+            .len(),
+        1
+    );
+    assert_eq!(edit_verdict(&cfg, &file, "use std::fmt;\nuse std::io;\nuse std::io;\n").len(), 1);
+}
+
+#[test]
+fn a_violation_the_file_holds_twice_is_allowed_twice_and_no_more() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo_with_crates(tmp.path(), "std::*");
+    let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    fs::write(&file, "use std::fmt;\nuse std::fmt;\n").unwrap();
+    assert!(edit_verdict(&cfg, &file, "use std::fmt;\nuse std::fmt;\n// x\n").is_empty());
+    assert_eq!(
+        edit_verdict(&cfg, &file, "use std::fmt;\nuse std::fmt;\nuse std::fmt;\n").len(),
+        1
+    );
+}
+
+#[test]
+fn a_lint_that_judges_the_whole_crate_has_no_verdict_on_an_edit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo_with_crates(tmp.path(), "std::*");
+    let whole = mockspace_lint_rules::all_lints()
+        .into_iter()
+        .find(|l| !l.per_file())
+        .expect("the engine ships a lint that judges a crate as a whole");
+    let out = crate::entry::edit::run_for_test(&cfg, whole.name(), &tmp.path().join("mock/crates/sim-core/src/lib.rs"));
+    assert_eq!(out, 2);
+    // The control: a per-file lint gets a verdict.
+    assert_eq!(
+        crate::entry::edit::run_for_test(&cfg, "forbidden-imports", &tmp.path().join("mock/crates/sim-core/src/lib.rs")),
+        0
+    );
+}
+
+#[test]
+fn the_hook_hands_the_engine_exactly_the_bytes_of_the_edit() {
+    // `$(...)` strips trailing newlines, which made an old_string of only newlines empty and
+    // the edit read as a whole-file write.
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
+    let call = tool_call(
+        "Edit",
+        serde_json::json!({
+            "file_path": target.display().to_string(),
+            "old_string": "\n\n\n",
+            "new_string": "a\n\n",
+        }),
+    );
+    let run = run_against_stub(tmp.path(), &call, 0, true);
+    assert_eq!(run.old.as_deref(), Some("\n\n\n"));
+    assert_eq!(run.stdin.as_deref(), Some("a\n\n"));
+    let call = tool_call(
+        "Write",
+        serde_json::json!({ "file_path": target.display().to_string(), "content": "fn f() {}\n\n" }),
+    );
+    let run = run_against_stub(tmp.path(), &call, 0, true);
+    assert_eq!(run.stdin.as_deref(), Some("fn f() {}\n\n"));
+    assert!(run.old.is_none());
+}
+
+#[test]
+fn a_render_with_no_rules_left_takes_the_hook_it_wrote_before_with_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = cfg_with_rule(tmp.path());
+    derive(tmp.path(), &cfg);
+    let hook = tmp.path().join(".claude/hooks/forbidden-imports.sh");
+    assert!(hook.is_file(), "control: the first render wrote it");
+    // Not ours: a hook of that name some other hand wrote stays.
+    let theirs = tmp.path().join(".github/hooks/forbidden-imports.sh");
+    fs::write(&theirs, "#!/bin/sh\n# written by hand\n").unwrap();
+    let mut empty = cfg_with_rule(tmp.path());
+    empty.lint_overrides.params.clear();
+    derive(tmp.path(), &empty);
+    assert!(!hook.exists(), "the generated hook outlived its rules");
+    assert!(theirs.is_file(), "a hook this renderer did not write is not its to remove");
+}

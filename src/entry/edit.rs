@@ -62,16 +62,31 @@ fn after(req: &Request, on_disk: impl FnOnce() -> Option<String>) -> Option<Stri
 /// findings printed when it does, and 2 when the lint named is not one that runs
 /// here, so a hook naming a lint that is gone says so instead of passing everything.
 pub(crate) fn run(cfg: &Config, pack: &LintPack, req: &Request) -> ExitCode {
-    let known = mockspace_lint_rules::all_lints()
-        .iter()
-        .any(|l| l.name() == req.lint)
-        || pack.crate_lints.iter().any(|l| l.name() == req.lint);
-    if !known {
-        eprintln!(
-            "mock check-edit: no per-crate lint answers to `{}`. `mock lints` lists what does.",
-            req.lint
-        );
-        return ExitCode::from(2);
+    let builtins = mockspace_lint_rules::all_lints();
+    let named = |n: &str| {
+        builtins
+            .iter()
+            .find(|l| l.name() == n)
+            .map(|l| l.per_file())
+            .or_else(|| pack.crate_lints.iter().find(|l| l.name() == n).map(|l| l.per_file()))
+    };
+    match named(req.lint) {
+        None => {
+            eprintln!(
+                "mock check-edit: no per-crate lint answers to `{}`. `mock lints` lists what does.",
+                req.lint
+            );
+            return ExitCode::from(2);
+        },
+        Some(false) => {
+            eprintln!(
+                "mock check-edit: `{}` judges the crate as a whole and not one file, so an edit has \
+                 no verdict from it.",
+                req.lint
+            );
+            return ExitCode::from(2);
+        },
+        Some(true) => {},
     }
 
     let Some(text) = after(req, || std::fs::read_to_string(req.file).ok()) else {
@@ -140,5 +155,31 @@ mod tests {
         assert_eq!(after(&req("X", Some("zzz"), false), || Some("a".into())), None);
         assert_eq!(after(&req("X", Some("a"), false), || None), None);
         assert_eq!(after(&req("X", Some(""), false), || Some("a".into())), None);
+    }
+}
+
+/// The exit status `run` gives an empty edit of `file` by `lint`, for the render tests,
+/// which have no process to read it from.
+#[cfg(test)]
+pub(crate) fn run_for_test(cfg: &Config, lint: &str, file: &Path) -> u8 {
+    let code = run(cfg, &LintPack::default(), &Request {
+        lint,
+        file,
+        text: std::fs::read_to_string(file).unwrap_or_default(),
+        replacing: None,
+        all: false,
+        mode: LintMode::Commit,
+    });
+    let (shown, ok, refused) = (
+        format!("{code:?}"),
+        format!("{:?}", ExitCode::SUCCESS),
+        format!("{:?}", ExitCode::from(2)),
+    );
+    if shown == ok {
+        0
+    } else if shown == refused {
+        2
+    } else {
+        1
     }
 }

@@ -122,6 +122,17 @@ pub(crate) fn generate_lint_derived_content(
     }
 
     if by_scope.is_empty() {
+        // With no rule left the hook has nothing to ask about. Only one this
+        // renderer wrote is taken: a hook of the same name some other hand wrote
+        // is not ours to remove.
+        for dir in [claude_hooks_dir, copilot_hooks_dir] {
+            let path = dir.join(format!("{FORBIDDEN_IMPORTS_LINT}.sh"));
+            let ours = fs::read_to_string(&path)
+                .is_ok_and(|t| t.contains(&format!("Auto-generated: the `{FORBIDDEN_IMPORTS_LINT}` lint")));
+            if ours {
+                let _ = fs::remove_file(&path);
+            }
+        }
         return (0, Vec::new());
     }
 
@@ -223,23 +234,30 @@ pub(crate) fn generate_lint_derived_content(
          COMMAND=\"\"\n\
          _scope_or_allow\n\
          case \"$FILE_PATH\" in *.rs) ;; *) allow ;; esac\n\
-         OLD=$(_extract \"old_string\")\n\
-         NEW=$(_extract \"new_string\")\n\
-         if [[ -z \"$OLD\" && -z \"$NEW\" ]]; then NEW=$(_extract \"content\"); fi\n\
-         ALL=\"\"\n\
-         if [[ \"$(_extract \"replace_all\")\" == \"true\" ]]; then ALL=\"--all\"; fi\n\
+         # A field goes to a file byte for byte. `$(...)` strips trailing newlines, and an\n\
+         # old_string that is only newlines, or a new_string ending in one, would then name a\n\
+         # different file than the one the edit makes. `_extract` ends with the one newline\n\
+         # jq adds, which is the only one removed.\n\
+         _extract_to() {{\n\
+             local v\n\
+             v=$(_extract \"$1\"; printf x)\n\
+             v=${{v%x}}\n\
+             printf '%s' \"${{v%$'\\n'}}\" > \"$2\"\n\
+         }}\n\
          {launcher_lookup}\
          [ -d \"$__HOOK_REPO_ROOT\" ] \\\n\
              || deny \"the forbidden-imports gate cannot run: its repository $__HOOK_REPO_ROOT is not there. Regenerate the hooks with cargo mock from where the repository now is.\"\n\
+         WORK=$(mktemp -d) || deny \"the forbidden-imports gate cannot run: no temporary directory.\"\n\
+         trap 'rm -rf \"$WORK\"' EXIT\n\
+         _extract_to old_string \"$WORK/old\"\n\
+         _extract_to new_string \"$WORK/new\"\n\
+         if [[ ! -s \"$WORK/old\" && ! -s \"$WORK/new\" ]]; then _extract_to content \"$WORK/new\"; fi\n\
          ARGS=(check-edit --lint {FORBIDDEN_IMPORTS_LINT} --file \"$FILE_PATH\")\n\
-         if [[ -n \"$OLD\" ]]; then\n\
-             OLD_FILE=$(mktemp) || deny \"the forbidden-imports gate cannot run: no temporary file.\"\n\
-             trap 'rm -f \"$OLD_FILE\"' EXIT\n\
-             printf '%s' \"$OLD\" > \"$OLD_FILE\"\n\
-             ARGS+=(--replace \"$OLD_FILE\")\n\
-             if [[ -n \"$ALL\" ]]; then ARGS+=(--all); fi\n\
+         if [[ -s \"$WORK/old\" ]]; then\n\
+             ARGS+=(--replace \"$WORK/old\")\n\
+             if [[ \"$(_extract replace_all)\" == \"true\" ]]; then ARGS+=(--all); fi\n\
          fi\n\
-         _OUT=$(cd \"$__HOOK_REPO_ROOT\" 2>/dev/null && printf '%s' \"$NEW\" | \"$launcher\" \"${{ARGS[@]}}\" 2>&1)\n\
+         _OUT=$(cd \"$__HOOK_REPO_ROOT\" 2>/dev/null && \"$launcher\" \"${{ARGS[@]}}\" < \"$WORK/new\" 2>&1)\n\
          _RC=$?\n\
          if [ \"$_RC\" -eq 0 ]; then allow; fi\n\
          deny \"$_OUT\"\n"
