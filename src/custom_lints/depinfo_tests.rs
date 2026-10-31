@@ -130,3 +130,24 @@ fn a_record_reads_back_as_written_and_a_foreign_one_does_not() {
     assert_eq!(decode("something else\nd\tn\n"), None);
     assert_eq!(decode("mockspace-pack-deps-1\nno separator\n"), None);
 }
+
+#[test]
+fn a_source_whose_timestamp_was_set_back_is_not_trusted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let began = SystemTime::now();
+    let gen_dir = tmp.path().join("gen");
+    let source = tmp.path().join("lints").join("probe.rs");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, "written after the build began").unwrap();
+    // What `cp -p`, `tar x` and `rsync -t` do: the modification time says long ago.
+    std::fs::File::options()
+        .write(true)
+        .open(&source)
+        .unwrap()
+        .set_modified(began - Duration::from_secs(3600))
+        .unwrap();
+    let mut roots = Roots::default();
+    roots.add("lints", source.parent().unwrap());
+    let dylib = built(&gen_dir, &format!("out.d: {}\n", source.display()));
+    assert!(record(&dylib, &gen_dir, &roots, began).is_none());
+}

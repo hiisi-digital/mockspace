@@ -182,3 +182,71 @@ fn the_build_does_not_read_the_profile_from_the_environment() {
     let without = name_in(&cache, &mock);
     assert_eq!((with.as_str(), without.as_str()), ("rel", "rel"));
 }
+
+/// Two trees of one commit, each with the lint `lint_src` and its own `files` under the mock
+/// directory, loaded in turn from one store. What each answers, in order.
+fn names_in_two_trees(tag: &str, lint_src: &str, setup: impl Fn(&Path, &str), what: [&str; 2]) -> [String; 2] {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = tmp.path().join("cache");
+    let trees: Vec<PathBuf> = ["a", "b"]
+        .iter()
+        .zip(what)
+        .map(|(who, content)| {
+            let mock = tree(&tmp.path().join(who), tag, "unused");
+            std::fs::write(lint_path(&mock), lint_src).unwrap();
+            setup(&mock, content);
+            mock
+        })
+        .collect();
+    [name_in(&cache, &trees[0]), name_in(&cache, &trees[1])]
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --include-ignored"]
+fn a_file_beside_the_lints_is_read_from_the_asking_tree() {
+    let got = names_in_two_trees(
+        "identity-beside",
+        &lint_named_by(r#"include_str!("../name.txt")"#),
+        |mock, text| std::fs::write(mock.join("name.txt"), text).unwrap(),
+        ["one", "two"],
+    );
+    assert_eq!(got, ["one", "two"]);
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "runs cargo build; run with --include-ignored"]
+fn a_file_behind_a_link_in_the_lints_is_read_from_the_asking_tree() {
+    let got = names_in_two_trees(
+        "identity-link",
+        &lint_named_by(r#"include_str!("data/name.txt")"#),
+        |mock, text| {
+            std::fs::create_dir_all(mock.join("data")).unwrap();
+            std::fs::write(mock.join("data").join("name.txt"), text).unwrap();
+            std::os::unix::fs::symlink("../data", mock.join("lints").join("data")).unwrap();
+        },
+        ["one", "two"],
+    );
+    assert_eq!(got, ["one", "two"]);
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --include-ignored"]
+fn a_variable_the_build_still_gets_is_checked_when_the_lint_reads_it() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = tmp.path().join("cache");
+    let mock = tree(tmp.path(), "identity-env-read", "unused");
+    std::fs::write(
+        lint_path(&mock),
+        lint_named_by(r#"match option_env!("NO_COLOR") { Some(_) => "set", None => "unset" }"#),
+    )
+    .unwrap();
+    // SAFETY: the lock above is held by every case that touches the environment.
+    unsafe { std::env::set_var("NO_COLOR", "1") };
+    let with = name_in(&cache, &mock);
+    // SAFETY: as above.
+    unsafe { std::env::remove_var("NO_COLOR") };
+    let without = name_in(&cache, &mock);
+    assert_eq!((with.as_str(), without.as_str()), ("set", "unset"));
+}
