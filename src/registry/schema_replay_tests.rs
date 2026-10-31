@@ -16,7 +16,7 @@ use crate::lint::verdicts::DiskVerdicts;
 use crate::render_design::GENERATED_MARKER;
 
 /// What mockspace writes at the root: marked as generated, with the registry as its include.
-const GENERATED_CONFIG: &str = "# AUTO-GENERATED: DO NOT EDIT DIRECTLY\ninclude = [\"mock/registry/**/*.toml\"]\n";
+const GENERATED_CONFIG: &str = "# AUTO-GENERATED: DO NOT EDIT DIRECTLY\n\n[[rule]]\ninclude = [\"mock/registry/**/*.toml\"]\nschema.path = \"target/mockspace/registry-schemas/registry.schema.json\"\n";
 
 /// A repository root with a registry file and a taplo stand-in that counts the times it checked.
 struct Fixture {
@@ -228,4 +228,96 @@ fn a_taplo_that_prints_its_version_on_stderr_keys_on_it() {
     install("taplo 0.11.0");
     assert!(f.passes());
     assert_eq!(f.runs(), 2, "the version on stderr moved");
+}
+
+/// A root as mockspace writes it: the generated config, one valid registry file, the schema.
+fn real_root() -> TempDir {
+    let root = TempDir::new().unwrap();
+    let p = root.path();
+    fs::create_dir_all(p.join("mock/registry")).unwrap();
+    fs::create_dir_all(p.join("target/mockspace/registry-schemas")).unwrap();
+    fs::write(p.join("mock/registry/a.toml"), "[[vocab]]\nid = \"a\"\n").unwrap();
+    fs::write(p.join("target/mockspace/registry-schemas/registry.schema.json"), "{}").unwrap();
+    fs::write(
+        p.join(".taplo.toml"),
+        format!(
+            "# {GENERATED_MARKER}\n\n[[rule]]\ninclude = [\"mock/registry/**/*.toml\"]\nschema.path = \"target/mockspace/registry-schemas/registry.schema.json\"\n"
+        ),
+    )
+    .unwrap();
+    root
+}
+
+fn taplo_installed() -> bool {
+    std::process::Command::new("taplo").arg("--version").output().is_ok()
+}
+
+fn real_check(root: &Path, store: &Path) -> bool {
+    let store = DiskVerdicts::open_in(store, "pack").expect("a store");
+    let namespaces: Vec<RegistryNamespace> = vec![builtin_vocab()];
+    matches!(
+        check_schemas_with(&OsString::from("taplo"), root, &namespaces, Some(&store)),
+        SchemaCheck::Ran { failures } if failures.is_empty()
+    )
+}
+
+/// Pass once with real taplo, break something taplo reads, and expect the next check to fail.
+fn breaks_after_a_pass(prepare: impl Fn(&Path), break_it: impl Fn(&Path)) {
+    if !taplo_installed() {
+        return;
+    }
+    let (root, store) = (real_root(), TempDir::new().unwrap());
+    prepare(root.path());
+    assert!(real_check(root.path(), store.path()), "the control: the tree passes real taplo");
+    assert!(real_check(root.path(), store.path()), "and replays");
+    break_it(root.path());
+    assert!(!real_check(root.path(), store.path()), "real taplo fails the broken tree, so a replay must not pass it");
+}
+
+#[test]
+fn real_taplo_a_broken_toml_under_the_root_target_is_not_replayed_as_a_pass() {
+    breaks_after_a_pass(|_| {}, |p| fs::write(p.join("target/broken.toml"), "bad = =\n").unwrap());
+}
+
+#[test]
+fn real_taplo_a_broken_toml_under_dot_git_is_not_replayed_as_a_pass() {
+    breaks_after_a_pass(
+        |p| fs::create_dir_all(p.join(".git")).unwrap(),
+        |p| fs::write(p.join(".git/broken.toml"), "bad = =\n").unwrap(),
+    );
+}
+
+#[test]
+fn real_taplo_a_schema_bound_by_a_root_dollar_schema_key_is_not_replayed() {
+    breaks_after_a_pass(
+        |p| {
+            fs::create_dir_all(p.join("other")).unwrap();
+            fs::write(p.join("other/s.json"), "{}").unwrap();
+            fs::write(p.join("other/x.toml"), "\"$schema\" = \"./s.json\"\nname = \"x\"\n").unwrap();
+        },
+        |p| fs::write(p.join("other/s.json"), "{\"type\":\"object\",\"required\":[\"need\"]}").unwrap(),
+    );
+}
+
+#[test]
+fn real_taplo_a_symlinked_directory_of_tomls_is_not_replayed() {
+    let outside = TempDir::new().unwrap();
+    let outside_path = outside.path().to_path_buf();
+    fs::write(outside_path.join("b.toml"), "name = \"b\"\n").unwrap();
+    breaks_after_a_pass(
+        |p| std::os::unix::fs::symlink(&outside_path, p.join("mock/registry/linked")).unwrap(),
+        |_| fs::write(outside_path.join("b.toml"), "bad = =\n").unwrap(),
+    );
+}
+
+#[test]
+fn real_taplo_a_hand_edited_generated_config_is_not_replayed() {
+    breaks_after_a_pass(
+        |p| {
+            fs::write(p.join("custom.json"), "{}").unwrap();
+            let cfg = fs::read_to_string(p.join(".taplo.toml")).unwrap();
+            fs::write(p.join(".taplo.toml"), format!("{cfg}\n[[rule]]\ninclude = [\"mock/registry/**/*.toml\"]\nschema.path = \"custom.json\"\n")).unwrap();
+        },
+        |p| fs::write(p.join("custom.json"), "{\"type\":\"object\",\"required\":[\"need\"]}").unwrap(),
+    );
 }

@@ -522,12 +522,15 @@ pub(crate) fn check_schemas_with(
     // The same inputs as the last pass replay it. Only a pass is ever saved below, so a failure,
     // a check that examined nothing and an absent taplo (returned above, before any lookup) are
     // each judged again.
-    let key = saved.filter(|_| probe.status.success()).and_then(|cache| {
-        let mut version = probe.stdout.clone();
-        version.extend_from_slice(&probe.stderr);
-        let from_env = std::env::var_os("TAPLO_CONFIG").is_some();
-        super::schema_replay::input_key(cache, repo_root, &version, from_env).map(|key| (cache, key))
-    });
+    let mut version = probe.stdout.clone();
+    version.extend_from_slice(&probe.stderr);
+    let env_changes_taplo = ["TAPLO_CONFIG", "RUST_LOG"].iter().any(|v| std::env::var_os(v).is_some());
+    let key_of = |cache: &dyn VerdictCache| {
+        super::schema_replay::input_key(cache, repo_root, &version, env_changes_taplo)
+    };
+    let key = saved
+        .filter(|_| probe.status.success())
+        .and_then(|cache| key_of(cache).map(|key| (cache, key)));
     if let Some((cache, key)) = &key {
         let hit = cache.replay(key).as_deref() == Some(super::schema_replay::PASSED);
         cache.tally(hit, "registry-schema-check");
@@ -558,8 +561,12 @@ pub(crate) fn check_schemas_with(
                     ],
                 };
             }
+            // Saved only if the inputs are still what the check began with: a file edited while
+            // taplo ran must not get this pass saved under its old content.
             if let Some((cache, key)) = &key {
-                cache.remember(key, super::schema_replay::PASSED);
+                if key_of(*cache).as_deref() == Some(key.as_str()) {
+                    cache.remember(key, super::schema_replay::PASSED);
+                }
             }
             SchemaCheck::Ran {
                 failures: Vec::new(),
