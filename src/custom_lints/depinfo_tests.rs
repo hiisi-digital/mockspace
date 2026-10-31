@@ -12,6 +12,9 @@ fn built(root: &Path, sources: &str) -> PathBuf {
     std::fs::create_dir_all(&release).unwrap();
     std::fs::write(release.join("libgen.so"), "library").unwrap();
     std::fs::write(release.join("libgen.d"), sources).unwrap();
+    let deps = release.join("deps");
+    std::fs::create_dir_all(&deps).unwrap();
+    std::fs::write(deps.join("gen.d"), sources).unwrap();
     release.join("libgen.so")
 }
 
@@ -38,7 +41,7 @@ fn a_file_is_named_by_its_root_and_not_by_where_the_root_sits() {
         std::fs::write(lints.join("sub").join("part.rs"), "x").unwrap();
         let mut roots = Roots::default();
         roots.add("lints", &lints);
-        names.push(roots.name(&lints.join("sub").join("part.rs")));
+        names.push(roots.name(&lints.join("sub").join("part.rs")).unwrap());
     }
     assert_eq!(names[0], names[1]);
     assert_eq!(names[0], "lints\tsub/part.rs");
@@ -54,10 +57,12 @@ fn a_file_under_no_root_is_named_absolutely_and_the_deepest_root_wins() {
     let mut roots = Roots::default();
     roots.add("outer", &outer);
     roots.add("inner", &inner);
-    assert_eq!(roots.name(&inner.join("f.rs")), "inner\tf.rs");
+    assert_eq!(roots.name(&inner.join("f.rs")).as_deref(), Some("inner\tf.rs"));
     let elsewhere = tmp.path().join("elsewhere.rs");
     std::fs::write(&elsewhere, "x").unwrap();
-    assert!(roots.name(&elsewhere).starts_with("abs\t"));
+    assert_eq!(roots.name(&elsewhere), None, "under no root, and not declared the same for every tree");
+    roots.allow_absolute(tmp.path());
+    assert!(roots.name(&elsewhere).unwrap().starts_with("abs\t"));
 }
 
 #[test]
@@ -86,7 +91,7 @@ fn what_was_recorded_holds_in_a_tree_of_the_same_content_and_not_after_an_edit()
     a.add("lints", &trees[0]);
     b.add("lints", &trees[1]);
 
-    let deps = record(&dylib, &gen_dir, &a, later()).expect("recorded");
+    let deps = record(&dylib, &gen_dir, &a, later(), Duration::ZERO).expect("recorded");
     assert_eq!(deps.len(), 2, "the generated crate's own files are not inputs: {deps:?}");
     assert!(hold(&deps, &a));
     assert!(hold(&deps, &b), "another tree of the same content");
@@ -108,16 +113,16 @@ fn nothing_is_recorded_that_cannot_be_trusted() {
     roots.add("lints", source.parent().unwrap());
     let dylib = built(&gen_dir, &format!("out.d: {}\n", source.display()));
 
-    assert!(record(&dylib, &gen_dir, &roots, later()).is_some(), "the control");
+    assert!(record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).is_some(), "the control");
     let before_the_file = SystemTime::now() - Duration::from_secs(3600);
     assert!(
-        record(&dylib, &gen_dir, &roots, before_the_file).is_none(),
+        record(&dylib, &gen_dir, &roots, before_the_file, Duration::ZERO).is_none(),
         "a source modified after the build began may have been read half-edited"
     );
     std::fs::remove_file(&source).unwrap();
-    assert!(record(&dylib, &gen_dir, &roots, later()).is_none(), "a source that is gone");
+    assert!(record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).is_none(), "a source that is gone");
     std::fs::remove_file(dylib.with_extension("d")).unwrap();
-    assert!(record(&dylib, &gen_dir, &roots, later()).is_none(), "no dep-info");
+    assert!(record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).is_none(), "no dep-info");
 }
 
 #[test]
@@ -135,6 +140,7 @@ fn a_record_reads_back_as_written_and_a_foreign_one_does_not() {
 fn a_source_whose_timestamp_was_set_back_is_not_trusted() {
     let tmp = tempfile::tempdir().unwrap();
     let began = SystemTime::now();
+    std::thread::sleep(Duration::from_millis(20));
     let gen_dir = tmp.path().join("gen");
     let source = tmp.path().join("lints").join("probe.rs");
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
@@ -149,5 +155,55 @@ fn a_source_whose_timestamp_was_set_back_is_not_trusted() {
     let mut roots = Roots::default();
     roots.add("lints", source.parent().unwrap());
     let dylib = built(&gen_dir, &format!("out.d: {}\n", source.display()));
-    assert!(record(&dylib, &gen_dir, &roots, began).is_none());
+    assert!(record(&dylib, &gen_dir, &roots, began, Duration::ZERO).is_none());
+}
+
+#[test]
+fn a_source_under_no_root_leaves_nothing_kept_unless_the_directory_is_the_same_for_every_tree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gen_dir = tmp.path().join("gen");
+    let outside = tmp.path().join("repo").join("name.txt");
+    std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
+    std::fs::write(&outside, "x").unwrap();
+    let dylib = built(&gen_dir, &format!("out.d: {}\n", outside.display()));
+    let mut roots = Roots::default();
+    assert!(record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).is_none());
+    roots.add("repo", &tmp.path().join("repo"));
+    let deps = record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).expect("under the repository root");
+    assert_eq!(deps.len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_behind_a_link_is_named_as_the_compiler_listed_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lints = tmp.path().join("lints");
+    let data = tmp.path().join("data");
+    std::fs::create_dir_all(&lints).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("name.txt"), "x").unwrap();
+    std::os::unix::fs::symlink("../data", lints.join("data")).unwrap();
+    let mut roots = Roots::default();
+    roots.add("lints", &lints);
+    assert_eq!(
+        roots.name(&lints.join("data").join("name.txt")).as_deref(),
+        Some("lints\tdata/name.txt"),
+        "by the path through the link, which another tree resolves to its own file"
+    );
+}
+
+#[test]
+fn a_variable_the_build_was_given_is_compared_and_one_it_was_not_is_not() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gen_dir = tmp.path().join("gen");
+    let info = "out.d: \n# env-dep:CARGO_PKG_NAME=probe\n# env-dep:NO_COLOR=1\n# env-dep:MOCKSPACE_PROBE_UNSET_VARIABLE\n";
+    let dylib = built(&gen_dir, info);
+    let roots = Roots::default();
+    let deps = record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).expect("recorded");
+    assert_eq!(deps.len(), 3);
+    // a variable the build was not given is not compared, whatever this process has
+    let cargo_set = Dep { name: "env\tCARGO_PKG_NAME".to_string(), digest: digest_bytes(b"other") };
+    assert!(hold(&[cargo_set], &roots));
+    let given = Dep { name: "env\tPATH".to_string(), digest: digest_bytes(b"not this process's PATH") };
+    assert!(!hold(&[given], &roots), "a variable the build was given, and reads differently now");
 }

@@ -7,59 +7,96 @@
 //!
 //! **Cargo's dep-info is the list, and nothing here assembles another.** The `.d` file beside a
 //! built library names every source rustc read, an `include_str!` and a `#[path]` module in a
-//! subdirectory among them. A kept library carries that list with the digest of each file, and a
-//! tree asking for it re-hashes the files first: the library is loaded only where every one of
-//! them is what it was built from.
+//! subdirectory among them, and every environment variable it read. A kept library carries that
+//! list with the digest of each file and the value of each variable, and a tree asking for it
+//! re-checks them first: the library is loaded only where every one of them is what it was built
+//! from.
 //!
-//! A file is named by the root it sits under (the lint directory, a path package) and the path
-//! below it, so two trees of one content name the same files. A file under no root is named by its
-//! absolute path, which is right for a registry package and for a checkout in cargo's home.
+//! A file is named by the root it sits under (the lint directory, a path package, the repository)
+//! and the path below it, as written and not as resolved, so two trees of one content name the
+//! same files even where a link inside the tree points elsewhere. A file under no root is named
+//! absolutely only where it sits in a directory declared to be the same for every tree (cargo's
+//! home); anywhere else the list cannot be trusted and nothing is kept.
 //!
-//! The `# env-dep:` lines of the `.d` file are not checked. The build is hermetic against the
-//! environment (`build`), so the variables a compile reads are the ones cargo sets from the
-//! generated manifest, which the identity holds.
+//! The variables are compared where the build was given them (`build::keeps_env`). One it was not
+//! given reads the same in every build, or is set by cargo from the generated manifest, which the
+//! identity holds.
+//!
+//! A source is trusted only if its change time, which no tool can set back, is older than the
+//! build by the margin. That is the part of the compiler's read that a hash taken afterwards
+//! cannot see: an edit between the read and the hash.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use super::build::keeps_env;
 use super::identity::digest_bytes;
 
-/// A source modified within this long before the build began, or any time after, may have been
-/// read in a state other than the one hashed afterwards. The margin is the filesystem's
-/// timestamp granularity.
-const MODIFIED_MARGIN: Duration = Duration::from_millis(10);
+/// How long before a build a source must have last changed for it to be trusted. Filesystems with
+/// a coarse timestamp (a second, two on some) stamp a file after a moment it was written in.
+pub(crate) const TRUST_MARGIN: Duration = Duration::from_secs(2);
 
 const SEPARATOR: char = '\t';
+const ENV: &str = "env";
+const UNSET: &str = "unset";
 
-/// The directories a tree's files are named relative to, by label.
+/// The directories a tree's files are named relative to, by label, and the ones whose absolute
+/// paths are the same for every tree.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Roots(Vec<(String, PathBuf)>);
+pub(crate) struct Roots {
+    named:    Vec<(String, PathBuf)>,
+    absolute: Vec<PathBuf>,
+}
 
 impl Roots {
+    /// A root, under the path as written and the path as the filesystem resolves it, so a file
+    /// is found by whichever spelling the compiler listed it under.
     pub(crate) fn add(&mut self, label: impl Into<String>, path: &Path) {
-        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        self.0.push((label.into(), path));
+        let label = label.into();
+        if let Ok(resolved) = path.canonicalize() {
+            if resolved != path {
+                self.named.push((label.clone(), resolved));
+            }
+        }
+        self.named.push((label, path.to_path_buf()));
+    }
+
+    /// A directory whose files are named by absolute path, because they are the same in every
+    /// tree.
+    pub(crate) fn allow_absolute(&mut self, path: &Path) {
+        self.absolute.push(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()));
     }
 
     fn resolve(&self, label: &str) -> Option<&Path> {
-        self.0.iter().find(|(l, _)| l == label).map(|(_, p)| p.as_path())
+        self.named.iter().find(|(l, _)| l == label).map(|(_, p)| p.as_path())
     }
 
-    /// The name of `file` in this tree: under the deepest root that holds it, else absolute.
-    fn name(&self, file: &Path) -> String {
-        let file = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
-        let deepest = self
-            .0
+    fn deepest(&self, file: &Path) -> Option<(&str, &Path)> {
+        self.named
             .iter()
             .filter(|(_, root)| file.starts_with(root))
-            .max_by_key(|(_, root)| root.components().count());
-        match deepest {
-            Some((label, root)) => {
-                let rel = file.strip_prefix(root).unwrap_or(&file);
-                format!("{label}{SEPARATOR}{}", slashed(rel))
-            },
-            None => format!("abs{SEPARATOR}{}", slashed(&file)),
-        }
+            .max_by_key(|(_, root)| root.components().count())
+            .map(|(label, root)| (label.as_str(), root.as_path()))
+    }
+
+    /// The name of `file` in this tree, or `None` where it is under no root and not in a
+    /// directory the same for every tree.
+    fn name(&self, file: &Path) -> Option<String> {
+        let resolved = file.canonicalize().ok();
+        let by_root = self
+            .deepest(file)
+            .or_else(|| resolved.as_deref().and_then(|r| self.deepest(r)))
+            .map(|(label, root)| {
+                let seen = if file.starts_with(root) { file } else { resolved.as_deref().unwrap_or(file) };
+                format!("{label}{SEPARATOR}{}", slashed(seen.strip_prefix(root).unwrap_or(seen)))
+            });
+        by_root.or_else(|| {
+            let seen = resolved.as_deref().unwrap_or(file);
+            self.absolute
+                .iter()
+                .any(|dir| seen.starts_with(dir))
+                .then(|| format!("abs{SEPARATOR}{}", slashed(seen)))
+        })
     }
 
     fn locate(&self, name: &str) -> Option<PathBuf> {
@@ -75,7 +112,8 @@ fn slashed(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-/// One file the library was built from, and the digest of its content then.
+/// One thing the library was built from, and what it was: the digest of a file, or of the value of
+/// an environment variable (`unset` where it had none).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Dep {
     name:   String,
@@ -114,19 +152,56 @@ pub(crate) fn sources_of(info: &str) -> Vec<PathBuf> {
     out
 }
 
-/// The files the library at `dylib` was built from, with their digests, or `None` where the list
-/// cannot be trusted: no dep-info, a file unreadable, or one modified since `started`.
+/// The `# env-dep:` lines of a rustc dep-info document: each variable it read, and its value.
+fn env_reads(info: &str) -> Vec<(String, Option<String>)> {
+    info.lines()
+        .filter_map(|l| l.strip_prefix("# env-dep:"))
+        .map(|rest| match rest.split_once('=') {
+            Some((key, value)) => (key.to_string(), Some(value.to_string())),
+            None => (rest.to_string(), None),
+        })
+        .collect()
+}
+
+fn env_digest(value: Option<&[u8]>) -> String {
+    value.map_or_else(|| UNSET.to_string(), digest_bytes)
+}
+
+/// When a file last changed, by anything: the later of its modification and its change time. The
+/// second cannot be set from user space, so `cp -p`, `tar x` and `rsync -t` do not move it back.
+fn changed_at(meta: &std::fs::Metadata) -> Option<SystemTime> {
+    let modified = meta.modified().ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let secs = u64::try_from(meta.ctime()).ok()?;
+        let changed = SystemTime::UNIX_EPOCH + Duration::new(secs, u32::try_from(meta.ctime_nsec()).ok()?);
+        return Some(modified.max(changed));
+    }
+    #[cfg(not(unix))]
+    Some(modified)
+}
+
+/// What the library at `dylib` was built from, with digests, or `None` where the list cannot be
+/// trusted: no dep-info, a file unreadable or under no root, or one that changed within `margin`
+/// of the build.
 ///
 /// `gen_dir` is where rustc ran, which a relative path in the list is read against. Its files are
 /// not inputs, since the identity holds their text, and nor are the build's own outputs, which
-/// are made from the inputs and sit in the target directory above the library.
+/// sit in the target directory above the library. `started` is the moment before cargo was run;
+/// where cargo reused an earlier build instead (its dep-info is older), the sources are held to
+/// that build's time, so a file changed since cannot pass for one that was built from.
 pub(crate) fn record(
     dylib: &Path,
     gen_dir: &Path,
     roots: &Roots,
     started: SystemTime,
+    margin: Duration,
 ) -> Option<Vec<Dep>> {
-    let info = std::fs::read_to_string(info_of(dylib)?).ok()?;
+    let info_path = info_of(dylib)?;
+    let info = std::fs::read_to_string(&info_path).ok()?;
+    let built_at = std::fs::metadata(&info_path).and_then(|m| m.modified()).ok()?;
+    let reference = built_at.min(started);
     let outside: Vec<PathBuf> = [Some(gen_dir), dylib.parent().and_then(Path::parent)]
         .into_iter()
         .flatten()
@@ -139,33 +214,54 @@ pub(crate) fn record(
         if outside.iter().any(|dir| seen.starts_with(dir)) {
             continue;
         }
-        let modified = std::fs::metadata(&file).and_then(|m| m.modified()).ok()?;
-        if modified + MODIFIED_MARGIN >= started {
+        let changed = changed_at(&std::fs::metadata(&file).ok()?)?;
+        if changed + margin > reference {
             return None;
         }
-        let name = roots.name(&file);
+        let name = roots.name(&file)?;
         if name.contains('\n') {
             return None;
         }
         deps.push(Dep { name, digest: digest_bytes(&std::fs::read(&file).ok()?) });
+    }
+    let unit_info = std::fs::read_to_string(unit_info_of(dylib)?).ok()?;
+    for (key, value) in env_reads(&unit_info) {
+        deps.push(Dep {
+            name:   format!("{ENV}{SEPARATOR}{key}"),
+            digest: env_digest(value.as_deref().map(str::as_bytes)),
+        });
     }
     deps.sort_by(|a, b| a.name.cmp(&b.name));
     deps.dedup();
     Some(deps)
 }
 
-/// The dep-info beside a library: cargo leaves `libname.so` and `libname.d` together.
+/// The dep-info beside a library: cargo leaves `libname.so` and `libname.d` together. That copy
+/// lists the sources of the unit and of what it depends on, and not the variables read.
 fn info_of(dylib: &Path) -> Option<PathBuf> {
     Some(dylib.with_extension("d"))
 }
 
-/// Whether every file is, in this tree, what the library was built from.
+/// The dep-info rustc wrote for the library itself, in `deps/`. It is the one with the `# env-dep:` lines, which cargo leaves out of the copy beside the library.
+fn unit_info_of(dylib: &Path) -> Option<PathBuf> {
+    let stem = dylib.file_stem()?.to_str()?;
+    let stem = stem.strip_prefix("lib").unwrap_or(stem);
+    Some(dylib.parent()?.join("deps").join(format!("{stem}.d")))
+}
+
+/// Whether every file is, in this tree, what the library was built from, and every variable the
+/// build was given reads as it did.
 pub(crate) fn hold(deps: &[Dep], roots: &Roots) -> bool {
-    deps.iter().all(|dep| {
-        roots
+    deps.iter().all(|dep| match dep.name.split_once(SEPARATOR) {
+        Some((ENV, key)) if !keeps_env(key) => true,
+        Some((ENV, key)) => {
+            let now = std::env::var_os(key);
+            env_digest(now.as_deref().map(|v| v.as_encoded_bytes())) == dep.digest
+        },
+        _ => roots
             .locate(&dep.name)
             .and_then(|path| std::fs::read(path).ok())
-            .is_some_and(|bytes| digest_bytes(&bytes) == dep.digest)
+            .is_some_and(|bytes| digest_bytes(&bytes) == dep.digest),
     })
 }
 

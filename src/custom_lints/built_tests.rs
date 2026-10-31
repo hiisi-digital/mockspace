@@ -11,6 +11,8 @@ fn fake_build(out: &Path, bytes: &str, sources: &[&Path]) -> Built {
     std::fs::write(&dylib, bytes).unwrap();
     let list: Vec<String> = sources.iter().map(|p| p.display().to_string()).collect();
     std::fs::write(release.join("libfake.d"), format!("out.d: {}\n", list.join(" "))).unwrap();
+    std::fs::create_dir_all(release.join("deps")).unwrap();
+    std::fs::write(release.join("deps").join("fake.d"), format!("out.d: {}\n", list.join(" "))).unwrap();
     Built { dylib, started: SystemTime::now() + Duration::from_secs(60) }
 }
 
@@ -46,14 +48,14 @@ fn an_identity_built_once_is_not_built_again() {
         calls.set(calls.get() + 1);
         Ok(fake_build(&f.ran, "first", &[&f.source]))
     };
-    let first = dylib_for(&f.base, "key", &f.roots, &f.ran, build).unwrap();
+    let first = dylib_for(&f.base, "key", &f.roots, &f.ran, Duration::ZERO, build).unwrap();
     assert_eq!(calls.get(), 1);
     assert_eq!(std::fs::read_to_string(&first.path).unwrap(), "first");
     assert!(first.identity.as_deref().is_some_and(|i| i.starts_with("key-")));
 
     // The build output is overwritten by another tree's run in between.
     std::fs::write(&first.path, "something else").unwrap();
-    let second = dylib_for(&f.base, "key", &f.roots, &f.ran, build).unwrap();
+    let second = dylib_for(&f.base, "key", &f.roots, &f.ran, Duration::ZERO, build).unwrap();
     assert_eq!(calls.get(), 1, "a kept library is loaded, not rebuilt");
     assert_eq!(std::fs::read_to_string(second.path).unwrap(), "first");
     assert_eq!(second.identity, first.identity);
@@ -64,7 +66,7 @@ fn a_kept_library_is_not_replayed_for_a_file_that_changed_since() {
     let f = fixture();
     let calls = Cell::new(0);
     let load = |bytes: &'static str| {
-        dylib_for(&f.base, "key", &f.roots, &f.ran, || {
+        dylib_for(&f.base, "key", &f.roots, &f.ran, Duration::ZERO, || {
             calls.set(calls.get() + 1);
             Ok(fake_build(&f.ran, bytes, &[&f.source]))
         })
@@ -89,7 +91,7 @@ fn another_key_is_built() {
     let f = fixture();
     let calls = Cell::new(0);
     for key in ["one", "two"] {
-        dylib_for(&f.base, key, &f.roots, &f.ran, || {
+        dylib_for(&f.base, key, &f.roots, &f.ran, Duration::ZERO, || {
             calls.set(calls.get() + 1);
             Ok(fake_build(&f.ran, key, &[&f.source]))
         })
@@ -101,9 +103,9 @@ fn another_key_is_built() {
 #[test]
 fn a_failed_build_keeps_nothing() {
     let f = fixture();
-    assert!(dylib_for(&f.base, "key", &f.roots, &f.ran, || Err("no".to_string())).is_err());
+    assert!(dylib_for(&f.base, "key", &f.roots, &f.ran, Duration::ZERO, || Err("no".to_string())).is_err());
     let calls = Cell::new(0);
-    dylib_for(&f.base, "key", &f.roots, &f.ran, || {
+    dylib_for(&f.base, "key", &f.roots, &f.ran, Duration::ZERO, || {
         calls.set(1);
         Ok(fake_build(&f.ran, "x", &[&f.source]))
     })
@@ -116,7 +118,7 @@ fn a_build_that_cannot_be_tied_to_its_files_is_returned_and_not_kept() {
     let f = fixture();
     let calls = Cell::new(0);
     let build_late = || {
-        dylib_for(&f.base, "key", &f.roots, &f.ran, || {
+        dylib_for(&f.base, "key", &f.roots, &f.ran, Duration::ZERO, || {
             calls.set(calls.get() + 1);
             let mut b = fake_build(&f.ran, "x", &[&f.source]);
             // A source modified after the build began.
@@ -136,14 +138,14 @@ fn a_build_that_cannot_be_tied_to_its_files_is_returned_and_not_kept() {
 fn only_files_unused_for_long_are_reaped() {
     let f = fixture();
     for key in ["old", "new"] {
-        dylib_for(&f.base, key, &f.roots, &f.ran, || Ok(fake_build(&f.ran, key, &[&f.source]))).unwrap();
+        dylib_for(&f.base, key, &f.roots, &f.ran, Duration::ZERO, || Ok(fake_build(&f.ran, key, &[&f.source]))).unwrap();
     }
     let later = SystemTime::now() + Duration::from_secs(10 * 24 * 3600);
     assert_eq!(reap(&f.base, later, Duration::from_secs(14 * 24 * 3600)), 0, "inside the window");
     let much_later = SystemTime::now() + Duration::from_secs(20 * 24 * 3600);
     assert_eq!(reap(&f.base, much_later, Duration::from_secs(14 * 24 * 3600)), 4, "each is two files");
     let calls = Cell::new(0);
-    dylib_for(&f.base, "old", &f.roots, &f.ran, || {
+    dylib_for(&f.base, "old", &f.roots, &f.ran, Duration::ZERO, || {
         calls.set(1);
         Ok(fake_build(&f.ran, "old", &[&f.source]))
     })

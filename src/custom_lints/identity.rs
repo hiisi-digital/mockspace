@@ -286,7 +286,9 @@ pub(crate) fn collect_inputs(tree: &Tree) -> Option<(Inputs, Roots)> {
     let json: serde_json::Value = serde_json::from_slice(&meta).ok()?;
     let members = members_from_metadata(&json, tree.generated_manifest).ok()?;
     let mut roots = path_roots(&json, tree.generated_manifest);
+    roots.add("repo", tree.repo_root);
     roots.add("lints", tree.lints_dir);
+    roots.allow_absolute(tree.cargo_home);
     let mut lints = Vec::new();
     for (name, path) in tree.lints {
         lints.push((name.clone(), digest_bytes(&std::fs::read(path).ok()?)));

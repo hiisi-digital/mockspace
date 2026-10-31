@@ -256,8 +256,10 @@ fn every_input_is_read_where_it_is_collected() {
     );
     assert!(!inputs.manifest.contains(&repo.display().to_string()));
     let mut expected = Roots::default();
+    expected.add("repo", &repo);
     expected.add("lints", &lints_dir);
-    assert_eq!(roots, expected, "the lint directory is the one root, the generated crate is none");
+    expected.allow_absolute(&home);
+    assert_eq!(roots, expected, "the repository and its lint directory, and no root for the generated crate");
 
     // And through the whole path: every input moves the key.
     let key = |t: &Tree| of_generated_crate(t).unwrap().key;

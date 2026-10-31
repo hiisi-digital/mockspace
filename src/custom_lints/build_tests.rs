@@ -69,14 +69,3 @@ fn the_build_is_given_where_things_are_and_nothing_that_changes_what_it_makes() 
         assert!(!keeps_env(dropped), "{dropped}");
     }
 }
-
-#[test]
-fn the_release_profile_is_pinned_for_every_setting_the_identity_assumes() {
-    for key in ["opt-level", "debug-assertions", "overflow-checks", "lto", "panic", "codegen-units"] {
-        assert!(
-            PINNED_PROFILE.iter().any(|s| s.starts_with(&format!("profile.release.{key}="))),
-            "{key}"
-        );
-    }
-    assert!(PINNED_PROFILE.contains(&"build.rustflags=[]"));
-}

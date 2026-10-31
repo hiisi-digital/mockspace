@@ -46,7 +46,13 @@ fn tree(parent: &Path, remote: &str, lint: &str) -> PathBuf {
     root.join("mock")
 }
 
+/// The fixture was written just now, and a source changed within the trust margin is not kept.
+fn settle() {
+    std::thread::sleep(crate::custom_lints::depinfo::TRUST_MARGIN + std::time::Duration::from_millis(200));
+}
+
 fn identity_in(cache: &Path, mock: &Path) -> String {
+    settle();
     let cfg = Config::from_dir(mock);
     let dep = format!(
         "{{ package = \"mockspace-lint-rules\", path = \"{}/lint-rules\" }}",
@@ -108,6 +114,7 @@ fn lint_path(mock: &Path) -> PathBuf {
 /// Load, read the lint's name, unload. Unloaded before a later load of the same path, or the
 /// dynamic loader answers with the mapping it still has.
 fn name_in(cache: &Path, mock: &Path) -> String {
+    settle();
     let cfg = Config::from_dir(mock);
     let dep = format!(
         "{{ package = \"mockspace-lint-rules\", path = \"{}/lint-rules\" }}",

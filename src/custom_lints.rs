@@ -235,7 +235,7 @@ fn build_and_load(
     store::knobs::run_after_identity(&gen_dir);
     let crate_name = gen_crate_name(&gen_dir);
     let library = match &identity {
-        Some(id) => built::dylib_for(base, &id.key, &id.roots, &gen_dir, || {
+        Some(id) => built::dylib_for(base, &id.key, &id.roots, &gen_dir, depinfo::TRUST_MARGIN, || {
             build::build_cdylib(&gen_dir, &crate_name)
         }),
         None => build::build_cdylib(&gen_dir, &crate_name)

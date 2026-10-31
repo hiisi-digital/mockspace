@@ -13,9 +13,11 @@
 //! a while.
 //!
 //! An entry is two files with one name, `<key>-<list>.<ext>` and `<key>-<list>.deps`, where
-//! `<list>` is the digest of the file list. The library and its list therefore cannot be paired
-//! wrongly by two runs writing at once, and a key may hold several entries, one for each state of
-//! the files it was built from.
+//! `<list>` is the digest of the file list. The name ties a list to its own digest and not to the
+//! library's bytes. What keeps a library paired with its own list is the lock on the generated crate
+//! (`custom_lints::build_and_load`), which a build and the writing of its entry are both inside, and
+//! the order of the writes: the library is renamed in first, so a list never names a missing one.
+//! A key may hold several entries, one for each state of the files it was built from.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -76,12 +78,14 @@ fn find(base: &Path, key: &str, roots: &Roots) -> Option<(PathBuf, String)> {
 /// `build` makes, kept first. A library that cannot be kept is still returned, so a read-only
 /// store costs sharing only.
 ///
-/// `gen_dir` is where the build ran.
+/// `gen_dir` is where the build ran, and `margin` how long before it a source must have last
+/// changed to be trusted (`depinfo::TRUST_MARGIN`).
 pub(crate) fn dylib_for(
     base: &Path,
     key: &str,
     roots: &Roots,
     gen_dir: &Path,
+    margin: Duration,
     build: impl FnOnce() -> Result<Built, String>,
 ) -> Result<Library, String> {
     if let Some((path, name)) = find(base, key, roots) {
@@ -89,7 +93,7 @@ pub(crate) fn dylib_for(
         return Ok(Library { path, identity: Some(name) });
     }
     let built = build()?;
-    let Some(deps) = depinfo::record(&built.dylib, gen_dir, roots, built.started)
+    let Some(deps) = depinfo::record(&built.dylib, gen_dir, roots, built.started, margin)
     else {
         return Ok(Library { path: built.dylib, identity: None });
     };
