@@ -62,7 +62,7 @@ pub const HOOK_NAMES: &[&str] = &["pre-commit", "pre-push", "commit-msg"];
 
 // The hooks that follow an event live beside their script, in `follow_up`.
 pub use crate::follow_up::FOLLOW_UP_HOOKS;
-use crate::follow_up::durable_follow_up_hook;
+use crate::follow_up::{CAN_GENERATE_SHELL, durable_follow_up_hook};
 
 /// Marks a file as generated, so a reader knows not to edit it and the installer
 /// knows it may overwrite it.
@@ -242,12 +242,28 @@ pub fn durable_hook(name: &str, hook_version: u32) -> String {
     // A file the merge driver left says some generated files were kept from one
     // side on the promise of a regeneration. With no generated hook here to make
     // it, a commit or a push would carry them, so those two refuse.
-    let kept_ours = if matches!(name, "pre-commit" | "pre-push") {
+    //
+    // A gate that fires with no generated hook here, while a side is owed, first builds that hook
+    // as the follow-up hooks do, and hands over to it, rather than refusing a tree the driver was
+    // told would be regenerated. Only `pre-commit` may stage what the build regenerates: the commit
+    // that concludes a stopped merge or a squash carries the index, and no follow-up hook runs for
+    // it. Any other gate builds without staging, so the record stands for whatever it gates: a
+    // merge commit's tree is written before `commit-msg` runs, and a push publishes commits, never
+    // the index, so a build that cleared the record there would hide a stale tree.
+    let build_flag = if name == "pre-commit" { " --stage" } else { "" };
+    let builds = if matches!(name, "pre-commit" | "commit-msg" | "pre-push") {
         format!(
-            "\n{KEPT_OURS_SHELL}if ms_kept_live; then\n    echo \"\" >&2\n    echo \"BLOCKED: generated files kept from one side of a merge or rebase were not regenerated.\" >&2\n    ms_kept_say\n    exit 1\nfi\n\n"
+            "{KEPT_OURS_SHELL}{CAN_GENERATE_SHELL}if ms_kept_live && ms_can_generate; then\n    cargo mock --generate-only{build_flag} >&2 2>&1\n    if [ -x \"$generated\" ]; then\n        {stdin_replay}\"$generated\" \"$@\"\n        exit $?\n    fi\nfi\n"
         )
     } else {
         String::new()
+    };
+    let kept_ours = if matches!(name, "pre-commit" | "pre-push") {
+        format!(
+            "\n{builds}if ms_kept_live; then\n    echo \"\" >&2\n    echo \"BLOCKED: generated files kept from one side of a merge or rebase were not regenerated.\" >&2\n    ms_kept_say\n    exit 1\nfi\n\n"
+        )
+    } else {
+        format!("\n{builds}")
     };
     let chain = chain_tail(name, stdin_replay);
     format!(
@@ -256,7 +272,8 @@ pub fn durable_hook(name: &str, hook_version: u32) -> String {
 # mockspace durable gate ({name}), v{hook_version}. Do not edit; rewritten on each
 # `mock` run. core.hooksPath points here: invisible to the repo, and it survives a
 # target/ clean. Carries no policy: it delegates to the generated per-repo hook
-# when mockspace is initialised, and blocks at the configured scope when it is not.
+# when mockspace is initialised (building it first where a merge left a side owed and
+# `cargo mock` resolves), and blocks at the configured scope when it is not.
 set -u
 {stdin_capture}
 {chain}

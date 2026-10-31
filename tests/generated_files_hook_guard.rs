@@ -100,25 +100,46 @@ fn a_hook_that_is_not_ours_does_not_count() {
 /// delegates to it and, with it missing, quietly does nothing, so a driver that
 /// looked only at the durable hook kept ours and nothing regenerated.
 #[test]
-fn a_rebase_in_a_fresh_worktree_conflicts_as_plain_git_does() {
+fn a_rebase_in_a_fresh_worktree_where_cargo_mock_does_not_resolve_conflicts_as_plain_git_does() {
     let r = Repo::new();
     r.two_sides();
     let wt = r.worktree("a");
-    let rebased = r.git_in(&wt, &["rebase", "dev"]);
+    let rebased = r.git_in_env(&wt, &[("MS_NO_MOCK", "1")], &["rebase", "dev"]);
     assert!(!rebased.status.success(), "{}", Repo::failure(&rebased));
     let doc = fs::read_to_string(wt.join("docs/ALPHA.md")).unwrap();
     assert!(doc.contains("<<<<<<<"), "both sides are in the file: {doc}");
 }
 
 #[test]
-fn a_merge_in_a_fresh_worktree_conflicts_as_plain_git_does() {
+fn a_merge_in_a_fresh_worktree_where_cargo_mock_does_not_resolve_conflicts_as_plain_git_does() {
     let r = Repo::new();
     r.two_sides();
     let wt = r.worktree("a");
-    let merged = r.git_in(&wt, &["merge", "dev", "-m", "chore: merge dev"]);
+    let merged = r.git_in_env(
+        &wt,
+        &[("MS_NO_MOCK", "1")],
+        &["merge", "dev", "-m", "chore: merge dev"],
+    );
     assert!(!merged.status.success(), "{}", Repo::failure(&merged));
     let doc = fs::read_to_string(wt.join("docs/ALPHA.md")).unwrap();
     assert!(doc.contains("<<<<<<<"), "both sides are in the file: {doc}");
+}
+
+#[test]
+fn a_merge_in_a_fresh_worktree_where_cargo_mock_resolves_builds_the_hook_and_regenerates() {
+    // the other arm: the hook the driver asked for is not there, and the merge builds it
+    let r = Repo::new();
+    r.two_sides();
+    let wt = r.worktree("a");
+    assert!(!wt.join("mock/target/hooks/post-merge").exists());
+    let merged = r.git_in(&wt, &["merge", "dev", "-m", "chore: merge dev"]);
+    assert!(merged.status.success(), "{}", Repo::failure(&merged));
+    assert!(wt.join("mock/target/hooks/post-merge").exists(), "the merge built the hook");
+    let in_head = r.git_in(&wt, &["show", "HEAD:docs/ALPHA.md"]);
+    let in_head = String::from_utf8_lossy(&in_head.stdout);
+    assert!(in_head.contains("one, edited on a"), "{in_head}");
+    assert!(in_head.contains("five, edited on dev"), "{in_head}");
+    assert!(!in_head.contains("<<<<<<<"), "{in_head}");
 }
 
 #[test]
@@ -173,7 +194,7 @@ fn a_merge_on_a_branch_with_another_mock_directory_conflicts_as_plain_git_does()
     }
     fs::remove_dir_all(r.root.join("linux/target/hooks")).ok();
 
-    let merged = r.git_out(&["merge", "d", "-m", "chore: merge d"]);
+    let merged = r.git_env(&[("MS_NO_MOCK", "1")], &["merge", "d", "-m", "chore: merge d"]);
     assert!(!merged.status.success(), "{}", Repo::failure(&merged));
     let text = fs::read_to_string(&doc).unwrap();
     assert!(

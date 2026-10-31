@@ -1588,6 +1588,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         &cfg.mock_dir.join("registry"),
         &crate::suite::history::History::dir(&cfg.mock_dir),
         &bootstrap::append_attribute_lines(&cfg.repo_root, &cfg.src_dirs, &cfg.append_only),
+        &bootstrap::lockfile_paths(&cfg.repo_root, &cfg.mock_dir, &cfg.lockfiles),
         &generated,
         commit_regenerated,
         stage_generated,

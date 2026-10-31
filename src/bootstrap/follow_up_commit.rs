@@ -170,6 +170,7 @@ pub(crate) fn finish_generation(
     registry_dir: &Path,
     history_dir: &Path,
     append_lines: &[String],
+    lockfiles: &[String],
     generated: &[PathBuf],
     commit: Option<&str>,
     stage_it: bool,
@@ -177,13 +178,32 @@ pub(crate) fn finish_generation(
     // Asked first: afterwards the file differs from HEAD by our line, whoever
     // else had edited it, and an edit of somebody's own is theirs to commit.
     let was_clean = attributes_clean(repo_root);
-    if write_gitattributes(repo_root, docs_dir, registry_dir, history_dir, append_lines) {
+    if write_gitattributes(
+        repo_root,
+        docs_dir,
+        registry_dir,
+        history_dir,
+        append_lines,
+        &lockfile_attribute_lines(lockfiles),
+    ) {
         eprintln!("  wrote the merge attributes");
     }
     let written = was_clean
         .then(|| fs::read_to_string(repo_root.join(".gitattributes")).ok())
         .flatten();
     let attributes = written.as_deref();
+    // a lockfile the merge driver kept from one side is settled from the merged manifests, and is then
+    // one of the files brought to the tree
+    let mut generated = generated.to_vec();
+    let kept = kept_lockfiles(repo_root, lockfiles);
+    if (commit.is_some() || stage_it) && !kept.is_empty() {
+        if let Err(what) = settle_lockfiles(repo_root, &kept) {
+            eprintln!("error: {what}");
+            return Err("a lockfile could not be settled from the merged manifests");
+        }
+        generated.extend(kept.iter().map(|r| repo_root.join(r)));
+    }
+    let generated = generated.as_slice();
     if let Some(subject) = commit {
         if !commit_follow_up(repo_root, generated, subject, attributes) {
             return Err("the regenerated files could not be committed");
@@ -209,6 +229,16 @@ fn kept_ours_path(repo_root: &Path) -> Option<PathBuf> {
         .filter(|o| o.status.success())?;
     let path = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
     Some(if path.is_absolute() { path } else { repo_root.join(path) })
+}
+
+/// The lockfiles among `lockfiles` that the merge driver wrote down as kept from one side: the only
+/// ones whose resolution is owed, so a run that kept none asks cargo about none.
+pub(crate) fn kept_lockfiles(repo_root: &Path, lockfiles: &[String]) -> Vec<String> {
+    let Some(record) = kept_ours_path(repo_root).and_then(|p| fs::read_to_string(p).ok()) else {
+        return Vec::new();
+    };
+    let recorded: Vec<&str> = record.lines().skip(1).collect();
+    lockfiles.iter().filter(|l| recorded.contains(&l.as_str())).cloned().collect()
 }
 
 /// Remove the record the merge driver left, once the generated files are
