@@ -53,7 +53,10 @@ impl Registry {
             .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
             .map(|doc| checksums(&doc))
             .unwrap_or_default();
-        Registry { locked, verdicts: HashMap::new() }
+        Registry {
+            locked,
+            verdicts: HashMap::new(),
+        }
     }
 
     /// Whether `file`, as the filesystem resolves it, sits in the unpacked source of a registry
@@ -87,11 +90,19 @@ impl Registry {
                 continue;
             };
             let unpacked = home.join("registry").join("src").join(index).join(package);
-            let finished = std::fs::metadata(unpacked.join(".cargo-ok")).ok().and_then(|m| changed_at(&m));
-            if finished.is_none_or(|finished| changed > finished || reused_at.is_some_and(|at| finished > at)) {
+            let finished = std::fs::metadata(unpacked.join(".cargo-ok"))
+                .ok()
+                .and_then(|m| changed_at(&m));
+            if finished.is_none_or(|finished| {
+                changed > finished || reused_at.is_some_and(|at| finished > at)
+            }) {
                 return false;
             }
-            let crate_file = home.join("registry").join("cache").join(index).join(format!("{package_name}.crate"));
+            let crate_file = home
+                .join("registry")
+                .join("cache")
+                .join(index)
+                .join(format!("{package_name}.crate"));
             if let Some(verdict) = self.verdicts.get(&crate_file) {
                 return *verdict;
             }
@@ -109,7 +120,9 @@ impl Registry {
 /// whichever home. Only the shape of the path is read, so it holds for a file as the compiler listed it.
 pub(crate) fn is_registry_source(file: &Path) -> bool {
     let parts: Vec<_> = file.components().map(|c| c.as_os_str()).collect();
-    parts.windows(2).any(|w| w[0] == "registry" && w[1] == "src")
+    parts
+        .windows(2)
+        .any(|w| w[0] == "registry" && w[1] == "src")
 }
 
 fn checksums(doc: &toml_edit::DocumentMut) -> HashMap<String, String> {
@@ -120,7 +133,10 @@ fn checksums(doc: &toml_edit::DocumentMut) -> HashMap<String, String> {
         .iter()
         .filter_map(|p| {
             let text = |key: &str| p.get(key).and_then(|v| v.as_str());
-            Some((format!("{}-{}", text("name")?, text("version")?), text("checksum")?.to_string()))
+            Some((
+                format!("{}-{}", text("name")?, text("version")?),
+                text("checksum")?.to_string(),
+            ))
         })
         .collect()
 }

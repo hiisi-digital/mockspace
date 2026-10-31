@@ -105,7 +105,7 @@ fn a_registry_file_edited_after_cargo_unpacked_it_is_not_trusted() {
     std::thread::sleep(Duration::from_millis(60));
     std::fs::write(&source, "pub fn foo() { edited() }").unwrap();
     assert!(
-        record(&made(&dylib, later(), true), &gen_dir, &roots, hour).is_none(),
+        record(&made(&dylib, later(), false), &gen_dir, &roots, hour).is_none(),
         "a source newer than cargo's own mark of having finished unpacking"
     );
 }
