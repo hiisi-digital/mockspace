@@ -18,6 +18,9 @@ use crate::render_design::GENERATED_MARKER;
 /// What mockspace writes at the root: marked as generated, with the registry as its include.
 const GENERATED_CONFIG: &str = "# AUTO-GENERATED: DO NOT EDIT DIRECTLY\n\n[[rule]]\ninclude = [\"mock/registry/**/*.toml\"]\nschema.path = \"target/mockspace/registry-schemas/registry.schema.json\"\n";
 
+/// Held by every check, so a test that sets an environment variable is not seen by another.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// A repository root with a registry file and a taplo stand-in that counts the times it checked.
 struct Fixture {
     root:  TempDir,
@@ -61,6 +64,7 @@ impl Fixture {
     }
 
     fn check(&self, program: &Path) -> SchemaCheck {
+        let _serial = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let store = DiskVerdicts::open_in(self.store.path(), "pack").expect("a store");
         let namespaces: Vec<RegistryNamespace> = vec![builtin_vocab()];
         check_schemas_with(&OsString::from(program), self.root.path(), &namespaces, Some(&store))
@@ -263,9 +267,7 @@ fn real_check(root: &Path, store: &Path) -> bool {
 
 /// Pass once with real taplo, break something taplo reads, and expect the next check to fail.
 fn breaks_after_a_pass(prepare: impl Fn(&Path), break_it: impl Fn(&Path)) {
-    if !taplo_installed() {
-        return;
-    }
+    assert!(taplo_installed(), "these tests run the real taplo; put it on PATH (the bootstrap installs it)");
     let (root, store) = (real_root(), TempDir::new().unwrap());
     prepare(root.path());
     assert!(real_check(root.path(), store.path()), "the control: the tree passes real taplo");
@@ -320,4 +322,99 @@ fn real_taplo_a_hand_edited_generated_config_is_not_replayed() {
         },
         |p| fs::write(p.join("custom.json"), "{\"type\":\"object\",\"required\":[\"need\"]}").unwrap(),
     );
+}
+
+#[test]
+fn real_taplo_a_schema_bound_by_an_escaped_key_or_a_spaced_directive_is_not_replayed() {
+    for (name, body) in [
+        ("escaped", "\"\\U00000024schema\" = \"./s.json\"\nname = \"x\"\n"),
+        ("spaced", "#: schema ./s.json\nname = \"x\"\n"),
+        ("tabbed", "#:\tschema ./s.json\nname = \"x\"\n"),
+    ] {
+        eprintln!("case {name}");
+        breaks_after_a_pass(
+            |p| {
+                fs::create_dir_all(p.join("other")).unwrap();
+                fs::write(p.join("other/s.json"), "{}").unwrap();
+                fs::write(p.join("other/x.toml"), body).unwrap();
+            },
+            |p| fs::write(p.join("other/s.json"), "{\"type\":\"object\",\"required\":[\"need\"]}").unwrap(),
+        );
+    }
+}
+
+#[test]
+fn real_taplo_a_directory_reached_by_a_second_name_is_checked_under_both() {
+    for dir in ["a1", "x", "q", "w", "b2", "c3"] {
+        breaks_after_a_pass(
+            |p| {
+                fs::create_dir_all(p.join("mock").join(dir)).unwrap();
+                fs::write(p.join("mock").join(dir).join("x.toml"), "name = \"x\"\n").unwrap();
+                fs::write(
+                    p.join("target/mockspace/registry-schemas/registry.schema.json"),
+                    "{\"type\":\"object\",\"required\":[\"vocab\"]}",
+                )
+                .unwrap();
+            },
+            |p| std::os::unix::fs::symlink(Path::new("..").join(dir), p.join("mock/registry/linked")).unwrap(),
+        );
+    }
+}
+
+#[test]
+fn a_file_edited_while_taplo_runs_does_not_get_the_pass_saved_under_its_old_content() {
+    let f = Fixture::new();
+    let reg = f.root.path().join("mock/registry/a.toml");
+    let body = format!(
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'taplo 0.10.0'; exit 0; fi\n\
+         echo run >> '{runs}'\necho 'found files total=2 excluded=0' >&2\n\
+         if [ ! -f '{flag}' ]; then touch '{flag}'; echo '# edited during the run' >> '{reg}'; fi\nexit 0\n",
+        runs = f.bin.path().join("runs").display(),
+        flag = f.bin.path().join("flag").display(),
+        reg = reg.display(),
+    );
+    let original = fs::read_to_string(&reg).unwrap();
+    let path = f.taplo_path();
+    let _ = fs::remove_file(&path);
+    fs::write(&path, body).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(f.passes());
+    fs::write(&reg, original).unwrap();
+    assert!(f.passes());
+    assert_eq!(f.runs(), 2, "the first pass began on content that moved, so it was not saved");
+}
+
+#[test]
+fn a_failed_version_probe_is_never_keyed() {
+    let f = Fixture::new();
+    let body = format!(
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'taplo 0.10.0'; exit 1; fi\n\
+         echo run >> '{runs}'\necho 'found files total=2 excluded=0' >&2\nexit 0\n",
+        runs = f.bin.path().join("runs").display(),
+    );
+    let path = f.taplo_path();
+    let _ = fs::remove_file(&path);
+    fs::write(&path, body).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(f.passes());
+    assert!(f.passes());
+    assert_eq!(f.runs(), 2, "a validator that cannot say its version is run every time");
+}
+
+#[test]
+fn taplo_config_and_rust_log_in_the_environment_are_read_and_stop_the_replay() {
+    for var in ["TAPLO_CONFIG", "RUST_LOG"] {
+        let f = Fixture::new();
+        let _serial = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        // SAFETY: every check in this module holds `ENV_LOCK`, so no other thread reads the
+        // environment while it is set.
+        unsafe { std::env::set_var(var, "x") };
+        drop(_serial);
+        assert!(f.passes());
+        assert!(f.passes());
+        let _serial = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        unsafe { std::env::remove_var(var) };
+        drop(_serial);
+        assert_eq!(f.runs(), 2, "{var} set: taplo ran both times");
+    }
 }

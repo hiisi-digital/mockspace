@@ -14,11 +14,12 @@
 //! **Where taplo can read something the key does not hold, there is no key and the check runs.** That
 //! is a config that is not exactly the generated one, a second config (`taplo.toml`), `TAPLO_CONFIG`
 //! or `RUST_LOG` in the environment (the latter changes the log line the empty-run check reads), and
-//! any keyed file binding a schema of its own, by a `#:schema` directive or a `$schema` key. Only a
+//! any keyed file that might bind a schema of its own: one with a `#:` comment in it, one that does not
+//! parse, or one with a root key that decodes to `$schema`. A `file://` reference inside the generated
+//! schema is not followed; the schemas are rewritten before every check. Only a
 //! pass is remembered ([`PASSED`]); a failure, a taplo that is absent and a run that examined no
 //! files are all judged again, so none of them can be replayed as green.
 
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -47,17 +48,16 @@ pub(super) fn input_key(
         return None;
     }
     let mut named: Vec<(String, Vec<u8>)> = Vec::new();
-    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
-    collect(repo_root, repo_root, &mut seen, &mut named)?;
+    let mut ancestors: Vec<PathBuf> = Vec::new();
+    collect(repo_root, repo_root, &mut ancestors, &mut named)?;
+    if named.iter().any(|(_, bytes)| may_bind_a_schema(bytes)) {
+        return None;
+    }
     let schemas = crate::build_dir::target_dir(repo_root).join("mockspace").join("registry-schemas");
     for entry in fs::read_dir(&schemas).ok()? {
         let entry = entry.ok()?;
         let name = format!("schemas/{}", entry.file_name().to_string_lossy());
         named.push((name, fs::read(entry.path()).ok()?));
-    }
-    let binds_a_schema = |bytes: &[u8]| contains(bytes, b"#:schema") || contains(bytes, b"$schema");
-    if named.iter().any(|(name, bytes)| !name.starts_with("schemas/") && binds_a_schema(bytes)) {
-        return None;
     }
     named.sort();
     let mut parts: Vec<&[u8]> = vec![b"taplo-check-v2", taplo_version];
@@ -79,22 +79,38 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
 
-/// Every `.toml` under `dir` with its path from `root`, following symlinks as taplo's walk does.
-/// A directory already visited under another name is not entered twice, which also ends a loop.
-fn collect(root: &Path, dir: &Path, seen: &mut BTreeSet<PathBuf>, out: &mut Vec<(String, Vec<u8>)>) -> Option<()> {
-    if !seen.insert(fs::canonicalize(dir).ok()?) {
+/// Whether a keyed file might bind a schema of its own. Refused broadly rather than by taplo's
+/// grammar: any `#:` comment (a directive, however it is spaced) and any file that does not parse
+/// or carries a root key that decodes to `$schema` (however it is escaped).
+fn may_bind_a_schema(bytes: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(bytes) else { return true };
+    if text.contains("#:") {
+        return true;
+    }
+    text.parse::<toml_edit::DocumentMut>().map_or(true, |doc| doc.contains_key("$schema"))
+}
+
+/// Every `.toml` under `dir` with its path from `root`, following symlinks as taplo's walk does and
+/// keying every path it is reached by: a directory seen again under another name is entered again,
+/// since taplo checks the files under both. Only a directory that is one of its own ancestors is
+/// not entered, which ends a loop.
+fn collect(root: &Path, dir: &Path, ancestors: &mut Vec<PathBuf>, out: &mut Vec<(String, Vec<u8>)>) -> Option<()> {
+    let here = fs::canonicalize(dir).ok()?;
+    if ancestors.contains(&here) {
         return Some(());
     }
+    ancestors.push(here);
     for entry in fs::read_dir(dir).ok()? {
         let path = entry.ok()?.path();
         let kind = fs::metadata(&path).ok()?;
         if kind.is_dir() {
-            collect(root, &path, seen, out)?;
+            collect(root, &path, ancestors, out)?;
         } else if path.extension().is_some_and(|e| e == "toml") {
             let rel = path.strip_prefix(root).ok()?.to_string_lossy().into_owned();
             out.push((rel, fs::read(&path).ok()?));
         }
     }
+    ancestors.pop();
     Some(())
 }
 

@@ -247,10 +247,20 @@ pub(crate) fn replay_or_batch(
 
 /// `compute` over each of `positions`, in order, spread over the machine's threads.
 pub(crate) fn parallel_map(positions: &[usize], compute: &(impl Fn(usize) -> Vec<LintError> + Sync)) -> Vec<Vec<LintError>> {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    parallel_map_with(threads, positions, compute)
+}
+
+/// [`parallel_map`] on at most `threads` threads, so a test can ask for several on any machine.
+pub(crate) fn parallel_map_with(
+    threads: usize,
+    positions: &[usize],
+    compute: &(impl Fn(usize) -> Vec<LintError> + Sync),
+) -> Vec<Vec<LintError>> {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(positions.len());
+    let workers = threads.min(positions.len());
     if workers <= 1 {
         return positions.iter().map(|&n| compute(n)).collect();
     }

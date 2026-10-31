@@ -671,3 +671,30 @@ fn a_batch_repeats_a_key_even_when_the_store_cannot_write() {
         assert_eq!((got[0].len(), got[1].len()), (1, 1), "the second naming gets the finding with nothing saved");
     });
 }
+
+#[test]
+fn a_parallel_map_on_four_threads_overlaps_and_keeps_the_order_whatever_finishes_first() {
+    let positions: Vec<usize> = (0 .. 4).collect();
+    let (live, peak) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    let got = verdict::parallel_map_with(4, &positions, &|n| {
+        let now = live.fetch_add(1, Ordering::SeqCst) + 1;
+        peak.fetch_max(now, Ordering::SeqCst);
+        // The first item takes longest, so finishing order is the reverse of position.
+        std::thread::sleep(std::time::Duration::from_millis(60 * (4 - n as u64)));
+        live.fetch_sub(1, Ordering::SeqCst);
+        finding(&[b'a' + n as u8])
+    });
+    assert!(peak.load(Ordering::SeqCst) >= 2, "four items overlapped, on any machine");
+    assert_eq!(got.iter().map(|f| f[0].message.clone()).collect::<Vec<_>>(), ["a", "b", "c", "d"]);
+}
+
+#[test]
+fn a_parallel_map_on_one_thread_runs_in_order_without_spawning() {
+    let positions: Vec<usize> = (0 .. 3).collect();
+    let order: std::sync::Mutex<Vec<usize>> = Default::default();
+    verdict::parallel_map_with(1, &positions, &|n| {
+        order.lock().unwrap().push(n);
+        Vec::new()
+    });
+    assert_eq!(*order.lock().unwrap(), vec![0, 1, 2]);
+}
