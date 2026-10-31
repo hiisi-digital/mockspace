@@ -32,7 +32,7 @@ mod rename;
 pub use rename::{cmd_rename_round, cmd_round_id};
 pub(crate) mod round_merge;
 
-#[cfg(test)]
+mod subjects;
 mod tests;
 
 /// Options parsed from CLI flags for design round subcommands.
@@ -101,7 +101,7 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                     eprintln!("locked doc changelist: {} → {}", cl.filename, r.new_name);
                     eprintln!("  phase transition: DOC → DRAFT");
                     eprintln!("  next: create a src changelist, then `cargo mock lock` again");
-                    let msg = format!("chore: lock doc changelist for {}", r.new_name);
+                    let msg = subjects::lock_doc(&r.new_name);
                     commit_or_suggest(cfg, opts, &[r.old_path, r.new_path], &msg);
                     ExitCode::SUCCESS
                 },
@@ -133,7 +133,7 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                     eprintln!("locked src changelist: {} → {}", cl.filename, r.new_name);
                     eprintln!("  phase transition: IMPL → CLOSED");
                     eprintln!("  next: `cargo mock close` to archive the round");
-                    let msg = format!("chore: lock src changelist for {}", r.new_name);
+                    let msg = subjects::lock_src(&r.new_name);
                     commit_or_suggest(cfg, opts, &[r.old_path, r.new_path], &msg);
                     ExitCode::SUCCESS
                 },
@@ -209,7 +209,7 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
             }
         }
         let names: Vec<&str> = strays.iter().map(|cl| cl.filename.as_str()).collect();
-        let msg = format!("chore: deprecate stray changelist {}", names.join(", "));
+        let msg = subjects::deprecate_strays(&names);
         commit_or_suggest(cfg, opts, &touched, &msg);
         return ExitCode::SUCCESS;
     }
@@ -237,7 +237,7 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                     );
                     eprintln!("  phase transition: DOC → TOPIC");
                     eprintln!("  next: create new topic files, then a new changelist");
-                    let msg = format!("chore: deprecate doc changelist {}", cl.filename);
+                    let msg = subjects::deprecate_doc(&cl.filename);
                     commit_or_suggest(cfg, opts, &[r.old_path, r.new_path], &msg);
                     ExitCode::SUCCESS
                 },
@@ -300,10 +300,7 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
 
             eprintln!("  phase transition: IMPL → DOC");
             eprintln!("  next: update doc templates, then lock and create new src changelist");
-            let msg = format!(
-                "chore: deprecate src changelist {} and unlock doc CL",
-                cl.filename
-            );
+            let msg = subjects::deprecate_src_and_unlock(&cl.filename);
             commit_or_suggest(cfg, opts, &touched, &msg);
             ExitCode::SUCCESS
         },
@@ -397,8 +394,8 @@ pub fn cmd_unlock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
 
     eprintln!();
     eprintln!("  phase transition: {} → DOC", phase.label());
-    let msg = "chore: unlock design round (deprecate src CL, unlock doc CL)";
-    commit_or_suggest(cfg, opts, &touched, msg);
+    let msg = subjects::unlock_round();
+    commit_or_suggest(cfg, opts, &touched, &msg);
     ExitCode::SUCCESS
 }
 
@@ -545,7 +542,7 @@ pub fn cmd_migrate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     }
 
     eprintln!("migrated {renamed} file(s), skipped {skipped}");
-    let msg = format!("chore: migrate {renamed} design round file(s) to new naming convention");
+    let msg = subjects::migrate(renamed);
     commit_or_suggest(cfg, opts, &touched, &msg);
     ExitCode::SUCCESS
 }

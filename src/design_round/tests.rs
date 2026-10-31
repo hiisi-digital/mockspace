@@ -270,7 +270,7 @@ mod tests {
         );
         assert_eq!(
             ArchiveKind::Abandoned.commit_subject("202604191100-abandoned"),
-            "chore: archive design round 202604191100-abandoned (abandoned)",
+            "chore: archive the abandoned design round 202604191100-abandoned",
         );
     }
 }
