@@ -1857,8 +1857,10 @@ pub struct LintPack {
     /// already makes.
     pub tools:           Vec<Box<dyn tool::Tool>>,
     /// Which code this pack's lints are, set by the engine after it loads the library and empty
-    /// for the builtins alone. It is the digest of the library's bytes, and every saved verdict is
-    /// keyed on it, so a rebuilt pack finds nothing saved by the one before. A pack never sets it.
+    /// for the builtins alone. It is the input key and the digest of the files read, `<key>-<list>`,
+    /// or the digest of the library's bytes where the build cannot be tied to its inputs. Every
+    /// saved verdict is keyed on it, so a rebuilt pack finds nothing saved by the one before. A pack
+    /// never sets it.
     pub identity:        String,
 }
 
