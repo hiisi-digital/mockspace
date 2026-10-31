@@ -233,6 +233,7 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
         return None;
     }
     let mut deps = Vec::new();
+    let mut registry = super::registry::Registry::of(gen_dir);
     let mut take = |info: &str, reference: SystemTime| -> Option<()> {
         for source in sources_of(info) {
             let file = if source.is_absolute() { source } else { gen_dir.join(source) };
@@ -246,7 +247,8 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
             #[cfg(test)]
             super::store::knobs::run_between_read_and_stat(&file);
             let changed = changed_at(&std::fs::metadata(&file).ok()?)?;
-            if changed + margin > reference {
+            // A registry crate has no age to speak of: it is held by the checksum of its `.crate`.
+            if changed + margin > reference && !registry.trusts(&seen, &roots.absolute) {
                 return None;
             }
             let name = roots.name(&file)?;
