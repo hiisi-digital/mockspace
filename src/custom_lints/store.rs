@@ -542,6 +542,29 @@ pub(crate) mod knobs {
             .any(|k| dir.starts_with(&k.under) && k.skip_lock)
     }
 
+    type Hook = std::sync::Arc<dyn Fn() + Send + Sync>;
+
+    static HOOKS: Mutex<Vec<(PathBuf, Hook)>> = Mutex::new(Vec::new());
+
+    /// For every crate directory under `under`: run `hook` once the identity is computed and
+    /// before the build starts, which is where an edit lands in the window the identity left open.
+    pub(crate) fn after_identity(under: &Path, hook: impl Fn() + Send + Sync + 'static) {
+        HOOKS.lock().unwrap().push((under.to_path_buf(), std::sync::Arc::new(hook)));
+    }
+
+    pub(crate) fn run_after_identity(dir: &Path) {
+        let hooks: Vec<Hook> = HOOKS
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(under, _)| dir.starts_with(under))
+            .map(|(_, h)| h.clone())
+            .collect();
+        for hook in hooks {
+            hook();
+        }
+    }
+
     pub(crate) fn pause_between_write_and_build(dir: &Path) {
         let pause = KNOBS
             .lock()

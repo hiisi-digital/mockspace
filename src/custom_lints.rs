@@ -228,6 +228,8 @@ fn build_and_load(
     // loads a peer's build and nothing is built or relinked on its account. Where the inputs
     // cannot be read, it is built as ever and identified by its bytes.
     let identity = pack_identity(&gen_dir, content);
+    #[cfg(test)]
+    store::knobs::run_after_identity(&gen_dir);
     let built = match &identity {
         Some(id) => {
             built::dylib_for(base, id, || build_cdylib(&gen_dir, &gen_crate_name(&gen_dir)))
