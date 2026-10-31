@@ -2096,9 +2096,14 @@ mod tests {
     /// built by the same hands as the code under test tends to avoid exactly
     /// the shape that breaks it.
     ///
-    /// `MOCKSPACE_REAL_SUPPORT_CRATE` names one, by path. Without it this
-    /// PANICS rather than silently passing, for the reason `real_trees.rs`
-    /// gives: a skip that reads as a pass is how a gate stops being one.
+    /// The crate is the committed fixture `tests/fixtures/real-support-crate`, a
+    /// buildable library with passing tests of its own, so the test runs on every
+    /// `cargo test --lib` and never skips. `MOCKSPACE_REAL_SUPPORT_CRATE` points it at
+    /// another crate by path, and a path that holds no crate PANICS rather than silently
+    /// passing, for the reason `real_trees.rs` gives: a skip that reads as a pass is how
+    /// a gate stops being one. `bench-core` is deliberately not the default: it is the
+    /// code this command's own tree is built from, so a pass over it would say little
+    /// about a consumer's support crate.
     ///
     /// One crate rather than a whole tree, because timing a large tree is not
     /// what this exists for. The walk-and-aggregate logic is exercised
@@ -2106,15 +2111,14 @@ mod tests {
     /// input that reaches what `mock bench test` was built for and a bare
     /// `cargo test` at the bench root cannot.
     ///
-    /// Run with:
+    /// Run another crate through it with:
     ///   MOCKSPACE_REAL_SUPPORT_CRATE=<path> cargo test --lib \
-    ///     bench::tests::cmd_test_finds_and_runs_a_real_support_crate -- --ignored
+    ///     bench::tests::cmd_test_finds_and_runs_a_real_support_crate
     #[test]
-    #[ignore = "needs a real support crate: set MOCKSPACE_REAL_SUPPORT_CRATE to one"]
     fn cmd_test_finds_and_runs_a_real_support_crate() {
-        let source = PathBuf::from(
-            std::env::var("MOCKSPACE_REAL_SUPPORT_CRATE")
-                .expect("set MOCKSPACE_REAL_SUPPORT_CRATE to a bench support crate's directory"),
+        let source = std::env::var_os("MOCKSPACE_REAL_SUPPORT_CRATE").map_or_else(
+            || Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/real-support-crate"),
+            PathBuf::from,
         );
         assert!(
             source.join("src/lib.rs").is_file(),
