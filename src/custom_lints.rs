@@ -61,6 +61,8 @@ use crate::config::Config;
 pub(crate) use store::ScopedPlan;
 
 pub(crate) mod store;
+mod built;
+mod identity;
 
 /// The `extern "C"` symbol the generated cdylib exports.
 const COLLECT_SYMBOL: &[u8] = b"__mockspace_collect_lints";
@@ -222,14 +224,23 @@ fn build_and_load(
     store::touch_used(&gen_dir)?;
     #[cfg(test)]
     store::knobs::pause_between_write_and_build(&gen_dir);
-    let built = build_cdylib(&gen_dir, &gen_crate_name(&gen_dir));
+    // The library is kept under an identity made from its inputs, so a tree of the same content
+    // loads a peer's build and nothing is built or relinked on its account. Where the inputs
+    // cannot be read, it is built as ever and identified by its bytes.
+    let identity = pack_identity(&gen_dir, content);
+    let built = match &identity {
+        Some(id) => {
+            built::dylib_for(base, id, || build_cdylib(&gen_dir, &gen_crate_name(&gen_dir)))
+        },
+        None => build_cdylib(&gen_dir, &gen_crate_name(&gen_dir)),
+    };
 
     // SAFETY: the cdylib is our own generated crate, built moments ago from
     // this repo's lint sources against the same pinned mockspace-lint-rules
     // the engine uses, so the `Lint`/`CrossCrateLint` vtable layout matches.
     // The returned boxes borrow their vtables from `lib`, so `lib` is stored
     // in `LoadedLints` and outlives them.
-    let loaded = built.and_then(|dylib| unsafe { collect(&dylib) }.map(Some));
+    let loaded = built.and_then(|dylib| unsafe { collect(&dylib, identity) }.map(Some));
     // Every whole build leaves the names its packs and local tools register twice, which a run of one tool
     // cannot ask for without building the packs.
     if scope.is_none() {
@@ -249,6 +260,7 @@ fn build_and_load(
         std::time::SystemTime::now(),
         store::STALE_AFTER,
     );
+    built::reap(base, std::time::SystemTime::now(), store::STALE_AFTER);
     if !removed.is_empty() {
         eprintln!(
             "mock: removed {} abandoned lint build(s) under {}",
@@ -540,8 +552,10 @@ fn extract_between(s: &str, start: &str, end: &str) -> Option<String> {
 /// against the `mockspace` package-rename so the lint files compile unchanged.
 ///
 /// The `#[path]` of each lint file is the absolute path in the worktree that is
-/// running, so this text differs between worktrees and a switch recompiles the
-/// generated crate. That is deliberate. Making it identical (a symlink inside
+/// running, so this text differs between worktrees and a build after a switch
+/// recompiles the generated crate. That is deliberate, and a switch no longer
+/// builds at all while the content is one a peer already built: the library is
+/// kept under an identity made from its inputs (`built`, `identity`). Making it identical (a symlink inside
 /// the store pointing at the running worktree's `lints/`, say) would leave
 /// cargo comparing the modification time of whatever the link points at now
 /// with the build's record of what it pointed at then, so a switch to a
@@ -625,6 +639,20 @@ fn gen_collect_lib(
     }
     out.push_str("}\n");
     out
+}
+
+/// The identity of the library built from `content`: a digest of its inputs that names no tree
+/// (see `identity`). `None` where they cannot be read.
+fn pack_identity(gen_dir: &Path, content: &Content) -> Option<String> {
+    let lints: Vec<(String, PathBuf)> = content
+        .lint_files
+        .iter()
+        .map(|n| (n.clone(), content.lints_dir.join(format!("{n}.rs"))))
+        .collect();
+    // The collector is generated against a fixed directory, so its text is the same in every tree.
+    let collector =
+        gen_collect_lib(Path::new("/lints"), &content.lint_files, &content.packs, &content.tools);
+    identity::of_generated_crate(&gen_dir.join("Cargo.toml"), &lints, collector)
 }
 
 /// Name of the generated crate: the name of the directory it sits in, which is
@@ -753,7 +781,7 @@ fn cdylib_artifact(line: &str, crate_name: &str) -> Option<PathBuf> {
 /// `mockspace-lint-rules` pin (and the same toolchain) as this engine, so the
 /// `Box<dyn Lint>` vtables the collector hands back match this engine's layout.
 /// The launcher enforces this by passing the pin-matched `lint_rules_dep`.
-unsafe fn collect(dylib: &Path) -> Result<LoadedLints, String> {
+unsafe fn collect(dylib: &Path, identity: Option<String>) -> Result<LoadedLints, String> {
     // SAFETY: loading a cdylib runs its initialisers. This is our own crate,
     // generated and built moments ago from this repo's lints, not arbitrary
     // code of unknown provenance.
@@ -788,7 +816,7 @@ unsafe fn collect(dylib: &Path) -> Result<LoadedLints, String> {
     // Which code these lints are, for the verdicts saved under them. A library that cannot be
     // read back gets an identity no other run shares, so what it saves is never found again
     // rather than found by a different pack with the same empty name.
-    pack.identity = crate::lint::verdicts::file_digest(dylib).unwrap_or_else(|| {
+    pack.identity = identity.or_else(|| crate::lint::verdicts::file_digest(dylib)).unwrap_or_else(|| {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
