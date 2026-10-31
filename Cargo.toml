@@ -62,7 +62,7 @@ mockspace-manifest = { path = "mockspace-manifest" }
 libloading = "0.8"
 # The one place a time type's pattern is applied in Rust: `registry::bounds`
 # holds a closed set's listed values to the same pattern the schema holds rows to.
-regex = { version = "1", default-features = false, features = ["std", "unicode-perl"] }
+regex = { version = "1", default-features = false, features = ["std"] }
 tree-sitter = "0.24"
 tree-sitter-rust = "0.23"
 toml_edit = { version = "0.22", features = ["serde"] }

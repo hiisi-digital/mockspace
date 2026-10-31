@@ -710,7 +710,13 @@ const CHILD_TEST: &str = "pack_pin::tests::this_process_reads_both_variables_and
 /// In the child: prints what `ThisProcess` reads, one `name=value` line each, and returns
 /// true so the caller stops there. False in the test binary's own run.
 fn report_if_child() -> bool {
-    if std::env::var_os(CHILD).is_none() {
+    // The variable alone is not enough: one left set in the outer environment would turn
+    // every run of the test into a pass that asserts nothing. `this_process_in` also
+    // passes `--exact` and `--nocapture`, which a person's run of the suite does not.
+    let args: Vec<String> = std::env::args().collect();
+    if std::env::var_os(CHILD).is_none()
+        || !(args.iter().any(|a| a == "--exact") && args.iter().any(|a| a == "--nocapture"))
+    {
         return false;
     }
     let p = ThisProcess;

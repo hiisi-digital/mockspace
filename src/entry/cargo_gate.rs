@@ -336,6 +336,36 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("crates")).unwrap();
         std::fs::write(tmp.path().join("crates/.gitkeep"), "").unwrap();
         assert!(is_memberless_virtual_workspace(tmp.path()));
+        // cargo takes the plain no-members path here, and the whole gate forgives it
+        assert!(forgives_failure(tmp.path(), &["check"]));
+    }
+
+    #[test]
+    fn a_glob_whose_parent_directory_is_absent_matches_nothing_and_is_forgiven() {
+        let tmp = tempfile::tempdir().unwrap();
+        manifest(tmp.path(), "[workspace]\nmembers = [\"crates/*\"]\n");
+        assert!(forgives_failure(tmp.path(), &["check"]));
+    }
+
+    #[test]
+    fn a_glob_beside_a_member_that_is_really_missing_is_a_breakage_not_forgiven() {
+        // cargo reports the first member it fails on, the empty glob, so the diagnostic
+        // alone says forgive; the manifest half's quantifier over every member is what
+        // refuses here
+        let tmp = tempfile::tempdir().unwrap();
+        manifest(tmp.path(), "[workspace]\nmembers = [\"crates/*\", \"tools/real\"]\n");
+        std::fs::create_dir_all(tmp.path().join("crates")).unwrap();
+        assert!(!is_memberless_virtual_workspace(tmp.path()));
+        assert!(!forgives_failure(tmp.path(), &["check"]));
+    }
+
+    #[test]
+    fn two_globs_that_both_match_nothing_are_forgiven() {
+        let tmp = tempfile::tempdir().unwrap();
+        manifest(tmp.path(), "[workspace]\nmembers = [\"crates/*\", \"tools/*\"]\n");
+        std::fs::create_dir_all(tmp.path().join("crates")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("tools")).unwrap();
+        assert!(forgives_failure(tmp.path(), &["check"]));
     }
 
     #[test]
