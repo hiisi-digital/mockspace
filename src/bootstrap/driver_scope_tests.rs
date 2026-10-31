@@ -7,12 +7,13 @@ use std::process::Command;
 
 use super::*;
 
-const ALL: [&str; 5] = [
+const ALL: [&str; 6] = [
     "mockspace-generated",
     "mockspace-registry",
     "mockspace-round",
     "mockspace-test-history",
     "mockspace-append",
+    "mockspace-lockfile",
 ];
 
 /// `git` in `dir` with the user config at `config` and no system config, so nothing of the machine's own

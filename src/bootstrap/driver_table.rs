@@ -1,5 +1,5 @@
 //! Every merge driver mockspace registers, in one place, so the clone's config and the user's are given
-//! the same five.
+//! the same six.
 
 use super::*;
 
@@ -27,13 +27,14 @@ impl ConfigTarget<'_> {
     }
 }
 
-/// Register all five drivers in `target`. Idempotent.
+/// Register all six drivers in `target`. Idempotent.
 pub(crate) fn register_all_drivers(target: &ConfigTarget, actions: &mut Vec<String>) {
     register_driver(target, actions);
     register_registry_driver(target, LAUNCHER, actions);
     register_round_driver(target, LAUNCHER, actions);
     register_history_driver(target, LAUNCHER, actions);
     register_append_driver(target, LAUNCHER, actions);
+    register_lockfile_driver(target, actions);
 }
 
 /// A clone that registered the generated-file driver before its command left the path behind still carries

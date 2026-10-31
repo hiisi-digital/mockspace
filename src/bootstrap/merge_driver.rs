@@ -123,6 +123,7 @@ pub(crate) fn write_gitattributes(
     registry_dir: &Path,
     history_dir: &Path,
     append_lines: &[String],
+    lockfile_lines: &[String],
 ) -> bool {
     let Some(line) = attributes_line(repo_root, docs_dir) else {
         return false;
@@ -145,6 +146,7 @@ pub(crate) fn write_gitattributes(
         next = with_note_line(&next, HISTORY_NOTE, &line);
     }
     next = with_lines(&next, APPEND_NOTE, append_lines);
+    next = with_driver_lines(&next, LOCKFILE_DRIVER, LOCKFILE_NOTE, lockfile_lines);
     if next == existing {
         return false;
     }

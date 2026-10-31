@@ -55,7 +55,7 @@ impl Repo {
         // reached: nothing in these hooks asks for one.
         write_executable(
             &shims.join("cargo"),
-            "#!/bin/sh\n# MS_NO_CARGO: a hook whose PATH has no cargo. MS_OLD_ENGINE: a launcher pinned to\n# an engine that ignores the flags it does not know and exits 0.\n[ -n \"$MS_NO_CARGO\" ] && exit 127\n[ \"$1\" = mock ] && [ -n \"$MS_OLD_ENGINE\" ] && exit 0\n[ \"$1\" = mock ] && { shift; exec \"$MOCKSPACE_BIN\" --dir \"$(git rev-parse --show-toplevel)/mock\" \"$@\"; }\n# `cargo metadata`, which the engine asks for a member graph, goes to the real one\n[ \"$1\" = metadata ] && [ -n \"$REAL_CARGO\" ] && exec \"$REAL_CARGO\" \"$@\"\nexit 127\n",
+            "#!/bin/sh\n# MS_NO_CARGO: a hook whose PATH has no cargo. MS_OLD_ENGINE: a launcher pinned to\n# an engine that ignores the flags it does not know and exits 0.\n[ -n \"$MS_NO_CARGO\" ] && exit 127\n# MS_NO_MOCK: a cargo with no `mock` command to resolve\n[ \"$1\" = --list ] && { [ -z \"$MS_NO_MOCK\" ] && printf '    mock\\n'; exit 0; }\n[ -n \"$MS_NO_MOCK\" ] && [ \"$1\" = mock ] && exit 101\n[ \"$1\" = mock ] && [ -n \"$MS_OLD_ENGINE\" ] && exit 0\n[ \"$1\" = mock ] && { shift; exec \"$MOCKSPACE_BIN\" --dir \"$(git rev-parse --show-toplevel)/mock\" \"$@\"; }\n# `cargo metadata`, which the engine asks for a member graph, goes to the real one\n[ \"$1\" = metadata ] && [ -n \"$REAL_CARGO\" ] && exec \"$REAL_CARGO\" \"$@\"\nexit 127\n",
         );
         write_executable(
             &shims.join("mock"),
@@ -151,6 +151,15 @@ impl Repo {
             .args(args)
             .output()
             .unwrap()
+    }
+
+    /// Git in another working tree, with extra environment.
+    pub fn git_in_env(&self, dir: &Path, env: &[(&str, &str)], args: &[&str]) -> Output {
+        let mut c = self.cmd("git");
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        c.current_dir(dir).args(args).output().unwrap()
     }
 
     /// A linked working tree on `branch`, with no `target/` in it: what a
