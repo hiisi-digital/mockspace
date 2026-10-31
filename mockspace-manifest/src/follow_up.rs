@@ -179,7 +179,7 @@ mod tests {
         std::fs::create_dir_all(bin).unwrap();
         for tool in [
             "git", "bash", "sh", "awk", "basename", "dirname", "head", "tail", "tr", "wc", "cat", "sed", "grep",
-            "env", "rm", "mkdir", "ls", "sort", "cut", "chmod", "touch",
+            "env", "rm", "mkdir", "ls", "sort", "cut", "cp", "touch",
         ] {
             let found = std::process::Command::new("sh")
                 .args(["-c", &format!("command -v {tool}")])
@@ -229,12 +229,18 @@ mod tests {
         if cargo == Some(true) {
             // the call that regenerates also leaves the generated hook behind
             let built = root.join("mock/target/hooks/pre-commit");
+            let source = root.join("generated-hook-source");
+            crate::exec::write_executable(
+                &source,
+                &format!("#!/bin/sh\ntouch {}\n", root.join("generated-ran").display()),
+            )
+            .unwrap();
             crate::exec::write_executable(
                 &root.join("bin/cargo"),
                 &format!(
-                    "#!/bin/sh\nif [ \"$1\" = --list ]; then printf '    mock   alias: x\\n'; exit 0; fi\nmkdir -p {dir}\nprintf '#!/bin/sh\\ntouch {ran}\\n' > {built}\nchmod +x {built}\n",
+                    "#!/bin/sh\nif [ \"$1\" = --list ]; then printf '    mock   alias: x\\n'; exit 0; fi\nmkdir -p {dir}\ncp {source} {built}\n",
                     dir = built.parent().unwrap().display(),
-                    ran = root.join("generated-ran").display(),
+                    source = source.display(),
                     built = built.display(),
                 ),
             )
