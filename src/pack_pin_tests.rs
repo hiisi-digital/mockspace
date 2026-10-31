@@ -675,8 +675,7 @@ fn this_process_in(dir: &Path, env: &[(&str, &str)], name: &str) -> String {
     child
         .args([
             "--exact",
-            "pack_pin::tests::this_process_reports_itself",
-            "--ignored",
+            CHILD_TEST,
             "--nocapture",
             "--test-threads=1",
         ])
@@ -704,18 +703,15 @@ fn sources_in(dir: &Path, env: &[(&str, &str)]) -> [String; 3] {
     ["ssh_command", "ssh", "core"].map(|name| this_process_in(dir, env, name))
 }
 
-#[test]
-#[ignore = "run as a child by this_process_in, which reads what it prints"]
-fn this_process_reports_itself() {
+/// The test `this_process_in` runs the test binary again for. It is an ordinary test, so
+/// no run of the suite, ignored tests included, finds a second one that only reports.
+const CHILD_TEST: &str = "pack_pin::tests::this_process_reads_both_variables_and_the_clone_it_runs_in";
+
+/// In the child: prints what `ThisProcess` reads, one `name=value` line each, and returns
+/// true so the caller stops there. False in the test binary's own run.
+fn report_if_child() -> bool {
     if std::env::var_os(CHILD).is_none() {
-        // Run by `--include-ignored` rather than as a child: it reports nothing
-        // itself, so what it can show is that a child does, all four lines of it.
-        let dir = tempfile::tempdir().unwrap();
-        git(dir.path(), &["init", "-q"]);
-        for name in ["ssh_command", "ssh", "core", "batch"] {
-            this_process_in(dir.path(), &[], name);
-        }
-        return;
+        return false;
     }
     let p = ThisProcess;
     // The harness prints the test's name with no newline before its output.
@@ -727,10 +723,14 @@ fn this_process_reports_itself() {
         "batch={:?}",
         ssh_env(&ls_remote_command("u", "dev", &p, ASK_DEADLINE))
     );
+    true
 }
 
 #[test]
 fn this_process_reads_both_variables_and_the_clone_it_runs_in() {
+    if report_if_child() {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     git(dir.path(), &["init", "-q"]);
     assert_eq!(sources_in(dir.path(), &[]), ["None".to_string(), "None".into(), "None".into()]);

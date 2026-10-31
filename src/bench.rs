@@ -2096,11 +2096,9 @@ mod tests {
     /// built by the same hands as the code under test tends to avoid exactly
     /// the shape that breaks it.
     ///
-    /// The crate is `bench-core`, this repository's own: it has no dependencies
-    /// to fetch and carries tests of its own, which a copy of it must still run
-    /// and pass. `MOCKSPACE_REAL_SUPPORT_CRATE` names another by path, to try one
-    /// from a consumer. There is no skip: a skip that reads as a pass is how a
-    /// gate stops being one, as `real_trees.rs` gives.
+    /// `MOCKSPACE_REAL_SUPPORT_CRATE` names one, by path. Without it this
+    /// PANICS rather than silently passing, for the reason `real_trees.rs`
+    /// gives: a skip that reads as a pass is how a gate stops being one.
     ///
     /// One crate rather than a whole tree, because timing a large tree is not
     /// what this exists for. The walk-and-aggregate logic is exercised
@@ -2108,11 +2106,16 @@ mod tests {
     /// input that reaches what `mock bench test` was built for and a bare
     /// `cargo test` at the bench root cannot.
     ///
+    /// Run with:
+    ///   MOCKSPACE_REAL_SUPPORT_CRATE=<path> cargo test --lib \
+    ///     bench::tests::cmd_test_finds_and_runs_a_real_support_crate -- --ignored
     #[test]
+    #[ignore = "needs a real support crate: set MOCKSPACE_REAL_SUPPORT_CRATE to one"]
     fn cmd_test_finds_and_runs_a_real_support_crate() {
-        let source = std::env::var_os("MOCKSPACE_REAL_SUPPORT_CRATE")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("bench-core"));
+        let source = PathBuf::from(
+            std::env::var("MOCKSPACE_REAL_SUPPORT_CRATE")
+                .expect("set MOCKSPACE_REAL_SUPPORT_CRATE to a bench support crate's directory"),
+        );
         assert!(
             source.join("src/lib.rs").is_file(),
             "expected {} to hold a crate; is MOCKSPACE_REAL_SUPPORT_CRATE pointed at one?",

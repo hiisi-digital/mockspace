@@ -14,7 +14,9 @@
 //!
 //! Forgiveness is post-hoc, never predicted. The command runs, and its failure
 //! is forgiven only when BOTH hold: cargo's own diagnostic says the workspace
-//! has no members, and the manifest is confirmed virtual with no members. Any
+//! has no members, or that a `members` glob is itself the member it could not
+//! load, and the manifest is confirmed virtual with no members, a glob matching
+//! no directory counting as none. Any
 //! other failure fails the gate exactly as before, so a real breakage can never
 //! be mistaken for the empty-workspace case.
 
@@ -61,20 +63,29 @@ fn wildcard_matches(pattern: &str, name: &str) -> bool {
     go(&pattern.chars().collect::<Vec<_>>(), &name.chars().collect::<Vec<_>>())
 }
 
-/// Whether a `members` entry is a glob in its last path segment, and no directory under
-/// its parent matches it. A glob in any other segment is not read, and counts as a
-/// member, so the gate errs toward failing.
+/// Whether a `members` entry is a glob in its last path segment, written only with `*` and
+/// `?`, and no directory under its parent matches it. Files do not count, as cargo counts
+/// only directories, so a `crates/.gitkeep` leaves the glob matching nothing. A glob in any
+/// other segment, a character class, or a parent that cannot be read for any reason but
+/// being absent is not read, and counts as a member, so the gate errs toward failing.
 fn is_a_glob_matching_nothing(mock_dir: &Path, member: &str) -> bool {
     let (parent, last) = member.rsplit_once('/').unwrap_or((".", member));
-    if !has_glob_char(last) || has_glob_char(parent) {
+    if !has_glob_char(last) || has_glob_char_other_than_wildcards(last) || has_glob_char(parent) {
         return false;
     }
-    let Ok(entries) = std::fs::read_dir(mock_dir.join(parent)) else {
-        return true;
+    let entries = match std::fs::read_dir(mock_dir.join(parent)) {
+        Ok(entries) => entries,
+        Err(e) => return e.kind() == std::io::ErrorKind::NotFound,
     };
-    !entries
-        .flatten()
-        .any(|e| wildcard_matches(last, &e.file_name().to_string_lossy()))
+    !entries.flatten().any(|e| {
+        e.file_type().is_ok_and(|t| t.is_dir())
+            && wildcard_matches(last, &e.file_name().to_string_lossy())
+    })
+}
+
+/// A character class, which `wildcard_matches` does not read.
+fn has_glob_char_other_than_wildcards(s: &str) -> bool {
+    s.contains(['[', ']', '{', '}', '!'])
 }
 
 /// Whether `mock_dir`'s manifest is a virtual workspace with no members.
@@ -313,6 +324,27 @@ mod tests {
         manifest(tmp.path(), "[workspace]\nmembers = [\"crates/a\"]\n");
         assert!(!is_memberless_virtual_workspace(tmp.path()));
         manifest(tmp.path(), "[workspace]\nmembers = [\"*/x\"]\n");
+        assert!(!is_memberless_virtual_workspace(tmp.path()));
+    }
+
+    #[test]
+    fn a_glob_over_a_directory_holding_only_a_file_still_matches_nothing() {
+        // git cannot commit an empty directory, so a repo before its crates exist
+        // holds `crates/.gitkeep`; cargo counts directories only
+        let tmp = tempfile::tempdir().unwrap();
+        manifest(tmp.path(), "[workspace]\nmembers = [\"crates/*\"]\n");
+        std::fs::create_dir_all(tmp.path().join("crates")).unwrap();
+        std::fs::write(tmp.path().join("crates/.gitkeep"), "").unwrap();
+        assert!(is_memberless_virtual_workspace(tmp.path()));
+    }
+
+    #[test]
+    fn a_character_class_is_not_read_so_it_is_never_memberless() {
+        // the matcher reads `*` and `?` only; a class it would read as literal text
+        // would match nothing and skip the tests of a workspace with real members
+        let tmp = tempfile::tempdir().unwrap();
+        manifest(tmp.path(), "[workspace]\nmembers = [\"crates/[a-z]*\"]\n");
+        std::fs::create_dir_all(tmp.path().join("crates/foo")).unwrap();
         assert!(!is_memberless_virtual_workspace(tmp.path()));
     }
 
