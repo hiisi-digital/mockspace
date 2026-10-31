@@ -110,15 +110,51 @@ pub(crate) fn digest_inputs(inputs: &Inputs) -> String {
     hex(&h.finalize())
 }
 
+/// The files git tracks under `root`, as paths relative to it, or `None` where `root` is in no
+/// repository (or git cannot be run) and so git cannot say which files belong.
+///
+/// The index is what is asked, so a file staged but not yet committed is a file of the package, and
+/// one that is untracked or ignored is not: a scratch file beside a package is not part of it, and
+/// letting one move the identity builds the library again for nothing. A file that is read by the
+/// build and tracked by nobody still reaches `depinfo`, which records what the compiler opened.
+fn tracked_files(root: &Path) -> Option<std::collections::HashSet<String>> {
+    // Without `--full-name` the paths are relative to the directory it runs in, which is `root`.
+    let out = output_of_in(root, "git", &["ls-files", "-z", "--cached", "--", "."])?;
+    let listed = out
+        .split(|b| *b == 0)
+        .filter(|p| !p.is_empty())
+        .filter_map(|p| std::str::from_utf8(p).ok())
+        .map(str::to_string)
+        .collect();
+    Some(listed)
+}
+
 /// The digest of a directory's files: each relative path and its bytes, in name order. Build
-/// output (`target`) and git state are not part of a package.
+/// output (`target`) and git state are not part of a package, and where the directory is in a git
+/// repository only the files git tracks are (see [`tracked_files`]).
 pub(crate) fn digest_tree(root: &Path) -> std::io::Result<String> {
     let mut h = Sha256::new();
-    walk(root, root, &mut h)?;
+    let tracked = tracked_files(root);
+    walk(root, root, &mut h, tracked.as_ref())?;
+    // A tracked file that is gone from the disk is a change to the package and is hashed as one.
+    if let Some(tracked) = &tracked {
+        let mut gone: Vec<&String> =
+            tracked.iter().filter(|rel| std::fs::symlink_metadata(root.join(rel.as_str())).is_err()).collect();
+        gone.sort();
+        for rel in gone {
+            field(&mut h, b"gone");
+            field(&mut h, rel.as_bytes());
+        }
+    }
     Ok(hex(&h.finalize()))
 }
 
-fn walk(root: &Path, dir: &Path, h: &mut Sha256) -> std::io::Result<()> {
+fn walk(
+    root: &Path,
+    dir: &Path,
+    h: &mut Sha256,
+    tracked: Option<&std::collections::HashSet<String>>,
+) -> std::io::Result<()> {
     let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     entries.sort_by_key(|e| e.file_name());
     for entry in entries {
@@ -131,7 +167,9 @@ fn walk(root: &Path, dir: &Path, h: &mut Sha256) -> std::io::Result<()> {
             if (dir == root && name == "target") || name == ".git" {
                 continue;
             }
-            walk(root, &path, h)?;
+            walk(root, &path, h, tracked)?;
+        } else if tracked.is_some_and(|t| !t.contains(&rel)) {
+            continue;
         } else if meta.file_type().is_symlink() {
             // The link as written, and the content behind it where it is a file. A link to a
             // directory is not followed, which could loop; the files read through it are in the
@@ -203,6 +241,12 @@ pub(crate) fn members_from_metadata(
 /// build runs, so a `rust-toolchain.toml` there answers the same.
 fn output_of(program: &str, args: &[&str]) -> Option<Vec<u8>> {
     let out = Command::new(program).args(args).env("LC_ALL", "C").output().ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
+/// [`output_of`] run in `dir`.
+fn output_of_in(dir: &Path, program: &str, args: &[&str]) -> Option<Vec<u8>> {
+    let out = Command::new(program).args(args).current_dir(dir).env("LC_ALL", "C").output().ok()?;
     out.status.success().then_some(out.stdout)
 }
 
