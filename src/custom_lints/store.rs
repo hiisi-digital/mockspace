@@ -577,6 +577,37 @@ pub(crate) mod knobs {
         BUILDS.lock().unwrap().iter().filter(|d| d.starts_with(base)).count()
     }
 
+    type FileHook = Box<dyn Fn(&Path)>;
+
+    thread_local! {
+        static BETWEEN_READ_AND_STAT: std::cell::RefCell<Option<FileHook>> = const { std::cell::RefCell::new(None) };
+    }
+
+    /// Clears the hook it set when dropped.
+    pub(crate) struct FileHookGuard;
+
+    impl Drop for FileHookGuard {
+        fn drop(&mut self) {
+            BETWEEN_READ_AND_STAT.with(|h| *h.borrow_mut() = None);
+        }
+    }
+
+    /// For this thread: run `hook` with the path of each source `depinfo::record` has read and not
+    /// yet asked the change time of, which is where an edit lands in the window the order of the
+    /// two calls closes. Per thread, so a test that sets one cannot disturb another beside it.
+    pub(crate) fn between_read_and_stat(hook: impl Fn(&Path) + 'static) -> FileHookGuard {
+        BETWEEN_READ_AND_STAT.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
+        FileHookGuard
+    }
+
+    pub(crate) fn run_between_read_and_stat(file: &Path) {
+        BETWEEN_READ_AND_STAT.with(|h| {
+            if let Some(hook) = h.borrow().as_ref() {
+                hook(file);
+            }
+        });
+    }
+
     pub(crate) fn pause_between_write_and_build(dir: &Path) {
         let pause = KNOBS
             .lock()

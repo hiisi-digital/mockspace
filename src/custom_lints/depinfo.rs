@@ -243,6 +243,8 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
             // The bytes first and the change time after: an edit between the two shows in the time,
             // and the other order would store the new content beside the library of the old.
             let bytes = std::fs::read(&file).ok()?;
+            #[cfg(test)]
+            super::store::knobs::run_between_read_and_stat(&file);
             let changed = changed_at(&std::fs::metadata(&file).ok()?)?;
             if changed + margin > reference {
                 return None;

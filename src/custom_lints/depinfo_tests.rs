@@ -349,3 +349,37 @@ fn a_build_script_or_macro_of_a_path_package_leaves_nothing_kept() {
     assert!(record(&with_unit(&dylib, &source, false, false), &gen_dir, &roots, Duration::ZERO).is_some());
     assert!(record(&with_unit(&dylib, &source, false, true), &gen_dir, &roots, Duration::ZERO).is_none());
 }
+
+/// The change time of a file edited inside the window between the compiler's read and ours is
+/// after the build began, and the bytes we hold are the new ones. Reading the bytes first is what
+/// makes the time catch it; the hook runs between the two calls so the order is what is tested.
+#[test]
+fn a_source_edited_between_the_read_and_the_stat_is_not_recorded() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gen_dir = tmp.path().join("gen");
+    let source = tmp.path().join("lints").join("probe.rs");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, "old").unwrap();
+    let mut roots = Roots::default();
+    roots.add("lints", source.parent().unwrap());
+    let dylib = built(&gen_dir, &format!("out.d: {}\n", source.display()));
+    // The file is older than the build, with room for the filesystem's timestamp to tell the two apart.
+    std::thread::sleep(Duration::from_millis(60));
+    let began = SystemTime::now();
+    std::thread::sleep(Duration::from_millis(60));
+
+    let control = record(&made(&dylib, began, false), &gen_dir, &roots, Duration::ZERO);
+    assert!(control.is_some(), "the control: a source older than the build, with nobody editing it");
+
+    let edit = source.clone();
+    let _hook = crate::custom_lints::store::knobs::between_read_and_stat(move |file| {
+        if file == edit {
+            std::fs::write(file, "new").unwrap();
+        }
+    });
+    assert!(
+        record(&made(&dylib, began, false), &gen_dir, &roots, Duration::ZERO).is_none(),
+        "an edit after the read must show in the change time, or the old library is kept beside the new content"
+    );
+    assert_eq!(std::fs::read_to_string(&source).unwrap(), "new", "the hook ran");
+}
