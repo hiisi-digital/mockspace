@@ -27,7 +27,54 @@ use std::process::Command;
 /// absolute manifest path, and cargo has reworded the surrounding prose before.
 pub(crate) fn diagnostic_is_no_members(stderr: &str) -> bool {
     let s = stderr.to_ascii_lowercase();
-    s.contains("contains no package") && s.contains("workspace has no members")
+    (s.contains("contains no package") && s.contains("workspace has no members"))
+        || diagnostic_is_an_unmatched_members_glob(&s)
+}
+
+/// Whether the lowercased stderr is cargo failing to load a workspace member that is
+/// the glob itself, which is how it reports `members = ["crates/*"]` matching nothing:
+/// the member path ends in the unexpanded pattern and the workspace "referenced" it
+/// directly, where a member the glob did match is "referenced via" the pattern.
+fn diagnostic_is_an_unmatched_members_glob(s: &str) -> bool {
+    s.lines()
+        .find_map(|l| l.strip_prefix("error: failed to load manifest for workspace member "))
+        .is_some_and(|member| has_glob_char(member.trim_matches('`')))
+        && s.contains("referenced by workspace at")
+}
+
+fn has_glob_char(s: &str) -> bool {
+    s.contains(['*', '?', '['])
+}
+
+/// Whether `name` matches `pattern`, where `*` is any run and `?` any one character.
+fn wildcard_matches(pattern: &str, name: &str) -> bool {
+    fn go(p: &[char], n: &[char]) -> bool {
+        match p.split_first() {
+            None => n.is_empty(),
+            Some(('*', rest)) => (0..=n.len()).any(|i| go(rest, &n[i..])),
+            Some((c, rest)) => {
+                n.split_first()
+                    .is_some_and(|(m, more)| (*c == '?' || c == m) && go(rest, more))
+            },
+        }
+    }
+    go(&pattern.chars().collect::<Vec<_>>(), &name.chars().collect::<Vec<_>>())
+}
+
+/// Whether a `members` entry is a glob in its last path segment, and no directory under
+/// its parent matches it. A glob in any other segment is not read, and counts as a
+/// member, so the gate errs toward failing.
+fn is_a_glob_matching_nothing(mock_dir: &Path, member: &str) -> bool {
+    let (parent, last) = member.rsplit_once('/').unwrap_or((".", member));
+    if !has_glob_char(last) || has_glob_char(parent) {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(mock_dir.join(parent)) else {
+        return true;
+    };
+    !entries
+        .flatten()
+        .any(|e| wildcard_matches(last, &e.file_name().to_string_lossy()))
 }
 
 /// Whether `mock_dir`'s manifest is a virtual workspace with no members.
@@ -54,7 +101,12 @@ pub(crate) fn is_memberless_virtual_workspace(mock_dir: &Path) -> bool {
         return false;
     };
     match workspace.get("members") {
-        Some(members) => members.as_array().is_some_and(toml_edit::Array::is_empty),
+        Some(members) => {
+            members.as_array().is_some_and(|list| {
+                list.iter()
+                    .all(|m| m.as_str().is_some_and(|m| is_a_glob_matching_nothing(mock_dir, m)))
+            })
+        },
         None => true,
     }
 }
@@ -226,15 +278,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "catalogue: members globbing to nothing yields a different cargo \
-                diagnostic, so a pre-first-round repo seeding a glob member list \
-                is still blocked; needs its own tolerated diagnostic"]
     fn a_members_glob_matching_nothing_is_also_a_pre_taxonomy_state() {
         // `members = ["crates/*"]` with an empty crates/ dir is the same
         // situation as an empty list from the repo's point of view, but cargo
-        // reports it as a failed member load rather than as no members, so the
-        // gate does not tolerate it. Asserting the intended behaviour, red until
-        // that diagnostic is handled.
+        // reports it as a failed member load of the glob itself rather than as
+        // no members.
         let tmp = tempfile::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nmembers = [\"crates/*\"]\n");
         std::fs::create_dir_all(tmp.path().join("crates")).unwrap();
@@ -242,5 +290,38 @@ mod tests {
             forgives_failure(tmp.path(), &["check"]),
             "a members glob matching nothing is the same pre-taxonomy state"
         );
+    }
+
+    #[test]
+    fn a_glob_that_matches_a_directory_is_a_member_and_is_not_forgiven() {
+        // the control: a glob that matches a broken crate is a real breakage,
+        // reported "via" the pattern, and neither half of the check forgives it
+        let tmp = tempfile::tempdir().unwrap();
+        manifest(tmp.path(), "[workspace]\nmembers = [\"crates/*\"]\n");
+        std::fs::create_dir_all(tmp.path().join("crates/x")).unwrap();
+        assert!(!is_memberless_virtual_workspace(tmp.path()));
+        assert!(!forgives_failure(tmp.path(), &["check"]));
+        assert!(!diagnostic_is_no_members(
+            "error: failed to load manifest for workspace member `/r/crates/x`\n\
+             referenced via `crates/*` by workspace at `/r/Cargo.toml`\n"
+        ));
+    }
+
+    #[test]
+    fn a_plain_member_and_a_glob_in_a_parent_segment_are_never_memberless() {
+        let tmp = tempfile::tempdir().unwrap();
+        manifest(tmp.path(), "[workspace]\nmembers = [\"crates/a\"]\n");
+        assert!(!is_memberless_virtual_workspace(tmp.path()));
+        manifest(tmp.path(), "[workspace]\nmembers = [\"*/x\"]\n");
+        assert!(!is_memberless_virtual_workspace(tmp.path()));
+    }
+
+    #[test]
+    fn a_wildcard_reads_star_as_a_run_and_question_as_one_character() {
+        assert!(wildcard_matches("*", ""));
+        assert!(wildcard_matches("a*c", "abbc"));
+        assert!(wildcard_matches("a?c", "abc"));
+        assert!(!wildcard_matches("a?c", "ac"));
+        assert!(!wildcard_matches("a*c", "abd"));
     }
 }

@@ -707,7 +707,16 @@ fn sources_in(dir: &Path, env: &[(&str, &str)]) -> [String; 3] {
 #[test]
 #[ignore = "run as a child by this_process_in, which reads what it prints"]
 fn this_process_reports_itself() {
-    assert!(std::env::var_os(CHILD).is_some(), "run only as a child, by `this_process_in`");
+    if std::env::var_os(CHILD).is_none() {
+        // Run by `--include-ignored` rather than as a child: it reports nothing
+        // itself, so what it can show is that a child does, all four lines of it.
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q"]);
+        for name in ["ssh_command", "ssh", "core", "batch"] {
+            this_process_in(dir.path(), &[], name);
+        }
+        return;
+    }
     let p = ThisProcess;
     // The harness prints the test's name with no newline before its output.
     println!();
