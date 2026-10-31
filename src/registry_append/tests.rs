@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use super::edit::append;
@@ -96,8 +95,7 @@ fn place_hook(root: &Path, body: &str) -> std::path::PathBuf {
     let dir = root.join(".mockspace/hooks");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("registry-append");
-    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(&path, format!("#!/bin/sh\n{body}\n"));
     path
 }
 
