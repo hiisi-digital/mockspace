@@ -1,0 +1,10 @@
+[package]
+name = "real-support-crate"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "A small, buildable bench support crate with passing tests, run by `mock bench test`'s own test"
+
+# Its own workspace root, so cargo never reads this directory as a member of the
+# repository above it, wherever it is built from.
+[workspace]
