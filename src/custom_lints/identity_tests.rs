@@ -362,3 +362,19 @@ fn a_package_outside_any_repository_is_read_whole() {
     std::fs::write(pkg.join("more.rs"), "fn m() {}").unwrap();
     assert_ne!(digest_tree(&pkg).unwrap(), before, "git cannot say, so every file counts");
 }
+
+#[test]
+fn a_package_git_does_not_track_at_all_is_read_whole() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    git_in(tmp.path(), &["init", "-q", repo.to_str().unwrap()]);
+    let pkg = repo.join("pkg");
+    tree(&pkg, "fn x() {}");
+    let before = digest_tree(&pkg).unwrap();
+    // A pack drafted before its first `git add`: the manifest is not in any lint source or dep-info.
+    std::fs::write(pkg.join("Cargo.toml"), "[package]\nedition = \"2021\"\n").unwrap();
+    assert_ne!(digest_tree(&pkg).unwrap(), before, "a manifest edit in an untracked package");
+    std::fs::write(pkg.join("src").join("lib.rs"), "fn y() {}").unwrap();
+    let edited = digest_tree(&pkg).unwrap();
+    assert_ne!(edited, before, "a source edit in an untracked package");
+}

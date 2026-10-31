@@ -371,6 +371,8 @@ fn a_source_edited_between_the_read_and_the_stat_is_not_recorded() {
     let control = record(&made(&dylib, began, false), &gen_dir, &roots, Duration::ZERO);
     assert!(control.is_some(), "the control: a source older than the build, with nobody editing it");
 
+    // The hook stays between the two calls in `record`, which is what makes a swap of them fail
+    // here: an edit made before both would show in the stat whatever their order.
     let edit = source.clone();
     let _hook = crate::custom_lints::store::knobs::between_read_and_stat(move |file| {
         if file == edit {
@@ -392,6 +394,8 @@ fn registry_crate(tmp: &Path, crate_bytes: &[u8], lock_checksum: &str) -> (PathB
     let source = home.join("registry").join("src").join("idx-1").join("foo-1.0.0").join("src").join("lib.rs");
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
     std::fs::write(&source, "pub fn foo() {}").unwrap();
+    // Cargo writes this last, when it has finished unpacking: nothing in the package is newer.
+    std::fs::write(home.join("registry").join("src").join("idx-1").join("foo-1.0.0").join(".cargo-ok"), "{}").unwrap();
     let cache = home.join("registry").join("cache").join("idx-1");
     std::fs::create_dir_all(&cache).unwrap();
     std::fs::write(cache.join("foo-1.0.0.crate"), crate_bytes).unwrap();
@@ -466,4 +470,57 @@ fn a_registry_crate_is_not_trusted_unless_its_file_matches_the_lock() {
     let mut roots = Roots::default();
     roots.allow_absolute(&home);
     assert!(record(&made(&dylib, later(), false), &gen_dir, &roots, hour).is_none(), "no crate file");
+}
+
+#[test]
+fn a_registry_file_edited_after_cargo_unpacked_it_is_not_trusted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bytes = b"the crate file as the registry served it";
+    let (home, gen_dir, source) = registry_crate(tmp.path(), bytes, &digest_bytes(bytes));
+    let dylib = built(&gen_dir, &format!("out.d: {}\n", source.display()));
+    let mut roots = Roots::default();
+    roots.allow_absolute(&home);
+    let hour = Duration::from_secs(3600);
+    assert!(record(&made(&dylib, later(), false), &gen_dir, &roots, hour).is_some(), "the control: as unpacked");
+
+    // The `.crate` still matches the lock, which says nothing of the unpacked copy. Cargo does not
+    // fingerprint registry sources by time, so it would reuse the unit built from the old text.
+    std::thread::sleep(Duration::from_millis(60));
+    std::fs::write(&source, "pub fn foo() { edited() }").unwrap();
+    assert!(
+        record(&made(&dylib, later(), true), &gen_dir, &roots, hour).is_none(),
+        "a source newer than cargo's own mark of having finished unpacking"
+    );
+}
+
+#[test]
+fn a_registry_source_is_never_touched_to_make_cargo_rebuild_its_unit() {
+    // Cargo fingerprints a registry crate by its version, not by the time of its files, so touching
+    // one forces nothing, writes to a cache every tree shares, and puts the file after the mark
+    // cargo left when it finished unpacking.
+    let tmp = tempfile::tempdir().unwrap();
+    let gen_dir = tmp.path().join("gen");
+    let own = tmp.path().join("lints").join("tool.rs");
+    std::fs::create_dir_all(own.parent().unwrap()).unwrap();
+    std::fs::write(&own, "x").unwrap();
+    let registry = tmp.path().join("home").join("registry").join("src").join("idx-1").join("foo-1.0.0").join("src").join("lib.rs");
+    std::fs::create_dir_all(registry.parent().unwrap()).unwrap();
+    std::fs::write(&registry, "y").unwrap();
+    let dylib = built(&gen_dir, "out.d: \n");
+    let deps = dylib.parent().unwrap().join("deps");
+    std::fs::write(
+        deps.join("tool-0f.d"),
+        format!("tool-0f.rlib: {} {}\n", own.display(), registry.display()),
+    )
+    .unwrap();
+    // The unit is old and both sources are newer than it.
+    std::fs::File::options()
+        .write(true)
+        .open(deps.join("tool-0f.d"))
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(3600))
+        .unwrap();
+    let unit = Unit { files: vec![deps.join("libtool-0f.rlib")], fresh: true, tree_code: false };
+    let build = Built { units: vec![unit], ..made(&dylib, later(), false) };
+    assert_eq!(newer_than_their_units(&build, &gen_dir), [own], "the control: a source of the tree is");
 }

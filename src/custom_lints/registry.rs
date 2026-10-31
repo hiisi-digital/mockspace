@@ -16,12 +16,22 @@
 //! `.crate` beside it, in `registry/cache/<index>/`, hashes to the checksum the generated crate's
 //! lock gives for that package. Its own digest is still recorded and checked as any source's is.
 //!
+//! The checksum is of the `.crate` and says nothing of the unpacked copy, so it does not stand
+//! alone: the file must also be no newer than the package's `.cargo-ok`, which cargo writes when
+//! it has finished unpacking. A file edited by hand afterwards is newer, is held to the age as any
+//! source is, and cargo's reuse of the unit built from the old text cannot be mistaken for a build
+//! of the edit.
+//!
 //! holds for: a source under a cargo home declared the same for every tree, of a package the lock
-//! gives a checksum. Does not hold for a path or git package, which have none, and so keep the age.
+//! gives a checksum, unpacked by a cargo that writes `.cargo-ok`. Does not hold for a path or git
+//! package, which have none, and so keep the age. Two registries serving one name and version are
+//! keyed alike here, and then the verdict may be a refusal, which is only the age test.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
+use super::depinfo::changed_at;
 use super::identity::digest_bytes;
 
 /// What the lock of one generated crate says, and the verdicts reached so far, so a crate file is
@@ -46,7 +56,11 @@ impl Registry {
 
     /// Whether `file`, as the filesystem resolves it, sits in the unpacked source of a registry
     /// crate under one of `homes` whose `.crate` hashes to the checksum the lock gives.
-    pub(crate) fn trusts(&mut self, file: &Path, homes: &[PathBuf]) -> bool {
+    ///
+    /// `changed` is when `file` last changed. It must be no later than the package's `.cargo-ok`,
+    /// which cargo writes when it has finished unpacking: the checksum is of the `.crate` and says
+    /// nothing of the unpacked copy, so a file edited after the unpack is not what the checksum names.
+    pub(crate) fn trusts(&mut self, file: &Path, changed: SystemTime, homes: &[PathBuf]) -> bool {
         for home in homes {
             let Ok(below) = file.strip_prefix(home.join("registry").join("src")) else {
                 continue;
@@ -59,6 +73,11 @@ impl Registry {
             let Some(package_name) = package.to_str() else {
                 continue;
             };
+            let unpacked = home.join("registry").join("src").join(index).join(package);
+            let finished = std::fs::metadata(unpacked.join(".cargo-ok")).ok().and_then(|m| changed_at(&m));
+            if finished.is_none_or(|finished| changed > finished) {
+                return false;
+            }
             let crate_file = home.join("registry").join("cache").join(index).join(format!("{package_name}.crate"));
             if let Some(verdict) = self.verdicts.get(&crate_file) {
                 return *verdict;
@@ -71,6 +90,13 @@ impl Registry {
         }
         false
     }
+}
+
+/// Whether `file` sits in a cargo home's unpacked registry sources (`registry/src/<index>/`), under
+/// whichever home. Only the shape of the path is read, so it holds for a file as the compiler listed it.
+pub(crate) fn is_registry_source(file: &Path) -> bool {
+    let parts: Vec<_> = file.components().map(|c| c.as_os_str()).collect();
+    parts.windows(2).any(|w| w[0] == "registry" && w[1] == "src")
 }
 
 fn checksums(doc: &toml_edit::DocumentMut) -> HashMap<String, String> {

@@ -179,7 +179,7 @@ fn env_digest(value: Option<&[u8]>) -> String {
 
 /// When a file last changed, by anything: the later of its modification and its change time. The
 /// second cannot be set from user space, so `cp -p`, `tar x` and `rsync -t` do not move it back.
-fn changed_at(meta: &std::fs::Metadata) -> Option<SystemTime> {
+pub(super) fn changed_at(meta: &std::fs::Metadata) -> Option<SystemTime> {
     let modified = meta.modified().ok()?;
     #[cfg(unix)]
     {
@@ -247,8 +247,9 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
             #[cfg(test)]
             super::store::knobs::run_between_read_and_stat(&file);
             let changed = changed_at(&std::fs::metadata(&file).ok()?)?;
-            // A registry crate has no age to speak of: it is held by the checksum of its `.crate`.
-            if changed + margin > reference && !registry.trusts(&seen, &roots.absolute) {
+            // A registry crate is as new as the unpack: it is held by the checksum of its `.crate`
+            // and bounded by the mark cargo left when it finished unpacking, not by the margin.
+            if changed + margin > reference && !registry.trusts(&seen, changed, &roots.absolute) {
                 return None;
             }
             let name = roots.name(&file)?;
@@ -335,6 +336,11 @@ pub(crate) fn newer_than_their_units(built: &Built, gen_dir: &Path) -> Vec<PathB
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
         for source in sources_of(&text) {
             let file = if source.is_absolute() { source } else { gen_dir.join(source) };
+            // Cargo fingerprints a registry crate by its version and not by the time of its files, so
+            // touching one forces no rebuild and only moves it past the mark of its unpack (`registry`).
+            if super::registry::is_registry_source(&file) {
+                continue;
+            }
             if std::fs::metadata(&file).ok().and_then(|m| changed_at(&m)).is_some_and(|at| at > made) {
                 out.push(file);
             }

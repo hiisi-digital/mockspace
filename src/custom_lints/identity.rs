@@ -134,7 +134,9 @@ fn tracked_files(root: &Path) -> Option<std::collections::HashSet<String>> {
 /// repository only the files git tracks are (see [`tracked_files`]).
 pub(crate) fn digest_tree(root: &Path) -> std::io::Result<String> {
     let mut h = Sha256::new();
-    let tracked = tracked_files(root);
+    // A package whose own manifest git does not track is not tracked at all (a pack drafted before
+    // its first `git add`), and its manifest is the one file no dep-info lists: it is read whole.
+    let tracked = tracked_files(root).filter(|t| t.contains("Cargo.toml"));
     walk(root, root, &mut h, tracked.as_ref())?;
     // A tracked file that is gone from the disk is a change to the package and is hashed as one.
     if let Some(tracked) = &tracked {
