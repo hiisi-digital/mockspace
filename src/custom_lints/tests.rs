@@ -258,3 +258,24 @@ fn manifest_renames_lint_rules_to_mockspace() {
     // standalone under the consumer's <mock>/target/ (not as a member).
     assert!(manifest.trim_start().starts_with("[workspace]"));
 }
+
+#[test]
+fn an_engine_path_is_refused_when_a_repo_declares_a_pack() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = crate::config::Config::from_dir(dir.path());
+    let path_dep = "{ package = \"mockspace-lint-rules\", path = \"/engine/lint-rules\" }";
+    let packs = [("p".to_string(), "{ git = \"ssh://g/p.git\", branch = \"dev\" }".to_string())];
+
+    let refused = dir.path().join("refused");
+    let err = write_cdylib_crate(&refused, &dir.path().join("lints"), &[], &packs, &[], path_dep, &cfg)
+        .expect_err("a pack beside a path engine would build a second lint-rules");
+    assert!(err.contains("has no git url"), "{err}");
+    assert!(err.contains("`[lint-crates]` pack(s)"), "{err}");
+    assert!(!refused.join("Cargo.toml").exists(), "a refused crate writes no manifest");
+
+    // The case that must pass: the same engine path with no pack declared has nothing to unify.
+    let allowed = dir.path().join("allowed");
+    write_cdylib_crate(&allowed, &dir.path().join("lints"), &[], &[], &[], path_dep, &cfg)
+        .expect("without a pack a path engine is fine");
+    assert!(allowed.join("Cargo.toml").exists());
+}
