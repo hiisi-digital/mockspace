@@ -140,6 +140,9 @@ pub(crate) fn build_cdylib(
         .arg("--message-format")
         .arg("json-render-diagnostics");
     // Only the generated crate gets these, so the dependencies stay shared between trees.
+    // FIXME(3f67a1d5a1d0): a tool's or path package's own `file!()` still names the tree, since the
+    // remap stops at the generated crate. Options on the ticket include cargo's `trim-paths`
+    // (nightly, needs vetting).
     if !remaps.is_empty() {
         command.arg("--");
         for (from, to) in remaps {

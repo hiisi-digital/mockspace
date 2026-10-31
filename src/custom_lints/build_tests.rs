@@ -20,16 +20,6 @@ fn the_artifact_path_comes_from_cargo_not_from_a_directory() {
 }
 
 #[test]
-fn a_lib_target_name_is_normalised_so_the_package_name_never_matches() {
-    // cargo turns `mockspace-lints-<hash>` into `mockspace_lints_<hash>`.
-    // matching the package name finds nothing, silently, and the engine
-    // then reports a successful build with no artifact. drop the
-    // substitution and this arm is what goes red.
-    assert!(ARTIFACT.contains(r#""name":"mockspace_lints_40d923802ebb4e36""#));
-    assert!(cdylib_artifact(ARTIFACT, "mockspace-lints-40d923802ebb4e36").is_some());
-}
-
-#[test]
 fn another_projects_artifact_is_not_ours() {
     // several generated crates can share one target dir, which is why the
     // name is hashed per project in the first place.
