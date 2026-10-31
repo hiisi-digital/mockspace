@@ -522,8 +522,11 @@ pub(crate) fn check_schemas_with(
     // The same inputs as the last pass replay it. Only a pass is ever saved below, so a failure,
     // a check that examined nothing and an absent taplo (returned above, before any lookup) are
     // each judged again.
-    let key = saved.and_then(|cache| {
-        super::schema_replay::input_key(cache, repo_root, &probe.stdout).map(|key| (cache, key))
+    let key = saved.filter(|_| probe.status.success()).and_then(|cache| {
+        let mut version = probe.stdout.clone();
+        version.extend_from_slice(&probe.stderr);
+        let from_env = std::env::var_os("TAPLO_CONFIG").is_some();
+        super::schema_replay::input_key(cache, repo_root, &version, from_env).map(|key| (cache, key))
     });
     if let Some((cache, key)) = &key {
         let hit = cache.replay(key).as_deref() == Some(super::schema_replay::PASSED);

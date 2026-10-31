@@ -612,3 +612,62 @@ fn a_batch_runs_its_misses_at_the_same_time() {
     });
     assert!(peak.load(Ordering::SeqCst) >= 2, "four slow misses overlapped; a sequential run peaks at one");
 }
+
+/// A store that counts what lints tell it was replayed or judged, and saves only when `writes`.
+#[derive(Default)]
+struct Tallying {
+    saved:  RefCell<HashMap<String, String>>,
+    writes: bool,
+    hit:    AtomicUsize,
+    miss:   AtomicUsize,
+}
+
+impl VerdictCache for Tallying {
+    fn digest(&self, parts: &[&[u8]]) -> String {
+        Memory::default().digest(parts)
+    }
+
+    fn replay(&self, key: &str) -> Option<String> {
+        self.saved.borrow().get(key).cloned()
+    }
+
+    fn remember(&self, key: &str, encoded: &str) {
+        if self.writes {
+            self.saved.borrow_mut().insert(key.to_string(), encoded.to_string());
+        }
+    }
+
+    fn tally(&self, hit: bool, _lint: &str) {
+        let counter = if hit { &self.hit } else { &self.miss };
+        counter.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn a_batch_counts_each_hit_and_each_miss_once() {
+    let store = Tallying { writes: true, ..Default::default() };
+    with_repo_context(Some(&store), |ctx| {
+        ctx.remembered("batched", &[b"warm"], || finding(b"warm"));
+        let hits_before = store.hit.load(Ordering::SeqCst);
+        let misses_before = store.miss.load(Ordering::SeqCst);
+        let parts: Vec<Vec<&[u8]>> = vec![vec![b"warm"], vec![b"cold1"], vec![b"cold2"], vec![b"cold1"]];
+        ctx.remembered_batch("batched", &parts, |_| Vec::new());
+        assert_eq!(store.miss.load(Ordering::SeqCst) - misses_before, 2, "two distinct unseen keys");
+        assert_eq!(store.hit.load(Ordering::SeqCst) - hits_before, 2, "the saved key and the repeated one");
+    });
+}
+
+#[test]
+fn a_batch_repeats_a_key_even_when_the_store_cannot_write() {
+    let store = Tallying { writes: false, ..Default::default() };
+    let computed = AtomicUsize::new(0);
+    with_repo_context(Some(&store), |ctx| {
+        let same: Vec<Vec<&[u8]>> = vec![vec![b"dup"], vec![b"dup"]];
+        let got = ctx.remembered_batch("batched", &same, |_| {
+            computed.fetch_add(1, Ordering::SeqCst);
+            finding(b"dup")
+        });
+        assert_eq!(computed.load(Ordering::SeqCst), 1);
+        assert_eq!((got[0].len(), got[1].len()), (1, 1), "the second naming gets the finding with nothing saved");
+    });
+}
