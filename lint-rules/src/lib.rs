@@ -1537,6 +1537,15 @@ pub struct RepoContext<'a> {
 }
 
 impl RepoContext<'_> {
+    /// The key one item's verdict is saved under, which `remembered` and `remembered_batch` both make.
+    fn item_key(cache: &dyn verdict::VerdictCache, lint: &str, parts: &[&[u8]]) -> String {
+        let mut all: Vec<&[u8]> = Vec::with_capacity(parts.len() + 2);
+        all.push(b"remembered-v1");
+        all.push(lint.as_bytes());
+        all.extend_from_slice(parts);
+        cache.digest(&all)
+    }
+
     /// `compute`'s findings for the item named by `parts`, replayed from the store when the same
     /// parts were judged before.
     ///
@@ -1557,12 +1566,31 @@ impl RepoContext<'_> {
         let Some(cache) = self.verdicts else {
             return compute();
         };
-        let mut all: Vec<&[u8]> = Vec::with_capacity(parts.len() + 2);
-        all.push(b"remembered-v1");
-        all.push(lint.as_bytes());
-        all.extend_from_slice(parts);
-        let key = cache.digest(&all);
+        let key = Self::item_key(cache, lint, parts);
         verdict::replay_or(cache, &key, lint, || Some(compute())).unwrap_or_default()
+    }
+
+    /// [`Self::remembered`] for many items at once: the findings of each, in the order given.
+    ///
+    /// Every item's key is asked of the store first, the misses are then computed at the same time
+    /// on the machine's threads, each distinct key once, and the new verdicts are saved after. A
+    /// lint that spends its time on separable items (a shader compiled each, a tool run per file)
+    /// asks here instead of looping over `remembered`, which can only run one miss after another
+    /// since the store is not `Sync`. `parts[n]` is everything item `n`'s verdict depends on, as
+    /// for `remembered`, and `compute(n)` judges item `n`; it runs on a worker thread, so it holds
+    /// no state it shares unguarded. The keys are the ones `remembered` makes, so a verdict saved by
+    /// either form replays in the other.
+    pub fn remembered_batch(
+        &self,
+        lint: &str,
+        parts: &[Vec<&[u8]>],
+        compute: impl Fn(usize) -> Vec<LintError> + Sync,
+    ) -> Vec<Vec<LintError>> {
+        let Some(cache) = self.verdicts else {
+            return verdict::parallel_map(&(0 .. parts.len()).collect::<Vec<_>>(), &compute);
+        };
+        let keys: Vec<String> = parts.iter().map(|item| Self::item_key(cache, lint, item)).collect();
+        verdict::replay_or_batch(cache, &keys, lint, compute)
     }
 }
 

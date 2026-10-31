@@ -506,3 +506,225 @@ fn a_named_run_judges_afresh_every_time() {
 
     assert!(check_crate_named(&ctx, "no-such-lint", None, &pack).is_empty());
 }
+
+fn finding(item: &[u8]) -> Vec<LintError> {
+    vec![LintError::error("alpha".to_string(), 0, "batched", String::from_utf8_lossy(item).into_owned())]
+}
+
+#[test]
+fn a_batch_runs_each_miss_once_replays_each_hit_and_matches_the_sequential_form() {
+    let items: [&[u8]; 4] = [b"a", b"b", b"c", b"d"];
+    let parts: Vec<Vec<&[u8]>> = items.iter().map(|i| vec![*i]).collect();
+
+    let sequential = Memory::default();
+    let expected: Vec<Vec<LintError>> = with_repo_context(Some(&sequential), |ctx| {
+        items.iter().map(|i| ctx.remembered("batched", &[*i], || finding(i))).collect()
+    });
+
+    let store = Memory::default();
+    let computed = AtomicUsize::new(0);
+    let ran: std::sync::Mutex<Vec<usize>> = Default::default();
+    let ask = |ctx: &crate::RepoContext, subset: &[usize]| {
+        let wanted: Vec<Vec<&[u8]>> = subset.iter().map(|&i| parts[i].clone()).collect();
+        ctx.remembered_batch("batched", &wanted, |n| {
+            computed.fetch_add(1, Ordering::SeqCst);
+            ran.lock().unwrap().push(subset[n]);
+            finding(items[subset[n]])
+        })
+    };
+    with_repo_context(Some(&store), |ctx| {
+        ask(ctx, &[0, 1]);
+        assert_eq!(computed.load(Ordering::SeqCst), 2, "the control: a cold batch computes each item");
+
+        let all = ask(ctx, &[0, 1, 2, 3]);
+        assert_eq!(computed.load(Ordering::SeqCst), 4, "only the two unseen items ran; the two hits replayed");
+        let mut ran = ran.lock().unwrap().clone();
+        ran.sort_unstable();
+        assert_eq!(ran, vec![0, 1, 2, 3], "each item ran exactly once across the two batches");
+        assert_eq!(all.iter().map(|f| lines(f)).collect::<Vec<_>>(), expected.iter().map(|f| lines(f)).collect::<Vec<_>>());
+
+        let again = ask(ctx, &[0, 1, 2, 3]);
+        assert_eq!(computed.load(Ordering::SeqCst), 4, "a warm batch computes nothing");
+        assert_eq!(again.iter().map(|f| lines(f)).collect::<Vec<_>>(), expected.iter().map(|f| lines(f)).collect::<Vec<_>>());
+    });
+}
+
+#[test]
+fn a_batch_shares_keys_with_the_single_form() {
+    let store = Memory::default();
+    let computed = AtomicUsize::new(0);
+    with_repo_context(Some(&store), |ctx| {
+        ctx.remembered("batched", &[b"x"], || finding(b"x"));
+        let got = ctx.remembered_batch("batched", &[vec![b"x" as &[u8]]], |_| {
+            computed.fetch_add(1, Ordering::SeqCst);
+            Vec::new()
+        });
+        assert_eq!(computed.load(Ordering::SeqCst), 0, "a verdict saved singly replays in a batch");
+        assert_eq!(lines(&got[0]), lines(&finding(b"x")));
+    });
+}
+
+#[test]
+fn a_batch_with_one_key_twice_computes_it_once() {
+    let store = Memory::default();
+    let computed = AtomicUsize::new(0);
+    with_repo_context(Some(&store), |ctx| {
+        let same: Vec<Vec<&[u8]>> = vec![vec![b"dup"], vec![b"dup"]];
+        let got = ctx.remembered_batch("batched", &same, |_| {
+            computed.fetch_add(1, Ordering::SeqCst);
+            finding(b"dup")
+        });
+        assert_eq!(computed.load(Ordering::SeqCst), 1);
+        assert_eq!((got[0].len(), got[1].len()), (1, 1), "both positions carry the finding");
+    });
+}
+
+#[test]
+fn a_batch_without_a_store_computes_every_item_and_keeps_the_order() {
+    let computed = AtomicUsize::new(0);
+    with_repo_context(None, |ctx| {
+        let parts: Vec<Vec<&[u8]>> = vec![vec![b"p"], vec![b"q"], vec![b"r"]];
+        let got = ctx.remembered_batch("batched", &parts, |n| {
+            computed.fetch_add(1, Ordering::SeqCst);
+            finding(&[b'p' + n as u8])
+        });
+        assert_eq!(computed.load(Ordering::SeqCst), 3);
+        assert_eq!(got.iter().map(|f| f[0].message.clone()).collect::<Vec<_>>(), ["p", "q", "r"]);
+    });
+}
+
+#[test]
+fn a_batch_runs_its_misses_at_the_same_time() {
+    if std::thread::available_parallelism().map_or(1, |n| n.get()) < 2 {
+        return;
+    }
+    let store = Memory::default();
+    let (live, peak) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    with_repo_context(Some(&store), |ctx| {
+        let parts: Vec<Vec<&[u8]>> = vec![vec![b"1"], vec![b"2"], vec![b"3"], vec![b"4"]];
+        ctx.remembered_batch("batched", &parts, |_| {
+            let now = live.fetch_add(1, Ordering::SeqCst) + 1;
+            peak.fetch_max(now, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            live.fetch_sub(1, Ordering::SeqCst);
+            Vec::new()
+        });
+    });
+    assert!(peak.load(Ordering::SeqCst) >= 2, "four slow misses overlapped; a sequential run peaks at one");
+}
+
+/// A store that counts what lints tell it was replayed or judged, and saves only when `writes`.
+#[derive(Default)]
+struct Tallying {
+    saved:  RefCell<HashMap<String, String>>,
+    writes: bool,
+    hit:    AtomicUsize,
+    miss:   AtomicUsize,
+}
+
+impl VerdictCache for Tallying {
+    fn digest(&self, parts: &[&[u8]]) -> String {
+        Memory::default().digest(parts)
+    }
+
+    fn replay(&self, key: &str) -> Option<String> {
+        self.saved.borrow().get(key).cloned()
+    }
+
+    fn remember(&self, key: &str, encoded: &str) {
+        if self.writes {
+            self.saved.borrow_mut().insert(key.to_string(), encoded.to_string());
+        }
+    }
+
+    fn tally(&self, hit: bool, _lint: &str) {
+        let counter = if hit { &self.hit } else { &self.miss };
+        counter.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn a_batch_counts_each_hit_and_each_miss_once() {
+    let store = Tallying { writes: true, ..Default::default() };
+    with_repo_context(Some(&store), |ctx| {
+        ctx.remembered("batched", &[b"warm"], || finding(b"warm"));
+        let hits_before = store.hit.load(Ordering::SeqCst);
+        let misses_before = store.miss.load(Ordering::SeqCst);
+        let parts: Vec<Vec<&[u8]>> = vec![vec![b"warm"], vec![b"cold1"], vec![b"cold2"], vec![b"cold1"]];
+        ctx.remembered_batch("batched", &parts, |_| Vec::new());
+        assert_eq!(store.miss.load(Ordering::SeqCst) - misses_before, 2, "two distinct unseen keys");
+        assert_eq!(store.hit.load(Ordering::SeqCst) - hits_before, 2, "the saved key and the repeated one");
+    });
+}
+
+#[test]
+fn a_batch_repeats_a_key_even_when_the_store_cannot_write() {
+    let store = Tallying { writes: false, ..Default::default() };
+    let computed = AtomicUsize::new(0);
+    with_repo_context(Some(&store), |ctx| {
+        let same: Vec<Vec<&[u8]>> = vec![vec![b"dup"], vec![b"dup"]];
+        let got = ctx.remembered_batch("batched", &same, |_| {
+            computed.fetch_add(1, Ordering::SeqCst);
+            finding(b"dup")
+        });
+        assert_eq!(computed.load(Ordering::SeqCst), 1);
+        assert_eq!((got[0].len(), got[1].len()), (1, 1), "the second naming gets the finding with nothing saved");
+    });
+}
+
+#[test]
+fn a_parallel_map_on_four_threads_overlaps_and_keeps_the_order_whatever_finishes_first() {
+    let positions: Vec<usize> = (0 .. 4).collect();
+    let (live, peak) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    let got = verdict::parallel_map_with(4, &positions, &|n| {
+        let now = live.fetch_add(1, Ordering::SeqCst) + 1;
+        peak.fetch_max(now, Ordering::SeqCst);
+        // The first item takes longest, so finishing order is the reverse of position.
+        std::thread::sleep(std::time::Duration::from_millis(60 * (4 - n as u64)));
+        live.fetch_sub(1, Ordering::SeqCst);
+        finding(&[b'a' + n as u8])
+    });
+    assert!(peak.load(Ordering::SeqCst) >= 2, "four items overlapped, on any machine");
+    assert_eq!(got.iter().map(|f| f[0].message.clone()).collect::<Vec<_>>(), ["a", "b", "c", "d"]);
+}
+
+#[test]
+fn a_parallel_map_on_one_thread_runs_in_order_without_spawning() {
+    let positions: Vec<usize> = (0 .. 3).collect();
+    let order: std::sync::Mutex<Vec<usize>> = Default::default();
+    verdict::parallel_map_with(1, &positions, &|n| {
+        order.lock().unwrap().push(n);
+        Vec::new()
+    });
+    assert_eq!(*order.lock().unwrap(), vec![0, 1, 2]);
+}
+
+#[test]
+fn a_panic_in_one_item_of_a_batch_propagates_and_saves_nothing_of_that_batch() {
+    let store = Memory::default();
+    let parts: Vec<Vec<&[u8]>> = vec![vec![b"p"], vec![b"q"], vec![b"r"]];
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        with_repo_context(Some(&store), |ctx| {
+            ctx.remembered_batch("batched", &parts, |n| {
+                assert!(n != 1, "the judge crashed on item {n}");
+                Vec::new()
+            })
+        })
+    }));
+    assert!(outcome.is_err(), "a crashed judge must not read as a clean lint");
+    assert_eq!(store.stores.load(Ordering::SeqCst), 0, "nothing of the batch was saved");
+}
+
+#[test]
+fn a_parallel_map_never_runs_more_items_at_once_than_the_threads_it_was_given() {
+    let positions: Vec<usize> = (0 .. 8).collect();
+    let (live, peak) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    verdict::parallel_map_with(2, &positions, &|_| {
+        let now = live.fetch_add(1, Ordering::SeqCst) + 1;
+        peak.fetch_max(now, Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        live.fetch_sub(1, Ordering::SeqCst);
+        Vec::new()
+    });
+    assert_eq!(peak.load(Ordering::SeqCst), 2, "two threads, eight slow items: two at once, never more");
+}
