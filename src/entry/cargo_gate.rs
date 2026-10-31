@@ -63,12 +63,17 @@ fn wildcard_matches(pattern: &str, name: &str) -> bool {
     go(&pattern.chars().collect::<Vec<_>>(), &name.chars().collect::<Vec<_>>())
 }
 
-/// Whether a `members` entry is a glob in its last path segment, written only with `*` and
-/// `?`, and no directory under its parent matches it. Files do not count, as cargo counts
-/// only directories, so a `crates/.gitkeep` leaves the glob matching nothing. A glob in any
+/// Whether a `members` entry names no member once `exclude` is applied: either the entry is
+/// itself excluded, or it is a glob in its last path segment, written only with `*` and `?`,
+/// and no directory under its parent that is not excluded matches it. Files do not count, as
+/// cargo counts only directories, so a `crates/.gitkeep` leaves the glob matching nothing. A glob in any
 /// other segment, a character class, or a parent that cannot be read for any reason but
 /// being absent is not read, and counts as a member, so the gate errs toward failing.
-fn is_a_glob_matching_nothing(mock_dir: &Path, member: &str) -> bool {
+fn is_a_member_entry_matching_nothing(mock_dir: &Path, member: &str, exclude: &[String]) -> bool {
+    let is_excluded = |path: &str| exclude.iter().any(|x| x == &normalise_path(path));
+    if is_excluded(member) {
+        return true;
+    }
     let (parent, last) = member.rsplit_once('/').unwrap_or((".", member));
     if !has_glob_char(last) || has_glob_char_other_than_wildcards(last) || has_glob_char(parent) {
         return false;
@@ -78,9 +83,17 @@ fn is_a_glob_matching_nothing(mock_dir: &Path, member: &str) -> bool {
         Err(e) => return e.kind() == std::io::ErrorKind::NotFound,
     };
     !entries.flatten().any(|e| {
+        let name = e.file_name().to_string_lossy().into_owned();
         e.file_type().is_ok_and(|t| t.is_dir())
-            && wildcard_matches(last, &e.file_name().to_string_lossy())
+            && wildcard_matches(last, &name)
+            && !is_excluded(&format!("{parent}/{name}"))
     })
+}
+
+/// A manifest path with a leading `./` and trailing `/` removed, so `./crates/foo/` and
+/// `crates/foo` compare equal.
+fn normalise_path(path: &str) -> String {
+    path.trim_start_matches("./").trim_end_matches('/').to_string()
 }
 
 /// A character class, which `wildcard_matches` does not read.
@@ -111,11 +124,17 @@ pub(crate) fn is_memberless_virtual_workspace(mock_dir: &Path) -> bool {
     let Some(workspace) = doc.get("workspace").and_then(|w| w.as_table_like()) else {
         return false;
     };
+    let exclude: Vec<String> = workspace
+        .get("exclude")
+        .and_then(|e| e.as_array())
+        .map(|list| list.iter().filter_map(|x| x.as_str()).map(normalise_path).collect())
+        .unwrap_or_default();
     match workspace.get("members") {
         Some(members) => {
             members.as_array().is_some_and(|list| {
-                list.iter()
-                    .all(|m| m.as_str().is_some_and(|m| is_a_glob_matching_nothing(mock_dir, m)))
+                list.iter().all(|m| {
+                    m.as_str().is_some_and(|m| is_a_member_entry_matching_nothing(mock_dir, m, &exclude))
+                })
             })
         },
         None => true,
@@ -385,5 +404,46 @@ mod tests {
         assert!(wildcard_matches("a?c", "abc"));
         assert!(!wildcard_matches("a?c", "ac"));
         assert!(!wildcard_matches("a*c", "abd"));
+    }
+
+    #[test]
+    fn a_glob_whose_only_match_is_excluded_is_memberless() {
+        // cargo drops `exclude`d paths from the expanded `members`, so this workspace has
+        // no members and cargo says so. Counting `crates/foo` as present refuses a repo
+        // that is legitimately memberless.
+        let tmp = tempfile::tempdir().unwrap();
+        manifest(
+            tmp.path(),
+            "[workspace]\nmembers = [\"crates/*\"]\nexclude = [\"crates/foo\"]\n",
+        );
+        std::fs::create_dir_all(tmp.path().join("crates/foo")).unwrap();
+        assert!(is_memberless_virtual_workspace(tmp.path()));
+        assert!(
+            forgives_failure(tmp.path(), &["check"]),
+            "cargo's own diagnostic for this workspace must be forgiven"
+        );
+    }
+
+    #[test]
+    fn a_glob_with_a_match_that_is_not_excluded_is_not_memberless() {
+        // the control: excluding one directory does not hide a sibling the glob also matches
+        let tmp = tempfile::tempdir().unwrap();
+        manifest(
+            tmp.path(),
+            "[workspace]\nmembers = [\"crates/*\"]\nexclude = [\"crates/foo\"]\n",
+        );
+        std::fs::create_dir_all(tmp.path().join("crates/foo")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("crates/bar")).unwrap();
+        assert!(!is_memberless_virtual_workspace(tmp.path()));
+    }
+
+    #[test]
+    fn a_plain_member_that_is_also_excluded_is_memberless() {
+        let tmp = tempfile::tempdir().unwrap();
+        manifest(
+            tmp.path(),
+            "[workspace]\nmembers = [\"crates/foo\"]\nexclude = [\"./crates/foo/\"]\n",
+        );
+        assert!(is_memberless_virtual_workspace(tmp.path()));
     }
 }
