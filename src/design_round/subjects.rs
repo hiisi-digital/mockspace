@@ -24,7 +24,8 @@ pub(crate) fn lock_src(new_name: &str) -> String {
 
 /// However many strays there are, the subject does not grow with them.
 pub(crate) fn deprecate_strays(count: usize) -> String {
-    format!("chore: deprecate {count} stray changelists")
+    let noun = if count == 1 { "changelist" } else { "changelists" };
+    format!("chore: deprecate {count} stray {noun}")
 }
 
 pub(crate) fn deprecate_doc(filename: &str) -> String {
@@ -43,8 +44,9 @@ pub(crate) fn migrate(renamed: u32) -> String {
     format!("chore: migrate {renamed} design round files to the new naming")
 }
 
-pub(crate) fn rename_round(old: &str, new: &str) -> String {
-    format!("chore: rename design round {old} to {new}")
+/// Names the new directory only: the old one carries the same tail, and both would not fit.
+pub(crate) fn rename_round(new: &str) -> String {
+    format!("chore: rename design round to {new}")
 }
 
 #[cfg(test)]
@@ -106,7 +108,8 @@ mod tests {
             deprecate_src_and_unlock(&cl("src")),
             unlock_round(),
             migrate(u32::MAX),
-            rename_round(id, "202610221530-ab12"),
+            rename_round(&format!("202610221530-ab12-abandoned-10")),
+            rename_round(id),
         ];
         // one, two and many strays are one shape
         subjects.extend([1usize, 2, 3, 40, usize::MAX].map(deprecate_strays));

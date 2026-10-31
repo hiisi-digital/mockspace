@@ -249,3 +249,18 @@ fn a_rebase_continued_after_target_was_cleaned_and_cargo_mock_resolves_finishes_
     let in_head = r.git(&["show", "HEAD:docs/ALPHA.md"]);
     assert!(in_head.contains("three, resolved"), "{in_head}");
 }
+
+#[test]
+fn a_push_is_refused_while_a_kept_side_is_owed_even_where_cargo_mock_could_build_the_hook() {
+    // building the hook for a push must not regenerate into the index and clear the record, or the
+    // push publishes the stale document it was refusing
+    let r = Repo::new();
+    let _ = merge_with(&r, &[("MS_NO_CARGO", "1")]);
+    cargo_clean(&r);
+    let remote = r.remote();
+    let pushed = r.git_out(&["push", "origin", "dev"]);
+    assert!(!pushed.status.success(), "{}", Repo::failure(&pushed));
+    assert!(r.kept_ours().exists(), "and the record still stands");
+    let on_remote = r.git_out(&["--git-dir", remote.to_str().unwrap(), "rev-parse", "--verify", "-q", "dev"]);
+    assert!(!on_remote.status.success(), "nothing reached the remote");
+}
