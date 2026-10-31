@@ -245,6 +245,7 @@ dependencies = [
  "mockspace-bench-harness",
  "mockspace-lint-rules",
  "mockspace-manifest",
+ "regex",
  "serde",
  "serde_json",
  "sha2",
