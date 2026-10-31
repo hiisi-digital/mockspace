@@ -2,7 +2,6 @@
 //! commands names a path of one clone.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -111,8 +110,7 @@ fn a_conflict_under_the_generated_driver(repo: &Path, config: &Path) {
 fn stub_script_in(git_common_dir: &Path, label: &str) {
     let script = git_common_dir.join("mockspace/merge-generated");
     fs::create_dir_all(script.parent().unwrap()).unwrap();
-    fs::write(&script, format!("#!/bin/sh\necho {label} > \"$2\"\n")).unwrap();
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(&script, format!("#!/bin/sh\necho {label} > \"$2\"\n"));
 }
 
 fn registered_for_the_user(root: &Path) -> PathBuf {
