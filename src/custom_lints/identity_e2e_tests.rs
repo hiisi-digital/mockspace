@@ -131,8 +131,11 @@ fn a_lint_edited_during_the_build_is_not_kept_under_the_old_content() {
     let after = lint_source("after");
     let edit = after.clone();
     let target = source.clone();
+    let fired = std::sync::atomic::AtomicBool::new(false);
     crate::custom_lints::store::knobs::after_identity(&cache, move || {
-        std::fs::write(&target, &edit).unwrap();
+        if !fired.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            std::fs::write(&target, &edit).unwrap();
+        }
     });
     // The identity was made from "before", and the build reads "after".
     assert_eq!(name_in(&cache, &mock), "after");

@@ -41,6 +41,8 @@ struct Pair {
     cache: PathBuf,
     a:     PathBuf,
     b:     PathBuf,
+    /// A third worktree, whose lint neither of the two shares, for warming the dependency graph.
+    warm:  PathBuf,
 }
 
 /// `tag` goes in the remote, so each case has a key, and so a package name and a
@@ -66,7 +68,7 @@ fn pair(tag: &str) -> Pair {
     git(&main, &["commit", "-q", "-m", "one"]);
 
     let mut mocks = Vec::new();
-    for (who, lint) in [("a", "lint-from-a"), ("b", "lint-from-b")] {
+    for (who, lint) in [("a", "lint-from-a"), ("b", "lint-from-b"), ("w", "lint-warm")] {
         let wt = tmp.path().join("wt").join(who);
         git(&main, &[
             "worktree",
@@ -87,6 +89,7 @@ fn pair(tag: &str) -> Pair {
     }
     Pair {
         cache: tmp.path().join("cache"),
+        warm:  mocks.pop().unwrap(),
         b:     mocks.pop().unwrap(),
         a:     mocks.pop().unwrap(),
         _tmp:  tmp,
@@ -177,9 +180,10 @@ fn without_the_lock_the_same_race_loads_the_wrong_lint() {
     // meets a half-written file and fails. If this passes with both right, the
     // case above proves nothing about the lock.
     let p = pair("unlocked");
-    // Warm the dependency graph under the lock, so the race below is about
-    // the lint crate and not about two cold builds queueing on cargo.
-    assert_eq!(name_loaded(&p.cache, &p.a).unwrap(), "lint-from-a");
+    // Warm the dependency graph under the lock, with a lint of neither side, so the race below
+    // is about the lint crate and not about two cold builds queueing on cargo, and both sides
+    // are cold identities: a kept library for either would answer without a build to race.
+    assert_eq!(name_loaded(&p.cache, &p.warm).unwrap(), "lint-warm");
 
     knobs::set(&p.cache, true, Duration::from_millis(1500));
     let results: Vec<(&str, Result<String, String>)> = std::thread::scope(|s| {

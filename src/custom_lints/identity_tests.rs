@@ -15,7 +15,8 @@ fn member(name: &str) -> Member {
 fn inputs() -> Inputs {
     Inputs {
         toolchain: "rustc 1".to_string(),
-        flags:     String::new(),
+        config:    String::new(),
+        manifest:  "[package]".to_string(),
         lints:     vec![("one".to_string(), "d1".to_string())],
         collector: "fn collect".to_string(),
         members:   vec![member("serde"), member("toml")],
@@ -23,17 +24,12 @@ fn inputs() -> Inputs {
 }
 
 #[test]
-fn the_same_inputs_give_the_same_identity() {
-    assert_eq!(digest_inputs(&inputs()), digest_inputs(&inputs()));
-    assert!(!digest_inputs(&inputs()).is_empty());
-}
-
-#[test]
 fn every_input_that_decides_the_library_moves_the_identity() {
     let base = digest_inputs(&inputs());
     let mutations: Vec<(&str, Box<dyn Fn(&mut Inputs)>)> = vec![
         ("toolchain", Box::new(|i| i.toolchain.push('x'))),
-        ("flags", Box::new(|i| i.flags.push('x'))),
+        ("config", Box::new(|i| i.config.push('x'))),
+        ("manifest", Box::new(|i| i.manifest.push('x'))),
         ("lint content", Box::new(|i| i.lints[0].1 = "d2".to_string())),
         ("lint name", Box::new(|i| i.lints[0].0 = "two".to_string())),
         ("collector", Box::new(|i| i.collector.push('x'))),
@@ -152,4 +148,152 @@ fn a_changed_path_dependency_changes_the_graph() {
     tree(&one.join("tool"), "fn tool() { changed() }");
     let after = members_from_metadata(&metadata(&one), &manifest).unwrap();
     assert_ne!(before, after);
+}
+
+#[test]
+fn a_module_called_target_below_the_package_root_is_part_of_the_package() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = tmp.path().join("a");
+    tree(&a, "fn x() {}");
+    let before = digest_tree(&a).unwrap();
+    std::fs::create_dir_all(a.join("src").join("target")).unwrap();
+    std::fs::write(a.join("src").join("target").join("mod.rs"), "fn t() {}").unwrap();
+    assert_ne!(digest_tree(&a).unwrap(), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_is_part_of_the_package_and_a_dead_one_is_not_skipped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = tmp.path().join("a");
+    tree(&a, "fn x() {}");
+    let before = digest_tree(&a).unwrap();
+    std::os::unix::fs::symlink("nowhere", a.join("src").join("dead")).unwrap();
+    let dead = digest_tree(&a).unwrap();
+    assert_ne!(dead, before, "a link to nothing");
+    std::fs::remove_file(a.join("src").join("dead")).unwrap();
+    std::os::unix::fs::symlink("src", a.join("dir")).unwrap();
+    assert_ne!(digest_tree(&a).unwrap(), before, "a link to a directory");
+}
+
+fn write(path: &Path, text: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
+}
+
+#[test]
+fn the_cargo_config_files_the_build_meets_are_part_of_the_identity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let work = tmp.path().join("repo").join("mock");
+    let home = tmp.path().join("home");
+    let none = config_digest(&work, &home);
+
+    write(&tmp.path().join("repo").join(".cargo").join("config.toml"), "[build]\nrustflags = [\"-Cx\"]\n");
+    let repo = config_digest(&work, &home);
+    assert_ne!(repo, none, "a config above the working directory");
+
+    write(&home.join("config.toml"), "[profile.release]\ndebug-assertions = true\n");
+    let both = config_digest(&work, &home);
+    assert_ne!(both, repo, "cargo's home");
+
+    write(&tmp.path().join("repo").join(".cargo").join("config.toml"), "[build]\nrustflags = [\"-Cy\"]\n");
+    assert_ne!(config_digest(&work, &home), both, "an edit");
+
+    // The same config under a longer path is the same input.
+    let other = tmp.path().join("a-much-longer-name").join("repo").join("mock");
+    write(
+        &tmp.path().join("a-much-longer-name").join("repo").join(".cargo").join("config.toml"),
+        "[build]\nrustflags = [\"-Cy\"]\n",
+    );
+    assert_eq!(config_digest(&other, &home), config_digest(&work, &home));
+}
+
+/// A generated crate with no dependencies, so `cargo metadata` needs no network.
+fn generated(tmp: &Path, manifest_extra: &str) -> PathBuf {
+    let dir = tmp.join("gen");
+    write(&dir.join("src").join("lib.rs"), "");
+    let manifest = dir.join("Cargo.toml");
+    write(
+        &manifest,
+        &format!("[workspace]\n\n[package]\nname = \"probe-gen\"\nversion = \"0.0.0\"\nedition = \"2024\"\n{manifest_extra}"),
+    );
+    manifest
+}
+
+#[test]
+fn every_input_is_read_where_it_is_collected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let manifest = generated(tmp.path(), &format!("# {}/repo/tool\n", tmp.path().display()));
+    let lints_dir = tmp.path().join("lints");
+    write(&lints_dir.join("one.rs"), "fn one() {}");
+    let lints = vec![("one".to_string(), lints_dir.join("one.rs"))];
+    let work = tmp.path().join("work");
+    let home = tmp.path().join("home");
+    write(&work.join(".cargo").join("config.toml"), "[build]\n");
+    let repo = tmp.path().join("repo");
+    let tree = Tree {
+        generated_manifest: &manifest,
+        lints_dir:          &lints_dir,
+        lints:              &lints,
+        collector:          "fn collect".to_string(),
+        repo_root:          &repo,
+        working_dir:        &work,
+        cargo_home:         &home,
+    };
+    let (inputs, roots) = collect_inputs(&tree).expect("collected");
+
+    assert!(inputs.toolchain.starts_with("rustc "), "the compiler's own words: {:?}", inputs.toolchain);
+    assert!(inputs.toolchain.contains("host:"), "{:?}", inputs.toolchain);
+    assert_eq!(inputs.config, config_digest(&work, &home), "the config the build meets");
+    assert_ne!(inputs.config, config_digest(&tmp.path().join("elsewhere"), &home));
+    assert_eq!(inputs.collector, "fn collect");
+    assert_eq!(inputs.lints, [("one".to_string(), digest_bytes(b"fn one() {}"))]);
+    assert!(inputs.members.is_empty(), "the generated crate itself is not a member");
+    assert!(
+        inputs.manifest.contains("# <repo>/tool"),
+        "the tree's path is taken out of the manifest: {:?}",
+        inputs.manifest
+    );
+    assert!(!inputs.manifest.contains(&repo.display().to_string()));
+    let mut expected = Roots::default();
+    expected.add("lints", &lints_dir);
+    assert_eq!(roots, expected, "the lint directory is the one root, the generated crate is none");
+
+    // And through the whole path: every input moves the key.
+    let key = |t: &Tree| of_generated_crate(t).unwrap().key;
+    let base = key(&tree);
+    write(&lints_dir.join("one.rs"), "fn one() { 1; }");
+    assert_ne!(key(&tree), base, "a lint edit");
+    write(&lints_dir.join("one.rs"), "fn one() {}");
+    assert_eq!(key(&tree), base, "and its undoing");
+    write(&work.join(".cargo").join("config.toml"), "[build]\nrustflags = []\n");
+    assert_ne!(key(&tree), base, "a config edit");
+}
+
+#[test]
+fn a_generated_manifest_that_differs_only_by_the_tree_is_one_manifest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let text = |root: &Path| {
+        let manifest = generated(&tmp.path().join(root.file_name().unwrap()), &format!("# {}/tool\n", root.display()));
+        manifest_text(&manifest, root).unwrap()
+    };
+    assert_eq!(text(&tmp.path().join("one")), text(&tmp.path().join("two-with-a-longer-name")));
+}
+
+#[test]
+fn collecting_nothing_unreadable_is_none_and_never_a_partial_identity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let manifest = generated(tmp.path(), "");
+    let lints_dir = tmp.path().join("lints");
+    let lints = vec![("missing".to_string(), lints_dir.join("missing.rs"))];
+    let tree = Tree {
+        generated_manifest: &manifest,
+        lints_dir:          &lints_dir,
+        lints:              &lints,
+        collector:          String::new(),
+        repo_root:          tmp.path(),
+        working_dir:        tmp.path(),
+        cargo_home:         tmp.path(),
+    };
+    assert!(of_generated_crate(&tree).is_none());
 }
