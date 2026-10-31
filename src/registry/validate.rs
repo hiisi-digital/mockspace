@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
+use mockspace_lint_rules::verdict::VerdictCache;
+
 use super::*;
 
 /// Check every provenance reference in the registry against the declared roots.
@@ -490,20 +492,50 @@ pub enum SchemaCheck {
 ///
 /// The cost of delegating is a dependency the gate cannot assume, which is why
 /// absence is reported rather than passed over.
-pub fn check_schemas(repo_root: &Path, namespaces: &[RegistryNamespace]) -> SchemaCheck {
+pub fn check_schemas(
+    repo_root: &Path,
+    namespaces: &[RegistryNamespace],
+    saved: Option<&dyn VerdictCache>,
+) -> SchemaCheck {
+    check_schemas_with(std::ffi::OsStr::new("taplo"), repo_root, namespaces, saved)
+}
+
+/// [`check_schemas`] with the validator named, so a test can stand a counting one in for taplo.
+pub(crate) fn check_schemas_with(
+    program: &std::ffi::OsStr,
+    repo_root: &Path,
+    namespaces: &[RegistryNamespace],
+    saved: Option<&dyn VerdictCache>,
+) -> SchemaCheck {
     if namespaces.is_empty() {
         return SchemaCheck::Ran {
             failures: Vec::new(),
         };
     }
-    let probe = std::process::Command::new("taplo")
+    let Ok(probe) = std::process::Command::new(program)
         .arg("--version")
-        .output();
-    if probe.is_err() {
+        .output()
+    else {
         return SchemaCheck::Unavailable;
+    };
+
+    // The same inputs as the last pass replay it. Only a pass is ever saved below, so a failure,
+    // a check that examined nothing and an absent taplo (returned above, before any lookup) are
+    // each judged again.
+    let key = saved.and_then(|cache| {
+        super::schema_replay::input_key(cache, repo_root, &probe.stdout).map(|key| (cache, key))
+    });
+    if let Some((cache, key)) = &key {
+        let hit = cache.replay(key).as_deref() == Some(super::schema_replay::PASSED);
+        cache.tally(hit, "registry-schema-check");
+        if hit {
+            return SchemaCheck::Ran {
+                failures: Vec::new(),
+            };
+        }
     }
 
-    let out = std::process::Command::new("taplo")
+    let out = std::process::Command::new(program)
         .arg("check")
         .current_dir(repo_root)
         .output();
@@ -522,6 +554,9 @@ pub fn check_schemas(repo_root: &Path, namespaces: &[RegistryNamespace]) -> Sche
                             .to_string(),
                     ],
                 };
+            }
+            if let Some((cache, key)) = &key {
+                cache.remember(key, super::schema_replay::PASSED);
             }
             SchemaCheck::Ran {
                 failures: Vec::new(),
