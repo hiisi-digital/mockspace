@@ -317,6 +317,17 @@ mod tests {
 
     use super::*;
 
+    /// The first line of every test that runs `cargo deny` for real: names the tool
+    /// when it is missing, where `check()` would return `Ok` having done nothing and
+    /// the test would fail on a message about something else.
+    fn require_cargo_deny() {
+        assert!(
+            cargo_deny_installed(),
+            "this test needs `cargo-deny` on PATH and it is not installed: \
+             `cargo install cargo-deny --locked`"
+        );
+    }
+
     fn write(path: &Path, contents: &str) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, contents).unwrap();
@@ -446,6 +457,7 @@ mod tests {
     #[test]
     #[ignore = "needs cargo-deny"]
     fn an_unreadable_graph_blocks_rather_than_skipping() {
+        require_cargo_deny();
         // And the caller has to act on the distinction, not merely receive it.
         // End-to-end through `check()`, which returns `Ok` with no work done
         // the moment cargo-deny is absent, so this needs the tool installed to
@@ -549,6 +561,7 @@ mod tests {
     #[test]
     #[ignore = "needs cargo-deny"]
     fn an_unreadable_spike_tree_is_skipped_while_an_unreadable_crate_blocks() {
+        require_cargo_deny();
         // The case a single-root fixture cannot express, and the reason this
         // one is built with four. Measured on mockspace itself: 23 roots, 7
         // unreadable, every one of them a committed probe under
@@ -682,6 +695,7 @@ mod tests {
     #[test]
     #[ignore = "needs cargo-deny"]
     fn a_spike_tree_with_a_readable_graph_that_fails_deny_is_still_skipped() {
+        require_cargo_deny();
         // The reported defect: `cargo metadata --no-deps` can come back
         // Present (readable) on a spike whose git dependency no longer
         // resolves, because `--no-deps` never walks the dependency it would
@@ -732,6 +746,7 @@ mod tests {
     #[test]
     #[ignore = "needs cargo-deny"]
     fn a_non_spike_root_with_a_readable_graph_that_fails_deny_still_blocks() {
+        require_cargo_deny();
         // The control for the spike-tree test above. Without it, a version
         // that skipped every readable-but-failing root (not only spike trees)
         // would pass the positive case too.

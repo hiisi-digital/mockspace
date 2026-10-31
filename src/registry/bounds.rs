@@ -55,12 +55,17 @@ pub fn misplaced_bounds(namespaces: &[RegistryNamespace]) -> Vec<RegistryFinding
 }
 
 /// A member of a field's `values` that no row could hold: one that does not read as an
-/// `integer` or a `boolean` on a field of that type, an integer not written plainly, or
-/// an integer outside the field's own `min` and `max`.
+/// `integer` or a `boolean` on a field of that type, an integer not written plainly, an
+/// integer outside the field's own `min` and `max`, or a `date`, `time`, `datetime` or
+/// `span` not written in the form `time_pattern` gives it.
 pub fn unfit_values(namespaces: &[RegistryNamespace]) -> Vec<RegistryFinding> {
     let mut out = Vec::new();
     for ns in namespaces {
         for f in &ns.fields {
+            // Built once per field; every pattern is a literal in `time_pattern`, and each
+            // of the four is read by the tests below.
+            let form = time_pattern(&f.r#type)
+                .map(|pattern| regex::Regex::new(pattern).expect("a time pattern is a valid regex"));
             for v in &f.values {
                 let problem = match f.r#type.as_str() {
                     "integer" => {
@@ -83,7 +88,13 @@ pub fn unfit_values(namespaces: &[RegistryNamespace]) -> Vec<RegistryFinding> {
                     "boolean" if v != "true" && v != "false" => {
                         Some(format!("`{v}` is neither `true` nor `false`"))
                     },
-                    _ => None,
+                    ty => {
+                        // The pattern is the one the schema holds each row to, so a
+                        // listed value it refuses is a value no row can hold.
+                        form.as_ref()
+                            .filter(|re| !re.is_match(v))
+                            .map(|_| format!("`{v}` is not written in the form of a `{ty}`"))
+                    },
                 };
                 if let Some(problem) = problem {
                     out.push(RegistryFinding {
@@ -219,8 +230,8 @@ mod tests {
 
     #[test]
     fn a_closed_set_of_well_formed_time_values_passes() {
-        // the control for the catalogued arm below: it is red because of what is
-        // refused, never because a well-formed value is
+        // the control for the refusing arm below: it refuses because of what is wrong,
+        // never because a well-formed value is
         let found = unfit_values(&ns(vec![
             field(0, "date", &["2026-10-28"], None, None),
             field(1, "time", &["18:49", "18:49:07"], None, None),
@@ -231,13 +242,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "catalogue: a closed set's listed value on a time type is not checked against \
-                its form at the declaration, so a value no row can hold is found only by \
-                the first row that holds it; see the FIXME on `time_pattern`"]
     fn a_closed_set_member_that_is_not_in_the_form_of_its_time_type_is_refused() {
-        // Asserting the intended behaviour, red until the declaration reads the
-        // form: each of these is a value no row of its field can hold, as `+5`
-        // is on an integer.
+        // Each of these is a value no row of its field can hold, as `+5` is on
+        // an integer.
         let found = unfit_values(&ns(vec![
             field(0, "date", &["tomorrow"], None, None),
             field(1, "date", &["2026-13-45"], None, None),
