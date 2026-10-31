@@ -34,14 +34,13 @@
 //! cdylib. Validated experimentally (identical trait source compiled
 //! separately still dispatches correctly).
 //!
-//! FIXME: one residual is unenforced. The cached engine is built by `cargo
+//! FIXME(mockspace_builds_the_lint_cdylib_under_the_consumer): one residual is unenforced. The cached engine is built by `cargo
 //! install --git mockspace` under mockspace's own `rust-toolchain.toml`, while
 //! this cdylib is built by `cargo rustc` under the consumer repo's toolchain.
 //! They match today because the whole workspace pins one nightly, but a repo
 //! pinning a different toolchain than the engine's would desync the vtable
 //! layout with no signal. The complete fix builds the cdylib under the engine's
 //! toolchain (capture it at engine-build time, pin it in the generated crate).
-//! Tracked as a follow-up.
 
 use std::path::{Path, PathBuf};
 
@@ -64,6 +63,7 @@ mod depinfo;
 mod identity;
 mod collector;
 mod patch;
+mod registry;
 use collector::gen_collect_lib;
 use patch::{cargo_home, ensure_lint_rules_checkout, extract_between, is_git_rev_dep, patch_section};
 
