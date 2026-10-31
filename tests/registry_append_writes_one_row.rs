@@ -11,7 +11,6 @@
 mod common;
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
@@ -71,8 +70,7 @@ fn rows(root: &Path) -> String {
 
 fn place_hook(dir: &Path, body: &str) {
     let path = dir.join(".mockspace/hooks/registry-append");
-    write(&path, &format!("#!/bin/sh\n{body}\n"));
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&path, format!("#!/bin/sh\n{body}\n"));
 }
 
 #[test]
