@@ -13,7 +13,7 @@ fn fake_build(out: &Path, bytes: &str, sources: &[&Path]) -> Built {
     std::fs::write(release.join("libfake.d"), format!("out.d: {}\n", list.join(" "))).unwrap();
     std::fs::create_dir_all(release.join("deps")).unwrap();
     std::fs::write(release.join("deps").join("fake.d"), format!("out.d: {}\n", list.join(" "))).unwrap();
-    Built { dylib, started: SystemTime::now() + Duration::from_secs(60) }
+    Built { dylib, started: SystemTime::now() + Duration::from_secs(1), units: Vec::new(), fresh: false }
 }
 
 struct Fixture {

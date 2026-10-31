@@ -86,15 +86,22 @@ pub(crate) fn dylib_for(
     roots: &Roots,
     gen_dir: &Path,
     margin: Duration,
-    build: impl FnOnce() -> Result<Built, String>,
+    mut build: impl FnMut() -> Result<Built, String>,
 ) -> Result<Library, String> {
     if let Some((path, name)) = find(base, key, roots) {
         touch(&path);
         return Ok(Library { path, identity: Some(name) });
     }
-    let built = build()?;
-    let Some(deps) = depinfo::record(&built.dylib, gen_dir, roots, built.started, margin)
-    else {
+    let mut built = build()?;
+    let mut deps = depinfo::record(&built, gen_dir, roots, margin);
+    if deps.is_none() && built.fresh {
+        // Cargo judged the old output fresh, by timestamps a tool may have set back, and this tree
+        // cannot be tied to it. Touching the generated source makes cargo build it for real.
+        touch(&gen_dir.join("src").join("lib.rs"));
+        built = build()?;
+        deps = depinfo::record(&built, gen_dir, roots, margin);
+    }
+    let Some(deps) = deps else {
         return Ok(Library { path: built.dylib, identity: None });
     };
     let list = depinfo::encode(&deps);

@@ -1,9 +1,15 @@
 use std::time::Duration;
 
 use super::*;
+use crate::custom_lints::build::Built;
 
 fn later() -> SystemTime {
-    SystemTime::now() + Duration::from_secs(60)
+    SystemTime::now() + Duration::from_secs(1)
+}
+
+/// What a build reports, for a library at `dylib` that cargo `fresh`ly reused or built after `started`.
+fn made(dylib: &Path, started: SystemTime, fresh: bool) -> Built {
+    Built { dylib: dylib.to_path_buf(), started, units: Vec::new(), fresh }
 }
 
 /// A built tree: the library, its dep-info listing `sources`, under `target/release`.
@@ -11,7 +17,9 @@ fn built(root: &Path, sources: &str) -> PathBuf {
     let release = root.join("target").join("release");
     std::fs::create_dir_all(&release).unwrap();
     std::fs::write(release.join("libgen.so"), "library").unwrap();
-    std::fs::write(release.join("libgen.d"), sources).unwrap();
+    // Cargo leaves the variables out of the copy beside the library.
+    let uplifted: Vec<&str> = sources.lines().filter(|l| !l.starts_with("# env-dep:")).collect();
+    std::fs::write(release.join("libgen.d"), uplifted.join("\n")).unwrap();
     let deps = release.join("deps");
     std::fs::create_dir_all(&deps).unwrap();
     std::fs::write(deps.join("gen.d"), sources).unwrap();
@@ -91,7 +99,7 @@ fn what_was_recorded_holds_in_a_tree_of_the_same_content_and_not_after_an_edit()
     a.add("lints", &trees[0]);
     b.add("lints", &trees[1]);
 
-    let deps = record(&dylib, &gen_dir, &a, later(), Duration::ZERO).expect("recorded");
+    let deps = record(&made(&dylib, later(), false), &gen_dir, &a, Duration::ZERO).expect("recorded");
     assert_eq!(deps.len(), 2, "the generated crate's own files are not inputs: {deps:?}");
     assert!(hold(&deps, &a));
     assert!(hold(&deps, &b), "another tree of the same content");
@@ -113,16 +121,16 @@ fn nothing_is_recorded_that_cannot_be_trusted() {
     roots.add("lints", source.parent().unwrap());
     let dylib = built(&gen_dir, &format!("out.d: {}\n", source.display()));
 
-    assert!(record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).is_some(), "the control");
+    assert!(record(&made(&dylib, later(), false), &gen_dir, &roots, Duration::ZERO).is_some(), "the control");
     let before_the_file = SystemTime::now() - Duration::from_secs(3600);
     assert!(
-        record(&dylib, &gen_dir, &roots, before_the_file, Duration::ZERO).is_none(),
+        record(&made(&dylib, before_the_file, false), &gen_dir, &roots, Duration::ZERO).is_none(),
         "a source modified after the build began may have been read half-edited"
     );
     std::fs::remove_file(&source).unwrap();
-    assert!(record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).is_none(), "a source that is gone");
+    assert!(record(&made(&dylib, later(), false), &gen_dir, &roots, Duration::ZERO).is_none(), "a source that is gone");
     std::fs::remove_file(dylib.with_extension("d")).unwrap();
-    assert!(record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).is_none(), "no dep-info");
+    assert!(record(&made(&dylib, later(), false), &gen_dir, &roots, Duration::ZERO).is_none(), "no dep-info");
 }
 
 #[test]
@@ -155,7 +163,7 @@ fn a_source_whose_timestamp_was_set_back_is_not_trusted() {
     let mut roots = Roots::default();
     roots.add("lints", source.parent().unwrap());
     let dylib = built(&gen_dir, &format!("out.d: {}\n", source.display()));
-    assert!(record(&dylib, &gen_dir, &roots, began, Duration::ZERO).is_none());
+    assert!(record(&made(&dylib, began, false), &gen_dir, &roots, Duration::ZERO).is_none());
 }
 
 #[test]
@@ -167,9 +175,9 @@ fn a_source_under_no_root_leaves_nothing_kept_unless_the_directory_is_the_same_f
     std::fs::write(&outside, "x").unwrap();
     let dylib = built(&gen_dir, &format!("out.d: {}\n", outside.display()));
     let mut roots = Roots::default();
-    assert!(record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).is_none());
+    assert!(record(&made(&dylib, later(), false), &gen_dir, &roots, Duration::ZERO).is_none());
     roots.add("repo", &tmp.path().join("repo"));
-    let deps = record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).expect("under the repository root");
+    let deps = record(&made(&dylib, later(), false), &gen_dir, &roots, Duration::ZERO).expect("under the repository root");
     assert_eq!(deps.len(), 1);
 }
 
@@ -199,7 +207,7 @@ fn a_variable_the_build_was_given_is_compared_and_one_it_was_not_is_not() {
     let info = "out.d: \n# env-dep:CARGO_PKG_NAME=probe\n# env-dep:NO_COLOR=1\n# env-dep:MOCKSPACE_PROBE_UNSET_VARIABLE\n";
     let dylib = built(&gen_dir, info);
     let roots = Roots::default();
-    let deps = record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).expect("recorded");
+    let deps = record(&made(&dylib, later(), false), &gen_dir, &roots, Duration::ZERO).expect("recorded");
     assert_eq!(deps.len(), 3);
     // a variable the build was not given is not compared, whatever this process has
     let cargo_set = Dep { name: "env\tCARGO_PKG_NAME".to_string(), digest: digest_bytes(b"other") };
@@ -214,7 +222,7 @@ fn a_unit_dep_info_left_by_an_earlier_build_is_not_read_for_this_one() {
     let gen_dir = tmp.path().join("gen");
     let dylib = built(&gen_dir, "out.d: \n# env-dep:NO_COLOR=1\n");
     let roots = Roots::default();
-    assert!(record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).is_some(), "the control");
+    assert!(record(&made(&dylib, later(), false), &gen_dir, &roots, Duration::ZERO).is_some(), "the control");
     // With `build.build-dir` set rustc writes the unit's dep-info elsewhere, and this one is what
     // an earlier build without it left behind.
     std::fs::File::options()
@@ -223,5 +231,58 @@ fn a_unit_dep_info_left_by_an_earlier_build_is_not_read_for_this_one() {
         .unwrap()
         .set_modified(SystemTime::now() - Duration::from_secs(3600))
         .unwrap();
-    assert!(record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).is_none());
+    assert!(record(&made(&dylib, later(), false), &gen_dir, &roots, Duration::ZERO).is_none());
+}
+
+#[test]
+fn a_reused_build_holds_the_sources_to_the_time_it_was_made() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gen_dir = tmp.path().join("gen");
+    let source = tmp.path().join("lints").join("probe.rs");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, "x").unwrap();
+    let mut roots = Roots::default();
+    roots.add("lints", source.parent().unwrap());
+    let dylib = built(&gen_dir, &format!("out.d: {}\n", source.display()));
+    let reused = made(&dylib, later(), true);
+    assert!(record(&reused, &gen_dir, &roots, Duration::ZERO).is_some(), "the source is older than the output");
+    // The source changes after the output was made, with a modification time set back, and cargo
+    // calls the output fresh all the same.
+    std::fs::File::options()
+        .write(true)
+        .open(dylib.parent().unwrap().join("deps").join("gen.d"))
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(3600))
+        .unwrap();
+    assert!(record(&reused, &gen_dir, &roots, Duration::ZERO).is_none());
+}
+
+#[test]
+fn a_unit_that_read_the_directory_of_a_manifest_in_the_tree_leaves_nothing_kept() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gen_dir = tmp.path().join("gen");
+    let tool = tmp.path().join("repo").join("tools").join("t");
+    std::fs::create_dir_all(&tool).unwrap();
+    let info = format!("out.d: \n# env-dep:CARGO_MANIFEST_DIR={}\n", tool.display());
+    let dylib = built(&gen_dir, &info);
+    let mut roots = Roots::default();
+    assert!(record(&made(&dylib, later(), false), &gen_dir, &roots, Duration::ZERO).is_none());
+    let own = built(&gen_dir, &format!("out.d: \n# env-dep:CARGO_MANIFEST_DIR={}\n", gen_dir.display()));
+    assert!(record(&made(&own, later(), false), &gen_dir, &roots, Duration::ZERO).is_some(), "the shared crate itself");
+    roots.allow_absolute(tmp.path().join("repo").as_path());
+    assert!(record(&made(&dylib, later(), false), &gen_dir, &roots, Duration::ZERO).is_some());
+}
+
+#[test]
+fn the_unit_dep_info_is_named_for_the_unit_wherever_the_output_was_linked() {
+    let name = |file: &str| unit_info_of(Path::new(file)).unwrap();
+    // The library linked up into the profile directory.
+    assert_eq!(name("/t/release/libmockspace_lints_ab.so"), Path::new("/t/release/deps/mockspace_lints_ab.d"));
+    // A dependency in `deps/` carries its hash, and rustc leaves the `lib` off its dep-info.
+    assert_eq!(name("/t/release/deps/libserde-0f1e.rlib"), Path::new("/t/release/deps/serde-0f1e.d"));
+    // A cross target adds a directory above the profile and changes nothing below it.
+    assert_eq!(
+        name("/t/x86_64-unknown-linux-gnu/release/libmockspace_lints_ab.so"),
+        Path::new("/t/x86_64-unknown-linux-gnu/release/deps/mockspace_lints_ab.d")
+    );
 }

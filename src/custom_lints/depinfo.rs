@@ -29,7 +29,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use super::build::keeps_env;
+use super::build::{Built, keeps_env};
 use super::identity::digest_bytes;
 
 /// How long before a build a source must have last changed for it to be trusted. Filesystems with
@@ -182,26 +182,37 @@ fn changed_at(meta: &std::fs::Metadata) -> Option<SystemTime> {
     Some(modified)
 }
 
+/// How long before the build a unit's dep-info may be stamped and still be the one it wrote.
+const SLACK: Duration = Duration::from_secs(2);
+
+/// Variables that name the directory of a package's manifest. A path package or tool crate sits in
+/// the tree and its value would carry that tree into a library shared by others.
+const MANIFEST_KEYS: [&str; 2] = ["CARGO_MANIFEST_DIR", "CARGO_MANIFEST_PATH"];
+
 /// What the library at `dylib` was built from, with digests, or `None` where the list cannot be
-/// trusted: no dep-info, a file unreadable or under no root, or one that changed within `margin`
-/// of the build.
+/// trusted: no dep-info, one left by another build, a file unreadable or under no root, one that
+/// changed within `margin` of the build, or a unit that read the directory of a manifest in the
+/// tree.
 ///
 /// `gen_dir` is where rustc ran, which a relative path in the list is read against. Its files are
 /// not inputs, since the identity holds their text, and nor are the build's own outputs, which
 /// sit in the target directory above the library. `started` is the moment before cargo was run;
 /// where cargo reused an earlier build instead (its dep-info is older), the sources are held to
-/// that build's time, so a file changed since cannot pass for one that was built from.
-pub(crate) fn record(
-    dylib: &Path,
-    gen_dir: &Path,
-    roots: &Roots,
-    started: SystemTime,
-    margin: Duration,
-) -> Option<Vec<Dep>> {
-    let info_path = info_of(dylib)?;
-    let info = std::fs::read_to_string(&info_path).ok()?;
-    let built_at = std::fs::metadata(&info_path).and_then(|m| m.modified()).ok()?;
-    let reference = built_at.min(started);
+/// that build's time, so a file changed since cannot pass for one that was built from. `built.units`
+/// are the files cargo reported making, whose dep-info carries the variables each unit read.
+pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Duration) -> Option<Vec<Dep>> {
+    let dylib = built.dylib.as_path();
+    let units = built.units.as_slice();
+    let info = std::fs::read_to_string(info_of(dylib)?).ok()?;
+    let own_info = unit_info_of(dylib)?;
+    let own_at = std::fs::metadata(&own_info).and_then(|m| m.modified()).ok()?;
+    // A build cargo ran wrote the unit's dep-info after it began; one older than that is a file an
+    // earlier build left, and the sources are held to the time of the one that made the output.
+    if !built.fresh && own_at + SLACK < built.started {
+        return None;
+    }
+    let reference = if built.fresh { own_at } else { built.started };
+    let gen_seen = gen_dir.canonicalize().unwrap_or_else(|_| gen_dir.to_path_buf());
     let outside: Vec<PathBuf> = [Some(gen_dir), dylib.parent().and_then(Path::parent)]
         .into_iter()
         .flatten()
@@ -224,12 +235,25 @@ pub(crate) fn record(
         }
         deps.push(Dep { name, digest: digest_bytes(&std::fs::read(&file).ok()?) });
     }
-    let unit_info = std::fs::read_to_string(unit_info_of(dylib)?).ok()?;
-    for (key, value) in env_reads(&unit_info) {
-        deps.push(Dep {
-            name:   format!("{ENV}{SEPARATOR}{key}"),
-            digest: env_digest(value.as_deref().map(str::as_bytes)),
-        });
+    let mut infos = vec![own_info];
+    infos.extend(units.iter().filter_map(|u| unit_info_of(u)));
+    infos.sort();
+    infos.dedup();
+    for path in infos {
+        let Ok(unit_info) = std::fs::read_to_string(&path) else { continue };
+        for (key, value) in env_reads(&unit_info) {
+            if let (true, Some(value)) = (MANIFEST_KEYS.contains(&key.as_str()), value.as_deref()) {
+                let at = Path::new(value);
+                let at = at.canonicalize().unwrap_or_else(|_| at.to_path_buf());
+                if !at.starts_with(&gen_seen) && !roots.absolute.iter().any(|dir| at.starts_with(dir)) {
+                    return None;
+                }
+            }
+            deps.push(Dep {
+                name:   format!("{ENV}{SEPARATOR}{key}"),
+                digest: env_digest(value.as_deref().map(str::as_bytes)),
+            });
+        }
     }
     deps.sort_by(|a, b| a.name.cmp(&b.name));
     deps.dedup();
@@ -242,11 +266,15 @@ fn info_of(dylib: &Path) -> Option<PathBuf> {
     Some(dylib.with_extension("d"))
 }
 
-/// The dep-info rustc wrote for the library itself, in `deps/`. It is the one with the `# env-dep:` lines, which cargo leaves out of the copy beside the library.
-fn unit_info_of(dylib: &Path) -> Option<PathBuf> {
-    let stem = dylib.file_stem()?.to_str()?;
+/// The dep-info rustc wrote for the unit that made `file`: in `deps/` beside it, or for a file
+/// cargo linked up into the profile directory, in the `deps/` below it. It is the one with the
+/// `# env-dep:` lines, which cargo leaves out of the copy beside the library.
+fn unit_info_of(file: &Path) -> Option<PathBuf> {
+    let dir = file.parent()?;
+    let stem = file.file_stem()?.to_str()?;
     let stem = stem.strip_prefix("lib").unwrap_or(stem);
-    Some(dylib.parent()?.join("deps").join(format!("{stem}.d")))
+    let deps = if dir.file_name().is_some_and(|n| n == "deps") { dir.to_path_buf() } else { dir.join("deps") };
+    Some(deps.join(format!("{stem}.d")))
 }
 
 /// Whether every file is, in this tree, what the library was built from, and every variable the

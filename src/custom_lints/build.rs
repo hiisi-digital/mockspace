@@ -88,6 +88,10 @@ pub(crate) struct Built {
     /// The moment before cargo was started. A source modified after it may or may not have been
     /// read by the compiler, so a library built beside such a source is not kept.
     pub started: SystemTime,
+    /// Every file cargo reported making, the library's dependencies among them.
+    pub units:   Vec<PathBuf>,
+    /// Whether cargo reused an earlier output instead of building, as its own report says.
+    pub fresh:   bool,
 }
 
 /// `cargo build` the cdylib and return the built library path.
@@ -135,9 +139,13 @@ pub(crate) fn build_cdylib(gen_dir: &Path, crate_name: &str) -> Result<Built, St
         .take()
         .ok_or_else(|| "cargo build gave no stdout to read artifacts from".to_string())?;
     let mut found = None;
+    let mut fresh = false;
+    let mut units = Vec::new();
     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        units.extend(artifact_files(&line));
         if let Some(p) = cdylib_artifact(&line, crate_name) {
             found = Some(p);
+            fresh = artifact_is_fresh(&line);
         }
     }
 
@@ -161,7 +169,29 @@ pub(crate) fn build_cdylib(gen_dir: &Path, crate_name: &str) -> Result<Built, St
     // `<mock>/target` marks an almost-empty directory and leaves the large one
     // indexed. Only reachable here because the path came from cargo.
     crate::build_dir::mark_target_root_of(&dylib);
-    Ok(Built { dylib, started })
+    Ok(Built { dylib, started, units, fresh })
+}
+
+/// Whether a `compiler-artifact` line says cargo reused the output.
+fn artifact_is_fresh(line: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(line)
+        .ok()
+        .and_then(|m| m.get("fresh").and_then(|f| f.as_bool()))
+        .unwrap_or(false)
+}
+
+/// The files a `compiler-artifact` line of cargo's json names, whatever the unit.
+fn artifact_files(line: &str) -> Vec<PathBuf> {
+    let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) else { return Vec::new() };
+    if msg.get("reason").and_then(|r| r.as_str()) != Some("compiler-artifact") {
+        return Vec::new();
+    }
+    msg.get("filenames")
+        .and_then(|f| f.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|f| f.as_str().map(PathBuf::from))
+        .collect()
 }
 
 /// One line of cargo's json, to the cdylib path it names, or nothing.
