@@ -228,7 +228,9 @@ fn build_and_load(
     // The library is kept under an identity made from its inputs, so a tree of the same content
     // loads a peer's build and nothing is built or relinked on its account. Where the inputs
     // cannot be read, it is built as ever and identified by its bytes.
-    let identity = pack_identity(&gen_dir, content, cfg);
+    let identity = mockspace_lint_rules::timing::time("phase:pack-identity", || {
+        pack_identity(&gen_dir, content, cfg)
+    });
     #[cfg(test)]
     store::knobs::run_after_identity(&gen_dir);
     let crate_name = gen_crate_name(&gen_dir);
