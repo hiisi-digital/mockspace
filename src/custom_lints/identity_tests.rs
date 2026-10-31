@@ -378,3 +378,17 @@ fn a_package_git_does_not_track_at_all_is_read_whole() {
     let edited = digest_tree(&pkg).unwrap();
     assert_ne!(edited, before, "a source edit in an untracked package");
 }
+
+#[test]
+fn a_build_script_git_does_not_track_yet_still_moves_the_digest() {
+    // Cargo finds `build.rs` at the package root by itself, so neither the manifest nor an earlier
+    // build's dep-info names a new one, and a scratch file beside the package is not the same thing.
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    let pkg = tracked_package(&repo);
+    let before = digest_tree(&pkg).unwrap();
+    std::fs::write(pkg.join("scratch.rs"), "fn s() {}").unwrap();
+    assert_eq!(digest_tree(&pkg).unwrap(), before, "the control: a scratch file is not read");
+    std::fs::write(pkg.join("build.rs"), "fn main() {}").unwrap();
+    assert_ne!(digest_tree(&pkg).unwrap(), before, "an untracked build script");
+}

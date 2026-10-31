@@ -234,7 +234,7 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
     }
     let mut deps = Vec::new();
     let mut registry = super::registry::Registry::of(gen_dir);
-    let mut take = |info: &str, reference: SystemTime| -> Option<()> {
+    let mut take = |info: &str, reference: SystemTime, reused: bool| -> Option<()> {
         for source in sources_of(info) {
             let file = if source.is_absolute() { source } else { gen_dir.join(source) };
             let seen = file.canonicalize().unwrap_or_else(|_| file.clone());
@@ -249,7 +249,7 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
             let changed = changed_at(&std::fs::metadata(&file).ok()?)?;
             // A registry crate is as new as the unpack: it is held by the checksum of its `.crate`
             // and bounded by the mark cargo left when it finished unpacking, not by the margin.
-            if changed + margin > reference && !registry.trusts(&seen, changed, &roots.absolute) {
+            if changed + margin > reference && !registry.trusts(&seen, changed, reused.then_some(reference), &roots.absolute) {
                 return None;
             }
             let name = roots.name(&file)?;
@@ -260,7 +260,7 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
         }
         Some(())
     };
-    take(&info, reference)?;
+    take(&info, reference, built.fresh)?;
     // Each unit's own sources are held to that unit's own time: one cargo reused is only as old as
     // the dep-info it wrote, however recently the library above it was linked.
     let mut infos = vec![own_info];
@@ -268,7 +268,7 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
         let path = info_of_unit(unit)?;
         let text = std::fs::read_to_string(&path).ok()?;
         let at = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
-        take(&text, if unit.fresh { at } else { built.started })?;
+        take(&text, if unit.fresh { at } else { built.started }, unit.fresh)?;
         infos.push(path);
     }
     infos.sort();
@@ -402,3 +402,7 @@ pub(crate) fn decode(text: &str) -> Option<Vec<Dep>> {
 #[cfg(test)]
 #[path = "depinfo_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "depinfo_registry_tests.rs"]
+mod registry_tests;

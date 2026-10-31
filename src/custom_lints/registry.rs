@@ -20,7 +20,9 @@
 //! alone: the file must also be no newer than the package's `.cargo-ok`, which cargo writes when
 //! it has finished unpacking. A file edited by hand afterwards is newer, is held to the age as any
 //! source is, and cargo's reuse of the unit built from the old text cannot be mistaken for a build
-//! of the edit.
+//! of the edit. For a unit cargo reused the unpack must also be no later than the unit, or an edit
+//! followed by a fresh unpack would pass for the text the unit was built from; a unit built in this
+//! run is unpacked by it and has no such bound.
 //!
 //! holds for: a source under a cargo home declared the same for every tree, of a package the lock
 //! gives a checksum, unpacked by a cargo that writes `.cargo-ok`. Does not hold for a path or git
@@ -60,7 +62,18 @@ impl Registry {
     /// `changed` is when `file` last changed. It must be no later than the package's `.cargo-ok`,
     /// which cargo writes when it has finished unpacking: the checksum is of the `.crate` and says
     /// nothing of the unpacked copy, so a file edited after the unpack is not what the checksum names.
-    pub(crate) fn trusts(&mut self, file: &Path, changed: SystemTime, homes: &[PathBuf]) -> bool {
+    ///
+    /// `reused_at` is the time of the unit cargo reused, where the file belongs to one. Cargo does not
+    /// fingerprint a registry crate by time, so a unit older than the unpack may have been built from
+    /// text that was edited and then unpacked afresh; the unpack must then be no later than the unit.
+    /// A unit built in this run is unpacked by this run, and has no such bound.
+    pub(crate) fn trusts(
+        &mut self,
+        file: &Path,
+        changed: SystemTime,
+        reused_at: Option<SystemTime>,
+        homes: &[PathBuf],
+    ) -> bool {
         for home in homes {
             let Ok(below) = file.strip_prefix(home.join("registry").join("src")) else {
                 continue;
@@ -75,7 +88,7 @@ impl Registry {
             };
             let unpacked = home.join("registry").join("src").join(index).join(package);
             let finished = std::fs::metadata(unpacked.join(".cargo-ok")).ok().and_then(|m| changed_at(&m));
-            if finished.is_none_or(|finished| changed > finished) {
+            if finished.is_none_or(|finished| changed > finished || reused_at.is_some_and(|at| finished > at)) {
                 return false;
             }
             let crate_file = home.join("registry").join("cache").join(index).join(format!("{package_name}.crate"));

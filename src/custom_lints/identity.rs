@@ -136,7 +136,15 @@ pub(crate) fn digest_tree(root: &Path) -> std::io::Result<String> {
     let mut h = Sha256::new();
     // A package whose own manifest git does not track is not tracked at all (a pack drafted before
     // its first `git add`), and its manifest is the one file no dep-info lists: it is read whole.
-    let tracked = tracked_files(root).filter(|t| t.contains("Cargo.toml"));
+    let tracked = tracked_files(root).filter(|t| t.contains("Cargo.toml")).map(|mut t| {
+        // Cargo finds a build script at the package root by itself: no manifest and no earlier
+        // build's dep-info names a new one, so it counts before it is added. Any other untracked
+        // file is a file nobody has said belongs to the package.
+        if root.join("build.rs").is_file() {
+            t.insert("build.rs".to_string());
+        }
+        t
+    });
     walk(root, root, &mut h, tracked.as_ref())?;
     // A tracked file that is gone from the disk is a change to the package and is hashed as one.
     if let Some(tracked) = &tracked {
