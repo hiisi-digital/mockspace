@@ -698,3 +698,33 @@ fn a_parallel_map_on_one_thread_runs_in_order_without_spawning() {
     });
     assert_eq!(*order.lock().unwrap(), vec![0, 1, 2]);
 }
+
+#[test]
+fn a_panic_in_one_item_of_a_batch_propagates_and_saves_nothing_of_that_batch() {
+    let store = Memory::default();
+    let parts: Vec<Vec<&[u8]>> = vec![vec![b"p"], vec![b"q"], vec![b"r"]];
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        with_repo_context(Some(&store), |ctx| {
+            ctx.remembered_batch("batched", &parts, |n| {
+                assert!(n != 1, "the judge crashed on item {n}");
+                Vec::new()
+            })
+        })
+    }));
+    assert!(outcome.is_err(), "a crashed judge must not read as a clean lint");
+    assert_eq!(store.stores.load(Ordering::SeqCst), 0, "nothing of the batch was saved");
+}
+
+#[test]
+fn a_parallel_map_never_runs_more_items_at_once_than_the_threads_it_was_given() {
+    let positions: Vec<usize> = (0 .. 8).collect();
+    let (live, peak) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    verdict::parallel_map_with(2, &positions, &|_| {
+        let now = live.fetch_add(1, Ordering::SeqCst) + 1;
+        peak.fetch_max(now, Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        live.fetch_sub(1, Ordering::SeqCst);
+        Vec::new()
+    });
+    assert_eq!(peak.load(Ordering::SeqCst), 2, "two threads, eight slow items: two at once, never more");
+}

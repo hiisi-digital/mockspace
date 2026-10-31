@@ -5,7 +5,6 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
@@ -55,8 +54,7 @@ impl Fixture {
         );
         let path = self.taplo_path();
         let _ = fs::remove_file(&path);
-        fs::write(&path, script).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_exec::write_executable(&path, script);
     }
 
     fn runs(&self) -> usize {
@@ -224,8 +222,7 @@ fn a_taplo_that_prints_its_version_on_stderr_keys_on_it() {
     };
     let install = |version: &str| {
         let _ = fs::remove_file(&path);
-        fs::write(&path, body(version)).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_exec::write_executable(&path, body(version));
     };
     install("taplo 0.10.0");
     assert!(f.passes());
@@ -376,8 +373,7 @@ fn a_file_edited_while_taplo_runs_does_not_get_the_pass_saved_under_its_old_cont
     let original = fs::read_to_string(&reg).unwrap();
     let path = f.taplo_path();
     let _ = fs::remove_file(&path);
-    fs::write(&path, body).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(&path, body);
     assert!(f.passes());
     fs::write(&reg, original).unwrap();
     assert!(f.passes());
@@ -394,8 +390,7 @@ fn a_failed_version_probe_is_never_keyed() {
     );
     let path = f.taplo_path();
     let _ = fs::remove_file(&path);
-    fs::write(&path, body).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(&path, body);
     assert!(f.passes());
     assert!(f.passes());
     assert_eq!(f.runs(), 2, "a validator that cannot say its version is run every time");

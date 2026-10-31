@@ -1537,6 +1537,15 @@ pub struct RepoContext<'a> {
 }
 
 impl RepoContext<'_> {
+    /// The key one item's verdict is saved under, which `remembered` and `remembered_batch` both make.
+    fn item_key(cache: &dyn verdict::VerdictCache, lint: &str, parts: &[&[u8]]) -> String {
+        let mut all: Vec<&[u8]> = Vec::with_capacity(parts.len() + 2);
+        all.push(b"remembered-v1");
+        all.push(lint.as_bytes());
+        all.extend_from_slice(parts);
+        cache.digest(&all)
+    }
+
     /// `compute`'s findings for the item named by `parts`, replayed from the store when the same
     /// parts were judged before.
     ///
@@ -1557,11 +1566,7 @@ impl RepoContext<'_> {
         let Some(cache) = self.verdicts else {
             return compute();
         };
-        let mut all: Vec<&[u8]> = Vec::with_capacity(parts.len() + 2);
-        all.push(b"remembered-v1");
-        all.push(lint.as_bytes());
-        all.extend_from_slice(parts);
-        let key = cache.digest(&all);
+        let key = Self::item_key(cache, lint, parts);
         verdict::replay_or(cache, &key, lint, || Some(compute())).unwrap_or_default()
     }
 
@@ -1584,16 +1589,7 @@ impl RepoContext<'_> {
         let Some(cache) = self.verdicts else {
             return verdict::parallel_map(&(0 .. parts.len()).collect::<Vec<_>>(), &compute);
         };
-        let keys: Vec<String> = parts
-            .iter()
-            .map(|item| {
-                let mut all: Vec<&[u8]> = Vec::with_capacity(item.len() + 2);
-                all.push(b"remembered-v1");
-                all.push(lint.as_bytes());
-                all.extend_from_slice(item);
-                cache.digest(&all)
-            })
-            .collect();
+        let keys: Vec<String> = parts.iter().map(|item| Self::item_key(cache, lint, item)).collect();
         verdict::replay_or_batch(cache, &keys, lint, compute)
     }
 }
