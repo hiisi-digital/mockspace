@@ -15,7 +15,11 @@
 
 use std::time::Duration;
 
-use super::tests::git;
+use std::path::{Path, PathBuf};
+
+use super::key::is_key_name;
+use super::support::git;
+use crate::config::Config;
 use super::*;
 use crate::custom_lints::{LoadedLints, load_in};
 
