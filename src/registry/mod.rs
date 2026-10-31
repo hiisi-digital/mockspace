@@ -70,6 +70,7 @@ mod render;
 mod resolve;
 mod resolved;
 mod rowref;
+mod schema_replay;
 pub(crate) mod validate;
 
 pub use bounds::*;

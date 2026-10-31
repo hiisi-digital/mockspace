@@ -203,6 +203,88 @@ pub(crate) fn replay_or(
     Some(found)
 }
 
+/// The findings for every key, replayed where saved and computed where not, the misses at the
+/// same time.
+///
+/// The batch form of [`replay_or`]: every key is asked of the store first, on this thread, since
+/// a store is not required to be `Sync`; the misses then run on as many threads as the machine
+/// has, each key's item once however many positions name it; and the new verdicts are saved after,
+/// on this thread again. A key named twice is the second naming's hit, as it is in the sequential
+/// form. `compute(n)` judges the item at position `n`.
+pub(crate) fn replay_or_batch(
+    cache: &dyn VerdictCache,
+    keys: &[String],
+    lint: &str,
+    compute: impl Fn(usize) -> Vec<LintError> + Sync,
+) -> Vec<Vec<LintError>> {
+    let mut out: Vec<Option<Vec<LintError>>> = Vec::with_capacity(keys.len());
+    let mut first_of: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut misses: Vec<usize> = Vec::new();
+    for (n, key) in keys.iter().enumerate() {
+        let found = cache.replay(key).as_deref().and_then(decode);
+        if found.is_some() || first_of.contains_key(key.as_str()) {
+            cache.tally(true, lint);
+        } else {
+            first_of.insert(key.as_str(), n);
+            misses.push(n);
+        }
+        out.push(found);
+    }
+    for (n, found) in misses.iter().zip(parallel_map(&misses, &compute)) {
+        cache.tally(false, lint);
+        cache.remember(&keys[*n], &encode(&found));
+        out[*n] = Some(found);
+    }
+    // A repeat of a key computed above takes the first naming's answer from memory, not from the
+    // store, which may be one that cannot write.
+    for (n, key) in keys.iter().enumerate() {
+        if out[n].is_none() {
+            out[n] = out[first_of[key.as_str()]].clone();
+        }
+    }
+    out.into_iter().map(Option::unwrap_or_default).collect()
+}
+
+/// `compute` over each of `positions`, in order, spread over the machine's threads.
+pub(crate) fn parallel_map(positions: &[usize], compute: &(impl Fn(usize) -> Vec<LintError> + Sync)) -> Vec<Vec<LintError>> {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    parallel_map_with(threads, positions, compute)
+}
+
+/// [`parallel_map`] on at most `threads` threads, so a test can ask for several on any machine.
+pub(crate) fn parallel_map_with(
+    threads: usize,
+    positions: &[usize],
+    compute: &(impl Fn(usize) -> Vec<LintError> + Sync),
+) -> Vec<Vec<LintError>> {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let workers = threads.min(positions.len());
+    if workers <= 1 {
+        return positions.iter().map(|&n| compute(n)).collect();
+    }
+    let next = AtomicUsize::new(0);
+    let done: Mutex<Vec<Option<Vec<LintError>>>> = Mutex::new(vec![None; positions.len()]);
+    std::thread::scope(|scope| {
+        for _ in 0 .. workers {
+            scope.spawn(|| {
+                loop {
+                    let at = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(&n) = positions.get(at) else { break };
+                    let found = compute(n);
+                    done.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[at] = Some(found);
+                }
+            });
+        }
+    });
+    done.into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .into_iter()
+        .map(Option::unwrap_or_default)
+        .collect()
+}
+
 /// The version line of the encoding. A reader that does not know it finds nothing.
 const FORMAT: &str = "verdict-v2";
 

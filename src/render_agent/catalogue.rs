@@ -24,7 +24,7 @@ pub(crate) fn body(cfg: &Config, pack: &LintPack) -> String {
     let set_here = crate::lint_catalogue::render_set_here(&lints, &absent);
     format!(
         "## What is available here, and what is checking you\n\n\
-         `mock tools` and `mock lints` list everything here, with the severities that govern, including what arrives through `lint-crates`. The reach column says how much of the repository a lint reads, from one file to everything, and a lint that declares nothing is shown as the widest: a run replays a saved verdict only for a lint with a narrower reach, so that column is also what decides whether the lint is skipped when nothing it reads has moved. Below is only what this repository declares, as of the last `cargo mock`.\n\n\
+         `mock tools` and `mock lints` list everything here, with the severities that govern, including what arrives through `lint-crates`. The reach column says how much of the repository a lint reads, from one file to everything, and a lint that declares nothing is shown as the widest: a run replays a saved verdict for a lint with a narrower reach, so that column decides whether the lint is skipped when nothing it reads has moved. A repository lint is never saved whole: one that judges separable items replays each item on its own, and `remembered_batch` computes the items that moved at the same time. The registry schema check replays too, while nothing taplo reads has moved. Below is only what this repository declares, as of the last `cargo mock`.\n\n\
          ```\n{tools}\n{set_here}```\n"
     )
 }
