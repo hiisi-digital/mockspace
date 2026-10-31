@@ -179,7 +179,7 @@ fn env_digest(value: Option<&[u8]>) -> String {
 
 /// When a file last changed, by anything: the later of its modification and its change time. The
 /// second cannot be set from user space, so `cp -p`, `tar x` and `rsync -t` do not move it back.
-fn changed_at(meta: &std::fs::Metadata) -> Option<SystemTime> {
+pub(super) fn changed_at(meta: &std::fs::Metadata) -> Option<SystemTime> {
     let modified = meta.modified().ok()?;
     #[cfg(unix)]
     {
@@ -233,7 +233,8 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
         return None;
     }
     let mut deps = Vec::new();
-    let mut take = |info: &str, reference: SystemTime| -> Option<()> {
+    let mut registry = super::registry::Registry::of(gen_dir);
+    let mut take = |info: &str, reference: SystemTime, reused: bool| -> Option<()> {
         for source in sources_of(info) {
             let file = if source.is_absolute() { source } else { gen_dir.join(source) };
             let seen = file.canonicalize().unwrap_or_else(|_| file.clone());
@@ -243,8 +244,12 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
             // The bytes first and the change time after: an edit between the two shows in the time,
             // and the other order would store the new content beside the library of the old.
             let bytes = std::fs::read(&file).ok()?;
+            #[cfg(test)]
+            super::store::knobs::run_between_read_and_stat(&file);
             let changed = changed_at(&std::fs::metadata(&file).ok()?)?;
-            if changed + margin > reference {
+            // A registry crate is as new as the unpack: it is held by the checksum of its `.crate`
+            // and bounded by the mark cargo left when it finished unpacking, not by the margin.
+            if changed + margin > reference && !registry.trusts(&seen, changed, reused.then_some(reference), &roots.absolute) {
                 return None;
             }
             let name = roots.name(&file)?;
@@ -255,7 +260,7 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
         }
         Some(())
     };
-    take(&info, reference)?;
+    take(&info, reference, built.fresh)?;
     // Each unit's own sources are held to that unit's own time: one cargo reused is only as old as
     // the dep-info it wrote, however recently the library above it was linked.
     let mut infos = vec![own_info];
@@ -263,7 +268,7 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
         let path = info_of_unit(unit)?;
         let text = std::fs::read_to_string(&path).ok()?;
         let at = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
-        take(&text, if unit.fresh { at } else { built.started })?;
+        take(&text, if unit.fresh { at } else { built.started }, unit.fresh)?;
         infos.push(path);
     }
     infos.sort();
@@ -331,6 +336,11 @@ pub(crate) fn newer_than_their_units(built: &Built, gen_dir: &Path) -> Vec<PathB
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
         for source in sources_of(&text) {
             let file = if source.is_absolute() { source } else { gen_dir.join(source) };
+            // Cargo fingerprints a registry crate by its version and not by the time of its files, so
+            // touching one forces no rebuild and only moves it past the mark of its unpack (`registry`).
+            if super::registry::is_registry_source(&file) {
+                continue;
+            }
             if std::fs::metadata(&file).ok().and_then(|m| changed_at(&m)).is_some_and(|at| at > made) {
                 out.push(file);
             }
@@ -392,3 +402,7 @@ pub(crate) fn decode(text: &str) -> Option<Vec<Dep>> {
 #[cfg(test)]
 #[path = "depinfo_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "depinfo_registry_tests.rs"]
+mod registry_tests;

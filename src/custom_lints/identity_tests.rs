@@ -299,3 +299,96 @@ fn collecting_nothing_unreadable_is_none_and_never_a_partial_identity() {
     };
     assert!(of_generated_crate(&tree).is_none());
 }
+
+fn git_in(dir: &Path, args: &[&str]) {
+    let out = std::process::Command::new("git").args(args).current_dir(dir).output().unwrap();
+    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+/// A package at `<repo>/pkg` in a fresh git repository, with its files staged.
+fn tracked_package(repo: &Path) -> std::path::PathBuf {
+    git_in(repo.parent().unwrap(), &["init", "-q", repo.to_str().unwrap()]);
+    let pkg = repo.join("pkg");
+    tree(&pkg, "fn x() {}");
+    git_in(repo, &["add", "pkg"]);
+    pkg
+}
+
+#[test]
+fn a_file_git_does_not_track_is_not_part_of_a_package_in_a_repository() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    let pkg = tracked_package(&repo);
+    let before = digest_tree(&pkg).unwrap();
+
+    std::fs::write(pkg.join("scratch.rs"), "fn scratch() {}").unwrap();
+    std::fs::create_dir_all(pkg.join("src").join("notes")).unwrap();
+    std::fs::write(pkg.join("src").join("notes").join("draft.rs"), "fn d() {}").unwrap();
+    assert_eq!(digest_tree(&pkg).unwrap(), before, "an untracked file moved the identity");
+
+    std::fs::write(repo.join(".gitignore"), "ignored.bin\n").unwrap();
+    std::fs::write(pkg.join("ignored.bin"), [1, 2, 3]).unwrap();
+    assert_eq!(digest_tree(&pkg).unwrap(), before, "an ignored file moved the identity");
+}
+
+#[test]
+fn a_tracked_file_is_part_of_a_package_whatever_its_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    let pkg = tracked_package(&repo);
+    let before = digest_tree(&pkg).unwrap();
+
+    std::fs::write(pkg.join("src").join("lib.rs"), "fn y() {}").unwrap();
+    let edited = digest_tree(&pkg).unwrap();
+    assert_ne!(edited, before, "an edit not yet staged");
+
+    // The case that must fail to stay equal: a file added to the index is a file of the package.
+    std::fs::write(pkg.join("src").join("extra.rs"), "fn e() {}").unwrap();
+    git_in(&repo, &["add", "pkg/src/extra.rs"]);
+    let added = digest_tree(&pkg).unwrap();
+    assert_ne!(added, edited, "a staged new file");
+
+    // A tracked file gone from the disk is a change, and is not an error.
+    std::fs::remove_file(pkg.join("src").join("extra.rs")).unwrap();
+    assert_ne!(digest_tree(&pkg).unwrap(), added, "a tracked file deleted from the disk");
+}
+
+#[test]
+fn a_package_outside_any_repository_is_read_whole() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    tree(&pkg, "fn x() {}");
+    let before = digest_tree(&pkg).unwrap();
+    std::fs::write(pkg.join("more.rs"), "fn m() {}").unwrap();
+    assert_ne!(digest_tree(&pkg).unwrap(), before, "git cannot say, so every file counts");
+}
+
+#[test]
+fn a_package_git_does_not_track_at_all_is_read_whole() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    git_in(tmp.path(), &["init", "-q", repo.to_str().unwrap()]);
+    let pkg = repo.join("pkg");
+    tree(&pkg, "fn x() {}");
+    let before = digest_tree(&pkg).unwrap();
+    // A pack drafted before its first `git add`: the manifest is not in any lint source or dep-info.
+    std::fs::write(pkg.join("Cargo.toml"), "[package]\nedition = \"2021\"\n").unwrap();
+    assert_ne!(digest_tree(&pkg).unwrap(), before, "a manifest edit in an untracked package");
+    std::fs::write(pkg.join("src").join("lib.rs"), "fn y() {}").unwrap();
+    let edited = digest_tree(&pkg).unwrap();
+    assert_ne!(edited, before, "a source edit in an untracked package");
+}
+
+#[test]
+fn a_build_script_git_does_not_track_yet_still_moves_the_digest() {
+    // Cargo finds `build.rs` at the package root by itself, so neither the manifest nor an earlier
+    // build's dep-info names a new one, and a scratch file beside the package is not the same thing.
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    let pkg = tracked_package(&repo);
+    let before = digest_tree(&pkg).unwrap();
+    std::fs::write(pkg.join("scratch.rs"), "fn s() {}").unwrap();
+    assert_eq!(digest_tree(&pkg).unwrap(), before, "the control: a scratch file is not read");
+    std::fs::write(pkg.join("build.rs"), "fn main() {}").unwrap();
+    assert_ne!(digest_tree(&pkg).unwrap(), before, "an untracked build script");
+}

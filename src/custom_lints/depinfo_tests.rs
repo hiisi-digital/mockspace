@@ -3,17 +3,17 @@ use std::time::Duration;
 use super::*;
 use crate::custom_lints::build::{Built, Unit};
 
-fn later() -> SystemTime {
+pub(super) fn later() -> SystemTime {
     SystemTime::now() + Duration::from_secs(1)
 }
 
 /// What a build reports, for a library at `dylib` that cargo `fresh`ly reused or built after `started`.
-fn made(dylib: &Path, started: SystemTime, fresh: bool) -> Built {
+pub(super) fn made(dylib: &Path, started: SystemTime, fresh: bool) -> Built {
     Built { dylib: dylib.to_path_buf(), started, units: Vec::new(), fresh }
 }
 
 /// A built tree: the library, its dep-info listing `sources`, under `target/release`.
-fn built(root: &Path, sources: &str) -> PathBuf {
+pub(super) fn built(root: &Path, sources: &str) -> PathBuf {
     let release = root.join("target").join("release");
     std::fs::create_dir_all(&release).unwrap();
     std::fs::write(release.join("libgen.so"), "library").unwrap();
@@ -348,4 +348,72 @@ fn a_build_script_or_macro_of_a_path_package_leaves_nothing_kept() {
     let dylib = built(&gen_dir, "out.d: \n");
     assert!(record(&with_unit(&dylib, &source, false, false), &gen_dir, &roots, Duration::ZERO).is_some());
     assert!(record(&with_unit(&dylib, &source, false, true), &gen_dir, &roots, Duration::ZERO).is_none());
+}
+
+/// The change time of a file edited inside the window between the compiler's read and ours is
+/// after the build began, and the bytes we hold are the new ones. Reading the bytes first is what
+/// makes the time catch it; the hook runs between the two calls so the order is what is tested.
+#[test]
+fn a_source_edited_between_the_read_and_the_stat_is_not_recorded() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gen_dir = tmp.path().join("gen");
+    let source = tmp.path().join("lints").join("probe.rs");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, "old").unwrap();
+    let mut roots = Roots::default();
+    roots.add("lints", source.parent().unwrap());
+    let dylib = built(&gen_dir, &format!("out.d: {}\n", source.display()));
+    // The file is older than the build, with room for the filesystem's timestamp to tell the two apart.
+    std::thread::sleep(Duration::from_millis(60));
+    let began = SystemTime::now();
+    std::thread::sleep(Duration::from_millis(60));
+
+    let control = record(&made(&dylib, began, false), &gen_dir, &roots, Duration::ZERO);
+    assert!(control.is_some(), "the control: a source older than the build, with nobody editing it");
+
+    // The hook stays between the two calls in `record`, which is what makes a swap of them fail
+    // here: an edit made before both would show in the stat whatever their order.
+    let edit = source.clone();
+    let _hook = crate::custom_lints::store::knobs::between_read_and_stat(move |file| {
+        if file == edit {
+            std::fs::write(file, "new").unwrap();
+        }
+    });
+    assert!(
+        record(&made(&dylib, began, false), &gen_dir, &roots, Duration::ZERO).is_none(),
+        "an edit after the read must show in the change time, or the old library is kept beside the new content"
+    );
+    assert_eq!(std::fs::read_to_string(&source).unwrap(), "new", "the hook ran");
+}
+
+#[test]
+fn a_registry_source_is_never_touched_to_make_cargo_rebuild_its_unit() {
+    // Cargo fingerprints a registry crate by its version, not by the time of its files, so touching
+    // one forces nothing, writes to a cache every tree shares, and puts the file after the mark
+    // cargo left when it finished unpacking.
+    let tmp = tempfile::tempdir().unwrap();
+    let gen_dir = tmp.path().join("gen");
+    let own = tmp.path().join("lints").join("tool.rs");
+    std::fs::create_dir_all(own.parent().unwrap()).unwrap();
+    std::fs::write(&own, "x").unwrap();
+    let registry = tmp.path().join("home").join("registry").join("src").join("idx-1").join("foo-1.0.0").join("src").join("lib.rs");
+    std::fs::create_dir_all(registry.parent().unwrap()).unwrap();
+    std::fs::write(&registry, "y").unwrap();
+    let dylib = built(&gen_dir, "out.d: \n");
+    let deps = dylib.parent().unwrap().join("deps");
+    std::fs::write(
+        deps.join("tool-0f.d"),
+        format!("tool-0f.rlib: {} {}\n", own.display(), registry.display()),
+    )
+    .unwrap();
+    // The unit is old and both sources are newer than it.
+    std::fs::File::options()
+        .write(true)
+        .open(deps.join("tool-0f.d"))
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(3600))
+        .unwrap();
+    let unit = Unit { files: vec![deps.join("libtool-0f.rlib")], fresh: true, tree_code: false };
+    let build = Built { units: vec![unit], ..made(&dylib, later(), false) };
+    assert_eq!(newer_than_their_units(&build, &gen_dir), [own], "the control: a source of the tree is");
 }
