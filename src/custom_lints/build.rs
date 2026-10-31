@@ -121,12 +121,16 @@ pub(crate) struct Built {
 /// graph, which is what saturated a laptop. Taking the path out of
 /// `--message-format json` fixes both and keeps the cache, because the path
 /// comes from the run that produced it and cannot be a leftover.
-pub(crate) fn build_cdylib(gen_dir: &Path, crate_name: &str) -> Result<Built, String> {
+pub(crate) fn build_cdylib(
+    gen_dir: &Path,
+    crate_name: &str,
+    remaps: &[(PathBuf, String)],
+) -> Result<Built, String> {
     let started = SystemTime::now();
     // json-render-diagnostics puts artifacts on stdout and still renders
     // warnings and errors to stderr the way a human expects.
     let mut command = Command::new("cargo");
-    command.arg("build").arg("--release");
+    command.arg("rustc").arg("--release").arg("--lib");
     for setting in PINNED_PROFILE {
         command.arg("--config").arg(setting);
     }
@@ -134,7 +138,15 @@ pub(crate) fn build_cdylib(gen_dir: &Path, crate_name: &str) -> Result<Built, St
         .arg("--manifest-path")
         .arg(gen_dir.join("Cargo.toml"))
         .arg("--message-format")
-        .arg("json-render-diagnostics")
+        .arg("json-render-diagnostics");
+    // Only the generated crate gets these, so the dependencies stay shared between trees.
+    if !remaps.is_empty() {
+        command.arg("--");
+        for (from, to) in remaps {
+            command.arg(format!("--remap-path-prefix={}={to}", from.display()));
+        }
+    }
+    command
         .env_clear()
         .envs(std::env::vars_os().filter(|(k, _)| k.to_str().is_some_and(keeps_env)))
         .stdout(Stdio::piped())

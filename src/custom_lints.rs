@@ -236,9 +236,9 @@ fn build_and_load(
     let crate_name = gen_crate_name(&gen_dir);
     let library = match &identity {
         Some(id) => built::dylib_for(base, &id.key, &id.roots, &gen_dir, depinfo::TRUST_MARGIN, || {
-            build::build_cdylib(&gen_dir, &crate_name)
+            build::build_cdylib(&gen_dir, &crate_name, &id.roots.remaps())
         }),
-        None => build::build_cdylib(&gen_dir, &crate_name)
+        None => build::build_cdylib(&gen_dir, &crate_name, &[])
             .map(|b| built::Library { path: b.dylib, identity: None }),
     };
     let (built, identity) = match library {

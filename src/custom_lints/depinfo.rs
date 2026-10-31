@@ -29,7 +29,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use super::build::{Built, keeps_env};
+use super::build::{Built, Unit, keeps_env};
 use super::identity::digest_bytes;
 
 /// How long before a build a source must have last changed for it to be trusted. Filesystems with
@@ -65,6 +65,16 @@ impl Roots {
     /// tree.
     pub(crate) fn allow_absolute(&mut self, path: &Path) {
         self.absolute.push(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()));
+    }
+
+    /// Each root as a prefix the compiler is told to write as `/<label>`, shallowest first, so the
+    /// deepest root is the last to match and wins. A path a library embeds (`file!()`, a panic
+    /// location) then reads the same in every tree.
+    pub(crate) fn remaps(&self) -> Vec<(PathBuf, String)> {
+        let mut out: Vec<(PathBuf, String)> =
+            self.named.iter().map(|(label, path)| (path.clone(), format!("/{label}"))).collect();
+        out.sort_by_key(|(path, _)| path.components().count());
+        out
     }
 
     fn resolve(&self, label: &str) -> Option<&Path> {
@@ -247,7 +257,7 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
     // the dep-info it wrote, however recently the library above it was linked.
     let mut infos = vec![own_info];
     for unit in units {
-        let path = unit.files.first().and_then(|f| unit_info_of(f))?;
+        let path = info_of_unit(unit)?;
         let text = std::fs::read_to_string(&path).ok()?;
         let at = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
         take(&text, if unit.fresh { at } else { built.started })?;
@@ -295,6 +305,48 @@ fn unit_info_of(file: &Path) -> Option<PathBuf> {
     let beside = dir.join(&name);
     let in_deps = deps.join(&name);
     Some(if !in_deps.exists() && beside.exists() { beside } else { in_deps })
+}
+
+/// The dep-info of a unit. A unit may name several files (a build script has a link and the
+/// binary), and the dep-info is named for one of them.
+fn info_of_unit(unit: &Unit) -> Option<PathBuf> {
+    unit.files
+        .iter()
+        .filter_map(|f| unit_info_of(f))
+        .find(|p| p.exists())
+        .or_else(|| unit.files.iter().find_map(|f| build_script_info(f)))
+}
+
+/// The sources that changed after a unit cargo called fresh was made. Cargo compares modification
+/// times, which a tool can set back, so it took an edited source for the one it built from; touching
+/// these makes it build the unit for real.
+pub(crate) fn newer_than_their_units(built: &Built, gen_dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for unit in built.units.iter().filter(|u| u.fresh) {
+        let Some(path) = info_of_unit(unit) else { continue };
+        let Some(made) = std::fs::metadata(&path).and_then(|m| m.modified()).ok() else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        for source in sources_of(&text) {
+            let file = if source.is_absolute() { source } else { gen_dir.join(source) };
+            if std::fs::metadata(&file).ok().and_then(|m| changed_at(&m)).is_some_and(|at| at > made) {
+                out.push(file);
+            }
+        }
+    }
+    out
+}
+
+/// The dep-info of a build script, which cargo reports as `build/<package>/build-script-build` while
+/// rustc wrote `build_script_build-<hash>.d` beside it.
+fn build_script_info(file: &Path) -> Option<PathBuf> {
+    if file.file_name()? != "build-script-build" {
+        return None;
+    }
+    std::fs::read_dir(file.parent()?)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "d"))
 }
 
 /// Whether every file is, in this tree, what the library was built from, and every variable the

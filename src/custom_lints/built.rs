@@ -94,9 +94,13 @@ pub(crate) fn dylib_for(
     }
     let mut built = build()?;
     let mut deps = depinfo::record(&built, gen_dir, roots, margin);
-    if deps.is_none() && built.fresh {
-        // Cargo judged the old output fresh, by timestamps a tool may have set back, and this tree
-        // cannot be tied to it. Touching the generated source makes cargo build it for real.
+    if deps.is_none() && (built.fresh || built.units.iter().any(|u| u.fresh)) {
+        // Cargo judged an old output fresh, by timestamps a tool may have set back, and this tree
+        // cannot be tied to it. Touching the generated source, and any source newer than the unit
+        // cargo reused, makes cargo build them for real.
+        for source in depinfo::newer_than_their_units(&built, gen_dir) {
+            touch(&source);
+        }
         touch(&gen_dir.join("src").join("lib.rs"));
         built = build()?;
         deps = depinfo::record(&built, gen_dir, roots, margin);

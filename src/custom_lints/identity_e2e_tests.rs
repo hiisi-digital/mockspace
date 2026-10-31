@@ -347,10 +347,10 @@ fn a_tool_source_set_back_in_time_is_not_kept_as_the_new_content() {
 
 #[test]
 #[ignore = "runs cargo build; run with --include-ignored"]
-fn a_lint_file_macro_names_the_asking_tree() {
+fn a_lint_file_macro_reads_the_same_in_every_tree_and_names_none() {
     let got = names_in_two_trees("r3-file-macro", &lint_named_by("file!()"), |_, _| {}, ["", ""]);
-    assert!(got[0].contains("/a/clone/"), "{got:?}");
-    assert!(got[1].contains("/b/clone/"), "{got:?}");
+    assert_eq!(got[0], got[1]);
+    assert!(!got.iter().any(|g| g.contains("/a/clone/") || g.contains("/b/clone/")), "{got:?}");
 }
 
 #[test]
