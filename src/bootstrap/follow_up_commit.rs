@@ -195,12 +195,13 @@ pub(crate) fn finish_generation(
     // a lockfile the merge driver kept from one side is settled from the merged manifests, and is then
     // one of the files brought to the tree
     let mut generated = generated.to_vec();
-    if commit.is_some() || stage_it {
-        if let Err(what) = settle_lockfiles(repo_root, lockfiles) {
+    let kept = kept_lockfiles(repo_root, lockfiles);
+    if (commit.is_some() || stage_it) && !kept.is_empty() {
+        if let Err(what) = settle_lockfiles(repo_root, &kept) {
             eprintln!("error: {what}");
             return Err("a lockfile could not be settled from the merged manifests");
         }
-        generated.extend(lockfiles.iter().map(|r| repo_root.join(r)));
+        generated.extend(kept.iter().map(|r| repo_root.join(r)));
     }
     let generated = generated.as_slice();
     if let Some(subject) = commit {
@@ -228,6 +229,16 @@ fn kept_ours_path(repo_root: &Path) -> Option<PathBuf> {
         .filter(|o| o.status.success())?;
     let path = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
     Some(if path.is_absolute() { path } else { repo_root.join(path) })
+}
+
+/// The lockfiles among `lockfiles` that the merge driver wrote down as kept from one side: the only
+/// ones whose resolution is owed, so a run that kept none asks cargo about none.
+pub(crate) fn kept_lockfiles(repo_root: &Path, lockfiles: &[String]) -> Vec<String> {
+    let Some(record) = kept_ours_path(repo_root).and_then(|p| fs::read_to_string(p).ok()) else {
+        return Vec::new();
+    };
+    let recorded: Vec<&str> = record.lines().skip(1).collect();
+    lockfiles.iter().filter(|l| recorded.contains(&l.as_str())).cloned().collect()
 }
 
 /// Remove the record the merge driver left, once the generated files are

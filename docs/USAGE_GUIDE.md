@@ -194,7 +194,7 @@ primary_domain_macro = "<macro>"      # tracked per-crate in STRUCTURE.md
 primary_domain_label = "<Label>"
 layers = ["Layer0", "Layer1", ...]    # labels by depth index for the graph
 append_only = ["<path-or-pattern>"]   # files that only grow, merged by keeping both sides' additions
-lockfiles = ["<path/Cargo.lock>"]   # Cargo locks settled from the merged manifests (the mock directory's is always included)
+lockfiles = ["<path/Cargo.lock>"]     # Cargo locks settled from the merged manifests (the mock directory's is always included)
 
 install_git_hooks = "replace"
 install_cargo_config = "merge-append"

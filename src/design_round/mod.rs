@@ -33,6 +33,7 @@ pub use rename::{cmd_rename_round, cmd_round_id};
 pub(crate) mod round_merge;
 
 mod subjects;
+#[cfg(test)]
 mod tests;
 
 /// Options parsed from CLI flags for design round subcommands.
@@ -209,7 +210,7 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
             }
         }
         let names: Vec<&str> = strays.iter().map(|cl| cl.filename.as_str()).collect();
-        let msg = subjects::deprecate_strays(&names);
+        let msg = subjects::deprecate_strays(names.len());
         commit_or_suggest(cfg, opts, &touched, &msg);
         return ExitCode::SUCCESS;
     }

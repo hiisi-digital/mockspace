@@ -37,7 +37,7 @@ pub(crate) fn lockfile_paths(
     }
     for entry in declared {
         let rel = entry.trim_start_matches('/');
-        if rel.ends_with("Cargo.lock")
+        if rel.rsplit('/').next() == Some("Cargo.lock")
             && !rel.split('/').any(|p| p == "..")
             && !rel.contains(char::is_whitespace)
         {
@@ -75,8 +75,7 @@ pub(crate) fn register_lockfile_driver(target: &ConfigTarget, actions: &mut Vec<
 
 /// Resolve each lockfile again from the manifests beside it, so a lock kept from one side of a
 /// merge has every member of the merged tree. Offline first, since a member is a path
-/// dependency and needs no registry; online only if that cannot resolve. Returns the paths that
-/// are now settled, or what cargo said.
+/// dependency and needs no registry; online only if that cannot resolve. An error is what cargo said.
 pub(crate) fn settle_lockfiles(repo_root: &Path, rels: &[String]) -> Result<(), String> {
     for rel in rels {
         let Some(manifest) = repo_root
@@ -85,6 +84,7 @@ pub(crate) fn settle_lockfiles(repo_root: &Path, rels: &[String]) -> Result<(), 
             .canonicalize()
             .ok()
         else {
+            eprintln!("warning: no Cargo.toml beside {rel}, so it is not settled");
             continue;
         };
         let run = |offline: bool| {
@@ -281,5 +281,24 @@ mod merge_tests {
             );
         }
         assert!(!settled.contains("<<<<<<<"));
+    }
+}
+
+#[cfg(test)]
+mod kept_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_lockfiles_the_driver_wrote_down_are_owed_a_settling() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let ok = |a: &[&str]| {
+            assert!(Command::new("git").args(a).current_dir(root).output().unwrap().status.success());
+        };
+        ok(&["init", "-q"]);
+        let lockfiles = ["mock/Cargo.lock", "tools/Cargo.lock"].map(String::from);
+        assert!(kept_lockfiles(root, &lockfiles).is_empty(), "no record, nothing owed");
+        fs::write(root.join(".git/mockspace-kept-ours"), "0123\ntools/Cargo.lock\ndocs/X.md\n").unwrap();
+        assert_eq!(kept_lockfiles(root, &lockfiles), vec!["tools/Cargo.lock"]);
     }
 }

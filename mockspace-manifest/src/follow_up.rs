@@ -8,6 +8,15 @@
 use crate::gate::{DISCOVERY, MANAGED_MARKER, chain_tail};
 use crate::kept_ours::KEPT_OURS_SHELL;
 
+/// Whether this working tree can regenerate: a mockspace config was found, and `cargo mock` resolves
+/// (the launcher is a cargo subcommand or an alias), asked of cargo rather than assumed from a `cargo`
+/// being on `PATH`. Shared by every durable hook that builds the generated hook on first use.
+pub(crate) const CAN_GENERATE_SHELL: &str = r##"ms_can_generate() {
+    [ -n "$cfg" ] && command -v cargo >/dev/null 2>&1 \
+        && cargo --list 2>/dev/null | grep -Eq '^[[:space:]]+mock([[:space:]]|$)'
+}
+"##;
+
 /// The hooks that follow an event rather than gate it. They never block: a
 /// merge or a rebase has already happened, so the only thing left to do at
 /// `post-merge` and `post-rewrite` is bring the generated files to the merged
@@ -49,10 +58,7 @@ set -u
 generated="$mockdir/target/hooks/{name}"
 # the merge driver asks whether this hook would hand over to a generated one in
 # this working tree, and a hook that would not is not one that regenerates
-ms_can_generate() {{
-    [ -n "$cfg" ] && command -v cargo >/dev/null 2>&1
-}}
-if [ -n "${{MOCKSPACE_PROBE:-}}" ]; then
+{CAN_GENERATE_SHELL}if [ -n "${{MOCKSPACE_PROBE:-}}" ]; then
     [ -x "$generated" ] || ms_can_generate
     exit $?
 fi
@@ -130,7 +136,7 @@ mod tests {
         let hook = dir.join("hook");
         std::fs::write(&hook, durable_follow_up_hook("post-merge", 3)).unwrap();
         // the tools the hook reads and no `cargo`: with one, the hook can build what is missing
-        let bare = tool_dir(&dir.join("bin"), false);
+        let bare = tool_dir(&dir.join("bin"), None);
         let probe_on = |path: &std::ffi::OsStr| {
             std::process::Command::new("bash")
                 .arg(&hook)
@@ -147,7 +153,13 @@ mod tests {
         std::fs::create_dir_all(dir.join("mock/target/hooks")).unwrap();
         crate::exec::write_executable(&dir.join("mock/target/hooks/post-merge"), "#!/bin/sh\n").unwrap();
         assert_eq!(probe(), Some(1), "a leftover under another directory does not count");
-        let with_cargo = tool_dir(&dir.join("bin2"), true);
+        let no_mock = tool_dir(&dir.join("bin3"), Some(false));
+        assert_eq!(
+            probe_on(&no_mock),
+            Some(1),
+            "a cargo that does not resolve `mock` cannot regenerate, so the probe must not promise it"
+        );
+        let with_cargo = tool_dir(&dir.join("bin2"), Some(true));
         assert_eq!(
             probe_on(&with_cargo),
             Some(0),
@@ -160,13 +172,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A directory of the tools the hooks read, git and the coreutils, with a `cargo` that records its
-    /// arguments into `cargo.log` beside it when asked. Returned as a `PATH` value.
-    fn tool_dir(bin: &std::path::Path, with_cargo: bool) -> std::ffi::OsString {
+    /// A directory of the tools the hooks read, git and the coreutils, and a `cargo` when asked: one that
+    /// lists `mock` among its commands (`Some(true)`) or does not (`Some(false)`), and records any other
+    /// call into `cargo.log` beside it. Returned as a `PATH` value.
+    fn tool_dir(bin: &std::path::Path, cargo: Option<bool>) -> std::ffi::OsString {
         std::fs::create_dir_all(bin).unwrap();
         for tool in [
             "git", "bash", "sh", "awk", "basename", "dirname", "head", "tail", "tr", "wc", "cat", "sed", "grep",
-            "env", "rm", "mkdir", "ls", "sort", "cut",
+            "env", "rm", "mkdir", "ls", "sort", "cut", "chmod", "touch",
         ] {
             let found = std::process::Command::new("sh")
                 .args(["-c", &format!("command -v {tool}")])
@@ -177,15 +190,79 @@ mod tests {
                 let _ = std::os::unix::fs::symlink(real, bin.join(tool));
             }
         }
-        if with_cargo {
+        if let Some(lists_mock) = cargo {
             let log = bin.join("cargo.log");
+            let mock = if lists_mock { "    mock   alias: x\\n" } else { "" };
             crate::exec::write_executable(
                 &bin.join("cargo"),
-                &format!("#!/bin/sh\necho \"$@\" >> {}\n", log.display()),
+                &format!(
+                    "#!/bin/sh\nif [ \"$1\" = --list ]; then printf 'Installed Commands:\\n    build\\n{mock}'; exit 0; fi\necho \"$@\" >> {}\n",
+                    log.display()
+                ),
             )
             .unwrap();
         }
         bin.as_os_str().to_owned()
+    }
+
+    /// A repository standing in a merge that stopped, with a record of a kept side and no generated
+    /// hook, and `pre-commit` run in it with `cargo` as `tool_dir` makes it. A `cargo` that builds
+    /// the generated hook lets the commit through that hook; one that cannot leaves the refusal.
+    fn stopped_merge(cargo: Option<bool>) -> (std::process::ExitStatus, bool) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let git = |a: &[&str]| {
+            let out = std::process::Command::new("git").args(a).current_dir(root).output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        };
+        git(&["init", "-q", "-b", "dev"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@e.c", "commit", "-q", "--allow-empty", "-m", "one"]);
+        std::fs::create_dir_all(root.join("mock")).unwrap();
+        std::fs::write(root.join("mock/mockspace.toml"), "project_name = \"x\"\n").unwrap();
+        let head = String::from_utf8(
+            std::process::Command::new("git").args(["rev-parse", "HEAD"]).current_dir(root).output().unwrap().stdout,
+        )
+        .unwrap();
+        std::fs::write(root.join(".git/MERGE_HEAD"), &head).unwrap();
+        std::fs::write(root.join(".git/mockspace-kept-ours"), format!("{}docs/X.md\n", head)).unwrap();
+        let bin = tool_dir(&root.join("bin"), cargo);
+        if cargo == Some(true) {
+            // the call that regenerates also leaves the generated hook behind
+            let built = root.join("mock/target/hooks/pre-commit");
+            crate::exec::write_executable(
+                &root.join("bin/cargo"),
+                &format!(
+                    "#!/bin/sh\nif [ \"$1\" = --list ]; then printf '    mock   alias: x\\n'; exit 0; fi\nmkdir -p {dir}\nprintf '#!/bin/sh\\ntouch {ran}\\n' > {built}\nchmod +x {built}\n",
+                    dir = built.parent().unwrap().display(),
+                    ran = root.join("generated-ran").display(),
+                    built = built.display(),
+                ),
+            )
+            .unwrap();
+        }
+        let hook = root.join("hook");
+        std::fs::write(&hook, crate::gate::durable_hook("pre-commit", 3)).unwrap();
+        let status = std::process::Command::new("bash")
+            .arg(&hook)
+            .current_dir(root)
+            .env("PATH", &bin)
+            .env_remove("MOCK_ROOT")
+            .output()
+            .unwrap()
+            .status;
+        (status, root.join("generated-ran").exists())
+    }
+
+    #[test]
+    fn the_commit_that_concludes_a_stopped_merge_builds_the_hook_and_hands_over() {
+        let (status, ran) = stopped_merge(Some(true));
+        assert!(status.success() && ran, "the generated hook ran: {status:?} {ran}");
+        // the control: where `cargo mock` does not resolve nothing can build it, and the kept sides refuse
+        let (status, ran) = stopped_merge(Some(false));
+        assert_eq!(status.code(), Some(1));
+        assert!(!ran);
+        let (status, _) = stopped_merge(None);
+        assert_eq!(status.code(), Some(1));
     }
 
     #[test]
@@ -218,7 +295,7 @@ mod tests {
             std::fs::write(root.join("mock/mockspace.toml"), "project_name = \"x\"\n").unwrap();
             let hook = root.join("hook");
             std::fs::write(&hook, durable_follow_up_hook(name, 3)).unwrap();
-            let bin = tool_dir(&root.join("bin"), true);
+            let bin = tool_dir(&root.join("bin"), Some(true));
             let status = std::process::Command::new("bash")
                 .arg(&hook)
                 .args(&args)

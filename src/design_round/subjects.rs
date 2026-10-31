@@ -9,9 +9,9 @@
 //! enforces: `type: lowercase imperative`, under 72 characters, no parentheses, no trailing
 //! period. The tool's own suggestion has to pass the gate it runs beside.
 
-/// A changelist filename reduced to its round id, the part before the first underscore.
+/// A changelist filename reduced to its round id, which the id grammar owns.
 fn round_id(filename: &str) -> &str {
-    filename.split_once('_').map_or(filename, |(id, _)| id)
+    mockspace_lint_rules::round_id::base_id(filename).unwrap_or(filename)
 }
 
 pub(crate) fn lock_doc(new_name: &str) -> String {
@@ -22,9 +22,9 @@ pub(crate) fn lock_src(new_name: &str) -> String {
     format!("chore: lock src changelist {}", round_id(new_name))
 }
 
-pub(crate) fn deprecate_strays(filenames: &[&str]) -> String {
-    let ids: Vec<&str> = filenames.iter().map(|f| round_id(f)).collect();
-    format!("chore: deprecate stray changelist {}", ids.join(", "))
+/// However many strays there are, the subject does not grow with them.
+pub(crate) fn deprecate_strays(count: usize) -> String {
+    format!("chore: deprecate {count} stray changelists")
 }
 
 pub(crate) fn deprecate_doc(filename: &str) -> String {
@@ -52,7 +52,9 @@ mod tests {
     use super::*;
     use crate::design_round::ArchiveKind;
 
-    /// The shape the commit-msg gate holds a subject to.
+    /// The shape the commit-msg gate holds a subject to. The gate itself is a message lint a project
+    /// imports from its packs, which mockspace does not carry, so this is a model of it.
+    /// The model is held against the subject the tool used to print, below.
     fn gate_refusal(s: &str) -> Option<String> {
         let Some((ty, rest)) = s.split_once(": ") else {
             return Some("no `type: ` prefix".into());
@@ -89,21 +91,25 @@ mod tests {
     }
 
     #[test]
-    fn every_subject_the_round_commands_print_passes_the_gate() {
-        let long_cl = "202610221529-kx3f_changelist.src.lock.md";
-        let id = "202610221529-kx3f-abandoned";
-        let subjects = [
-            ArchiveKind::Closed.commit_subject(id),
-            ArchiveKind::Abandoned.commit_subject(id),
-            lock_doc(long_cl),
-            lock_src(long_cl),
-            deprecate_strays(&[long_cl, "202610221540-kx3f_changelist.doc.md"]),
-            deprecate_doc(long_cl),
-            deprecate_src_and_unlock(long_cl),
+    fn every_subject_the_round_commands_print_passes_the_gate_at_the_longest_the_grammar_allows() {
+        // the longest id: the stamp and a four-character tag; the longest tail: `-abandoned` with a
+        // two-digit collision count
+        let id = "202610221529-kx3f";
+        let dir = format!("{id}-abandoned-10");
+        let cl = |kind: &str| format!("{id}_changelist.{kind}.lock.md");
+        let mut subjects = vec![
+            ArchiveKind::Closed.commit_subject(&dir),
+            ArchiveKind::Abandoned.commit_subject(&dir),
+            lock_doc(&cl("doc")),
+            lock_src(&cl("src")),
+            deprecate_doc(&cl("doc")),
+            deprecate_src_and_unlock(&cl("src")),
             unlock_round(),
-            migrate(12),
-            rename_round("202610221529-kx3f", "202610221530-ab12"),
+            migrate(u32::MAX),
+            rename_round(id, "202610221530-ab12"),
         ];
+        // one, two and many strays are one shape
+        subjects.extend([1usize, 2, 3, 40, usize::MAX].map(deprecate_strays));
         for s in &subjects {
             assert_eq!(gate_refusal(s), None, "{s}");
         }

@@ -110,6 +110,15 @@ followed_up() {{
 }}
 
 if generated && followed_up; then
+    if [ "${{path##*/}}" = Cargo.lock ]; then
+        # a lock also records resolution choices (a bump, a pinned revision) that no manifest
+        # holds, so the two sides are text-merged first: a clean merge carries both sides' choices
+        # and only a conflict keeps ours, to be settled from the merged manifests afterwards
+        try="$ours.mockspace-try"
+        cp "$ours" "$try"
+        git merge-file -q -L ours -L base -L theirs "$try" "$base" "$theirs" && cp "$try" "$ours"
+        rm -f "$try"
+    fi
     kept=$(git rev-parse --git-path mockspace-kept-ours)
     [ -f "$kept" ] || git rev-parse HEAD > "$kept"
     echo "$path" >> "$kept"
@@ -144,7 +153,7 @@ mod tests {
             let root = dir.path().to_path_buf();
             let bin = root.join("bin");
             std::fs::create_dir_all(&bin).unwrap();
-            for tool in ["git", "head", "grep", "env", "cat", "rm", "sh", "tail"] {
+            for tool in ["git", "head", "grep", "env", "cat", "rm", "sh", "tail", "cp"] {
                 let found = Command::new("sh")
                     .args(["-c", &format!("command -v {tool}")])
                     .output()
@@ -220,6 +229,52 @@ mod tests {
         fn kept(&self) -> Option<String> {
             std::fs::read_to_string(self.dir.path().join("repo/.git/mockspace-kept-ours")).ok()
         }
+    }
+
+    impl Rig {
+        /// Run the driver on a `Cargo.lock` with the three sides as given, as a merge.
+        fn run_lock(&self, base: &str, ours: &str, theirs: &str) -> (bool, String) {
+            let root = self.dir.path();
+            std::fs::write(root.join("O"), base).unwrap();
+            std::fs::write(root.join("A"), ours).unwrap();
+            std::fs::write(root.join("B"), theirs).unwrap();
+            let out = Command::new(root.join("bin/sh"))
+                .arg(root.join("script"))
+                .args([root.join("O"), root.join("A"), root.join("B")])
+                .args(["Cargo.lock", "7"])
+                .current_dir(root.join("repo"))
+                .env("PATH", root.join("bin"))
+                .env("GITHEAD_0123456789", "a")
+                .output()
+                .unwrap();
+            (out.status.success(), std::fs::read_to_string(root.join("A")).unwrap())
+        }
+    }
+
+    const LOCK_BASE: &str = "version = 4\n\n[[package]]\nname = \"dep\"\nversion = \"1.0.0\"\n\n[[package]]\nname = \"base\"\nversion = \"0.1.0\"\n";
+
+    #[test]
+    fn a_lock_both_sides_changed_apart_is_text_merged_so_a_bump_survives() {
+        // theirs bumps a dependency, ours adds a member far from it: git merges that without help,
+        // and keeping ours alone would drop the bump
+        let rig = Rig::new(false, 0);
+        let theirs = LOCK_BASE.replace("1.0.0", "1.0.1");
+        let ours = format!("{LOCK_BASE}\n[[package]]\nname = \"m1\"\nversion = \"0.1.0\"\n");
+        let (kept, merged) = rig.run_lock(LOCK_BASE, &ours, &theirs);
+        assert!(kept);
+        assert!(merged.contains("1.0.1"), "theirs' bump is in the lock: {merged}");
+        assert!(merged.contains("name = \"m1\""), "and so is our member: {merged}");
+        assert!(rig.kept().is_some_and(|r| r.lines().any(|l| l == "Cargo.lock")), "settled afterwards");
+    }
+
+    #[test]
+    fn a_lock_both_sides_added_to_the_same_spot_keeps_ours_for_the_settling_to_finish() {
+        let rig = Rig::new(false, 0);
+        let add = |n: &str| format!("{LOCK_BASE}\n[[package]]\nname = \"{n}\"\nversion = \"0.1.0\"\n");
+        let (kept, merged) = rig.run_lock(LOCK_BASE, &add("m1"), &add("m2"));
+        assert!(kept);
+        assert!(merged.contains("name = \"m1\"") && !merged.contains("<<<<<<<"), "{merged}");
+        assert!(!merged.contains("name = \"m2\""), "the settling adds it from the manifests: {merged}");
     }
 
     #[test]

@@ -62,7 +62,7 @@ pub const HOOK_NAMES: &[&str] = &["pre-commit", "pre-push", "commit-msg"];
 
 // The hooks that follow an event live beside their script, in `follow_up`.
 pub use crate::follow_up::FOLLOW_UP_HOOKS;
-use crate::follow_up::durable_follow_up_hook;
+use crate::follow_up::{CAN_GENERATE_SHELL, durable_follow_up_hook};
 
 /// Marks a file as generated, so a reader knows not to edit it and the installer
 /// knows it may overwrite it.
@@ -242,12 +242,24 @@ pub fn durable_hook(name: &str, hook_version: u32) -> String {
     // A file the merge driver left says some generated files were kept from one
     // side on the promise of a regeneration. With no generated hook here to make
     // it, a commit or a push would carry them, so those two refuse.
-    let kept_ours = if matches!(name, "pre-commit" | "pre-push") {
+    //
+    // The commit that concludes a merge, or a squash, is where those files are regenerated when
+    // the merge stopped, and the follow-up hooks never run for it. So every gate that fires on the
+    // way to that commit first builds the generated hook, as the follow-up hooks do, and hands over
+    // to it, rather than refusing a tree the driver was told would be regenerated.
+    let builds = if matches!(name, "pre-commit" | "commit-msg" | "pre-merge-commit" | "pre-push") {
         format!(
-            "\n{KEPT_OURS_SHELL}if ms_kept_live; then\n    echo \"\" >&2\n    echo \"BLOCKED: generated files kept from one side of a merge or rebase were not regenerated.\" >&2\n    ms_kept_say\n    exit 1\nfi\n\n"
+            "{KEPT_OURS_SHELL}{CAN_GENERATE_SHELL}if ms_kept_live && ms_can_generate; then\n    cargo mock --generate-only --stage >&2 2>&1\n    if [ -x \"$generated\" ]; then\n        {stdin_replay}\"$generated\" \"$@\"\n        exit $?\n    fi\nfi\n"
         )
     } else {
         String::new()
+    };
+    let kept_ours = if matches!(name, "pre-commit" | "pre-push") {
+        format!(
+            "\n{builds}if ms_kept_live; then\n    echo \"\" >&2\n    echo \"BLOCKED: generated files kept from one side of a merge or rebase were not regenerated.\" >&2\n    ms_kept_say\n    exit 1\nfi\n\n"
+        )
+    } else {
+        format!("\n{builds}")
     };
     let chain = chain_tail(name, stdin_replay);
     format!(

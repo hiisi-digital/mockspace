@@ -30,7 +30,7 @@ impl ArchiveKind {
         match self {
             ArchiveKind::Closed => format!("chore: close design round {archive_dir_name}"),
             ArchiveKind::Abandoned => {
-                format!("chore: archive the abandoned design round {archive_dir_name}")
+                format!("chore: archive abandoned round {archive_dir_name}")
             },
         }
     }

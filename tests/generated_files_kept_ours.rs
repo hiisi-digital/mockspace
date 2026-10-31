@@ -49,13 +49,14 @@ fn cargo_clean(r: &Repo) {
 }
 
 #[test]
-fn a_commit_concluding_a_merge_is_blocked_when_target_was_cleaned_meanwhile() {
+fn a_commit_concluding_a_merge_is_blocked_when_target_was_cleaned_and_cargo_mock_does_not_resolve() {
     let r = Repo::new();
     stopped_merge(&r);
     cargo_clean(&r);
     resolve_template(&r);
 
-    let done = r.git_out(&["commit", "-q", "-m", "chore: merge a"]);
+    let no_mock = [("MS_NO_MOCK", "1")];
+    let done = r.git_env(&no_mock, &["commit", "-q", "-m", "chore: merge a"]);
     let out = Repo::failure(&done);
     assert!(
         !done.status.success(),
@@ -76,7 +77,22 @@ fn a_commit_concluding_a_merge_is_blocked_when_target_was_cleaned_meanwhile() {
 }
 
 #[test]
-fn a_rebase_continued_after_target_was_cleaned_does_not_finish_stale() {
+fn a_commit_concluding_a_merge_builds_the_hook_when_target_was_cleaned_and_cargo_mock_resolves() {
+    // the other arm: nothing to fix by hand, the commit builds what the driver was promised
+    let r = Repo::new();
+    stopped_merge(&r);
+    cargo_clean(&r);
+    resolve_template(&r);
+
+    let done = r.git_out(&["commit", "-q", "-m", "chore: merge a"]);
+    assert!(done.status.success(), "{}", Repo::failure(&done));
+    let in_head = r.git(&["show", "HEAD:docs/ALPHA.md"]);
+    assert!(in_head.contains("three, resolved"), "{in_head}");
+    assert!(!r.kept_ours().exists(), "the engine checked, so the record is gone");
+}
+
+#[test]
+fn a_rebase_continued_after_target_was_cleaned_and_cargo_mock_does_not_resolve_does_not_finish_stale() {
     let r = Repo::new();
     r.git(&["switch", "-q", "-c", "a"]);
     r.side("a", "three", "three, on a");
@@ -92,6 +108,7 @@ fn a_rebase_continued_after_target_was_cleaned_does_not_finish_stale() {
     let done = r
         .cmd("git")
         .env("GIT_EDITOR", "true")
+        .env("MS_NO_MOCK", "1")
         .args(["rebase", "--continue"])
         .output()
         .unwrap();
@@ -210,3 +227,25 @@ fn an_ordinary_merge_leaves_no_record() {
 /// Takes the machine's git environment out of this process before `main`.
 #[path = "common/ambient.rs"]
 mod ambient;
+
+#[test]
+fn a_rebase_continued_after_target_was_cleaned_and_cargo_mock_resolves_finishes_regenerated() {
+    // the other arm of the rebase above
+    let r = Repo::new();
+    r.git(&["switch", "-q", "-c", "a"]);
+    r.side("a", "three", "three, on a");
+    r.git(&["switch", "-q", "dev"]);
+    r.side("dev", "three", "three, on dev");
+    r.git(&["switch", "-q", "a"]);
+    let stopped = r.git_out(&["rebase", "dev"]);
+    assert!(!stopped.status.success());
+    assert!(r.kept_ours().exists());
+
+    cargo_clean(&r);
+    resolve_template(&r);
+    let done = r.cmd("git").env("GIT_EDITOR", "true").args(["rebase", "--continue"]).output().unwrap();
+    assert!(done.status.success(), "{}", Repo::failure(&done));
+    assert!(!r.kept_ours().exists(), "regenerated and checked, so the record is gone");
+    let in_head = r.git(&["show", "HEAD:docs/ALPHA.md"]);
+    assert!(in_head.contains("three, resolved"), "{in_head}");
+}

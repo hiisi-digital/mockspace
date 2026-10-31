@@ -255,7 +255,7 @@ const COMMANDS: &[Cmd] = &[
         name:    "register-drivers",
         summary: "register the merge drivers in the user's git config",
         args:    &[],
-        help:    "`register-drivers --global` writes the five merge drivers `cargo mock` \
+        help:    "`register-drivers --global` writes the six merge drivers `cargo mock` \
                   registers per clone into the user's git config as well, with commands that \
                   name no clone: a clone made later, a worktree, or a container that never \
                   ran `cargo mock` there then calls them when its `.gitattributes` names one. \
