@@ -565,6 +565,18 @@ pub(crate) mod knobs {
         }
     }
 
+    static BUILDS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+    /// Record that a build of the crate in `dir` ran.
+    pub(crate) fn note_build(dir: &Path) {
+        BUILDS.lock().unwrap().push(dir.to_path_buf());
+    }
+
+    /// How many builds ran for crates under `base`, so a case can show that a load built nothing.
+    pub(crate) fn builds_under(base: &Path) -> usize {
+        BUILDS.lock().unwrap().iter().filter(|d| d.starts_with(base)).count()
+    }
+
     pub(crate) fn pause_between_write_and_build(dir: &Path) {
         let pause = KNOBS
             .lock()

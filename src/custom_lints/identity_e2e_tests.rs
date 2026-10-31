@@ -374,3 +374,89 @@ fn a_tool_build_script_manifest_dir_names_the_asking_tree() {
     assert!(got[0].contains("/a/clone/"), "{got:?}");
     assert!(got[1].contains("/b/clone/"), "{got:?}");
 }
+
+/// A cargo config written where the build will find it, and removed when dropped.
+struct ConfigGuard(PathBuf);
+
+impl ConfigGuard {
+    fn write(text: &str) -> Self {
+        let dir = std::env::current_dir().unwrap().join(".cargo");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("config.toml");
+        std::fs::write(&file, text).unwrap();
+        Self(file)
+    }
+}
+
+impl Drop for ConfigGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        if let Some(dir) = self.0.parent() {
+            let _ = std::fs::remove_dir(dir);
+        }
+    }
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --include-ignored"]
+fn a_cargo_config_that_appears_during_the_build_is_not_kept_under_the_old_key() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = tmp.path().join("cache");
+    let mock = tree(tmp.path(), "review2-config", "unused");
+    std::fs::write(
+        lint_path(&mock),
+        lint_named_by(r#"if cfg!(review_probe_flag) { "on" } else { "off" }"#),
+    )
+    .unwrap();
+    let config = std::sync::Mutex::new(None);
+    let config = std::sync::Arc::new(config);
+    let held = config.clone();
+    let fired = std::sync::atomic::AtomicBool::new(false);
+    // The identity is made without the config, and the build meets it.
+    crate::custom_lints::store::knobs::after_identity(&cache, move || {
+        if !fired.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            *held.lock().unwrap() = Some(ConfigGuard::write(
+                "[target.x86_64-unknown-linux-gnu]\nrustflags = [\"--cfg\", \"review_probe_flag\"]\n",
+            ));
+        }
+    });
+    let first = name_in(&cache, &mock);
+    // The config is gone, so the tree is the one the identity named.
+    drop(config.lock().unwrap().take());
+    let second = name_in(&cache, &mock);
+    assert_eq!((first.as_str(), second.as_str()), ("on", "off"));
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --include-ignored"]
+fn the_build_does_not_read_rustflags_from_the_environment() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = tmp.path().join("cache");
+    let mock = tree(tmp.path(), "review2-rustflags", "unused");
+    std::fs::write(
+        lint_path(&mock),
+        lint_named_by(r#"if cfg!(review_env_flag) { "on" } else { "off" }"#),
+    )
+    .unwrap();
+    // SAFETY: the lock above is held by every case that touches the environment.
+    unsafe { std::env::set_var("RUSTFLAGS", "--cfg review_env_flag") };
+    let name = name_in(&cache, &mock);
+    // SAFETY: as above.
+    unsafe { std::env::remove_var("RUSTFLAGS") };
+    assert_eq!(name, "off");
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --include-ignored"]
+fn a_second_tree_of_the_same_sources_loads_the_kept_library_and_builds_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = tmp.path().join("cache");
+    let a = tree(&tmp.path().join("a"), "review2-no-build", "same");
+    let b = tree(&tmp.path().join("a-longer-path-for-b"), "review2-no-build", "same");
+    identity_in(&cache, &a);
+    let after_a = crate::custom_lints::store::knobs::builds_under(&cache);
+    assert!(after_a >= 1, "the first tree has to build");
+    identity_in(&cache, &b);
+    assert_eq!(crate::custom_lints::store::knobs::builds_under(&cache), after_a);
+}
