@@ -45,6 +45,8 @@ mod round_driver;
 pub(crate) use round_driver::*;
 mod append_driver;
 pub(crate) use append_driver::*;
+mod lockfile_driver;
+pub(crate) use lockfile_driver::*;
 mod history_driver;
 pub(crate) use history_driver::*;
 mod merge_driver;

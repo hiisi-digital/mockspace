@@ -337,10 +337,7 @@ pub fn cmd_rename_round(cfg: &Config, opts: &SubcmdOpts, args: &[&str]) -> ExitC
         .flat_map(|(from, to)| [from.clone(), to.clone()])
         .collect();
     touched.extend(renamed.rewrote);
-    let msg = format!(
-        "chore: rename design round {} to {}",
-        renamed.old_name, renamed.new_name
-    );
+    let msg = super::subjects::rename_round(&renamed.new_name);
     commit_or_suggest(cfg, opts, &touched, &msg);
     ExitCode::SUCCESS
 }

@@ -194,6 +194,7 @@ primary_domain_macro = "<macro>"      # tracked per-crate in STRUCTURE.md
 primary_domain_label = "<Label>"
 layers = ["Layer0", "Layer1", ...]    # labels by depth index for the graph
 append_only = ["<path-or-pattern>"]   # files that only grow, merged by keeping both sides' additions
+lockfiles = ["<path/Cargo.lock>"]     # Cargo locks settled from the merged manifests (the mock directory's is always included)
 
 install_git_hooks = "replace"
 install_cargo_config = "merge-append"
@@ -536,6 +537,10 @@ A lint says how much it reads by overriding `Lint::reach`: `File` (one source fi
 The declaration is checked. `mockspace_lint_rules::reach_check` runs a lint over a corpus, changes what it claims not to read (sibling files, a design document, the workspace directory, another package, all at once, against one reference run) and fails if the findings move. It is a sample, not a proof, and a lint that finds nothing on the corpus fails the built-in test, since it would pass trivially. Every built-in lint that declares a reach goes through it, and a pack should put its own declarations through the same two functions in its tests. A lint declaring `File` must also return `true` from `per_file`, and findings must come out in a stable order, since a replay returns them in the order they were saved.
 
 A repository lint is never saved whole, because its reach is the widest there is. One that spends its time on separable items (a shader compiled, a file read against a table) calls `RepoContext::remembered` per item with everything that item's verdict depends on, and `compute` runs only on a miss. The lint's configured parameters, path filter and origin are mixed into every key by the engine. Leave any other dependency out of the parts and a stale verdict replays as fresh, so parts that are shared by every item (a table of replaced rows, a tool version) belong in each item's parts.
+
+A lint whose items are slow and independent (one external process each) calls `RepoContext::remembered_batch` instead, with one list of parts per item and a `compute` that judges item `n`. Every key is asked of the store first, each distinct missing key is computed once on the machine's threads, and the findings come back per item in the order given, so `compute` must be safe to run at the same time as itself. Its keys are `remembered`'s, so the two forms replay each other's verdicts.
+
+The registry schema check (`taplo check`) is replayed the same way, counted as `registry-schema-check` in the timing report. Its key holds taplo's version output, the generated config, the generated schemas and every `.toml` under the repository root, `target/` and `.git/` and symlinked directories included, since taplo examines all of them. Only a pass is saved, and only if the inputs are unchanged when taplo has finished. There is no key, so taplo runs, when the root `.taplo.toml` is not exactly the generated one, a `taplo.toml` sits beside it, `TAPLO_CONFIG` or `RUST_LOG` is set, or a `.toml` file has a `#:` comment, does not parse, or has a root `$schema` key.
 
 The store is `$MOCKSPACE_VERDICTS_DIR`, else `$XDG_CACHE_HOME/mockspace/verdicts`, else `~/.cache/mockspace/verdicts`, one store for the machine, shared by every repository. It is content addressed and never committed, deleting it costs one full run, and entries not accessed for fourteen days are swept (on a mount that keeps no access times that means written fourteen days ago, which costs a rerun and nothing else). `MOCKSPACE_NO_VERDICTS=1` turns it off for a run, which is a full run, and `MOCKSPACE_TIMINGS=1` prints where a run spent its time and how many verdicts each lint replayed (`hit:<lint>`) or computed (`miss:<lint>`). `cargo mock lints` lists each lint's reach.
 

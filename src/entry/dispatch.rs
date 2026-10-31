@@ -1122,7 +1122,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         //     reports `unknown-provenance-root`, which is a false positive rather
         //     than a weaker check.
         if lint_only {
-            let registry_errors = mockspace_lint_rules::timing::time("phase:registry-gate", || registry_gate(&cfg, &lint_registry, &[], mode));
+            let registry_errors = mockspace_lint_rules::timing::time("phase:registry-gate", || registry_gate(&cfg, &lint_registry, &[], mode, pack));
             if registry_errors > 0 {
                 eprintln!("registry check failed: {registry_errors} error(s)");
                 return ExitCode::FAILURE;
@@ -1462,7 +1462,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     let mut registry_errors = 0usize;
 
     // Printed and counted by one function, shared with the commit gate.
-    registry_errors += registry_gate(&cfg, &registry, &cycle_findings, mode);
+    registry_errors += registry_gate(&cfg, &registry, &cycle_findings, mode, pack);
 
     // --- Every markdown document, through one pipeline ---
     //
@@ -1588,6 +1588,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         &cfg.mock_dir.join("registry"),
         &crate::suite::history::History::dir(&cfg.mock_dir),
         &bootstrap::append_attribute_lines(&cfg.repo_root, &cfg.src_dirs, &cfg.append_only),
+        &bootstrap::lockfile_paths(&cfg.repo_root, &cfg.mock_dir, &cfg.lockfiles),
         &generated,
         commit_regenerated,
         stage_generated,
@@ -2059,6 +2060,7 @@ fn registry_gate(
     registry: &registry::Registry,
     cycles: &[registry::RegistryFinding],
     mode: LintMode,
+    pack: &LintPack,
 ) -> usize {
     if cfg.registry_namespaces.is_empty() {
         return 0;
@@ -2163,7 +2165,11 @@ fn registry_gate(
             );
         },
     }
-    match registry::check_schemas(&cfg.repo_root, &cfg.registry_namespaces) {
+    // The store lint verdicts live in, opened here as well because this phase runs before the lint
+    // run opens its own; both are the same directory, salted by the same engine and pack.
+    let verdicts = crate::lint::verdicts::DiskVerdicts::open(&pack.identity);
+    let saved = verdicts.as_ref().map(|v| v as &dyn mockspace_lint_rules::verdict::VerdictCache);
+    match registry::check_schemas(&cfg.repo_root, &cfg.registry_namespaces, saved) {
         registry::SchemaCheck::Ran {
             failures,
         } if failures.is_empty() => {
