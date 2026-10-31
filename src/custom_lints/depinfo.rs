@@ -240,6 +240,9 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
             if outside.iter().any(|dir| seen.starts_with(dir)) {
                 continue;
             }
+            // The bytes first and the change time after: an edit between the two shows in the time,
+            // and the other order would store the new content beside the library of the old.
+            let bytes = std::fs::read(&file).ok()?;
             let changed = changed_at(&std::fs::metadata(&file).ok()?)?;
             if changed + margin > reference {
                 return None;
@@ -248,7 +251,7 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
             if name.contains('\n') {
                 return None;
             }
-            deps.push(Dep { name, digest: digest_bytes(&std::fs::read(&file).ok()?) });
+            deps.push(Dep { name, digest: digest_bytes(&bytes) });
         }
         Some(())
     };

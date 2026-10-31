@@ -79,13 +79,16 @@ fn find(base: &Path, key: &str, roots: &Roots) -> Option<(PathBuf, String)> {
 /// store costs sharing only.
 ///
 /// `gen_dir` is where the build ran, and `margin` how long before it a source must have last
-/// changed to be trusted (`depinfo::TRUST_MARGIN`).
+/// changed to be trusted (`depinfo::TRUST_MARGIN`). `unchanged` is asked after a build and says
+/// whether the inputs the key was made from still read the same, which is whether the new library
+/// may be kept under it.
 pub(crate) fn dylib_for(
     base: &Path,
     key: &str,
     roots: &Roots,
     gen_dir: &Path,
     margin: Duration,
+    unchanged: impl Fn() -> bool,
     mut build: impl FnMut() -> Result<Built, String>,
 ) -> Result<Library, String> {
     if let Some((path, name)) = find(base, key, roots) {
@@ -105,7 +108,10 @@ pub(crate) fn dylib_for(
         built = build()?;
         deps = depinfo::record(&built, gen_dir, roots, margin);
     }
-    let Some(deps) = deps else {
+    // The key was made before the build ran. What it names but the file list does not hold (the
+    // cargo config, the toolchain, the resolved packages) may have moved since, and a library built
+    // under the new state must not be kept under the old key.
+    let Some(deps) = deps.filter(|_| unchanged()) else {
         return Ok(Library { path: built.dylib, identity: None });
     };
     let list = depinfo::encode(&deps);
