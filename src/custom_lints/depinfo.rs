@@ -218,29 +218,45 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
         .flatten()
         .map(|d| d.canonicalize().unwrap_or_else(|_| d.to_path_buf()))
         .collect();
-    let mut deps = Vec::new();
-    for source in sources_of(&info) {
-        let file = if source.is_absolute() { source } else { gen_dir.join(source) };
-        let seen = file.canonicalize().unwrap_or_else(|_| file.clone());
-        if outside.iter().any(|dir| seen.starts_with(dir)) {
-            continue;
-        }
-        let changed = changed_at(&std::fs::metadata(&file).ok()?)?;
-        if changed + margin > reference {
-            return None;
-        }
-        let name = roots.name(&file)?;
-        if name.contains('\n') {
-            return None;
-        }
-        deps.push(Dep { name, digest: digest_bytes(&std::fs::read(&file).ok()?) });
+    // Code that runs while building and belongs to the tree writes files no dep-info lists.
+    if units.iter().any(|u| u.tree_code) {
+        return None;
     }
+    let mut deps = Vec::new();
+    let mut take = |info: &str, reference: SystemTime| -> Option<()> {
+        for source in sources_of(info) {
+            let file = if source.is_absolute() { source } else { gen_dir.join(source) };
+            let seen = file.canonicalize().unwrap_or_else(|_| file.clone());
+            if outside.iter().any(|dir| seen.starts_with(dir)) {
+                continue;
+            }
+            let changed = changed_at(&std::fs::metadata(&file).ok()?)?;
+            if changed + margin > reference {
+                return None;
+            }
+            let name = roots.name(&file)?;
+            if name.contains('\n') {
+                return None;
+            }
+            deps.push(Dep { name, digest: digest_bytes(&std::fs::read(&file).ok()?) });
+        }
+        Some(())
+    };
+    take(&info, reference)?;
+    // Each unit's own sources are held to that unit's own time: one cargo reused is only as old as
+    // the dep-info it wrote, however recently the library above it was linked.
     let mut infos = vec![own_info];
-    infos.extend(units.iter().filter_map(|u| unit_info_of(u)));
+    for unit in units {
+        let path = unit.files.first().and_then(|f| unit_info_of(f))?;
+        let text = std::fs::read_to_string(&path).ok()?;
+        let at = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+        take(&text, if unit.fresh { at } else { built.started })?;
+        infos.push(path);
+    }
     infos.sort();
     infos.dedup();
     for path in infos {
-        let Ok(unit_info) = std::fs::read_to_string(&path) else { continue };
+        let unit_info = std::fs::read_to_string(&path).ok()?;
         for (key, value) in env_reads(&unit_info) {
             if let (true, Some(value)) = (MANIFEST_KEYS.contains(&key.as_str()), value.as_deref()) {
                 let at = Path::new(value);
@@ -274,7 +290,11 @@ fn unit_info_of(file: &Path) -> Option<PathBuf> {
     let stem = file.file_stem()?.to_str()?;
     let stem = stem.strip_prefix("lib").unwrap_or(stem);
     let deps = if dir.file_name().is_some_and(|n| n == "deps") { dir.to_path_buf() } else { dir.join("deps") };
-    Some(deps.join(format!("{stem}.d")))
+    let name = format!("{stem}.d");
+    // A build script is compiled into `build/<package>/`, with its dep-info beside it.
+    let beside = dir.join(&name);
+    let in_deps = deps.join(&name);
+    Some(if !in_deps.exists() && beside.exists() { beside } else { in_deps })
 }
 
 /// Whether every file is, in this tree, what the library was built from, and every variable the

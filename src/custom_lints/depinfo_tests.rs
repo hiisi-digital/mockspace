@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::*;
-use crate::custom_lints::build::Built;
+use crate::custom_lints::build::{Built, Unit};
 
 fn later() -> SystemTime {
     SystemTime::now() + Duration::from_secs(1)
@@ -285,4 +285,67 @@ fn the_unit_dep_info_is_named_for_the_unit_wherever_the_output_was_linked() {
         name("/t/x86_64-unknown-linux-gnu/release/libmockspace_lints_ab.so"),
         Path::new("/t/x86_64-unknown-linux-gnu/release/deps/mockspace_lints_ab.d")
     );
+}
+
+/// A dependency unit beside the library: its output in `deps/`, its dep-info listing `source`.
+fn with_unit(dylib: &Path, source: &Path, fresh: bool, tree_code: bool) -> Built {
+    let deps = dylib.parent().unwrap().join("deps");
+    std::fs::write(deps.join("tool-0f.d"), format!("tool-0f.rlib: {}\n", source.display())).unwrap();
+    let unit = Unit { files: vec![deps.join("libtool-0f.rlib")], fresh, tree_code };
+    Built { units: vec![unit], ..made(dylib, later(), false) }
+}
+
+#[test]
+fn a_reused_dependency_unit_holds_its_sources_to_the_time_it_was_made() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gen_dir = tmp.path().join("gen");
+    let source = tmp.path().join("lints").join("tool.rs");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, "x").unwrap();
+    let mut roots = Roots::default();
+    roots.add("lints", source.parent().unwrap());
+    let dylib = built(&gen_dir, "out.d: \n");
+    let reused = with_unit(&dylib, &source, true, false);
+    assert!(record(&reused, &gen_dir, &roots, Duration::ZERO).is_some(), "the source is older than its unit");
+    // The unit is old, the library above it was built just now, and the source is newer than the unit.
+    let unit_info = dylib.parent().unwrap().join("deps").join("tool-0f.d");
+    std::fs::File::options()
+        .write(true)
+        .open(&unit_info)
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(3600))
+        .unwrap();
+    assert!(record(&reused, &gen_dir, &roots, Duration::ZERO).is_none());
+    let rebuilt = with_unit(&dylib, &source, false, false);
+    std::fs::File::options()
+        .write(true)
+        .open(&unit_info)
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(3600))
+        .unwrap();
+    assert!(record(&rebuilt, &gen_dir, &roots, Duration::ZERO).is_some(), "a unit cargo built is held to the build");
+}
+
+#[test]
+fn a_unit_without_dep_info_leaves_nothing_kept() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gen_dir = tmp.path().join("gen");
+    let dylib = built(&gen_dir, "out.d: \n");
+    let unit = Unit { files: vec![dylib.parent().unwrap().join("deps").join("libabsent-1.rlib")], fresh: false, tree_code: false };
+    let build = Built { units: vec![unit], ..made(&dylib, later(), false) };
+    assert!(record(&build, &gen_dir, &Roots::default(), Duration::ZERO).is_none());
+}
+
+#[test]
+fn a_build_script_or_macro_of_a_path_package_leaves_nothing_kept() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gen_dir = tmp.path().join("gen");
+    let source = tmp.path().join("lints").join("tool.rs");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, "x").unwrap();
+    let mut roots = Roots::default();
+    roots.add("lints", source.parent().unwrap());
+    let dylib = built(&gen_dir, "out.d: \n");
+    assert!(record(&with_unit(&dylib, &source, false, false), &gen_dir, &roots, Duration::ZERO).is_some());
+    assert!(record(&with_unit(&dylib, &source, false, true), &gen_dir, &roots, Duration::ZERO).is_none());
 }

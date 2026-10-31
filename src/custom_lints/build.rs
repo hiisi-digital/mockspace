@@ -82,14 +82,23 @@ pub(crate) fn keeps_env(name: &str) -> bool {
     KEPT_ENV.contains(&name) || KEPT_ENV_PREFIXES.iter().any(|p| name.starts_with(p))
 }
 
+/// One unit cargo reported: the files it made, whether it reused them, and whether it is code that
+/// runs while building and belongs to the tree (a build script or procedural macro of a path
+/// package), whose output no dep-info lists.
+pub(crate) struct Unit {
+    pub files:     Vec<PathBuf>,
+    pub fresh:     bool,
+    pub tree_code: bool,
+}
+
 /// What a build made, and when it began.
 pub(crate) struct Built {
     pub dylib:   PathBuf,
     /// The moment before cargo was started. A source modified after it may or may not have been
     /// read by the compiler, so a library built beside such a source is not kept.
     pub started: SystemTime,
-    /// Every file cargo reported making, the library's dependencies among them.
-    pub units:   Vec<PathBuf>,
+    /// Every unit cargo reported, the library's dependencies among them.
+    pub units:   Vec<Unit>,
     /// Whether cargo reused an earlier output instead of building, as its own report says.
     pub fresh:   bool,
 }
@@ -140,9 +149,9 @@ pub(crate) fn build_cdylib(gen_dir: &Path, crate_name: &str) -> Result<Built, St
         .ok_or_else(|| "cargo build gave no stdout to read artifacts from".to_string())?;
     let mut found = None;
     let mut fresh = false;
-    let mut units = Vec::new();
+    let mut units: Vec<Unit> = Vec::new();
     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-        units.extend(artifact_files(&line));
+        units.extend(artifact_unit(&line));
         if let Some(p) = cdylib_artifact(&line, crate_name) {
             found = Some(p);
             fresh = artifact_is_fresh(&line);
@@ -180,18 +189,31 @@ fn artifact_is_fresh(line: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// The files a `compiler-artifact` line of cargo's json names, whatever the unit.
-fn artifact_files(line: &str) -> Vec<PathBuf> {
-    let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) else { return Vec::new() };
-    if msg.get("reason").and_then(|r| r.as_str()) != Some("compiler-artifact") {
-        return Vec::new();
+/// The unit a `compiler-artifact` line of cargo's json reports, whatever it is.
+///
+/// A package id of a path package carries `path+` in both spellings cargo has used.
+fn artifact_unit(line: &str) -> Option<Unit> {
+    let msg: serde_json::Value = serde_json::from_str(line).ok()?;
+    if msg.get("reason")?.as_str()? != "compiler-artifact" {
+        return None;
     }
-    msg.get("filenames")
-        .and_then(|f| f.as_array())
-        .into_iter()
-        .flatten()
+    let files = msg
+        .get("filenames")?
+        .as_array()?
+        .iter()
         .filter_map(|f| f.as_str().map(PathBuf::from))
-        .collect()
+        .collect();
+    let runs_while_building = msg
+        .get("target")
+        .and_then(|t| t.get("kind"))
+        .and_then(|k| k.as_array())
+        .is_some_and(|kinds| kinds.iter().any(|k| k == "custom-build" || k == "proc-macro"));
+    let in_tree = msg.get("package_id").and_then(|p| p.as_str()).is_some_and(|p| p.contains("path+"));
+    Some(Unit {
+        files,
+        fresh: msg.get("fresh").and_then(|f| f.as_bool()).unwrap_or(false),
+        tree_code: runs_while_building && in_tree,
+    })
 }
 
 /// One line of cargo's json, to the cdylib path it names, or nothing.
