@@ -257,3 +257,69 @@ fn a_variable_the_build_still_gets_is_checked_when_the_lint_reads_it() {
     let without = name_in(&cache, &mock);
     assert_eq!((with.as_str(), without.as_str()), ("set", "unset"));
 }
+
+// ---- review probes ----
+
+fn probe_tool(mock: &Path, body: &str) {
+    let t = mock.join("tools").join("probe-tool");
+    std::fs::create_dir_all(t.join("src")).unwrap();
+    std::fs::write(
+        t.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"probe-tool\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nmockspace = {{ package = \"mockspace-lint-rules\", path = \"{}/lint-rules\" }}\n",
+            env!("CARGO_MANIFEST_DIR")
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        t.join("src").join("lib.rs"),
+        format!("pub fn collect(_p: &mut mockspace::LintPack) {{}}\n{body}\n"),
+    )
+    .unwrap();
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --include-ignored"]
+fn a_variable_a_dependency_reads_is_checked() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = tmp.path().join("cache");
+    let mock = tree(tmp.path(), "review-dep-env", "unused");
+    probe_tool(&mock, r#"pub const NAME: &str = match option_env!("NO_COLOR") { Some(_) => "set", None => "unset" };"#);
+    std::fs::write(lint_path(&mock), lint_named_by("probe_tool::NAME")).unwrap();
+    unsafe { std::env::set_var("NO_COLOR", "1") };
+    let with = name_in(&cache, &mock);
+    unsafe { std::env::remove_var("NO_COLOR") };
+    let without = name_in(&cache, &mock);
+    assert_eq!((with.as_str(), without.as_str()), ("set", "unset"));
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --include-ignored"]
+fn a_tool_manifest_dir_names_the_asking_tree() {
+    let got = names_in_two_trees(
+        "review-manifest-dir",
+        &lint_named_by("probe_tool::NAME"),
+        |mock, _| probe_tool(mock, r#"pub const NAME: &str = env!("CARGO_MANIFEST_DIR");"#),
+        ["", ""],
+    );
+    assert!(got[0].contains("/a/clone/"), "{got:?}");
+    assert!(got[1].contains("/b/clone/"), "{got:?}");
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --include-ignored"]
+fn a_source_set_back_in_time_is_built_not_reused_by_cargo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = tmp.path().join("cache");
+    let mock = tree(tmp.path(), "review-setback", "unused");
+    let text = mock.join("lints").join("probe_name.txt");
+    std::fs::write(lint_path(&mock), lint_named_by(r#"include_str!("probe_name.txt")"#)).unwrap();
+    std::fs::write(&text, "one").unwrap();
+    assert_eq!(name_in(&cache, &mock), "one");
+    std::fs::write(&text, "two").unwrap();
+    std::fs::File::options().write(true).open(&text).unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600)).unwrap();
+    assert_eq!(name_in(&cache, &mock), "two");
+}
+

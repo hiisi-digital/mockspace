@@ -207,3 +207,21 @@ fn a_variable_the_build_was_given_is_compared_and_one_it_was_not_is_not() {
     let given = Dep { name: "env\tPATH".to_string(), digest: digest_bytes(b"not this process's PATH") };
     assert!(!hold(&[given], &roots), "a variable the build was given, and reads differently now");
 }
+
+#[test]
+fn a_unit_dep_info_left_by_an_earlier_build_is_not_read_for_this_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gen_dir = tmp.path().join("gen");
+    let dylib = built(&gen_dir, "out.d: \n# env-dep:NO_COLOR=1\n");
+    let roots = Roots::default();
+    assert!(record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).is_some(), "the control");
+    // With `build.build-dir` set rustc writes the unit's dep-info elsewhere, and this one is what
+    // an earlier build without it left behind.
+    std::fs::File::options()
+        .write(true)
+        .open(dylib.parent().unwrap().join("deps").join("gen.d"))
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(3600))
+        .unwrap();
+    assert!(record(&dylib, &gen_dir, &roots, later(), Duration::ZERO).is_none());
+}
