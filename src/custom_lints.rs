@@ -36,16 +36,14 @@
 //!
 //! FIXME: one residual is unenforced. The cached engine is built by `cargo
 //! install --git mockspace` under mockspace's own `rust-toolchain.toml`, while
-//! this cdylib is built by `cargo build` under the consumer repo's toolchain.
+//! this cdylib is built by `cargo rustc` under the consumer repo's toolchain.
 //! They match today because the whole workspace pins one nightly, but a repo
 //! pinning a different toolchain than the engine's would desync the vtable
 //! layout with no signal. The complete fix builds the cdylib under the engine's
 //! toolchain (capture it at engine-build time, pin it in the generated crate).
 //! Tracked as a follow-up.
 
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use mockspace_lint_rules::LintPack;
 use mockspace_lint_rules::tool::duplicate_tool_names;
@@ -55,12 +53,19 @@ use crate::bootstrap::{
     discover_custom_lint_files,
     discover_tool_crates,
     parse_lint_crates,
-    scan_lint_functions,
 };
 use crate::config::Config;
 pub(crate) use store::ScopedPlan;
 
 pub(crate) mod store;
+mod build;
+mod built;
+mod depinfo;
+mod identity;
+mod collector;
+mod patch;
+use collector::gen_collect_lib;
+use patch::{cargo_home, ensure_lint_rules_checkout, extract_between, is_git_rev_dep, patch_section};
 
 /// The `extern "C"` symbol the generated cdylib exports.
 const COLLECT_SYMBOL: &[u8] = b"__mockspace_collect_lints";
@@ -222,14 +227,43 @@ fn build_and_load(
     store::touch_used(&gen_dir)?;
     #[cfg(test)]
     store::knobs::pause_between_write_and_build(&gen_dir);
-    let built = build_cdylib(&gen_dir, &gen_crate_name(&gen_dir));
+    // The library is kept under an identity made from its inputs, so a tree of the same content
+    // loads a peer's build and nothing is built or relinked on its account. Where the inputs
+    // cannot be read, it is built as ever and identified by its bytes.
+    let identity = mockspace_lint_rules::timing::time("phase:pack-identity", || {
+        pack_identity(&gen_dir, content, cfg)
+    });
+    #[cfg(test)]
+    store::knobs::run_after_identity(&gen_dir);
+    let crate_name = gen_crate_name(&gen_dir);
+    let library = match &identity {
+        Some(id) => built::dylib_for(
+            base,
+            &id.key,
+            &id.roots,
+            &gen_dir,
+            depinfo::TRUST_MARGIN,
+            || pack_identity(&gen_dir, content, cfg).is_some_and(|now| now.key == id.key),
+            || {
+                #[cfg(test)]
+                store::knobs::note_build(&gen_dir);
+                build::build_cdylib(&gen_dir, &crate_name, &id.roots.remaps())
+            },
+        ),
+        None => build::build_cdylib(&gen_dir, &crate_name, &[])
+            .map(|b| built::Library { path: b.dylib, identity: None }),
+    };
+    let (built, identity) = match library {
+        Ok(l) => (Ok(l.path), l.identity),
+        Err(e) => (Err(e), None),
+    };
 
     // SAFETY: the cdylib is our own generated crate, built moments ago from
     // this repo's lint sources against the same pinned mockspace-lint-rules
     // the engine uses, so the `Lint`/`CrossCrateLint` vtable layout matches.
     // The returned boxes borrow their vtables from `lib`, so `lib` is stored
     // in `LoadedLints` and outlives them.
-    let loaded = built.and_then(|dylib| unsafe { collect(&dylib) }.map(Some));
+    let loaded = built.and_then(|dylib| unsafe { collect(&dylib, identity) }.map(Some));
     // Every whole build leaves the names its packs and local tools register twice, which a run of one tool
     // cannot ask for without building the packs.
     if scope.is_none() {
@@ -249,6 +283,7 @@ fn build_and_load(
         std::time::SystemTime::now(),
         store::STALE_AFTER,
     );
+    built::reap(base, std::time::SystemTime::now(), store::STALE_AFTER);
     if !removed.is_empty() {
         eprintln!(
             "mock: removed {} abandoned lint build(s) under {}",
@@ -345,286 +380,29 @@ pub(crate) fn write_cdylib_crate(
     )?;
     Ok(())
 }
-
-/// Build the `[patch]` that pins `mockspace-lint-rules` to the engine's exact
-/// lint-rules, so a `[lint-crates]` pack that references lint-rules by branch
-/// unifies with the engine's rev-pinned copy instead of building a second one.
-///
-/// The patch points at a **path**: cargo's own checkout of the engine's source
-/// at that rev (`$CARGO_HOME/git/checkouts/<name>-<hash>/<short-rev>/lint-rules`),
-/// which cargo just extracted to build the engine. It has to be a path (or any
-/// source other than the original git url) because cargo rejects a patch that
-/// points back at the same git source. `None` when the dep is not a git-rev spec
-/// (a tag/version or a local path override) or the checkout cannot be located,
-/// in which case no patch is emitted.
-fn patch_section(lint_rules_dep: &str, cargo_home: &Path) -> Option<String> {
-    let url = extract_between(lint_rules_dep, "git = \"", "\"")?;
-    let rev = extract_between(lint_rules_dep, "rev = \"", "\"")?;
-    let path = find_lint_rules_checkout(cargo_home, &url, &rev)?;
-    let mut out = String::new();
-    for spelling in spellings_of(&url) {
-        out.push_str(&format!(
-            "\n[patch.\"{spelling}\"]\nmockspace-lint-rules = {{ path = \"{}\" }}\n",
-            path.display()
-        ));
-    }
-    Some(out)
-}
-
-/// Every url a pack might have written for the same repository.
-///
-/// Cargo keys a source on the url string, so `https://github.com/o/r.git` and
-/// `ssh://git@github.com/o/r.git` are two sources holding two copies of one
-/// crate, and a patch on one covers neither the other nor anything that named
-/// it. That is the exact failure the patch above exists to prevent, arriving
-/// through the one door it did not cover.
-///
-/// It is not hypothetical and it is not rare: the engine names its own
-/// lint-rules by whichever spelling its manifest carries, and a `[lint-crates]`
-/// pack in somebody else's repository names it by whichever spelling that
-/// author wrote. Both are correct and they do not have to agree.
-///
-/// So the patch is emitted for both, which costs a table cargo ignores when
-/// nothing names that source and is what makes the unification hold when
-/// something does.
-///
-/// Only these two forms, and no attempt to normalise beyond them: a url this
-/// does not recognise is passed through unchanged, so a self-hosted forge or a
-/// scheme nobody here uses behaves exactly as it did before.
-///
-/// A `.git`-less spelling is deliberately not a third form. Cargo canonicalises
-/// that suffix away, so a patch key differing from the dependency url only by
-/// it already matches, while a key naming a different repository does not.
-/// Scheme and userinfo are what canonicalisation preserves, which is why this
-/// is the axis and the only one.
-///
-/// **The answers are distinct**, and that is load-bearing rather than tidy: two
-/// identical `[patch."X"]` tables is `error: duplicate key`, which cargo raises
-/// at manifest parse before resolving anything, so every `cargo mock` in that
-/// repository would stop. The dedup is what makes a future third form safe to
-/// add without knowing this.
-fn spellings_of(url: &str) -> Vec<String> {
-    let (https, ssh) = if let Some(rest) = url.strip_prefix("https://") {
-        (url.to_string(), format!("ssh://git@{rest}"))
-    } else if let Some(rest) = url.strip_prefix("ssh://git@") {
-        (format!("https://{rest}"), url.to_string())
-    } else {
-        return vec![url.to_string()];
-    };
-    let mut out = vec![https];
-    if !out.contains(&ssh) {
-        out.push(ssh);
-    }
-    out
-}
-
-/// The throwaway package the fetch runs against: lint-rules and nothing else.
-///
-/// A workspace of its own, so it does not join the generated crate's, and a lib
-/// target, so cargo has a package rather than a manifest it refuses to read.
-fn fetch_manifest(lint_rules_dep: &str) -> String {
-    format!(
-        "[workspace]\n\n\
-         [package]\nname = \"lint-rules-fetch\"\nversion = \"0.0.0\"\n\
-         edition = \"2024\"\npublish = false\n\n\
-         [lib]\npath = \"lib.rs\"\n\n\
-         [dependencies]\nmockspace = {lint_rules_dep}\n"
-    )
-}
-
-/// Whether the dependency names a git repository at a fixed revision, which is
-/// the only shape [`patch_section`] can build anything from.
-/// The url has to carry a scheme, since cargo refuses a relative one and the
-/// fetch would spend a process to be told so.
-fn is_git_rev_dep(dep: &str) -> bool {
-    extract_between(dep, "git = \"", "\"").is_some_and(|u| u.contains("://"))
-        && extract_between(dep, "rev = \"", "\"").is_some()
-}
-
-/// Make cargo extract its checkout of `lint-rules` at the engine's revision, so
-/// [`patch_section`] has something to point at.
-///
-/// The patch is built from a path into cargo's checkout, and on a cold cache
-/// that checkout does not exist at the moment the manifest is written: cargo
-/// extracts it while building this crate, which is afterwards. So the first run
-/// in a repository emitted no patch at all, resolved a second copy of
-/// `mockspace-lint-rules` for every pack or tool naming it by another spelling,
-/// and failed with `E0308` between `LintPack` and `LintPack` at one file and
-/// one line, with nothing in the output naming a url. The next run, the
-/// checkout now present, worked.
-///
-/// That is the worst shape a defect takes, because it repairs itself and the
-/// repair looks like the thing having been flaky. Observed in `muisti`, where
-/// four tools were rewritten to a different url spelling on the strength of it.
-///
-/// What is fetched is a throwaway package depending on lint-rules and nothing
-/// else, rather than the generated crate, since that one is not written yet and
-/// its manifest is what this is being computed for. Failure is silent on
-/// purpose: the caller asks [`patch_section`] again either way, so a fetch that
-/// could not run costs the patch and nothing more, which is where it was.
-fn ensure_lint_rules_checkout(gen_dir: &Path, lint_rules_dep: &str, cargo_home: &Path) {
-    let dir = gen_dir.join(".fetch");
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    if std::fs::write(dir.join("lib.rs"), "").is_err() {
-        return;
-    }
-    if write_if_changed(&dir.join("Cargo.toml"), &fetch_manifest(lint_rules_dep)).is_err() {
-        return;
-    }
-    // stderr is inherited: this is where cargo says it is updating a git
-    // repository, which is the only thing on screen explaining a cold run's
-    // pause. stdout carries nothing worth reading here.
-    //
-    // `CARGO_HOME` is passed rather than inherited, so the fetch writes its
-    // checkout under the same root [`patch_section`] then reads. Inheriting it
-    // agrees with that root in every real run and in none that plants one.
-    let _ = Command::new("cargo")
-        .arg("fetch")
-        .arg("--manifest-path")
-        .arg(dir.join("Cargo.toml"))
-        .env("CARGO_HOME", cargo_home)
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .status();
-}
-
-/// Locate cargo's checkout of `lint-rules` at `rev` for the git repo `url`,
-/// under `<cargo_home>/git/checkouts/<name>-<hash>/<short-rev>/lint-rules`. The
-/// `<name>-<hash>` dir is keyed on the url; the sub-dir is the short rev.
-fn find_lint_rules_checkout(cargo_home: &Path, url: &str, rev: &str) -> Option<PathBuf> {
-    let name = url.rsplit('/').next()?.trim_end_matches(".git");
-    let short = &rev[.. rev.len().min(7)];
-    let checkouts = cargo_home.join("git").join("checkouts");
-    for repo in std::fs::read_dir(&checkouts).ok()?.flatten() {
-        if !repo
-            .file_name()
-            .to_string_lossy()
-            .starts_with(&format!("{name}-"))
-        {
-            continue;
-        }
-        for co in std::fs::read_dir(repo.path()).ok()?.flatten() {
-            if co.file_name().to_string_lossy().starts_with(short) {
-                let lr = co.path().join("lint-rules");
-                if lr.is_dir() {
-                    return Some(lr);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// `$CARGO_HOME` or `~/.cargo`.
-fn cargo_home() -> PathBuf {
-    std::env::var_os("CARGO_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))
-        .unwrap_or_else(|| PathBuf::from(".cargo"))
-}
-
-/// The substring of `s` between the first `start` and the next `end` after it.
-fn extract_between(s: &str, start: &str, end: &str) -> Option<String> {
-    let from = s.find(start)? + start.len();
-    let rest = &s[from ..];
-    let to = rest.find(end)?;
-    Some(rest[.. to].to_string())
-}
-
-/// The cdylib `lib.rs`: the repo's in-tree lint files pulled in by path, the
-/// pack crates referenced by their (dash-to-underscore) idents, and one
-/// `extern "C"` collector that fills the caller's vecs. Mirrors the proxy's
-/// `generate_custom_lint_main`, but as a collector rather than a `main`, and
-/// against the `mockspace` package-rename so the lint files compile unchanged.
-///
-/// The `#[path]` of each lint file is the absolute path in the worktree that is
-/// running, so this text differs between worktrees and a switch recompiles the
-/// generated crate. That is deliberate. Making it identical (a symlink inside
-/// the store pointing at the running worktree's `lints/`, say) would leave
-/// cargo comparing the modification time of whatever the link points at now
-/// with the build's record of what it pointed at then, so a switch to a
-/// worktree whose lint files are older than the last build would be judged
-/// fresh and the other worktree's library loaded. What the worktrees share is
-/// the dependency graph, which is the 85 MB; the one small crate is rebuilt.
-fn gen_collect_lib(
-    lints_dir: &Path,
-    lint_files: &[String],
-    packs: &[(String, String)],
-    tools: &[ToolCrate],
-) -> String {
-    // generated code: suppress the noise a repo with only lints (no cross, or
-    // vice versa) would otherwise emit on the unused collector parameter.
-    let mut out = String::from("#![allow(unused)]\n\n");
-    for name in lint_files {
-        let abs = lints_dir
-            .join(format!("{name}.rs"))
-            .display()
-            .to_string()
-            .replace('\\', "/");
-        out.push_str(&format!("#[path = \"{abs}\"]\nmod {name};\n"));
-    }
-    out.push('\n');
-
-    let mut lint_mods = Vec::new();
-    let mut cross_mods = Vec::new();
-    let mut repo_mods = Vec::new();
-    let mut message_mods = Vec::new();
-    for name in lint_files {
-        let found = scan_lint_functions(lints_dir, name);
-        if found.lint {
-            lint_mods.push(name.as_str());
-        }
-        if found.cross_lint {
-            cross_mods.push(name.as_str());
-        }
-        if found.repo_lint {
-            repo_mods.push(name.as_str());
-        }
-        if found.message_lint {
-            message_mods.push(name.as_str());
-        }
-    }
-    let pack_idents: Vec<String> = packs.iter().map(|(n, _)| n.replace('-', "_")).collect();
-
-    out.push_str(
-        "/// Collect this repo's lints. The pack is owned by the caller (the\n\
-         /// engine); the boxes' vtables live in this cdylib, which the engine\n\
-         /// keeps loaded for the duration of the lint run. One struct rather\n\
-         /// than a vec per kind, so a new lint kind is additive here.\n\
-         #[unsafe(no_mangle)]\npub extern \"C\" fn __mockspace_collect_lints(\n\
-         \x20   pack: &mut mockspace::LintPack,\n) {\n",
-    );
-    for m in &lint_mods {
-        out.push_str(&format!("    pack.crate_lints.push({m}::lint());\n"));
-    }
-    for m in &cross_mods {
-        out.push_str(&format!(
-            "    pack.workspace_lints.push({m}::cross_lint());\n"
-        ));
-    }
-    for m in &repo_mods {
-        out.push_str(&format!("    pack.repo_lints.push({m}::repo_lint());\n"));
-    }
-    for m in &message_mods {
-        out.push_str(&format!(
-            "    pack.message_lints.push({m}::message_lint());\n"
-        ));
-    }
-    for id in &pack_idents {
-        out.push_str(&format!("    {id}::collect(pack);\n"));
-    }
-    // A tool crate contributes through the same `collect(pack)` entry point a
-    // pack uses, generated by the same `lint_pack!` macro. There is no separate
-    // tool entry point, because a tool crate may reasonably ship a lint
-    // alongside its tool and a second symbol would make that two registrations
-    // to keep in step.
-    for tool in tools {
-        out.push_str(&format!("    {}::collect(pack);\n", tool.ident()));
-    }
-    out.push_str("}\n");
-    out
+/// The identity of the library built from `content`: a digest of its inputs that names no tree
+/// (see `identity`). `None` where they cannot be read.
+fn pack_identity(gen_dir: &Path, content: &Content, cfg: &Config) -> Option<identity::Identity> {
+    let lints: Vec<(String, PathBuf)> = content
+        .lint_files
+        .iter()
+        .map(|n| (n.clone(), content.lints_dir.join(format!("{n}.rs"))))
+        .collect();
+    // Generated from the real lint directory, which is what the scan for lint functions reads,
+    // and with that directory taken out afterwards so the text names no tree.
+    let collector = gen_collect_lib(&content.lints_dir, &content.lint_files, &content.packs, &content.tools)
+        .replace(&content.lints_dir.display().to_string().replace('\\', "/"), "<lints>");
+    let manifest = gen_dir.join("Cargo.toml");
+    let home = cargo_home();
+    identity::of_generated_crate(&identity::Tree {
+        generated_manifest: &manifest,
+        lints_dir:          &content.lints_dir,
+        lints:              &lints,
+        collector,
+        repo_root:          &cfg.repo_root,
+        working_dir:        &std::env::current_dir().ok()?,
+        cargo_home:         &home,
+    })
 }
 
 /// Name of the generated crate: the name of the directory it sits in, which is
@@ -642,108 +420,6 @@ fn gen_crate_name(gen_dir: &Path) -> String {
     format!("mockspace-lints-{key}")
 }
 
-/// `cargo build` the cdylib and return the built library path.
-///
-/// **The path comes from cargo, not from a directory listing.** Two reasons,
-/// and the second is the one that bit:
-///
-///   - cargo honours `CARGO_TARGET_DIR`, which is set on any machine sharing
-///     one build dir across worktrees, so the artifact need not be under
-///     `gen_dir` and a listing there finds nothing;
-///   - worse, where a previous run left a file in the expected place, that
-///     stale copy loads and the engine answers from an old build of the
-///     project's lints and tools, silently. Reads exactly like an edit not
-///     taking effect, and cost two rounds chasing a phantom loader bug.
-///
-/// Pinning `--target-dir` fixes both and forecloses the cache: every fresh
-/// clone, worktree and fixture then pays a cold release build of the whole dep
-/// graph, which is what saturated a laptop. Taking the path out of
-/// `--message-format json` fixes both and keeps the cache, because the path
-/// comes from the run that produced it and cannot be a leftover.
-fn build_cdylib(gen_dir: &Path, crate_name: &str) -> Result<PathBuf, String> {
-    // json-render-diagnostics puts artifacts on stdout and still renders
-    // warnings and errors to stderr the way a human expects.
-    let mut child = Command::new("cargo")
-        .arg("build")
-        .arg("--release")
-        .arg("--manifest-path")
-        .arg(gen_dir.join("Cargo.toml"))
-        .arg("--message-format")
-        .arg("json-render-diagnostics")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|e| format!("could not run cargo build for the lint cdylib: {e}"))?;
-
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "cargo build gave no stdout to read artifacts from".to_string())?;
-    let mut found = None;
-    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-        if let Some(p) = cdylib_artifact(&line, crate_name) {
-            found = Some(p);
-        }
-    }
-
-    // NOTE: stdout drained first, else a full pipe deadlocks the wait
-    let status = child
-        .wait()
-        .map_err(|e| format!("could not wait on cargo build for the lint cdylib: {e}"))?;
-    if !status.success() {
-        return Err("building the custom-lint cdylib failed; see cargo output above".to_string());
-    }
-
-    let dylib = found.ok_or_else(|| {
-        format!(
-            "cargo reported success but emitted no cdylib artifact for \
-             `{crate_name}`, so the build produced nothing this engine can load"
-        )
-    })?;
-    // NOTE: the path is known now, so the tree cargo actually wrote is known
-    // too, and that is the one worth keeping out of the desktop index. Under
-    // CARGO_TARGET_DIR it is nowhere this engine computed, so marking
-    // `<mock>/target` marks an almost-empty directory and leaves the large one
-    // indexed. Only reachable here because the path came from cargo.
-    crate::build_dir::mark_target_root_of(&dylib);
-    Ok(dylib)
-}
-
-/// One line of cargo's json, to the cdylib path it names, or nothing.
-///
-/// NOTE: cargo normalises a lib target's name, so the package
-/// `mockspace-lints-<hash>` arrives here as `mockspace_lints_<hash>`. matching
-/// on the package name finds nothing at all, silently, which is why the
-/// substitution is done rather than assumed.
-fn cdylib_artifact(line: &str, crate_name: &str) -> Option<PathBuf> {
-    let msg: serde_json::Value = serde_json::from_str(line).ok()?;
-    if msg.get("reason")? != "compiler-artifact" {
-        return None;
-    }
-    let target = msg.get("target")?;
-    if target.get("name")? != crate_name.replace('-', "_").as_str() {
-        return None;
-    }
-    if !target
-        .get("kind")?
-        .as_array()?
-        .iter()
-        .any(|k| k == "cdylib")
-    {
-        return None;
-    }
-    // one target can emit several files; take the loadable one
-    msg.get("filenames")?
-        .as_array()?
-        .iter()
-        .filter_map(|f| f.as_str())
-        .map(PathBuf::from)
-        .find(|p| {
-            p.extension()
-                .is_some_and(|e| e == "dylib" || e == "so" || e == "dll")
-        })
-}
-
 /// dlopen the cdylib, call its collector, and return the loaded lints holding
 /// the library alive.
 ///
@@ -753,7 +429,7 @@ fn cdylib_artifact(line: &str, crate_name: &str) -> Option<PathBuf> {
 /// `mockspace-lint-rules` pin (and the same toolchain) as this engine, so the
 /// `Box<dyn Lint>` vtables the collector hands back match this engine's layout.
 /// The launcher enforces this by passing the pin-matched `lint_rules_dep`.
-unsafe fn collect(dylib: &Path) -> Result<LoadedLints, String> {
+unsafe fn collect(dylib: &Path, identity: Option<String>) -> Result<LoadedLints, String> {
     // SAFETY: loading a cdylib runs its initialisers. This is our own crate,
     // generated and built moments ago from this repo's lints, not arbitrary
     // code of unknown provenance.
@@ -788,7 +464,7 @@ unsafe fn collect(dylib: &Path) -> Result<LoadedLints, String> {
     // Which code these lints are, for the verdicts saved under them. A library that cannot be
     // read back gets an identity no other run shares, so what it saves is never found again
     // rather than found by a different pack with the same empty name.
-    pack.identity = crate::lint::verdicts::file_digest(dylib).unwrap_or_else(|| {
+    pack.identity = identity.or_else(|| crate::lint::verdicts::file_digest(dylib)).unwrap_or_else(|| {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
@@ -800,7 +476,7 @@ unsafe fn collect(dylib: &Path) -> Result<LoadedLints, String> {
     })
 }
 
-fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
+pub(super) fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
     if std::fs::read_to_string(path)
         .map(|c| c == content)
         .unwrap_or(false)
@@ -811,577 +487,4 @@ fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    // one real `compiler-artifact` line, out of a live
-    // `cargo build --message-format json-render-diagnostics`. hand-written json
-    // here would only test that the test agrees with itself.
-    const ARTIFACT: &str = r#"{"reason":"compiler-artifact","package_id":"path+file:///p/mock/target/mockspace-lints#mockspace-lints-40d923802ebb4e36@0.0.0","manifest_path":"/p/mock/target/mockspace-lints/Cargo.toml","target":{"kind":["cdylib"],"crate_types":["cdylib"],"name":"mockspace_lints_40d923802ebb4e36","src_path":"/p/mock/target/mockspace-lints/src/lib.rs","edition":"2024","doc":false,"doctest":false,"test":true},"profile":{"opt_level":"3","debuginfo":0,"debug_assertions":false,"overflow_checks":false,"test":false},"features":[],"filenames":["/elsewhere/release/libmockspace_lints_40d923802ebb4e36.dylib"],"executable":null,"fresh":true}"#;
-
-    #[test]
-    fn the_artifact_path_comes_from_cargo_not_from_a_directory() {
-        // the whole mechanism: the path is wherever cargo put it, which under
-        // an inherited CARGO_TARGET_DIR is not under gen_dir at all.
-        assert_eq!(
-            cdylib_artifact(ARTIFACT, "mockspace-lints-40d923802ebb4e36"),
-            Some(PathBuf::from(
-                "/elsewhere/release/libmockspace_lints_40d923802ebb4e36.dylib"
-            ))
-        );
-    }
-
-    #[test]
-    fn a_lib_target_name_is_normalised_so_the_package_name_never_matches() {
-        // cargo turns `mockspace-lints-<hash>` into `mockspace_lints_<hash>`.
-        // matching the package name finds nothing, silently, and the engine
-        // then reports a successful build with no artifact. drop the
-        // substitution and this arm is what goes red.
-        assert!(ARTIFACT.contains(r#""name":"mockspace_lints_40d923802ebb4e36""#));
-        assert!(cdylib_artifact(ARTIFACT, "mockspace-lints-40d923802ebb4e36").is_some());
-    }
-
-    #[test]
-    fn another_projects_artifact_is_not_ours() {
-        // several generated crates can share one target dir, which is why the
-        // name is hashed per project in the first place.
-        assert!(cdylib_artifact(ARTIFACT, "mockspace-lints-0000000000000000").is_none());
-    }
-
-    #[test]
-    fn nothing_but_a_cdylib_artifact_answers() {
-        // controls. without these, a filter that always took the first
-        // filename would pass every arm above.
-        let lib = ARTIFACT.replace(r#""kind":["cdylib"]"#, r#""kind":["lib"]"#);
-        assert!(cdylib_artifact(&lib, "mockspace-lints-40d923802ebb4e36").is_none());
-        let other = ARTIFACT.replace("compiler-artifact", "build-script-executed");
-        assert!(cdylib_artifact(&other, "mockspace-lints-40d923802ebb4e36").is_none());
-        assert!(cdylib_artifact("not json at all", "mockspace-lints-40d923802ebb4e36").is_none());
-        let rlib = ARTIFACT.replace(".dylib", ".rlib");
-        assert!(cdylib_artifact(&rlib, "mockspace-lints-40d923802ebb4e36").is_none());
-    }
-
-    /// A repo with a lint, a pack and two tools, so a scope has something to
-    /// leave out.
-    fn repo_with_lints_packs_and_tools() -> (tempfile::TempDir, crate::config::Config) {
-        let dir = tempfile::tempdir().unwrap();
-        let mock = dir.path().join("mock");
-        std::fs::create_dir_all(mock.join("lints")).unwrap();
-        std::fs::write(
-            mock.join("lints").join("foo.rs"),
-            "pub fn lint() -> Box<dyn mockspace::Lint> { todo!() }\n",
-        )
-        .unwrap();
-        for tool in ["ticket-add", "asset-new"] {
-            let t = mock.join("tools").join(tool);
-            std::fs::create_dir_all(&t).unwrap();
-            std::fs::write(
-                t.join("Cargo.toml"),
-                format!("[package]\nname = \"{tool}\"\nversion = \"0.0.0\"\n"),
-            )
-            .unwrap();
-        }
-        std::fs::write(
-            dir.path().join("mockspace.toml"),
-            "[lint-crates]\nsome-pack = \"1\"\n",
-        )
-        .unwrap();
-        let cfg = crate::config::Config::from_dir(&mock);
-        (dir, cfg)
-    }
-
-    #[test]
-    fn a_tool_scope_carries_the_one_tool_and_no_lints_or_packs() {
-        let (dir, cfg) = repo_with_lints_packs_and_tools();
-        let path = dir.path().join("mockspace.toml");
-        // control: the whole content is all of it, so the scope below is
-        // leaving something out rather than there being nothing to leave
-        let whole = discover(&cfg, &path).unwrap();
-        assert_eq!(whole.lint_files, ["foo"]);
-        assert_eq!(whole.packs.len(), 1);
-        assert_eq!(whole.tools.len(), 2);
-
-        let scoped = discover_scoped(&cfg, &path, "ticket-add").unwrap();
-        assert!(scoped.lint_files.is_empty(), "no lint builds for a tool");
-        assert!(scoped.packs.is_empty(), "no pack builds for a tool");
-        let tools: Vec<&str> = scoped.tools.iter().map(|t| t.dir.as_str()).collect();
-        assert_eq!(tools, ["ticket-add"]);
-    }
-
-    #[test]
-    fn a_name_that_is_no_tool_directory_scopes_to_nothing() {
-        let (dir, cfg) = repo_with_lints_packs_and_tools();
-        let path = dir.path().join("mockspace.toml");
-        assert!(discover_scoped(&cfg, &path, "foo").is_none());
-        assert!(discover_scoped(&cfg, &path, "some-pack").is_none());
-    }
-
-    #[test]
-    fn collector_lib_shape() {
-        let dir = tempfile::tempdir().unwrap();
-        let lints = dir.path().join("lints");
-        std::fs::create_dir_all(&lints).unwrap();
-        std::fs::write(
-            lints.join("foo.rs"),
-            "pub fn lint() -> Box<dyn mockspace::Lint> { todo!() }\n",
-        )
-        .unwrap();
-        let src = gen_collect_lib(
-            &lints,
-            &["foo".to_string()],
-            &[("some-pack".into(), "\"1\"".into())],
-            &[],
-        );
-        assert!(src.contains("#[unsafe(no_mangle)]"));
-        assert!(src.contains("pub extern \"C\" fn __mockspace_collect_lints"));
-        assert!(src.contains("mod foo;"));
-        // one struct across the boundary, so a new lint kind is additive
-        assert!(src.contains("pack: &mut mockspace::LintPack"));
-        assert!(src.contains("pack.crate_lints.push(foo::lint());"));
-        // pack idents dash->underscore, and one collect() call per pack rather
-        // than one call per lint kind
-        assert!(src.contains("some_pack::collect(pack);"));
-        // foo has no cross_lint(), so no per-file workspace push for it
-        assert!(!src.contains("pack.workspace_lints.push(foo::cross_lint());"));
-    }
-
-    /// All four entry points, which the scanner recognised as two until
-    /// recently. `RepoLint` is the one handed paths rather than packages, so it
-    /// is the only kind a repository with no packages can register, and it was
-    /// reachable from an imported pack and from nowhere else.
-    ///
-    /// The trap is in the names. `cross_lint(`, `repo_lint(` and
-    /// `message_lint(` all end in `lint(`, so a probe for the plain kind that
-    /// is not anchored on the space after `fn` claims every file that defines
-    /// any of them. That is what the negatives below are for, and the scanner
-    /// carries a comment about it while pinning nothing.
-    #[test]
-    fn every_entry_point_is_recognised_and_none_stands_in_for_another() {
-        let dir = tempfile::tempdir().unwrap();
-        let lints = dir.path().join("lints");
-        std::fs::create_dir_all(&lints).unwrap();
-
-        for (stem, decl) in [
-            ("plain", "pub fn lint()"),
-            ("cross", "pub fn cross_lint()"),
-            ("repo", "pub fn repo_lint()"),
-            ("msg", "pub fn message_lint()"),
-        ] {
-            std::fs::write(
-                lints.join(format!("{stem}.rs")),
-                format!("{decl} {{ todo!() }}\n"),
-            )
-            .unwrap();
-        }
-
-        let modules: Vec<String> = ["plain", "cross", "repo", "msg"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let src = gen_collect_lib(&lints, &modules, &[], &[]);
-
-        assert!(src.contains("pack.crate_lints.push(plain::lint());"));
-        assert!(src.contains("pack.workspace_lints.push(cross::cross_lint());"));
-        assert!(src.contains("pack.repo_lints.push(repo::repo_lint());"));
-        assert!(src.contains("pack.message_lints.push(msg::message_lint());"));
-
-        // the part with teeth: a file defining only one kind registers only
-        // that kind, so a suffix match on `lint(` cannot pass this
-        assert!(!src.contains("pack.crate_lints.push(cross::lint());"));
-        assert!(!src.contains("pack.crate_lints.push(repo::lint());"));
-        assert!(!src.contains("pack.crate_lints.push(msg::lint());"));
-        assert!(!src.contains("pack.repo_lints.push(plain::repo_lint());"));
-        assert!(!src.contains("pack.message_lints.push(plain::message_lint());"));
-    }
-
-    /// A file may define more than one, and each is pushed once onto its own
-    /// list. The control for the test above, which uses one kind per file and
-    /// so cannot tell "recognises each" from "recognises whichever it sees
-    /// first".
-    #[test]
-    fn one_file_may_register_several_kinds() {
-        let dir = tempfile::tempdir().unwrap();
-        let lints = dir.path().join("lints");
-        std::fs::create_dir_all(&lints).unwrap();
-        std::fs::write(
-            lints.join("both.rs"),
-            "pub fn lint() { todo!() }\npub fn repo_lint() { todo!() }\n",
-        )
-        .unwrap();
-
-        let src = gen_collect_lib(&lints, &["both".to_string()], &[], &[]);
-        assert!(src.contains("pack.crate_lints.push(both::lint());"));
-        assert!(src.contains("pack.repo_lints.push(both::repo_lint());"));
-        assert!(!src.contains("pack.workspace_lints.push(both::cross_lint());"));
-        assert!(!src.contains("pack.message_lints.push(both::message_lint());"));
-    }
-
-    fn tool(dir: &str, package: &str, at: &Path) -> ToolCrate {
-        ToolCrate {
-            dir:     dir.to_string(),
-            package: package.to_string(),
-            path:    at.join(dir),
-        }
-    }
-
-    #[test]
-    fn a_tool_crate_is_collected_through_the_same_entry_point_a_pack_uses() {
-        let dir = tempfile::tempdir().unwrap();
-        let lints = dir.path().join("lints");
-        std::fs::create_dir_all(&lints).unwrap();
-        let t = tool("phrase-search", "demo-phrase-search", dir.path());
-
-        let src = gen_collect_lib(&lints, &[], &[], std::slice::from_ref(&t));
-        // dash-to-underscore on the package name, and one collect() call, so a
-        // tool crate shipping a lint beside its tool registers both.
-        assert!(src.contains("demo_phrase_search::collect(pack);"), "{src}");
-        // and it must NOT invent a tool-specific symbol: the negative that
-        // pins "same pattern as lints" rather than a parallel path.
-        assert!(!src.contains("demo_phrase_search::tool()"), "{src}");
-        assert!(!src.contains("pack.tools.push"), "{src}");
-    }
-
-    #[test]
-    fn a_tool_crate_lands_on_the_dependency_line_by_package_name_and_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let cfg = crate::config::Config::from_dir(dir.path());
-        let gen_dir = dir.path().join("gen_dir");
-        let t = tool("phrase-search", "demo-phrase-search", dir.path());
-        write_cdylib_crate(
-            &gen_dir,
-            &dir.path().join("lints"),
-            &[],
-            &[],
-            std::slice::from_ref(&t),
-            "{ package = \"mockspace-lint-rules\", git = \"u\", rev = \"r\" }",
-            &cfg,
-        )
-        .unwrap();
-        let manifest = std::fs::read_to_string(gen_dir.join("Cargo.toml")).unwrap();
-        assert!(
-            manifest.contains(&format!(
-                "demo-phrase-search = {{ path = \"{}\" }}",
-                t.path.display()
-            )),
-            "{manifest}"
-        );
-        // The case that must fail: depending on the DIRECTORY name would emit
-        // `phrase-search = ...`, which cargo cannot resolve to that package.
-        assert!(
-            !manifest.contains("\nphrase-search = {"),
-            "the directory name must not be used as the package name: {manifest}"
-        );
-    }
-
-    #[test]
-    fn a_repo_with_only_tools_still_gets_a_cdylib() {
-        // The early return in `load` short-circuits on "no lints and no packs".
-        // Before tools were counted there, a repo whose only custom content is
-        // a tool built nothing and `mock <tool>` found nothing.
-        let dir = tempfile::tempdir().unwrap();
-        let mock = dir.path().join("mock");
-        std::fs::create_dir_all(mock.join("tools").join("only-tool").join("src")).unwrap();
-        std::fs::write(
-            mock.join("tools").join("only-tool").join("Cargo.toml"),
-            "[package]\nname = \"only-tool\"\nversion = \"0.0.0\"\n",
-        )
-        .unwrap();
-        std::fs::write(mock.join("mockspace.toml"), "project_name = \"x\"\n").unwrap();
-
-        // no mock/lints, no [lint-crates]: the two things the old guard checked
-        assert!(!mock.join("lints").exists());
-        assert!(parse_lint_crates(&mock.join("mockspace.toml")).is_empty());
-        // and yet there is something to build
-        assert_eq!(discover_tool_crates(&mock.join("tools")).len(), 1);
-    }
-
-    #[test]
-    fn manifest_renames_lint_rules_to_mockspace() {
-        let dir = tempfile::tempdir().unwrap();
-        let cfg = crate::config::Config::from_dir(dir.path());
-        let gen_dir = dir.path().join("gen_dir");
-        let dep = "{ package = \"mockspace-lint-rules\", git = \"u\", rev = \"r\" }";
-        write_cdylib_crate(
-            &gen_dir,
-            &dir.path().join("lints"),
-            &[],
-            &[("p".into(), "\"1\"".into())],
-            &[],
-            dep,
-            &cfg,
-        )
-        .unwrap();
-        let manifest = std::fs::read_to_string(gen_dir.join("Cargo.toml")).unwrap();
-        assert!(manifest.contains("crate-type = [\"cdylib\"]"));
-        assert!(manifest.contains(&format!("mockspace = {dep}")));
-        assert!(manifest.contains("p = \"1\""));
-        // a leading [workspace] makes the crate its own root so cargo builds it
-        // standalone under the consumer's <mock>/target/ (not as a member).
-        assert!(manifest.trim_start().starts_with("[workspace]"));
-    }
-
-    #[test]
-    fn patch_section_points_at_the_checkout_path() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = tmp.path();
-        // lay out cargo's checkout: git/checkouts/<name>-<hash>/<short-rev>/lint-rules
-        let lr = home.join("git/checkouts/mockspace-deadbeef/abc1234/lint-rules");
-        std::fs::create_dir_all(&lr).unwrap();
-        let dep = "{ package = \"mockspace-lint-rules\", git = \"ssh://x/mockspace.git\", rev = \"abc1234ff\" }";
-        let patch = patch_section(dep, home).unwrap();
-        assert!(patch.contains("[patch.\"ssh://x/mockspace.git\"]"));
-        assert!(patch.contains(&format!(
-            "mockspace-lint-rules = {{ path = \"{}\" }}",
-            lr.display()
-        )));
-    }
-
-    #[test]
-    fn patch_section_covers_both_spellings_of_one_repository() {
-        // The defect this is the fix for, and it is worth stating as a case
-        // rather than trusting the helper below: cargo keys a source on the url
-        // string, so a pack naming the repository by ssh while the engine names
-        // it by https resolves to two copies of `mockspace-lint-rules`, whose
-        // `LintPack` types do not unify. The cdylib then fails to build and
-        // every lint under it stops running.
-        //
-        // Observed in `huurre`, which tracks the engine by branch and so rolled
-        // onto a revision emitting the https form, while `mockspace-extra-lints`
-        // and one of its own tools name the ssh form. The error named
-        // `mockspace_lint_rules` twice and neither url once.
-        let tmp = tempfile::tempdir().unwrap();
-        let home = tmp.path();
-        let lr = home.join("git/checkouts/mockspace-deadbeef/b57007c/lint-rules");
-        std::fs::create_dir_all(&lr).unwrap();
-
-        let https = "{ package = \"mockspace-lint-rules\", git = \
-                      \"https://github.com/hiisi-digital/mockspace.git\", rev = \"b57007c900\" }";
-        let patch = patch_section(https, home).unwrap();
-        assert!(
-            patch.contains("[patch.\"https://github.com/hiisi-digital/mockspace.git\"]"),
-            "the spelling the engine wrote is not patched: {patch}"
-        );
-        assert!(
-            patch.contains("[patch.\"ssh://git@github.com/hiisi-digital/mockspace.git\"]"),
-            "a pack naming the same repository by ssh is not covered: {patch}"
-        );
-
-        // And the same in the other direction, since which spelling the engine
-        // carries is not this function's to assume.
-        let ssh = "{ package = \"mockspace-lint-rules\", git = \
-                    \"ssh://git@github.com/hiisi-digital/mockspace.git\", rev = \"b57007c900\" }";
-        let patch = patch_section(ssh, home).unwrap();
-        assert!(patch.contains("[patch.\"https://github.com/hiisi-digital/mockspace.git\"]"));
-        assert!(patch.contains("[patch.\"ssh://git@github.com/hiisi-digital/mockspace.git\"]"));
-    }
-
-    #[test]
-    fn a_url_in_neither_form_is_passed_through_unchanged() {
-        // The boundary. A self-hosted forge, a `git://` url, a scheme nobody
-        // here uses: one table, the url as written, exactly as before this
-        // change. Guessing a second spelling for a host whose conventions are
-        // unknown would emit a patch for a source that does not exist, and a
-        // patch nothing matches is a manifest that no longer explains itself.
-        assert_eq!(spellings_of("git://example.invalid/m.git").len(), 1);
-        assert_eq!(spellings_of("ssh://x/mockspace.git").len(), 1);
-        assert_eq!(spellings_of("file:///home/somebody/mockspace"), vec![
-            "file:///home/somebody/mockspace".to_string()
-        ]);
-    }
-
-    #[test]
-    fn exactly_these_two_spellings_and_no_others() {
-        // What this pins that the two cases above do not: that the set is
-        // exactly the pair, so a third form cannot be added without somebody
-        // reading the reasoning for why there are two.
-        //
-        // It carried a false claim before, that a one-sided mapping would pass
-        // both other cases while producing a wrong second spelling. It would
-        // not: mapping https to both and ssh only to itself fails the coverage
-        // case outright, since that case asserts the https table for ssh input.
-        // Verified by mutation rather than by reading, which is how the claim
-        // was found.
-        let https = "https://github.com/hiisi-digital/mockspace.git";
-        let ssh = "ssh://git@github.com/hiisi-digital/mockspace.git";
-        assert_eq!(spellings_of(https), vec![
-            https.to_string(),
-            ssh.to_string()
-        ]);
-        assert_eq!(spellings_of(ssh), vec![https.to_string(), ssh.to_string()]);
-    }
-
-    #[test]
-    fn no_url_yields_the_same_spelling_twice() {
-        // What this pins is that the dedup is still there, and not that a
-        // colliding third form would be caught. With the dedup present a
-        // collision is absorbed rather than reported, so adding a `.git`-less
-        // spelling keeps this green; removing the dedup turns it red, naming
-        // `https://github.com/o/r`. Established by mutation, both ways round.
-        //
-        // Absorbing is the right answer rather than a shortcut. Patch keys are
-        // a set, so one table is the correct output for two rules naming one
-        // source, and refusing at run time would turn a harmless redundancy
-        // into a hard failure in a consumer's repository at commit time, which
-        // is the cost this whole change exists to remove. The loudness belongs
-        // here, at development time, and here is where it is.
-        //
-        // The dedup is also what makes the list below acceptable. Nine urls is
-        // a sample over an unbounded space, and sampling a law is the shape the
-        // test gate rejects; it is harmless only because an unsampled collision
-        // cannot reach a consumer.
-        //
-        // What a collision would cost without it: two identical `[patch."X"]`
-        // tables is `error: duplicate key`, raised at manifest parse before
-        // anything resolves, so every `cargo mock` in that repository stops.
-        for url in [
-            "https://github.com/hiisi-digital/mockspace.git",
-            "ssh://git@github.com/hiisi-digital/mockspace.git",
-            "https://github.com/o/r",
-            "ssh://git@host/r",
-            "https://git@github.com/o/r.git",
-            "git://example.invalid/m.git",
-            "file:///home/somebody/mockspace",
-            "ssh://x/mockspace.git",
-            "",
-        ] {
-            let out = spellings_of(url);
-            let mut sorted = out.clone();
-            sorted.sort();
-            sorted.dedup();
-            assert_eq!(
-                sorted.len(),
-                out.len(),
-                "{url:?} yields a repeated patch key: {out:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_git_rev_dep_is_the_only_shape_worth_fetching_for() {
-        // The guard on the retry. A dep with no rev, or none at all, has
-        // nothing a patch could point at, so fetching for it buys a cargo
-        // invocation per run and no patch either way.
-        assert!(is_git_rev_dep(
-            "{ package = \"mockspace-lint-rules\", git = \"ssh://x/m.git\", rev = \"abc\" }"
-        ));
-        assert!(!is_git_rev_dep(
-            "{ package = \"mockspace-lint-rules\", git = \"ssh://x/m.git\", branch = \"dev\" }"
-        ));
-        assert!(!is_git_rev_dep("{ path = \"../lint-rules\" }"));
-        assert!(!is_git_rev_dep("\"1.2.3\""));
-        // A url with no scheme is one cargo refuses, so fetching against it
-        // spends a process to be told so and leaves the error on screen.
-        assert!(!is_git_rev_dep(
-            "{ package = \"mockspace-lint-rules\", git = \"u\", rev = \"abc\" }"
-        ));
-    }
-
-    #[test]
-    fn the_fetch_package_names_the_engine_dependency_and_nothing_else() {
-        // What the retry fetches. It has to parse as a package on its own, or
-        // the fetch that materialises the checkout cannot run at all and the
-        // patch stays missing the same silent way it did before.
-        let dep = "{ package = \"mockspace-lint-rules\", git = \"ssh://x/m.git\", rev = \"abc\" }";
-        let m = fetch_manifest(dep);
-        assert!(m.trim_start().starts_with("[workspace]"));
-        assert!(m.contains("[lib]\npath = \"lib.rs\""));
-        assert!(m.contains(&format!("mockspace = {dep}")));
-        // One dependency and no other, so the fetch cannot drag in a pack or a
-        // tool, and cannot fail on one that does not resolve.
-        let deps = m.split("[dependencies]\n").nth(1).unwrap();
-        assert_eq!(deps.lines().filter(|l| !l.trim().is_empty()).count(), 1);
-    }
-
-    /// A cold cargo home has no checkout, so the patch is missing; the fetch
-    /// materialises one and the same call then answers.
-    ///
-    /// This is the whole of the defect: the manifest is written before the
-    /// generated crate is built, so on the first run in any repo the directory
-    /// [`find_lint_rules_checkout`] reads does not exist yet, `patch_section`
-    /// returns `None`, and nothing is emitted or said. The build then fails on
-    /// `E0308` between two `LintPack`s and the next run works, which reads as
-    /// flakiness rather than as an ordering bug.
-    ///
-    /// The `None` before the fetch is the case that has to fail, and it is the
-    /// state every cold machine is in. A `file://` url keeps it off the
-    /// network, and `CARGO_HOME` is planted so the fetch and the read agree on
-    /// a root this test owns.
-    #[test]
-    fn a_cold_cargo_home_gets_its_checkout_from_the_fetch() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("engine");
-        let home = tmp.path().join("cargo-home");
-        let gen_dir = tmp.path().join("gen");
-        std::fs::create_dir_all(repo.join("lint-rules/src")).unwrap();
-        std::fs::create_dir_all(&gen_dir).unwrap();
-        std::fs::write(
-            repo.join("Cargo.toml"),
-            "[workspace]\nmembers = [\"lint-rules\"]\nresolver = \"3\"\n",
-        )
-        .unwrap();
-        std::fs::write(
-            repo.join("lint-rules/Cargo.toml"),
-            "[package]\nname = \"mockspace-lint-rules\"\nversion = \"0.0.0\"\n\
-             edition = \"2024\"\n",
-        )
-        .unwrap();
-        std::fs::write(repo.join("lint-rules/src/lib.rs"), "").unwrap();
-
-        let git = |args: &[&str]| {
-            let ok = Command::new("git")
-                .args(["-C", repo.to_str().unwrap()])
-                .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
-                .args(args)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok_and(|s| s.success());
-            assert!(ok, "git {args:?} failed");
-        };
-        git(&["init", "-q"]);
-        git(&["add", "-A"]);
-        git(&["commit", "-q", "-m", "e", "--no-verify"]);
-        let rev = String::from_utf8(
-            Command::new("git")
-                .args(["-C", repo.to_str().unwrap(), "rev-parse", "HEAD"])
-                .output()
-                .unwrap()
-                .stdout,
-        )
-        .unwrap();
-        let dep = format!(
-            "{{ package = \"mockspace-lint-rules\", git = \"file://{}\", rev = \"{}\" }}",
-            repo.display(),
-            rev.trim()
-        );
-
-        // The failing case, and the state of every machine that has not built
-        // this repo before.
-        assert!(
-            patch_section(&dep, &home).is_none(),
-            "a cargo home with no checkout must yield no patch"
-        );
-
-        ensure_lint_rules_checkout(&gen_dir, &dep, &home);
-
-        let patch = patch_section(&dep, &home)
-            .expect("the fetch must leave a checkout the patch can point at");
-        // It points into the planted home rather than the machine's own, which
-        // is what says the fetch honoured the `CARGO_HOME` it was passed.
-        assert!(
-            patch.contains(&home.join("git/checkouts").display().to_string()),
-            "patch points outside the planted cargo home: {patch}"
-        );
-        assert!(patch.contains("mockspace-lint-rules = { path ="));
-    }
-
-    #[test]
-    fn patch_section_none_when_checkout_absent_or_not_git() {
-        let tmp = tempfile::tempdir().unwrap();
-        // git-rev dep but no checkout on disk -> no patch.
-        let dep = "{ package = \"mockspace-lint-rules\", git = \"ssh://x/m.git\", rev = \"abc\" }";
-        assert!(patch_section(dep, tmp.path()).is_none());
-        // path/registry override -> no patch.
-        assert!(patch_section("{ path = \"../lint-rules\" }", tmp.path()).is_none());
-    }
-}
+mod tests;

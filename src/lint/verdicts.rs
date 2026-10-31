@@ -7,8 +7,9 @@
 //!
 //! **A verdict is saved under the digest of everything it depends on**, which the lint runners
 //! assemble (see `mockspace_lint_rules::verdict`) and this module hashes. The digest is salted with
-//! the identity of the code that produced the verdict: the engine binary and the library each
-//! loaded pack came from, hashed by content. A rebuilt lint therefore finds nothing saved by the
+//! the identity of the code that produced the verdict: the engine binary by its bytes, and each
+//! loaded pack by a digest of the inputs it was built from (`custom_lints::identity`), so one
+//! commit has one identity from any tree. A changed lint therefore finds nothing saved by the
 //! one before it, and no version number has to be remembered to be bumped.
 //!
 //! **The store is local and never committed.** It is content-addressed, so a stale entry is not

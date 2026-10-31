@@ -542,6 +542,41 @@ pub(crate) mod knobs {
             .any(|k| dir.starts_with(&k.under) && k.skip_lock)
     }
 
+    type Hook = std::sync::Arc<dyn Fn() + Send + Sync>;
+
+    static HOOKS: Mutex<Vec<(PathBuf, Hook)>> = Mutex::new(Vec::new());
+
+    /// For every crate directory under `under`: run `hook` once the identity is computed and
+    /// before the build starts, which is where an edit lands in the window the identity left open.
+    pub(crate) fn after_identity(under: &Path, hook: impl Fn() + Send + Sync + 'static) {
+        HOOKS.lock().unwrap().push((under.to_path_buf(), std::sync::Arc::new(hook)));
+    }
+
+    pub(crate) fn run_after_identity(dir: &Path) {
+        let hooks: Vec<Hook> = HOOKS
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(under, _)| dir.starts_with(under))
+            .map(|(_, h)| h.clone())
+            .collect();
+        for hook in hooks {
+            hook();
+        }
+    }
+
+    static BUILDS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+    /// Record that a build of the crate in `dir` ran.
+    pub(crate) fn note_build(dir: &Path) {
+        BUILDS.lock().unwrap().push(dir.to_path_buf());
+    }
+
+    /// How many builds ran for crates under `base`, so a case can show that a load built nothing.
+    pub(crate) fn builds_under(base: &Path) -> usize {
+        BUILDS.lock().unwrap().iter().filter(|d| d.starts_with(base)).count()
+    }
+
     pub(crate) fn pause_between_write_and_build(dir: &Path) {
         let pause = KNOBS
             .lock()
