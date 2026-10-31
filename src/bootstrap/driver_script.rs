@@ -113,10 +113,10 @@ if generated && followed_up; then
     if [ "${{path##*/}}" = Cargo.lock ]; then
         # a lock also records resolution choices (a bump, a pinned revision) that no manifest
         # holds, so the two sides are text-merged first: a clean merge carries both sides' choices
-        # and only a conflict keeps ours, to be settled from the merged manifests afterwards
+        # and a conflicting hunk keeps ours, to be settled from the merged manifests afterwards
         try="$ours.mockspace-try"
         cp "$ours" "$try"
-        git merge-file -q -L ours -L base -L theirs "$try" "$base" "$theirs" && cp "$try" "$ours"
+        git merge-file -q --ours -L ours -L base -L theirs "$try" "$base" "$theirs" && cp "$try" "$ours"
         rm -f "$try"
     fi
     kept=$(git rev-parse --git-path mockspace-kept-ours)
@@ -275,6 +275,20 @@ mod tests {
         assert!(kept);
         assert!(merged.contains("name = \"m1\"") && !merged.contains("<<<<<<<"), "{merged}");
         assert!(!merged.contains("name = \"m2\""), "the settling adds it from the manifests: {merged}");
+    }
+
+    #[test]
+    fn a_bump_far_from_a_conflicting_hunk_survives_the_conflict() {
+        // theirs bumps a dependency and adds m2 at the end; ours adds m1 at the end: the member hunk
+        // conflicts, the bump does not, and ours must win only the hunk that conflicts
+        let rig = Rig::new(false, 0);
+        let add = |s: &str, n: &str| format!("{s}\n[[package]]\nname = \"{n}\"\nversion = \"0.1.0\"\n");
+        let theirs = add(&LOCK_BASE.replace("1.0.0", "1.0.1"), "m2");
+        let (kept, merged) = rig.run_lock(LOCK_BASE, &add(LOCK_BASE, "m1"), &theirs);
+        assert!(kept);
+        assert!(merged.contains("1.0.1"), "theirs' bump is not lost to the conflict: {merged}");
+        assert!(merged.contains("name = \"m1\""), "{merged}");
+        assert!(!merged.contains("<<<<<<<"), "{merged}");
     }
 
     #[test]

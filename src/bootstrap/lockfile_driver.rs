@@ -3,13 +3,14 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-//! A Cargo lockfile is settled from the merged manifests, never merged as text.
+//! A Cargo lockfile is settled from the merged manifests, not picked from a side.
 //!
 //! Two branches that each add a workspace member add a package to the lock at the same spot, and
 //! git alone stops on it. The lock is a function of the manifests, so whichever side a merge
 //! takes it is wrong until cargo has resolved the merged tree. This wires the same driver script
-//! the generated documents use (see [`super::driver_script`]) to the lockfiles, which keeps ours
-//! and writes the path down where a regeneration will follow, and the regeneration that follows
+//! the generated documents use (see [`super::driver_script`]) to the lockfiles, which text-merges
+//! the two sides (a conflicting hunk keeps ours, so a bump elsewhere in the file survives) and
+//! writes the path down where a regeneration will follow, and the regeneration that follows
 //! ([`settle_lockfiles`]) asks cargo for the merged manifests' resolution, which rewrites the
 //! lock with every member in it.
 //!
