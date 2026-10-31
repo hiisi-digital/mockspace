@@ -99,7 +99,17 @@ pub(crate) fn append_attribute_lines(
 /// into the block when it does. The driver's name is this tool's, so a line
 /// carrying it is not somebody else's to keep.
 pub(crate) fn with_lines(existing: &str, note: &str, lines: &[String]) -> String {
-    let driver = format!("merge={APPEND_DRIVER}");
+    with_driver_lines(existing, APPEND_DRIVER, note, lines)
+}
+
+/// [`with_lines`] for the block of any driver, named by `driver`.
+pub(crate) fn with_driver_lines(
+    existing: &str,
+    driver: &str,
+    note: &str,
+    lines: &[String],
+) -> String {
+    let driver = format!("merge={driver}");
     let managed = |l: &str| l.split_whitespace().last() == Some(driver.as_str());
     let current: Vec<&str> = existing.lines().filter(|l| managed(l)).collect();
     if current.len() == lines.len() && lines.iter().all(|l| current.contains(&l.as_str())) {

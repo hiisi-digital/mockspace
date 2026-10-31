@@ -170,6 +170,7 @@ pub(crate) fn finish_generation(
     registry_dir: &Path,
     history_dir: &Path,
     append_lines: &[String],
+    lockfiles: &[String],
     generated: &[PathBuf],
     commit: Option<&str>,
     stage_it: bool,
@@ -177,13 +178,31 @@ pub(crate) fn finish_generation(
     // Asked first: afterwards the file differs from HEAD by our line, whoever
     // else had edited it, and an edit of somebody's own is theirs to commit.
     let was_clean = attributes_clean(repo_root);
-    if write_gitattributes(repo_root, docs_dir, registry_dir, history_dir, append_lines) {
+    if write_gitattributes(
+        repo_root,
+        docs_dir,
+        registry_dir,
+        history_dir,
+        append_lines,
+        &lockfile_attribute_lines(lockfiles),
+    ) {
         eprintln!("  wrote the merge attributes");
     }
     let written = was_clean
         .then(|| fs::read_to_string(repo_root.join(".gitattributes")).ok())
         .flatten();
     let attributes = written.as_deref();
+    // a lockfile the merge driver kept from one side is settled from the merged manifests, and is then
+    // one of the files brought to the tree
+    let mut generated = generated.to_vec();
+    if commit.is_some() || stage_it {
+        if let Err(what) = settle_lockfiles(repo_root, lockfiles) {
+            eprintln!("error: {what}");
+            return Err("a lockfile could not be settled from the merged manifests");
+        }
+        generated.extend(lockfiles.iter().map(|r| repo_root.join(r)));
+    }
+    let generated = generated.as_slice();
     if let Some(subject) = commit {
         if !commit_follow_up(repo_root, generated, subject, attributes) {
             return Err("the regenerated files could not be committed");

@@ -86,6 +86,9 @@ pub struct Config {
     pub src_dirs:               Vec<PathBuf>,
     /// The `append_only` patterns of `mockspace.toml`, as written.
     pub append_only:            Vec<String>,
+    /// The `lockfiles` of `mockspace.toml`: Cargo lockfiles, relative to the repository root, that a
+    /// merge settles by resolving the merged manifests. The mock directory's own is always included.
+    pub lockfiles:              Vec<String>,
     pub repo_root:              PathBuf,
     pub docs_dir:               PathBuf,
     pub project_name:           String,
@@ -594,6 +597,8 @@ struct RawConfig {
     /// keeps both sides' additions when neither side touched a line already there.
     #[serde(default)]
     append_only:            Vec<String>,
+    #[serde(default)]
+    lockfiles:              Vec<String>,
     proc_macro_crates:      Vec<String>,
     #[serde(default)]
     lint_proc_macro_source: Option<bool>,
@@ -1107,6 +1112,7 @@ impl Config {
             crates_dir,
             src_dirs,
             append_only: raw.append_only.clone(),
+            lockfiles: raw.lockfiles.clone(),
             repo_root,
             docs_dir,
             config_path: toml_path,

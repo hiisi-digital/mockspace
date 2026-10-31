@@ -66,6 +66,10 @@ carries_header() {{
 }}
 
 generated() {{
+    # a lockfile is a function of the manifests: carrying no header is no reason to merge it as text
+    case ${{path##*/}} in
+        Cargo.lock) return 0 ;;
+    esac
     case $path in
         *.png|*.svg) command -v dot >/dev/null 2>&1 || return 1 ;;
     esac
