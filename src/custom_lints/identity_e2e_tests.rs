@@ -258,8 +258,6 @@ fn a_variable_the_build_still_gets_is_checked_when_the_lint_reads_it() {
     assert_eq!((with.as_str(), without.as_str()), ("set", "unset"));
 }
 
-// ---- review probes ----
-
 fn probe_tool(mock: &Path, body: &str) {
     let t = mock.join("tools").join("probe-tool");
     std::fs::create_dir_all(t.join("src")).unwrap();
@@ -323,3 +321,56 @@ fn a_source_set_back_in_time_is_built_not_reused_by_cargo() {
     assert_eq!(name_in(&cache, &mock), "two");
 }
 
+
+
+#[test]
+#[ignore = "runs cargo build; run with --include-ignored"]
+fn a_tool_source_set_back_in_time_is_not_kept_as_the_new_content() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = tmp.path().join("cache");
+    let a = tree(&tmp.path().join("a"), "r3-tool-setback", "unused");
+    probe_tool(&a, r#"pub const NAME: &str = "one";"#);
+    std::fs::write(lint_path(&a), lint_named_by("probe_tool::NAME")).unwrap();
+    assert_eq!(name_in(&cache, &a), "one");
+    let lib = a.join("tools").join("probe-tool").join("src").join("lib.rs");
+    std::fs::write(&lib, "pub fn collect(_p: &mut mockspace::LintPack) {}\npub const NAME: &str = \"two\";\n").unwrap();
+    std::fs::File::options().write(true).open(&lib).unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600)).unwrap();
+    let in_a = name_in(&cache, &a);
+    // A second tree of the new content, written plainly, with no set-back time.
+    let b = tree(&tmp.path().join("b"), "r3-tool-setback", "unused");
+    probe_tool(&b, r#"pub const NAME: &str = "two";"#);
+    std::fs::write(lint_path(&b), lint_named_by("probe_tool::NAME")).unwrap();
+    let in_b = name_in(&cache, &b);
+    assert_eq!((in_a.as_str(), in_b.as_str()), ("two", "two"));
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --include-ignored"]
+fn a_lint_file_macro_names_the_asking_tree() {
+    let got = names_in_two_trees("r3-file-macro", &lint_named_by("file!()"), |_, _| {}, ["", ""]);
+    assert!(got[0].contains("/a/clone/"), "{got:?}");
+    assert!(got[1].contains("/b/clone/"), "{got:?}");
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --include-ignored"]
+fn a_tool_build_script_manifest_dir_names_the_asking_tree() {
+    let got = names_in_two_trees(
+        "r3-build-script",
+        &lint_named_by("probe_tool::NAME"),
+        |mock, _| {
+            probe_tool(mock, r#"include!(concat!(env!("OUT_DIR"), "/name.rs"));"#);
+            std::fs::write(
+                mock.join("tools").join("probe-tool").join("build.rs"),
+                "fn main() { let d = std::env::var(\"CARGO_MANIFEST_DIR\").unwrap(); \
+                 std::fs::write(std::path::Path::new(&std::env::var(\"OUT_DIR\").unwrap()).join(\"name.rs\"), \
+                 format!(\"pub const NAME: &str = {d:?};\")).unwrap(); }\n",
+            )
+            .unwrap();
+        },
+        ["", ""],
+    );
+    assert!(got[0].contains("/a/clone/"), "{got:?}");
+    assert!(got[1].contains("/b/clone/"), "{got:?}");
+}
