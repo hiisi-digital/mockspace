@@ -11,8 +11,15 @@
 //! member) rerun every member. The digest here takes the member's own entry and
 //! the entries of everything it reaches, all dependency kinds followed, so it
 //! moves when something the member is built from moved and when nothing else
-//! did. A dev-dependency of a dependency is followed too, which makes the
+//! did, within the limit stated below. A dev-dependency of a dependency is
+//! followed too, which makes the
 //! closure wider than the build needs and never narrower.
+//!
+//! **What the lock cannot say** is which cargo features the build unifies. A
+//! bump in one member's dependency that turns on a feature of a crate another
+//! member also builds moves the first member and not the second, whose closure
+//! is unchanged. Feature edits in a manifest had the same blind spot before:
+//! manifests are fingerprinted per member, and only as that member's own input.
 
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -306,16 +306,38 @@ impl BinaryOutcomes {
 /// its report looks exactly like one that was never started. A binary that
 /// failed loses its record even though it is rebuilt on different inputs than
 /// the record named, so a stale pass cannot outlive a failure.
+///
+/// **Whole** is decided against `live`, never against nextest's exit code: a run
+/// that stops at its first failure (`--fail-fast`, `--max-fail`) exits as one
+/// that finished and leaves the tests it never started out of the report. A
+/// binary counts as having run whole only when every test it lists appears in
+/// the report, was skipped by the plan as already passed, or was left out by a
+/// narrowing to its failures. A failed binary is narrowed to later only when
+/// that holds; a passed one is recorded unless it is known not to hold, and where
+/// `live` is unknown a pass is judged as it always was.
 pub fn binary_outcomes(
     plan: &Plan,
     cases: &[Case],
     fp: &Fingerprints,
     complete: bool,
+    live: Option<&super::live::Live>,
 ) -> BinaryOutcomes {
     let mut out = BinaryOutcomes::default();
     if !complete {
         return out;
     }
+    let reported: BTreeSet<(&str, &str)> =
+        cases.iter().map(|c| (c.binary.as_str(), c.name.as_str())).collect();
+    let skipped: BTreeSet<(&str, &str)> =
+        plan.skip.iter().map(|s| (s.binary.as_str(), s.name.as_str())).collect();
+    let whole = |bin: &str| -> Option<bool> {
+        let tests = live?.get(bin)?;
+        Some(tests.iter().all(|t| {
+            reported.contains(&(bin, t.as_str()))
+                || skipped.contains(&(bin, t.as_str()))
+                || plan.rerun.get(bin).is_some_and(|names| !names.contains(t))
+        }))
+    };
     let deferred: BTreeSet<&str> = plan
         .skip
         .iter()
@@ -337,12 +359,14 @@ pub fn binary_outcomes(
             // Deferred heavy tests are neither passed nor failed, so a binary
             // holding some is run whole next time rather than narrowed.
             if !deferred.contains(bin)
+                && whole(bin) == Some(true)
                 && let Some(at) = fp.of_binary(bin)
             {
                 let names = red.remove(bin).unwrap_or_default().into_iter().collect();
                 out.red.push((bin.to_string(), Red { at: at.clone(), names }));
             }
         } else if !deferred.contains(bin)
+            && whole(bin) != Some(false)
             && let Some(at) = fp.of_binary(bin)
         {
             out.passed.push((bin.to_string(), at.clone()));

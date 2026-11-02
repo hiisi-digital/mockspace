@@ -455,7 +455,7 @@ fn a_run_leaves_each_binary_that_passed_at_its_fingerprint_and_names_each_that_f
         pass("render::b", Outcome::Fail),
         pass("unknown::x", Outcome::Pass),
     ];
-    let o = binary_outcomes(&p, &cases, &fp, true);
+    let o = binary_outcomes(&p, &cases, &fp, true, None);
     assert_eq!(o.passed, vec![
         ("render".to_string(), fp.base["render"].clone()),
         ("render::a".to_string(), fp.bins["render::a"].clone()),
@@ -473,6 +473,7 @@ fn an_incomplete_run_settles_no_binary() {
         &[pass("render::a", Outcome::Pass), pass("render::b", Outcome::Fail)],
         &fp,
         false,
+        None,
     );
     assert_eq!(o, BinaryOutcomes::default());
 }
@@ -498,6 +499,7 @@ fn a_binary_with_a_deferred_heavy_test_does_not_pass() {
         &[pass("render::a", Outcome::Pass), pass("render::b", Outcome::Pass)],
         &fp,
         true,
+        None,
     );
     assert_eq!(
         o.passed.iter().map(|(b, _)| b.as_str()).collect::<Vec<_>>(),

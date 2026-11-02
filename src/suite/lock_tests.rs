@@ -120,3 +120,45 @@ fn text_that_is_no_lockfile_is_not_read() {
     assert_eq!(Lock::parse("not = [toml"), None);
     assert_eq!(Lock::parse("[[package]]\nversion = \"1\"\n"), None);
 }
+
+/// A git dependency re-pinned at the same version changes its `source` and
+/// nothing else of its entry.
+#[test]
+fn a_dependency_moved_only_in_its_source_moves_its_dependents() {
+    let text = |rev: &str| {
+        format!(
+            r#"
+[[package]]
+name = "app"
+version = "0.1.0"
+dependencies = ["gitdep"]
+
+[[package]]
+name = "gitdep"
+version = "0.3.0"
+source = "git+https://example.invalid/gitdep?branch=dev#{rev}"
+"#
+        )
+    };
+    assert_ne!(digest(&text("aaaa"), "app"), digest(&text("bbbb"), "app"));
+    assert_eq!(digest(&text("aaaa"), "app"), digest(&text("aaaa"), "app"));
+}
+
+/// A lock that reads but holds no entry for a member is salted whole for it, so
+/// the member moves with any change to the file.
+#[test]
+fn a_member_missing_from_a_readable_lock_moves_with_the_whole_file() {
+    let mut salt = Salt::new("t");
+    let before = base();
+    salt.input("mock/Cargo.lock", [1; 32], Some(before.clone()));
+    let mut moved = Salt::new("t");
+    moved.input(
+        "mock/Cargo.lock",
+        [2; 32],
+        Some(lock("1.0.0", "bbb", "ccc", "0.2.0")),
+    );
+    assert_ne!(salt.of("nobody"), moved.of("nobody"));
+    // A member the lock holds does not, when the move was outside its closure.
+    assert_eq!(salt.of("app"), moved.of("app"));
+    assert_ne!(salt.of("app"), salt.of("lib"));
+}

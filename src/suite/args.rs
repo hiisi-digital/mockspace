@@ -97,6 +97,13 @@ impl Invocation {
         words.join(" ")
     }
 
+    /// Whether the caller named tests with a filter or test arguments, which a run can
+    /// match none of. A partition or an ignored-test mode narrows too, and an empty
+    /// one of those is an ordinary run, not a filter that missed.
+    pub fn filtered(&self) -> bool {
+        self.filter.is_some() || !self.test_args.is_empty()
+    }
+
     /// Whether the caller narrowed which tests run within a package, so a
     /// package that passed has not passed whole.
     pub fn narrowed(&self) -> bool {
@@ -240,6 +247,18 @@ mod tests {
 
     /// The partitions of one run share a flavour, and a partition of a features run
     /// does not share the plain one's.
+    /// Only a filter or test arguments can miss; a partition that holds nothing is not
+    /// one that missed.
+    #[test]
+    fn only_a_filter_or_test_arguments_count_as_asking_for_tests() {
+        assert!(!parse(&[]).filtered());
+        assert!(!parse(&["--partition", "count:2/2"]).filtered());
+        assert!(!parse(&["--run-ignored", "all"]).filtered());
+        assert!(parse(&["-E", "test(x)"]).filtered());
+        assert!(parse(&["--", "name"]).filtered());
+        assert!(parse(&["--partition", "count:2/2"]).narrowed());
+    }
+
     #[test]
     fn every_partition_of_a_run_is_one_flavour() {
         let whole = parse(&["--features", "editor"]).flavour();

@@ -251,7 +251,7 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
         }
         let complete = nextest::ran_to_the_end(code) && !inv.narrowed();
         let greens = select::greens(&plan, &cases, complete);
-        let mut binaries = select::binary_outcomes(&plan, &cases, fp, complete);
+        let mut binaries = select::binary_outcomes(&plan, &cases, fp, complete, live.as_ref());
         if let Some(live) = &live {
             binaries
                 .passed
@@ -278,7 +278,7 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
 
     report::outcome(&plan, &cases, cfg.test.heavy_after_secs);
     if status.as_ref().is_ok_and(|s| s.success())
-        && let Some(why) = select::empty_filtered_run(&plan, &cases, inv.narrowed())
+        && let Some(why) = select::empty_filtered_run(&plan, &cases, inv.filtered())
     {
         eprintln!("mock test: {why}");
         return Some(ExitCode::FAILURE);
