@@ -429,3 +429,18 @@ fn a_run_keeps_its_history_without_the_guard_when_none_is_declared() {
     let back = History::load_from(kept.as_ref()).unwrap();
     assert!(back.flavour("").unwrap().green.is_empty());
 }
+
+#[test]
+fn a_history_declaration_naming_a_registry_directory_is_refused_at_open() {
+    let remote = Remote::new();
+    let root = remote.clone_dir("a");
+    let text = format!("{}dir = \"ticket\"\n", config_text(true));
+    std::fs::write(root.join("mock/mockspace.toml"), text).unwrap();
+    let cfg = Config::from_dir(&root.join("mock"));
+    assert!(cfg.test.history.is_some(), "the declaration itself reads");
+    let (_, kept) = History::open(&cfg);
+    assert!(
+        kept.is_none(),
+        "a history has no directory, so the declaration is not one the engine can open"
+    );
+}

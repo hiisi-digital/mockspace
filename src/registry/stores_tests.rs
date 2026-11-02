@@ -8,7 +8,8 @@
 
 use super::*;
 use crate::registry::test_world::*;
-use crate::registry::{RegistryWriter, config_unknown_keys, load_registry_from};
+use crate::config::Config;
+use crate::registry::{RegistryWriter, load_registry_from};
 
 #[test]
 fn the_directory_stays_the_default_and_reads_as_it_always_did() {
@@ -107,31 +108,45 @@ fn one_write_may_not_span_two_stores() {
 }
 
 #[test]
-fn a_store_declaration_is_read_and_a_misspelt_key_in_it_is_reported() {
+fn a_store_declaration_is_read() {
     let w = World::new();
     let cfg = w.clone_of("a", true);
     assert_eq!(cfg.registry_stores.len(), 1);
-    assert_eq!(cfg.registry_stores[0].dir, "ticket");
+    assert_eq!(cfg.registry_stores[0].dir.as_deref(), Some("ticket"));
+}
+
+#[test]
+#[should_panic(expected = "unknown field `fom`")]
+fn a_misspelt_key_in_a_store_declaration_refuses_the_config_as_in_a_history() {
+    let w = World::new();
+    let root = w.remote.clone_dir("a");
     let text = format!("{CONFIG}{STORE_DECL}fom = \"ref\"\n");
-    let findings = config_unknown_keys(&text);
-    assert!(
-        findings
-            .iter()
-            .any(|f| f.message.contains("`fom`") && f.message.contains("registry.store")),
-        "{findings:?}"
-    );
-    assert!(
-        config_unknown_keys(&format!("{CONFIG}{STORE_DECL}")).is_empty(),
-        "control: the declaration alone is clean"
-    );
+    std::fs::write(root.join("mock/mockspace.toml"), text).unwrap();
+    let _ = Config::from_dir(&root.join("mock"));
+}
+
+#[test]
+fn a_store_declaration_with_no_directory_is_refused_at_open() {
+    let w = World::new();
+    let cfg = w.clone_of("a", false);
+    for dir in [None, Some(String::new()), Some("/".to_string())] {
+        let decl = RefDecl {
+            dir,
+            ..Default::default()
+        };
+        let err = RegistryStores::from_decls(&cfg.mock_dir, &cfg.repo_root, &[decl])
+            .err()
+            .unwrap();
+        assert!(matches!(err, RegistryStoreError::Declared(_)), "{err}");
+    }
 }
 
 #[test]
 fn a_form_that_is_neither_branch_nor_ref_is_refused_at_open() {
     let w = World::new();
     let cfg = w.clone_of("a", false);
-    let decl = RegistryStoreDecl {
-        dir: "ticket".into(),
+    let decl = RefDecl {
+        dir: Some("ticket".into()),
         form: Some("both".into()),
         ..Default::default()
     };

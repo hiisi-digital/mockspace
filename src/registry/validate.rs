@@ -405,23 +405,8 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
     let Some(reg) = doc.get("registry").and_then(|i| i.as_table()) else {
         return out;
     };
-    if let Some(stores) = reg.get("store").and_then(|i| i.as_array_of_tables()) {
-        for table in stores.iter() {
-            let dir = table.get("dir").and_then(|v| v.as_str()).unwrap_or("<no dir>");
-            for (k, _) in table.iter() {
-                if !super::stores::STORE_KEYS.contains(&k) {
-                    out.push(RegistryFinding {
-                        kind:    "unknown-config-key",
-                        message: format!(
-                            "[[registry.store]] `{dir}` declares `{k}`, which mockspace does not \
-                             read. It is discarded silently, so the declaration has no effect."
-                        ),
-                        source:  None,
-                    });
-                }
-            }
-        }
-    }
+    // A key of `[[registry.store]]` that is not read refuses the config as it parses (the one
+    // declaration is `deny_unknown_fields`), so there is nothing to report here.
     let Some(spaces) = reg.get("namespace").and_then(|i| i.as_array_of_tables()) else {
         return out;
     };
