@@ -82,7 +82,26 @@ impl Invocation {
     /// As written: sorting the words would make `--features a --target b`
     /// and `--features b --target a` one flavour.
     pub fn flavour(&self) -> String {
-        self.passed.join(" ")
+        // Which part of the tests a partition runs changes nothing about what is
+        // compiled, so every partition of a run is one flavour. Keyed by it, each
+        // `count:n/m` wrote a directory of its own that nothing else read.
+        let mut words: Vec<&str> = Vec::new();
+        let mut passed = self.passed.iter();
+        while let Some(a) = passed.next() {
+            if a == "--partition" {
+                passed.next();
+            } else if !a.starts_with("--partition=") {
+                words.push(a);
+            }
+        }
+        words.join(" ")
+    }
+
+    /// Whether the caller named tests with a filter or test arguments, which a run can
+    /// match none of. A partition or an ignored-test mode narrows too, and an empty
+    /// one of those is an ordinary run, not a filter that missed.
+    pub fn filtered(&self) -> bool {
+        self.filter.is_some() || !self.test_args.is_empty()
     }
 
     /// Whether the caller narrowed which tests run within a package, so a
@@ -224,6 +243,34 @@ mod tests {
         assert_eq!(i.exclude, vec!["e"]);
         assert!(i.workspace);
         assert!(i.passed.is_empty());
+    }
+
+    /// The partitions of one run share a flavour, and a partition of a features run
+    /// does not share the plain one's.
+    /// Only a filter or test arguments can miss; a partition that holds nothing is not
+    /// one that missed.
+    #[test]
+    fn only_a_filter_or_test_arguments_count_as_asking_for_tests() {
+        assert!(!parse(&[]).filtered());
+        assert!(!parse(&["--partition", "count:2/2"]).filtered());
+        assert!(!parse(&["--run-ignored", "all"]).filtered());
+        assert!(parse(&["-E", "test(x)"]).filtered());
+        assert!(parse(&["--", "name"]).filtered());
+        assert!(parse(&["--partition", "count:2/2"]).narrowed());
+    }
+
+    #[test]
+    fn every_partition_of_a_run_is_one_flavour() {
+        let whole = parse(&["--features", "editor"]).flavour();
+        for p in [
+            &["--features", "editor", "--partition", "count:1/3"][..],
+            &["--partition", "count:2/3", "--features", "editor"],
+            &["--features", "editor", "--partition=hash:3/4"],
+        ] {
+            assert_eq!(parse(p).flavour(), whole, "{p:?}");
+        }
+        assert_ne!(parse(&["--partition", "count:1/3"]).flavour(), whole);
+        assert_eq!(parse(&["--partition", "count:1/3"]).flavour(), "");
     }
 
     /// The flavour keeps a features run apart from a plain one, and does not

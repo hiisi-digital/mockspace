@@ -27,12 +27,31 @@ pub fn parse(json: &str) -> Option<Live> {
                 let tests = s
                     .get("testcases")
                     .and_then(|t| t.as_object())
-                    .map(|t| t.keys().cloned().collect())
+                    // An ignored test is not in a default run, so it is no part of what a
+                    // binary must have run to have run whole.
+                    .map(|t| {
+                        t.iter()
+                            .filter(|(_, c)| c.get("ignored").and_then(|i| i.as_bool()) != Some(true))
+                            .map(|(name, _)| name.clone())
+                            .collect()
+                    })
                     .unwrap_or_default();
                 (id.clone(), tests)
             })
             .collect(),
     )
+}
+
+/// A digest of a binary's listed tests, to tell whether the same ones are listed
+/// as when it was recorded.
+pub fn digest(tests: &BTreeSet<String>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for t in tests {
+        h.update(t.as_bytes());
+        h.update([0]);
+    }
+    h.finalize().iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
 
 /// Flags that choose what is built or listed, and take no value.
@@ -115,6 +134,11 @@ pub fn list_command_args(
         out.extend(["--config".to_string(), c.display().to_string()]);
     }
     out.extend(list_args(passed));
+    // As the run: without a target of its own, the listing builds and links every
+    // example too, to list none.
+    if !super::nextest::selects_targets(passed) {
+        out.push("--tests".to_string());
+    }
     out
 }
 
@@ -179,6 +203,26 @@ mod tests {
         assert!(live["kaski-village::example/empty"].is_empty());
     }
 
+    /// An ignored test is no part of a default run, so it is not one the binary has to
+    /// have run to have run whole.
+    #[test]
+    fn an_ignored_test_is_not_listed() {
+        let json = r#"{"rust-suites":{"b":{"testcases":{
+            "runs":{"ignored":false},"waits":{"ignored":true},"plain":{}}}}}"#;
+        assert_eq!(
+            parse(json).unwrap()["b"],
+            BTreeSet::from(["plain".to_string(), "runs".to_string()])
+        );
+    }
+
+    /// The listing builds the tests only, as the run does, unless the caller chose targets.
+    #[test]
+    fn the_listing_builds_the_tests_unless_the_caller_chose_targets() {
+        assert!(list_command_args(&words("a"), &[], None).contains(&"--tests".to_string()));
+        let chosen = list_command_args(&words("a"), &words("--all-targets"), None);
+        assert!(!chosen.contains(&"--tests".to_string()), "{chosen:?}");
+    }
+
     fn words(s: &str) -> Vec<String> {
         s.split_whitespace().map(str::to_string).collect()
     }
@@ -232,11 +276,11 @@ mod tests {
         );
         assert_eq!(
             args,
-            words("-p a -p b --config /w/mock/target/state/cargo.toml --config x=1 --release")
+            words("-p a -p b --config /w/mock/target/state/cargo.toml --config x=1 --release --tests")
         );
         assert_eq!(
             list_command_args(&words("a"), &words("--release"), None),
-            words("-p a --release")
+            words("-p a --release --tests")
         );
     }
 

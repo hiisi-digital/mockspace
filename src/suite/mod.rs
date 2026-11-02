@@ -38,6 +38,7 @@ pub mod history_guard;
 pub mod history_merge;
 pub mod junit;
 pub mod live;
+pub mod lock;
 pub mod nextest;
 mod report;
 pub mod select;
@@ -178,6 +179,11 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     };
     if let Some(live) = &live {
         plan.retain_live(live);
+    } else {
+        // A narrowing stands only against the listing it was made with, and
+        // none was read, so every binary runs whole.
+        plan.rerun.clear();
+        plan.rerun_listed.clear();
     }
 
     report::plan(&plan, inv, &fp_or_empty, cfg);
@@ -202,7 +208,7 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     let _ = std::fs::remove_file(&junit);
 
     let packages: Vec<String> = plan.run.iter().map(|(n, _)| n.clone()).collect();
-    let filter = nextest::filterset(inv.filter.as_deref(), &plan.skip, &plan.reuse);
+    let filter = nextest::filterset(inv.filter.as_deref(), &plan.skip, &plan.reuse, &plan.rerun);
     let load_before = mockspace_bench_harness::env::load_1m();
     let commit = mockspace_bench_harness::env::collect_git_commit_marked();
     let threads_env = std::env::var("NEXTEST_TEST_THREADS").ok();
@@ -268,8 +274,8 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
             history.prune(&flavour, &run_members, live);
         }
         let complete = nextest::ran_to_the_end(code) && !inv.narrowed();
-        let greens = select::greens(&plan, &cases, complete);
-        let mut binaries = select::binary_outcomes(&plan, &cases, fp, complete);
+        let greens = select::greens(&plan, &cases, complete, live.as_ref());
+        let mut binaries = select::binary_outcomes(&plan, &cases, fp, complete, live.as_ref());
         if let Some(live) = &live {
             binaries
                 .passed
@@ -295,6 +301,12 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     }
 
     report::outcome(&plan, &cases, cfg.test.heavy_after_secs);
+    if status.as_ref().is_ok_and(|s| s.success())
+        && let Some(why) = select::empty_filtered_run(&plan, &cases, inv.filtered())
+    {
+        eprintln!("mock test: {why}");
+        return Some(ExitCode::FAILURE);
+    }
     Some(if status.is_ok_and(|s| s.success()) {
         ExitCode::SUCCESS
     } else {

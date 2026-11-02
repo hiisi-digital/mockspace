@@ -59,9 +59,9 @@ pub fn tool_config(s: &TestSettings, heavy: &[(String, String)], junit: &Path) -
         "[profile.default.junit]\npath = {}\n# A passing test's stderr carries its work line, and nextest keeps it only on request.\nstore-success-output = true",
         toml_edit::Value::from(junit.to_string_lossy().as_ref())
     );
-    if !heavy.is_empty() {
+    for filter in heavy_filters(heavy) {
         t.push_str("\n[[profile.default.overrides]]\n");
-        let _ = writeln!(t, "filter = '{}'", any_of(heavy));
+        let _ = writeln!(t, "filter = '{filter}'");
         let _ = writeln!(t, "test-group = \"{HEAVY_GROUP}\"");
     }
     t
@@ -90,6 +90,38 @@ pub fn build_profile(passed: &[String], profile_flag: &str) -> String {
     "dev".to_string()
 }
 
+/// The longest filterset one override is given, in bytes. Nextest 0.9.148 refuses
+/// an expression of tens of kilobytes (measured: 76 KB naming 653 tests), so the
+/// heavy tests are split into several overrides, each of one binary, that stay
+/// well under it.
+const OVERRIDE_FILTER_BYTES: usize = 4000;
+
+/// The filtersets that together name exactly these tests, one binary and a bounded
+/// run of its tests each. Every override puts its tests in the same group, so the
+/// split changes nothing about how many run at a time.
+fn heavy_filters(heavy: &[(String, String)]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < heavy.len() {
+        let bin = &heavy[i].0;
+        let head = format!("binary_id(={bin}) & (");
+        let mut names: Vec<String> = Vec::new();
+        let mut len = head.len() + 1;
+        while i < heavy.len() && &heavy[i].0 == bin {
+            let one = format!("test(={})", heavy[i].1);
+            // The first name of a filter always goes in, however long it is.
+            if !names.is_empty() && len + one.len() + 3 > OVERRIDE_FILTER_BYTES {
+                break;
+            }
+            len += one.len() + 3;
+            names.push(one);
+            i += 1;
+        }
+        out.push(format!("{head}{})", names.join(" | ")));
+    }
+    out
+}
+
 /// A filterset matching exactly these tests.
 fn any_of<'a>(tests: impl IntoIterator<Item = &'a (String, String)>) -> String {
     tests
@@ -101,7 +133,12 @@ fn any_of<'a>(tests: impl IntoIterator<Item = &'a (String, String)>) -> String {
 
 /// The `-E` for a run: the caller's own filter, less the tests skipped and the
 /// binaries left out whole.
-pub fn filterset(caller: Option<&str>, skip: &[Skip], reuse: &[String]) -> Option<String> {
+pub fn filterset(
+    caller: Option<&str>,
+    skip: &[Skip],
+    reuse: &[String],
+    rerun: &std::collections::BTreeMap<String, Vec<String>>,
+) -> Option<String> {
     let skipped: Vec<(String, String)> = skip
         .iter()
         .map(|s| (s.binary.clone(), s.name.clone()))
@@ -111,6 +148,11 @@ pub fn filterset(caller: Option<&str>, skip: &[Skip], reuse: &[String]) -> Optio
         left_out.push(any_of(&skipped));
     }
     left_out.extend(reuse.iter().map(|b| format!("binary_id(={b})")));
+    // A binary narrowed to its failed tests leaves every other test of it out.
+    left_out.extend(rerun.iter().map(|(bin, names)| {
+        let names: Vec<String> = names.iter().map(|n| format!("test(={n})")).collect();
+        format!("(binary_id(={bin}) & not ({}))", names.join(" | "))
+    }));
     let not_skipped = (!left_out.is_empty()).then(|| format!("not ({})", left_out.join(" | ")));
     match (caller, not_skipped) {
         (None, None) => None,
@@ -160,6 +202,12 @@ pub fn command(r: &RunSpec) -> Command {
     if let Some(c) = r.cargo_config {
         cmd.arg("--config").arg(c);
     }
+    // The tests only: without a target of its own in the flags, nextest builds and
+    // links every example of every member too, to run none of them. Examples are
+    // a step of their own, not part of each test run.
+    if !selects_targets(r.passed) {
+        cmd.arg("--tests");
+    }
     cmd.args(r.passed);
     if let Some(f) = r.filterset {
         cmd.arg("-E").arg(f);
@@ -168,6 +216,17 @@ pub fn command(r: &RunSpec) -> Command {
         cmd.arg("--").args(r.test_args);
     }
     cmd
+}
+
+/// Whether the caller's own flags choose which cargo targets are built.
+pub fn selects_targets(passed: &[String]) -> bool {
+    const TARGETS: &[&str] = &[
+        "--lib", "--bins", "--bin", "--tests", "--test", "--examples", "--example", "--benches",
+        "--bench", "--all-targets",
+    ];
+    passed
+        .iter()
+        .any(|a| TARGETS.contains(&a.split('=').next().unwrap_or_default()))
 }
 
 /// Nextest's exit codes that mean every selected test ran: success, and the
@@ -179,199 +238,5 @@ pub fn ran_to_the_end(code: Option<i32>) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::suite::select::SkipWhy;
-
-    fn heavy() -> Vec<(String, String)> {
-        vec![
-            ("kaski-render".to_string(), "tests::drawn::a".to_string()),
-            ("kaski-web::it".to_string(), "b".to_string()),
-        ]
-    }
-
-    #[test]
-    fn the_config_carries_the_group_the_timeout_and_the_report() {
-        let s = TestSettings {
-            heavy_threads: 2,
-            timeout_secs: 900,
-            ..TestSettings::default()
-        };
-        let t = tool_config(&s, &heavy(), Path::new("/w/mock/target/state/junit.xml"));
-        assert!(
-            t.contains("[test-groups.\"@tool:mockspace:heavy\"]\nmax-threads = 2\n"),
-            "{t}"
-        );
-        assert!(
-            t.contains("slow-timeout = { period = \"60s\", terminate-after = 15 }"),
-            "{t}"
-        );
-        assert!(t.contains("fail-fast = false"));
-        assert!(t.contains("[profile.default.junit]\npath = \"/w/mock/target/state/junit.xml\"\n"), "{t}");
-        assert!(t.contains(
-            "filter = '(binary_id(=kaski-render) & test(=tests::drawn::a)) | (binary_id(=kaski-web::it) & test(=b))'"
-        ), "{t}");
-        // The written config must be TOML nextest can read.
-        assert!(t.parse::<toml_edit::DocumentMut>().is_ok(), "{t}");
-    }
-
-    #[test]
-    fn a_timeout_under_a_minute_shrinks_the_period_and_rounds_up() {
-        let s = TestSettings {
-            timeout_secs: 45,
-            ..TestSettings::default()
-        };
-        assert!(tool_config(&s, &[], Path::new("junit.xml")).contains("period = \"45s\", terminate-after = 1"));
-        let s = TestSettings {
-            timeout_secs: 61,
-            ..TestSettings::default()
-        };
-        assert!(tool_config(&s, &[], Path::new("junit.xml")).contains("period = \"60s\", terminate-after = 2"));
-    }
-
-    #[test]
-    fn the_profile_built_follows_the_flags_that_choose_it() {
-        let words = |s: &str| s.split_whitespace().map(String::from).collect::<Vec<_>>();
-        let p = |s: &str| build_profile(&words(s), "--cargo-profile");
-        assert_eq!(p(""), "dev");
-        assert_eq!(p("--features x"), "dev");
-        assert_eq!(p("--release"), "release");
-        assert_eq!(p("-r"), "release");
-        assert_eq!(p("--cargo-profile ci"), "ci");
-        assert_eq!(p("--cargo-profile=ci"), "ci");
-        assert_eq!(build_profile(&words("--profile ci"), "--profile"), "ci");
-        assert_eq!(build_profile(&words("--profile=ci"), "--profile"), "ci");
-        assert_eq!(
-            build_profile(&words("--profile ci"), "--cargo-profile"),
-            "dev"
-        );
-    }
-
-    #[test]
-    fn the_run_builds_with_the_generated_cargo_config_before_the_callers_flags() {
-        let cargo = Path::new("/w/mock/target/state/cargo.toml");
-        let passed = vec!["--config".to_string(), "x=1".to_string()];
-        let spec = |cargo_config| {
-            RunSpec {
-                mock_dir: Path::new("."),
-                tool_config: Path::new("nextest.toml"),
-                cargo_config,
-                packages: &[],
-                passed: &passed,
-                filterset: None,
-                test_args: &[],
-            }
-        };
-        let args = |c: &Command| {
-            c.get_args()
-                .map(|a| a.to_string_lossy().into_owned())
-                .collect::<Vec<_>>()
-        };
-        let with = args(&command(&spec(Some(cargo))));
-        let at = with
-            .iter()
-            .position(|a| a == "/w/mock/target/state/cargo.toml")
-            .unwrap();
-        assert_eq!(with[at - 1], "--config");
-        let callers = with.iter().position(|a| a == "x=1").unwrap();
-        assert!(
-            at < callers,
-            "the caller's own --config must come later and win: {with:?}"
-        );
-        assert!(
-            !args(&command(&spec(None)))
-                .iter()
-                .any(|a| a.ends_with("cargo.toml"))
-        );
-    }
-
-    #[test]
-    fn no_heavy_test_means_no_override() {
-        assert!(!tool_config(&TestSettings::default(), &[], Path::new("junit.xml")).contains("overrides"));
-    }
-
-    #[test]
-    fn the_filterset_subtracts_the_skipped_from_the_callers() {
-        let skip = vec![Skip {
-            binary: "kaski-render".to_string(),
-            name:   "tests::drawn::a".to_string(),
-            why:    SkipWhy::Cached,
-        }];
-        let not = "not ((binary_id(=kaski-render) & test(=tests::drawn::a)))";
-        assert_eq!(filterset(None, &[], &[]), None);
-        assert_eq!(
-            filterset(Some("test(x)"), &[], &[]).as_deref(),
-            Some("test(x)")
-        );
-        assert_eq!(filterset(None, &skip, &[]).as_deref(), Some(not));
-        assert_eq!(
-            filterset(Some("test(x)"), &skip, &[]),
-            Some(format!("(test(x)) & {not}"))
-        );
-    }
-
-    #[test]
-    fn the_filterset_leaves_out_whole_binaries_beside_single_tests() {
-        let reuse = vec!["kaski-web::sound_gate".to_string(), "kaski-web".to_string()];
-        assert_eq!(
-            filterset(None, &[], &reuse).as_deref(),
-            Some("not (binary_id(=kaski-web::sound_gate) | binary_id(=kaski-web))")
-        );
-        let skip = vec![Skip {
-            binary: "kaski-render".to_string(),
-            name:   "tests::drawn::a".to_string(),
-            why:    SkipWhy::Cached,
-        }];
-        assert_eq!(
-            filterset(Some("test(x)"), &skip, &reuse).as_deref(),
-            Some(
-                "(test(x)) & not ((binary_id(=kaski-render) & test(=tests::drawn::a)) | \
-                 binary_id(=kaski-web::sound_gate) | binary_id(=kaski-web))"
-            )
-        );
-    }
-    /// The report is where the config says, whatever target directory or profile
-    /// the build was told: nextest keeps its own store beside the workspace, not
-    /// under them, which is why the path is named rather than derived.
-    #[test]
-    fn the_report_is_a_file_of_ours_that_the_config_names() {
-        let state = Path::new("/w/mock/target/mockspace-test-state");
-        let junit = junit_path(state);
-        assert_eq!(junit, PathBuf::from("/w/mock/target/mockspace-test-state/junit.xml"));
-        let t = tool_config(&TestSettings::default(), &[], &junit);
-        assert!(
-            t.contains("[profile.default.junit]\npath = \"/w/mock/target/mockspace-test-state/junit.xml\"\n"),
-            "{t}"
-        );
-    }
-
-    /// Without this nextest writes `<system-err>` for failures only, so a passing
-    /// test's work line never reaches the report.
-    #[test]
-    fn a_passing_tests_output_is_kept_so_its_work_line_reaches_the_report() {
-        let t = tool_config(&TestSettings::default(), &[], Path::new("junit.xml"));
-        let junit = t.split("[profile.default.junit]").nth(1).expect("a junit table");
-        assert!(junit.lines().any(|l| l == "store-success-output = true"), "{t}");
-    }
-
-    /// Whatever the path holds, the config stays TOML that says that path.
-    #[test]
-    fn a_path_with_quotes_and_backslashes_is_escaped_into_the_config() {
-        let odd = Path::new("/w/it's \"mine\"/back\\slash/junit.xml");
-        let t = tool_config(&TestSettings::default(), &[], odd);
-        let doc = t.parse::<toml_edit::DocumentMut>().unwrap_or_else(|e| panic!("{e}\n{t}"));
-        assert_eq!(
-            doc["profile"]["default"]["junit"]["path"].as_str(),
-            Some(odd.to_str().unwrap())
-        );
-    }
-
-    #[test]
-    fn only_success_and_test_failures_ran_to_the_end() {
-        assert!(ran_to_the_end(Some(0)));
-        assert!(ran_to_the_end(Some(100)));
-        assert!(!ran_to_the_end(Some(101)));
-        assert!(!ran_to_the_end(Some(1)));
-        assert!(!ran_to_the_end(None));
-    }
-}
+#[path = "nextest_tests.rs"]
+mod tests;

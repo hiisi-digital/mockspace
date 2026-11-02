@@ -47,6 +47,7 @@ use std::process::Command;
 use sha2::{Digest, Sha256};
 
 use super::graph::Graph;
+use super::lock::Salt;
 use super::units::{self, Facts, Index, Layout};
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -93,7 +94,7 @@ pub(crate) const WORKSPACE_INPUTS: &[&str] = &[
 
 /// Bumped when what the digests are made of changes, so a record kept under the
 /// old scheme never equals one made under the new.
-const SCHEME: &str = "2";
+const SCHEME: &str = "3";
 
 /// `cargo_config` is the generated cargo config the run builds with, if any: a
 /// member's opt level changes what its tests are built from, so it salts every
@@ -108,25 +109,19 @@ pub fn compute(
     let index = Index::new(&files);
     let mut hashes = FileHashes::new(repo_root);
 
-    let mut salt = Sha256::new();
-    salt.update(format!("scheme\0{SCHEME}\0").as_bytes());
-    // Named by where they sit relative to the repository, never by absolute
-    // path, so the same tree on another machine has the same fingerprints and
-    // a pass recorded in the tracked history stands there too.
+    let mut salt = Salt::new(SCHEME);
     for (base, label) in [(mock_dir, "mock"), (repo_root, "root")] {
         for name in WORKSPACE_INPUTS {
             let p = base.join(name);
             if p.is_file() {
-                salt.update(format!("{label}/{name}").as_bytes());
-                salt.update(hashes.of_absolute(&p));
+                let lock = (*name == "Cargo.lock").then(|| std::fs::read_to_string(&p).ok()).flatten();
+                salt.input(&format!("{label}/{name}"), hashes.of_absolute(&p), lock);
             }
         }
     }
     if let Some(text) = cargo_config {
-        salt.update(b"cargo-config\0");
-        salt.update(text.as_bytes());
+        salt.cargo_config(text);
     }
-    let salt = salt.finalize();
 
     let mut fp = Fingerprints::default();
     let mut layouts: BTreeMap<String, Layout> = BTreeMap::new();
@@ -214,6 +209,7 @@ pub fn compute(
     }
 
     for name in graph.packages.keys() {
+        let salt = salt.of(name);
         let closure: Vec<(String, String)> = graph
             .test_closure(name)
             .into_iter()

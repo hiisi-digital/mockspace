@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::fingerprint::Fingerprints;
 use super::graph::Graph;
-use super::history::{Flavour, Green, History};
+use super::history::{Flavour, Green, History, Red};
 use super::junit::{Case, Outcome, package_of};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +69,13 @@ pub struct Plan {
     /// Test binaries of the members that run which are left out, since their
     /// inputs have not moved since they last ran whole and passed.
     pub reuse:   Vec<String>,
+    /// Test binaries of the members that run whose last whole run failed at the
+    /// fingerprint they have now, by the tests that failed. Every other test in
+    /// them passed then and stands, so only these run.
+    pub rerun:   BTreeMap<String, Vec<String>>,
+    /// The listing each narrowing was made against, as a digest, by binary. A
+    /// narrowing stands only against the same listing.
+    pub rerun_listed: BTreeMap<String, String>,
 }
 
 impl Plan {
@@ -79,6 +86,18 @@ impl Plan {
         self.heavy.retain(|(b, n)| exists(b, n));
         self.skip.retain(|s| exists(&s.binary, &s.name));
         self.reuse.retain(|b| live.contains_key(b));
+        // A name gone from a binary leaves nothing sound to narrow to, so the
+        // binary runs whole.
+        // And a binary that lists other tests than when it failed, at the same
+        // fingerprint, holds tests nobody has run.
+        let listed = &self.rerun_listed;
+        self.rerun.retain(|b, names| {
+            live.get(b).is_some_and(|t| {
+                names.iter().all(|n| t.contains(n))
+                    && listed.get(b).is_some_and(|d| *d == super::live::digest(t))
+            })
+        });
+        self.rerun_listed.retain(|b, _| self.rerun.contains_key(b));
     }
 }
 
@@ -128,6 +147,27 @@ pub fn plan(i: &Inputs) -> Plan {
             .collect();
     }
     let reused: BTreeSet<&str> = p.reuse.iter().map(String::as_str).collect();
+
+    // A binary that failed in some tests at the inputs it has now runs only those:
+    // the rest passed in that same run. Without the cache, or on a full run,
+    // nothing is taken on an earlier pass.
+    if i.cache && i.mode != Mode::Full {
+        p.rerun = f
+            .red
+            .iter()
+            .filter(|(bin, red)| {
+                running.contains(package_of(bin))
+                    && !reused.contains(bin.as_str())
+                    && i.fp.of_binary(bin) == Some(&red.at)
+            })
+            .map(|(bin, red)| (bin.clone(), red.names.clone()))
+            .collect();
+        p.rerun_listed = p
+            .rerun
+            .keys()
+            .filter_map(|bin| f.red.get(bin).map(|r| (bin.clone(), r.listed.clone())))
+            .collect();
+    }
 
     p.heavy = i
         .history
@@ -181,10 +221,22 @@ fn moved(name: &str, g: &Green, fp: &Fingerprints, graph: &Graph) -> Why {
 /// or a timeout that stopped the run, and no filter of the caller's narrowed
 /// it. An incomplete run leaves nothing green, since a member missing from the
 /// report looks exactly like one with nothing to report.
-pub fn greens(plan: &Plan, cases: &[Case], complete: bool) -> Vec<String> {
+pub fn greens(
+    plan: &Plan,
+    cases: &[Case],
+    complete: bool,
+    live: Option<&super::live::Live>,
+) -> Vec<String> {
     if !complete {
         return Vec::new();
     }
+    // A run that failed somewhere may have stopped there (`--fail-fast`) and
+    // exited as one that finished, so what it did not start looks like what it
+    // passed. Without a listing to tell, nothing is settled.
+    if live.is_none() && cases.iter().any(|c| c.outcome == Outcome::Fail) {
+        return Vec::new();
+    }
+    let coverage = Coverage::new(plan, cases, live);
     let failed: BTreeSet<&str> = cases
         .iter()
         .filter(|c| c.outcome == Outcome::Fail)
@@ -196,12 +248,43 @@ pub fn greens(plan: &Plan, cases: &[Case], complete: bool) -> Vec<String> {
         .filter(|s| s.why == SkipWhy::Deferred)
         .map(|s| package_of(&s.binary))
         .collect();
+    // A member with a listed binary that was not run whole has not passed whole.
+    let unfinished: BTreeSet<&str> = live
+        .into_iter()
+        .flatten()
+        .map(|(bin, _)| bin.as_str())
+        .filter(|bin| coverage.whole(bin) == Some(false))
+        .map(package_of)
+        .collect();
     plan.run
         .iter()
         .map(|(n, _)| n.as_str())
-        .filter(|n| !failed.contains(n) && !deferred.contains(n))
+        .filter(|n| !failed.contains(n) && !deferred.contains(n) && !unfinished.contains(n))
         .map(str::to_string)
         .collect()
+}
+
+/// Why a run that was narrowed by the caller and ran no test at all is a failure
+/// rather than a success, when the plan left tests out.
+///
+/// The filter may name only tests the plan left out as cached or deferred, or
+/// binaries it left out whole, or the passing tests of a binary it narrowed to
+/// its failures; the run then starts nothing and `--no-tests=warn` lets it exit
+/// green. Printing green for tests that did not run is the answer this refuses.
+pub fn empty_filtered_run(plan: &Plan, cases: &[Case], filtered: bool) -> Option<String> {
+    let ran = cases.iter().any(|c| c.outcome != Outcome::Skipped);
+    let cached = plan.skip.iter().filter(|s| s.why == SkipWhy::Cached).count();
+    let deferred = plan.skip.iter().filter(|s| s.why == SkipWhy::Deferred).count();
+    let (reused, narrowed) = (plan.reuse.len(), plan.rerun.len());
+    if !filtered || ran || cached + deferred + reused + narrowed == 0 {
+        return None;
+    }
+    Some(format!(
+        "the filter matched no test that ran, and the plan left tests out: {cached} heavy tests \
+         cached, {deferred} deferred by --cheap, {reused} binaries passed at their current \
+         inputs, {narrowed} narrowed to their failures; this ran nothing, so it is no pass. Ask \
+         again with --full or --no-cache to run what the filter names"
+    ))
 }
 
 /// The record a green member keeps: its fingerprint, its own inputs and the
@@ -224,6 +307,10 @@ pub struct BinaryOutcomes {
     pub passed: Vec<(String, String)>,
     /// Binaries in which a test failed, whose record of a pass is no longer true.
     pub failed: Vec<String>,
+    /// Of those, the ones that ran whole with nothing deferred: each by the tests
+    /// that failed, at the fingerprint it failed at, so the next run at it runs
+    /// those alone.
+    pub red:    Vec<(String, Red)>,
 }
 
 impl BinaryOutcomes {
@@ -234,7 +321,15 @@ impl BinaryOutcomes {
         for bin in &self.failed {
             record.bins.remove(bin);
         }
+        // A pass or a failure replaces whatever was said of the binary before.
+        for bin in self.passed.iter().map(|(b, _)| b) {
+            record.red.remove(bin);
+        }
+        for bin in &self.failed {
+            record.red.remove(bin);
+        }
         record.bins.extend(self.passed);
+        record.red.extend(self.red);
     }
 }
 
@@ -247,16 +342,32 @@ impl BinaryOutcomes {
 /// its report looks exactly like one that was never started. A binary that
 /// failed loses its record even though it is rebuilt on different inputs than
 /// the record named, so a stale pass cannot outlive a failure.
+///
+/// **Whole** is decided against `live`, never against nextest's exit code: a run
+/// that stops at its first failure (`--fail-fast`, `--max-fail`) exits as one
+/// that finished and leaves the tests it never started out of the report. A
+/// binary counts as having run whole only when every test it lists appears in
+/// the report, was skipped by the plan as cached (a deferred one is held back by the callers), or was left out by a
+/// narrowing to its failures. A failed binary is narrowed to later only when
+/// that holds; a passed one is recorded unless it is known not to hold, and where
+/// `live` is unknown a pass is judged as it always was.
 pub fn binary_outcomes(
     plan: &Plan,
     cases: &[Case],
     fp: &Fingerprints,
     complete: bool,
+    live: Option<&super::live::Live>,
 ) -> BinaryOutcomes {
     let mut out = BinaryOutcomes::default();
     if !complete {
         return out;
     }
+    // Without a listing a run that failed may have stopped at the failure, so no
+    // binary of it is known to have passed.
+    let unknown_after_failure =
+        live.is_none() && cases.iter().any(|c| c.outcome == Outcome::Fail);
+    let coverage = Coverage::new(plan, cases, live);
+    let whole = |bin: &str| coverage.whole(bin);
     let deferred: BTreeSet<&str> = plan
         .skip
         .iter()
@@ -264,20 +375,71 @@ pub fn binary_outcomes(
         .map(|s| s.binary.as_str())
         .collect();
     let mut verdict: BTreeMap<&str, bool> = BTreeMap::new();
+    let mut red: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
     for c in cases {
         let ok = verdict.entry(c.binary.as_str()).or_insert(true);
         *ok &= c.outcome != Outcome::Fail;
+        if c.outcome == Outcome::Fail {
+            red.entry(c.binary.as_str()).or_default().insert(c.name.clone());
+        }
     }
     for (bin, ok) in verdict {
         if !ok {
             out.failed.push(bin.to_string());
+            // Deferred heavy tests are neither passed nor failed, so a binary
+            // holding some is run whole next time rather than narrowed.
+            if !deferred.contains(bin)
+                && whole(bin) == Some(true)
+                && let Some(at) = fp.of_binary(bin)
+            {
+                let names = red.remove(bin).unwrap_or_default().into_iter().collect();
+                let listed = live.and_then(|l| l.get(bin)).map(super::live::digest).unwrap_or_default();
+                out.red.push((bin.to_string(), Red { at: at.clone(), names, listed }));
+            }
         } else if !deferred.contains(bin)
+            && whole(bin) != Some(false)
+            && !unknown_after_failure
             && let Some(at) = fp.of_binary(bin)
         {
             out.passed.push((bin.to_string(), at.clone()));
         }
     }
     out
+}
+
+/// What a report covers of each listed test binary.
+struct Coverage<'a> {
+    reported: BTreeSet<(&'a str, &'a str)>,
+    skipped:  BTreeSet<(&'a str, &'a str)>,
+    plan:     &'a Plan,
+    live:     Option<&'a super::live::Live>,
+}
+
+impl<'a> Coverage<'a> {
+    fn new(plan: &'a Plan, cases: &'a [Case], live: Option<&'a super::live::Live>) -> Self {
+        Coverage {
+            reported: cases.iter().map(|c| (c.binary.as_str(), c.name.as_str())).collect(),
+            skipped:  plan.skip.iter().map(|s| (s.binary.as_str(), s.name.as_str())).collect(),
+            plan,
+            live,
+        }
+    }
+
+    /// Whether the run covered every test the binary lists: each is in the report,
+    /// was skipped by the plan as cached or deferred (the callers hold deferred back), or was left out by a narrowing
+    /// to failures. `None` where the listing does not hold the binary.
+    fn whole(&self, bin: &str) -> Option<bool> {
+        let tests = self.live?.get(bin)?;
+        // A binary the plan left out whole passed at these inputs and is covered.
+        if self.plan.reuse.iter().any(|b| b == bin) {
+            return Some(true);
+        }
+        Some(tests.iter().all(|t| {
+            self.reported.contains(&(bin, t.as_str()))
+                || self.skipped.contains(&(bin, t.as_str()))
+                || self.plan.rerun.get(bin).is_some_and(|names| !names.contains(t))
+        }))
+    }
 }
 
 /// The binaries of the members that ran which hold no test at all, with the

@@ -323,11 +323,16 @@ and selects which to run rather than running them all:
   shaders and fixtures kept there included), every path outside it that its sources
   name as a `../` string literal (an `include_str!` of a content file, a directory joined
   to `CARGO_MANIFEST_DIR`), the shared inputs of every member compiled into its tests
-  (their libraries, never their `tests/`), and the workspace's lockfile, manifest,
-  toolchain pin and cargo and nextest configuration, and the cargo config `mock test`
-  generates from `[test.opt_level]`. A change to a member's library reaches that member
-  and everything depending on it, and nothing else; a change to a workspace input, that
-  table included, reruns every member.
+  (their libraries, never their `tests/`), the entries of the lockfile that the member
+  reaches through its dependencies (itself and everything below it, so a bump of one
+  edge reruns that edge's dependents only), and the workspace's manifest, toolchain pin
+  and cargo and nextest configuration, and the cargo config `mock test` generates from
+  `[test.opt_level]`. A change to a member's library reaches that member and everything
+  depending on it, and nothing else; a change to a workspace input, that table included,
+  reruns every member. A lockfile that does not parse moves every
+  member as it did before, and a member the lock does not hold moves with the whole file. What the lock cannot say is which cargo features the build
+  unifies across members, so a feature that one member's dependency turns on for
+  another's is seen only through the manifests, as it always was.
 - **Within a member that runs, an integration-test binary runs when its own inputs
   moved.** `tests/<name>.rs` and `tests/<name>/main.rs` are each a binary, built from
   their own files (the modules they declare, the files their string literals name inside
@@ -335,7 +340,15 @@ and selects which to run rather than running them all:
   their sources read from outside, the member's library and its dependencies. A binary
   that passed at inputs that have not moved is left out and listed as `reuse`, so a
   change confined to one `tests/<name>.rs` runs that binary, and a member that failed in
-  one binary reruns only that one. The library's own tests, the binaries and the examples
+  one binary reruns only that one. A binary that ran whole and failed in some tests is
+  kept with their names and the listing it had, and the next run at the same inputs and
+  the same listing runs those tests alone, listed as `rerun`; the rest passed in that
+  run and stand. Whole is judged against `nextest list`, never against the exit code: a
+  run that stopped at its first failure, or left a listed test out for any other reason,
+  settles no binary and no member it did not cover, and without a listing a run that
+  failed settles nothing. A run with a filter that started no test while the plan left tests
+  out ends in failure and counts what it left out, since a run that started nothing is
+  no pass; without a filter, or when the plan left nothing out, it is as before. The library's own tests, the binaries and the examples
   move with the member's shared files. What cannot be placed widens rather than being
   missed: a file under `tests/` that no binary claims, the manifest, the build script and
   the library move every binary; a binary that reads the environment or `file!()`, declares
@@ -343,6 +356,16 @@ and selects which to run rather than running them all:
   any binary claims; a manifest naming a test outside `tests/` narrows nothing. The values
   of environment variables are in no fingerprint, a path built at run time from pieces
   none of which names it is not seen, and `--full` and `--no-cache` run every binary.
+- **A run builds the tests and not the examples.** Without a target flag of its own
+  (`--lib`, `--bins`, `--examples`, `--all-targets` and the rest), `mock test` passes
+  `--tests` to nextest and to its listing, so an example is neither built nor linked to
+  run none of its tests; an example declared with `test = true` is still a test. Checking that
+  the examples still build is a step of its own.
+- **The partitions of one run share a history flavour.** `--partition count:n/m` does not
+  change what is compiled, so it is not part of the flavour; a partition settles no
+  member, binary or failure, as any narrowed run does. The generated nextest config
+  names the heavy tests in several overrides, one binary and a bounded run of its tests
+  each, since nextest refuses one expression naming hundreds.
 - **A test is heavy when its last run took `heavy_after_secs` or more.** Heavy tests run
   `heavy_threads` at a time in nextest's `@tool:mockspace:heavy` group, and a heavy test
   that passed at its binary's current fingerprint is skipped as cached.
