@@ -6,8 +6,10 @@ use std::process::{Command, Stdio};
 
 use crate::error::StoreError;
 
+#[derive(Clone)]
 pub(crate) struct Git {
-    dir: PathBuf,
+    dir:     PathBuf,
+    program: std::ffi::OsString,
 }
 
 pub(crate) struct Out {
@@ -30,6 +32,7 @@ impl Git {
     pub fn new(dir: PathBuf) -> Self {
         Self {
             dir,
+            program: "git".into(),
         }
     }
 
@@ -42,7 +45,7 @@ impl Git {
         envs: &[(&str, &str)],
         stdin: Option<&[u8]>,
     ) -> Result<Out, StoreError> {
-        let mut cmd = Command::new("git");
+        let mut cmd = Command::new(&self.program);
         cmd.arg("-C").arg(&self.dir).args(args);
         for var in [
             "GIT_DIR",
@@ -53,7 +56,9 @@ impl Git {
         ] {
             cmd.env_remove(var);
         }
-        cmd.env("LC_ALL", "C").env("GIT_TERMINAL_PROMPT", "0");
+        cmd.env("LC_ALL", "C")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_LITERAL_PATHSPECS", "1");
         for (k, v) in envs {
             cmd.env(k, v);
         }
@@ -94,5 +99,13 @@ impl Git {
                 detail:  out.stderr,
             })
         }
+    }
+}
+
+impl Git {
+    /// Run this program in place of `git`: a wrapper, or a build of git kept elsewhere.
+    pub fn with_program(mut self, program: impl Into<std::ffi::OsString>) -> Self {
+        self.program = program.into();
+        self
     }
 }

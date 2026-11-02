@@ -71,7 +71,7 @@ else
 fi
 
 # --- 3. fetch with an explicit refspec into a clone that has neither ref -------
-git clone -q "file://$W/bare.git" "$W/b" 2>/dev/null
+git clone -q "file://$W/bare.git" "$W/b" 2>"$W/clone-b.err" || { fail "setup clone b: $(cat "$W/clone-b.err")"; exit 1; }
 git -C "$W/b" remote -v >/dev/null
 if git -C "$W/b" rev-parse -q --verify "$MOCK" >/dev/null; then
     fail "3a the default clone already holds $MOCK; the probe cannot tell the refspec from the default"
@@ -107,7 +107,7 @@ if git -C "$W/c" fetch -q --depth 1 origin "+$MOCK:$MOCK" 2>"$W/fetch5.err" \
 else
     fail "5a shallow fetch with the refspec: $(cat "$W/fetch5.err")"
 fi
-git clone -q --depth 1 "file://$W/bare.git" "$W/d" 2>/dev/null
+git clone -q --depth 1 "file://$W/bare.git" "$W/d" 2>"$W/clone-d.err" || { fail "setup clone d: $(cat "$W/clone-d.err")"; exit 1; }
 if git -C "$W/d" fetch -q --depth 1 origin "+$MOCK:$MOCK" 2>"$W/fetch5b.err" \
     && [ "$(git -C "$W/d" rev-parse "$MOCK")" = "$C2" ]; then
     ok "5b shallow clone, then the same refspec fetched at depth 1"
@@ -179,10 +179,10 @@ if git -C "$W/a" push -q "--force-with-lease=$MOCK:$TIP" origin "$MERGED:$MOCK" 
 else
     fail "11 recovery push: $(cat "$W/push11.err")"
 fi
-if git -C "$W/bare.git" merge-base --is-ancestor "$C3" "$MERGED" && git -C "$W/bare.git" merge-base --is-ancestor "$C3B" "$MERGED"; then
-    ok "11b both racers' commits are ancestors of the remote tip: history keeps what each wrote"
+if [ "$(git -C "$W/bare.git" rev-parse "$MOCK")" = "$MERGED" ] && [ "$(git -C "$W/bare.git" cat-file -p "$MERGED" | grep -c "^parent ")" = 2 ]; then
+    ok "11b the remote tip is the merge commit and it has both racers as parents"
 else
-    fail "11b history lost a racer"
+    fail "11b the remote tip is $(git -C "$W/bare.git" rev-parse "$MOCK"), not the merge $MERGED"
 fi
 
 echo

@@ -135,6 +135,7 @@ fn a_lost_race_is_rebased_through_the_hook_and_keeps_both_commits() {
     let loser_repo = w.clone_dir("b");
     let loser = RefStore::new(&loser_repo, w.remote(), RefPair::ref_form(NS).unwrap())
         .with_retry(RetryPolicy::immediate(4));
+    loser.refresh().unwrap();
     rival_wins_once(&w, &loser_repo, &rival);
     let hook = Recording::default();
     let applied = loser
@@ -174,6 +175,7 @@ fn a_hook_that_refuses_leaves_the_winner_in_place() {
     let repo = w.clone_dir("b");
     let loser = RefStore::new(&repo, w.remote(), RefPair::ref_form(NS).unwrap())
         .with_retry(RetryPolicy::immediate(4));
+    loser.refresh().unwrap();
     rival_wins_once(&w, &repo, &rival);
 
     let err = loser
@@ -211,6 +213,7 @@ fn a_hook_can_change_the_edit_to_fit_the_new_tip() {
     let repo = w.clone_dir("b");
     let loser = RefStore::new(&repo, w.remote(), RefPair::ref_form(NS).unwrap())
         .with_retry(RetryPolicy::immediate(4));
+    loser.refresh().unwrap();
     rival_wins_once(&w, &repo, &rival);
     loser
         .apply(&Edit::new().put("counter", "2\n"), "bump", &AppendToCounter)
@@ -450,4 +453,140 @@ fn a_shallow_writer_adds_to_a_long_history() {
         "the remote's history is whole and the new commit sits on it"
     );
     assert_eq!(shallow.list("").unwrap().len(), 6);
+}
+
+// --- cases the first review found ------------------------------------------------------------
+
+struct Bump;
+
+impl MergeHook for Bump {
+    fn rebase(&self, tip: &dyn Reader, _ours: &Edit) -> Result<Edit, MergeRefusal> {
+        let n: u32 = String::from_utf8(tip.read("counter").unwrap().unwrap())
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        Ok(Edit::new().put("counter", format!("{}\n", n + 1)))
+    }
+}
+
+/// A stand-in for the `git` command: it runs the real one, and for `push` it follows
+/// `on_push`, a shell snippet with `"$@"` as the real arguments.
+fn git_shim(w: &World, on_push: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let p = w.dir.path().join("git-shim");
+    let body = format!(
+        "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = push ]; then\n{on_push}\n  fi\ndone\nexec git \"$@\"\n"
+    );
+    std::fs::write(&p, body).unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}
+
+#[test]
+fn a_write_after_a_stale_read_goes_through_the_hook() {
+    let w = World::new();
+    let a = store(&w, "a");
+    a.apply(&Edit::new().put("counter", "1\n"), "one", &Reapply)
+        .unwrap();
+    let b = store(&w, "b");
+    b.refresh().unwrap();
+    assert_eq!(b.read("counter").unwrap().as_deref(), Some(&b"1\n"[..]));
+    a.apply(&Edit::new().put("counter", "2\n"), "two", &Reapply)
+        .unwrap();
+    // b computed 2 from the 1 it read; the remote is already at 2
+    b.apply(&Edit::new().put("counter", "2\n"), "bump", &Bump)
+        .unwrap();
+    assert_eq!(
+        w.file(MOCK_REF, "counter").as_deref(),
+        Some("3"),
+        "the bump landed on a value it never saw"
+    );
+}
+
+#[test]
+fn a_push_the_remote_took_but_reported_failed_is_not_applied_twice() {
+    let w = World::new();
+    store(&w, "a")
+        .apply(&Edit::new().put("counter", "1\n"), "one", &Reapply)
+        .unwrap();
+    let shim = git_shim(
+        &w,
+        "    git \"$@\"; echo 'fatal: the remote end hung up unexpectedly' >&2; exit 128",
+    );
+    let b = store(&w, "b").with_git_program(&shim);
+    b.refresh().unwrap();
+    let applied = b
+        .apply(&Edit::new().put("counter", "2\n"), "bump", &Bump)
+        .unwrap();
+    assert!(applied.changed);
+    assert_eq!(
+        w.file(MOCK_REF, "counter").as_deref(),
+        Some("2"),
+        "one bump, not two"
+    );
+    assert_eq!(w.commits(MOCK_REF), 2);
+    assert_eq!(w.tip(MOCK_REF).as_deref(), applied.commit.as_deref());
+}
+
+#[test]
+fn a_dropped_connection_that_changed_nothing_is_tried_again() {
+    let w = World::new();
+    let mark = w.dir.path().join("dropped");
+    let shim = git_shim(
+        &w,
+        &format!(
+            "    [ -e '{m}' ] || {{ touch '{m}'; echo 'fatal: the remote end hung up unexpectedly' >&2; exit 128; }}",
+            m = mark.display()
+        ),
+    );
+    let s = store(&w, "a").with_git_program(&shim);
+    let applied = s
+        .apply(&Edit::new().put("a", "1"), "one", &Reapply)
+        .unwrap();
+    assert_eq!(applied.attempts, 2);
+    assert_eq!(w.commits(MOCK_REF), 1);
+}
+
+#[test]
+fn a_shallow_writer_overtaken_after_its_push_still_knows_it_landed() {
+    let w = World::new();
+    let long = store(&w, "long");
+    for i in 0 .. 3 {
+        long.apply(
+            &Edit::new().put(format!("f{i}"), "x"),
+            &format!("c{i}"),
+            &Reapply,
+        )
+        .unwrap();
+    }
+    // after the first push is accepted, another writer commits on top at once
+    let mark = w.dir.path().join("overtaken");
+    w.install_hook(
+        &w.bare,
+        "post-receive",
+        &format!(
+            "[ -e '{m}' ] && exit 0\ntouch '{m}'\n\
+             export GIT_AUTHOR_NAME=r GIT_AUTHOR_EMAIL=r@x GIT_COMMITTER_NAME=r GIT_COMMITTER_EMAIL=r@x\n\
+             t=$(git rev-parse {r})\nc=$(git commit-tree {e} -p $t -m overtaken)\ngit update-ref {r} $c",
+            m = mark.display(),
+            r = MOCK_REF,
+            e = EMPTY_TREE
+        ),
+    );
+    let repo = w.clone_dir("shallow");
+    let shallow = RefStore::new(&repo, w.remote(), RefPair::ref_form(NS).unwrap())
+        .with_retry(RetryPolicy::immediate(3))
+        .with_depth(1);
+    shallow.refresh().unwrap();
+    let applied = shallow
+        .apply(&Edit::new().put("late", "y"), "late", &Reapply)
+        .unwrap();
+    assert!(applied.changed);
+    assert_eq!(
+        w.commits(MOCK_REF),
+        5,
+        "three before, ours, the overtaking one"
+    );
+    assert_eq!(git(&w.bare, &["show", &format!("{MOCK_REF}~1:late")]), "y");
 }

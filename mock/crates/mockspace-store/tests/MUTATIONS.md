@@ -5,8 +5,19 @@ Each change was made to `src/ref_store.rs`, the tests were run, and the source w
 | Change | Red tests |
 | --- | --- |
 | A fetch that cannot reach the remote reads as an empty store | `an_unreachable_remote_is_an_error_and_never_an_empty_store`, `a_remote_that_went_away_after_a_fetch_is_loud_on_the_next_refresh` |
-| Commits written without a parent, as v2's `write_round_ref` does | `every_write_is_a_commit_on_the_tip`, `a_lost_race_is_rebased_through_the_hook_and_keeps_both_commits`, `a_shallow_writer_adds_to_a_long_history`, `many_writers_at_once_lose_nothing` |
+| Commits written without a parent, as v2's `write_round_ref` does (right for a round ref, wrong for a namespace that keeps its history) | `every_write_is_a_commit_on_the_tip`, `a_lost_race_is_rebased_through_the_hook_and_keeps_both_commits`, `a_shallow_writer_adds_to_a_long_history`, `many_writers_at_once_lose_nothing` |
 | The merge hook is not asked after a lost race | `a_lost_race_is_rebased_through_the_hook_and_keeps_both_commits`, `a_hook_that_refuses_leaves_the_winner_in_place`, `a_hook_can_change_the_edit_to_fit_the_new_tip` |
 | Every failed push is retried, a refusal included | `a_refusal_that_is_not_a_race_is_not_retried` |
 
-Not covered by a test: a push the remote accepted and then does not hold (the `Verify` error). It needs a remote that lies, and git offers no way to make a local one do it.
+A remote that lies about an accepted push is covered by a git shim in `ref_store.rs` (`a_push_the_remote_took_but_reported_failed_is_not_applied_twice`); the `Verify` error itself (the remote does not hold a commit it accepted) has no test, because a local bare repository cannot be made to drop an accepted push.
+
+## Added after the first review pass
+
+| Change | Red tests |
+| --- | --- |
+| The verify fetch is depth-limited, so a shallow store cannot see its own commit under a newer one | `a_shallow_writer_overtaken_after_its_push_still_knows_it_landed` |
+| A push reported as failed is never checked for having landed | `a_push_the_remote_took_but_reported_failed_is_not_applied_twice` |
+| The edit's base is not the tip the store held when the call began | `a_write_after_a_stale_read_goes_through_the_hook` |
+| A failed push that changed nothing is never retried on transient words | `a_dropped_connection_that_changed_nothing_is_tried_again` |
+
+The reported-failed push and the dropped connection use a stand-in for the `git` command (`RefStore::with_git_program`), a shell script that runs the real git.

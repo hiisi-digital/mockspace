@@ -47,12 +47,49 @@ impl Edit {
         let paths: Vec<&String> = self.files.keys().collect();
         for (i, a) in paths.iter().enumerate() {
             for b in &paths[i + 1 ..] {
-                if b.starts_with(a.as_str()) && b[a.len() ..].starts_with('/') {
+                let a_is_put = matches!(self.files.get(a.as_str()), Some(Some(_)));
+                if a_is_put && b.starts_with(a.as_str()) && b[a.len() ..].starts_with('/') {
                     return Err(StoreError::InvalidPath {
                         path: (*b).clone(),
                         why:  "lies under another path of the same edit",
                     });
                 }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Edit {
+    /// The edit against the state it is to be written on: a file may not be put where a
+    /// directory of files stands, nor below a path that is a file, unless the same edit
+    /// removes what is in the way. Both backends refuse the same edits.
+    pub fn check_against(&self, base: &dyn crate::reader::Reader) -> Result<(), StoreError> {
+        let existing: std::collections::BTreeSet<String> = base.list("")?.into_iter().collect();
+        let removed = |p: &str| matches!(self.files.get(p), Some(None));
+        let clash = |path: &str, why| {
+            Err(StoreError::InvalidPath {
+                path: path.to_owned(),
+                why,
+            })
+        };
+        for (path, bytes) in &self.files {
+            if bytes.is_none() {
+                continue;
+            }
+            for (i, _) in path.match_indices('/') {
+                let ancestor = &path[.. i];
+                if existing.contains(ancestor) && !removed(ancestor) {
+                    return clash(path, "a parent of it is a file");
+                }
+            }
+            let dir = format!("{path}/");
+            if existing
+                .range(dir.clone() ..)
+                .take_while(|e| e.starts_with(&dir))
+                .any(|e| !removed(e))
+            {
+                return clash(path, "it is a directory holding files");
             }
         }
         Ok(())

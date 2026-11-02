@@ -7,7 +7,9 @@
 //! `commit-tree`. The push carries `--force-with-lease` on the tip the commit was
 //! built on. A push that loses is answered by fetching again and asking the
 //! merge hook what the edit is on the tip that won; whether the push lost is
-//! decided by what the remote holds afterwards, never by reading git's output.
+//! decided by what the remote holds afterwards. Git's output is read for one thing only:
+//! a push that changed nothing on the remote is retried when its words name a dropped
+//! connection or a locked ref, and is final otherwise.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -70,6 +72,12 @@ impl RefStore {
     /// Fetch at most `depth` commits of history, for a shallow clone.
     pub fn with_depth(mut self, depth: u32) -> Self {
         self.depth = Some(depth);
+        self
+    }
+
+    /// Run this program in place of `git` for fetch, push and writes: a wrapper, or a git kept elsewhere.
+    pub fn with_git_program(mut self, program: impl Into<std::ffi::OsString>) -> Self {
+        self.git = self.git.with_program(program);
         self
     }
 
@@ -235,6 +243,43 @@ impl RefStore {
         Ok(Some(self.git.must(&args, &ident, None)?.text()))
     }
 
+    /// Whether the remote's tip has `commit` in its history. The tip is fetched into a
+    /// scratch ref without the depth limit, so a shallow store, whose own ref is cut short,
+    /// can still tell a commit that is held from one that is not.
+    fn remote_holds(&self, commit: &str) -> Result<bool, StoreError> {
+        let scratch = format!(
+            "refs/mockspace-store/probe-{}-{}",
+            std::process::id(),
+            INDEX_COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
+        let spec = format!("+{}:{scratch}", self.pair.remote());
+        let fetched = self
+            .git
+            .run(&["fetch", "-q", &self.remote, &spec], &[], None)?;
+        if !fetched.ok() {
+            return match self.remote_holds_ref() {
+                Ok(false) => Ok(false),
+                _ => Err(self.fetch_error(fetched.stderr)),
+            };
+        }
+        let held = self.git.run(
+            &["merge-base", "--is-ancestor", commit, &scratch],
+            &[],
+            None,
+        );
+        let _ = self.git.run(&["update-ref", "-d", &scratch], &[], None);
+        match held?.code {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => {
+                Err(StoreError::Git {
+                    command: format!("merge-base --is-ancestor {commit} {scratch}"),
+                    detail:  "neither an answer nor a refusal".into(),
+                })
+            },
+        }
+    }
+
     /// After an accepted push: the remote must now hold the commit.
     fn verify_pushed(&self, commit: &str) -> Result<(), StoreError> {
         let verify = |detail: String| {
@@ -244,12 +289,15 @@ impl RefStore {
                 detail,
             }
         };
-        self.fetch_once().map_err(|e| verify(e.to_string()))?;
-        let tip = self.local_tip()?.unwrap_or_default();
-        let held = self
-            .git
-            .run(&["merge-base", "--is-ancestor", commit, &tip], &[], None)?;
-        if held.ok() { Ok(()) } else { Err(verify(format!("remote tip is {tip}"))) }
+        match self.remote_holds(commit) {
+            Ok(true) => Ok(()),
+            Ok(false) => {
+                Err(verify(
+                    "the remote's tip does not have it in its history".into(),
+                ))
+            },
+            Err(e) => Err(verify(e.to_string())),
+        }
     }
 }
 
@@ -301,8 +349,10 @@ impl Store for RefStore {
         edit.validate()?;
         let attempts = self.retry.attempts.max(1);
         let mut current = edit.clone();
-        // the tip the last commit was built on, once there has been one
-        let mut built_on: Option<Option<String>> = None;
+        // The tip the edit was computed on: the local ref as it stands now, which is what the
+        // caller's reads saw. Any other tip, after the refresh or after a lost race, sends
+        // the edit through the hook.
+        let mut built_on: Option<String> = self.local_tip()?;
         let mut refreshed = false;
         for attempt in 1 ..= attempts {
             let is_last = attempt == attempts;
@@ -313,8 +363,10 @@ impl Store for RefStore {
                         e @ StoreError::Fetch {
                             ..
                         },
-                    ) if !is_last => {
-                        let _ = e;
+                    ) if is_last => return Err(e),
+                    Err(StoreError::Fetch {
+                        ..
+                    }) => {
                         self.retry.sleep_after(attempt);
                         continue;
                     },
@@ -323,11 +375,12 @@ impl Store for RefStore {
             }
             refreshed = false;
             let tip = self.local_tip()?;
-            if matches!(&built_on, Some(prev) if *prev != tip) {
+            if built_on != tip {
                 current = hook.rebase(&self.reader_at(tip.clone()), edit)?;
                 current.validate()?;
             }
-            built_on = Some(tip.clone());
+            built_on = tip.clone();
+            current.check_against(&self.reader_at(tip.clone()))?;
             let Some(commit) = self.build_commit(tip.as_deref(), &current, message)? else {
                 return Ok(Applied {
                     commit:   tip,
@@ -354,12 +407,20 @@ impl Store for RefStore {
                     attempts: attempt,
                 });
             }
-            // Did it lose, or was it refused? The remote's tip says.
+            // The push reported a failure. What the remote holds says what happened: our
+            // commit already there (accepted, then the connection dropped), a tip that moved
+            // (lost), or the tip we built on (refused, or a transient fault).
             match self.fetch_once() {
                 Ok(_) => {
                     refreshed = true;
-                    let now = self.local_tip()?;
-                    let lost = now != tip;
+                    if self.remote_holds(&commit)? {
+                        return Ok(Applied {
+                            commit:   Some(commit),
+                            changed:  true,
+                            attempts: attempt,
+                        });
+                    }
+                    let lost = self.local_tip()? != tip;
                     if !lost && !transient_push_output(&out.stderr) {
                         return Err(StoreError::PushRefused {
                             remote:     self.remote.clone(),

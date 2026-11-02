@@ -3,15 +3,15 @@ ok    2  ls-remote lists both refs under their patterns
 ok    3a a default clone does not carry refs/mock/registry/probe (the refspec is what brings it)
 ok    3b fetch of +refs/mock/registry/probe:refs/mock/registry/probe brings the ref to the same commit
 ok    4  fetching an absent ref exits 128 and says: fatal: couldn't find remote ref refs/mock/registry/absent
-ok    5a shallow fetch (depth 1) with the refspec: tip a231e74fcff1006a0a5c1b118ed86287d27c0974, one commit of history
+ok    5a shallow fetch (depth 1) with the refspec: tip 15ac3ed975a63c204a9532f9c678011cf0314838, one commit of history
 ok    5b shallow clone, then the same refspec fetched at depth 1
 ok    6  refs/heads/mock/probe fetched into a private local ref, a (local, remote) pair
-ok    7  lease push expecting a231e74fcff1006a0a5c1b118ed86287d27c0974 moves the ref to 870feee28393f45f8edb240b9f5c144b61d04c17
-ok    8  the writer holding the old tip is refused, exit 1:  ! [rejected]        2d1b2b5b35ed2be45ddfaaaf82bb40d6029d1324 -> refs/mock/registry/probe (stale info)
+ok    7  lease push expecting 15ac3ed975a63c204a9532f9c678011cf0314838 moves the ref to 11d35c4d901a8e4f37192c5a27fef031880001b5
+ok    8  the writer holding the old tip is refused, exit 1:  ! [rejected]        d243c7e59605e0cd409d9e5ad979937390655601 -> refs/mock/registry/probe (stale info)
 ok    8b the remote still holds the winner's commit
 ok    9  a plain push of a diverged commit is refused, exit 1
-ok    10 an unreachable remote exits 128 and leaves no ref behind: fatal: '/tmp/tmp.HLtWa0BgtP/does-not-exist.git' does not appear to be a git repository
+ok    10 an unreachable remote exits 128 and leaves no ref behind: fatal: '/tmp/tmp.U5jaJQVTGA/does-not-exist.git' does not appear to be a git repository
 ok    11 after the loss, a commit with both tips as parents lands on the lease of the new tip
-ok    11b both racers' commits are ancestors of the remote tip: history keeps what each wrote
+ok    11b the remote tip is the merge commit and it has both racers as parents
 
 probe: every case held

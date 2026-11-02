@@ -1,7 +1,7 @@
 //! Where the data of one mockspace namespace lives, behind one contract.
 //!
 //! A [`Store`] is a directory ([`DirStore`]) or a git ref ([`RefStore`]). Both
-//! read through [`Reader`] and take a write as an [`Edit`], one atomic step. The
+//! read through [`Reader`] and take a write as an [`Edit`], one step. The
 //! ref backend writes a commit on top of the tip with `--force-with-lease`, so a
 //! namespace keeps its history, and answers a lost race by fetching again and
 //! asking a [`MergeHook`] what the edit is on the tip that won. Fetch and push
@@ -10,6 +10,13 @@
 //! pair and nothing else.
 //!
 //! Plain git only: the crate runs the `git` command and asks no forge anything.
+//!
+//! Scope against the v2 spec: this store writes history, which suits a namespace that keeps
+//! its past (registry rows, tickets, test history, bench results). The spec makes the round
+//! and task refs orphan (`mockspace-v2-spec.md` line 1521), and this crate does not write
+//! those. Nor does it preserve a losing commit on a `-conflict-<host>-<ts>` side branch
+//! before a reset (spec section 24, step 12c); a [`Refuse`] drops it. Both are owed by
+//! whoever ports rounds, and neither is decided here.
 //!
 //! What a store offers: read, list, snapshot, refresh, apply. What it leaves
 //! out: merging file contents (the hook's, per namespace), validating what the
@@ -38,6 +45,6 @@ pub use merge::{MergeHook, MergeRefusal, Reapply, Refuse};
 pub use path::validate_path;
 pub use reader::Reader;
 pub use ref_store::RefStore;
-pub use refs::RefPair;
+pub use refs::{RefPair, RemoteForm};
 pub use retry::RetryPolicy;
 pub use store::{Applied, Freshness, Store};

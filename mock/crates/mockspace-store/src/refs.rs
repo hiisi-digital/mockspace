@@ -13,7 +13,28 @@ pub struct RefPair {
     remote: String,
 }
 
+/// Which form a namespace takes on the remote. The branch form is the default: measured
+/// from a cloud container on 2 November 2026 (by console-coord, not by this crate's probe),
+/// the proxy accepted a push of `refs/heads/mock/probe` and hung up on `refs/mock/probe` and
+/// `refs/notes/mock-probe`. The ref form is for a host that takes it, a self-hosted one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RemoteForm {
+    /// `refs/heads/mock/<namespace>` on the remote.
+    #[default]
+    Branch,
+    /// `refs/mock/<namespace>` on the remote.
+    Ref,
+}
+
 impl RefPair {
+    /// The pair for `namespace` in the given remote form.
+    pub fn for_namespace(namespace: &str, form: RemoteForm) -> Result<Self, StoreError> {
+        match form {
+            RemoteForm::Branch => Self::branch_form(namespace),
+            RemoteForm::Ref => Self::ref_form(namespace),
+        }
+    }
+
     /// An explicit pair. Both names must be fully qualified refs.
     pub fn new(local: impl Into<String>, remote: impl Into<String>) -> Result<Self, StoreError> {
         let (local, remote) = (local.into(), remote.into());
@@ -124,6 +145,15 @@ mod tests {
             b.fetch_refspec(),
             "+refs/heads/mock/registry/ticket:refs/mock/registry/ticket"
         );
+    }
+
+    #[test]
+    fn the_default_form_is_the_branch() {
+        assert_eq!(RemoteForm::default(), RemoteForm::Branch);
+        let p = RefPair::for_namespace("registry/ticket", RemoteForm::default()).unwrap();
+        assert_eq!(p.remote(), "refs/heads/mock/registry/ticket");
+        let r = RefPair::for_namespace("registry/ticket", RemoteForm::Ref).unwrap();
+        assert_eq!(r.remote(), "refs/mock/registry/ticket");
     }
 
     #[test]

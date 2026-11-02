@@ -10,6 +10,7 @@ use mockspace_store::{
     DirStore,
     Edit,
     Freshness,
+    Reader,
     Reapply,
     RefPair,
     RefStore,
@@ -18,12 +19,9 @@ use mockspace_store::{
     StoreError,
 };
 
-fn suite(store: &dyn Store) {
+fn suite(store: &dyn Store, first_refresh: Freshness) {
     // an empty store is empty, and the answer is a real one
-    assert!(matches!(
-        store.refresh().unwrap(),
-        Freshness::Empty | Freshness::Local
-    ));
+    assert_eq!(store.refresh().unwrap(), first_refresh);
     assert_eq!(store.list("").unwrap(), Vec::<String>::new());
     assert_eq!(store.read("a/b.toml").unwrap(), None);
 
@@ -76,6 +74,80 @@ fn suite(store: &dyn Store) {
 
     // a directory is not a file
     assert_eq!(store.read("a").unwrap(), None);
+
+    // a file and a directory of one name, against what is already stored
+    store
+        .apply(
+            &Edit::new().put("clash/file", "f").put("clash/deep/x", "x"),
+            "clash",
+            &Reapply,
+        )
+        .unwrap();
+    for (path, what) in [("clash/file/under", "below a file"), ("clash/deep", "over a directory")] {
+        let err = store
+            .apply(&Edit::new().put(path, "boom"), "clash", &Reapply)
+            .unwrap_err();
+        assert!(
+            matches!(err, StoreError::InvalidPath { .. }),
+            "{what}: {err}"
+        );
+    }
+    assert_eq!(
+        store.read("clash/file").unwrap().as_deref(),
+        Some(&b"f"[..]),
+        "the file under a refused put was lost"
+    );
+    assert_eq!(
+        store.read("clash/deep/x").unwrap().as_deref(),
+        Some(&b"x"[..])
+    );
+    // unless the same edit takes what is in the way
+    store
+        .apply(
+            &Edit::new()
+                .remove("clash/file")
+                .put("clash/file/under", "u"),
+            "swap",
+            &Reapply,
+        )
+        .unwrap();
+    assert_eq!(
+        store.read("clash/file/under").unwrap().as_deref(),
+        Some(&b"u"[..])
+    );
+    store
+        .apply(
+            &Edit::new()
+                .remove("clash/file/under")
+                .remove("clash/deep/x"),
+            "clear",
+            &Reapply,
+        )
+        .unwrap();
+
+    // paths that look like git pathspecs are plain names
+    for odd in [":(glob)x", "*.txt", ":x", "[a]"] {
+        store
+            .apply(&Edit::new().put(odd, odd), "odd", &Reapply)
+            .unwrap();
+        assert_eq!(
+            store.read(odd).unwrap().as_deref(),
+            Some(odd.as_bytes()),
+            "{odd}"
+        );
+    }
+    assert!(store.snapshot().unwrap().contains_key(":(glob)x"));
+    store
+        .apply(
+            &Edit::new()
+                .remove(":(glob)x")
+                .remove("*.txt")
+                .remove(":x")
+                .remove("[a]"),
+            "odd off",
+            &Reapply,
+        )
+        .unwrap();
 
     // replace, remove, and remove what is not there
     store
@@ -132,7 +204,7 @@ fn suite(store: &dyn Store) {
 #[test]
 fn directory_backend() {
     let d = tempfile::tempdir().unwrap();
-    suite(&DirStore::new(d.path().join("data")));
+    suite(&DirStore::new(d.path().join("data")), Freshness::Local);
 }
 
 #[test]
@@ -144,7 +216,7 @@ fn ref_backend_in_ref_form() {
         RefPair::ref_form("registry/probe").unwrap(),
     )
     .with_retry(RetryPolicy::immediate(3));
-    suite(&store);
+    suite(&store, Freshness::Empty);
     assert!(w.tip("refs/mock/registry/probe").is_some());
 }
 
@@ -157,10 +229,21 @@ fn ref_backend_in_branch_form() {
         RefPair::branch_form("registry/probe").unwrap(),
     )
     .with_retry(RetryPolicy::immediate(3));
-    suite(&store);
+    suite(&store, Freshness::Empty);
     assert!(w.tip("refs/heads/mock/registry/probe").is_some());
     assert!(
         w.tip("refs/mock/registry/probe").is_none(),
         "the branch form leaves nothing outside refs/heads on the remote"
     );
+}
+
+#[test]
+fn a_temporary_file_of_the_directory_backend_is_never_listed() {
+    let d = tempfile::tempdir().unwrap();
+    let root = d.path().join("data");
+    let s = DirStore::new(&root);
+    s.apply(&Edit::new().put("a/b", "1"), "m", &Reapply)
+        .unwrap();
+    std::fs::write(root.join("a/.mockspace-store-tmp-1-1"), "left by a crash").unwrap();
+    assert_eq!(s.list("").unwrap(), ["a/b"]);
 }

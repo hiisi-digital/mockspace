@@ -41,8 +41,10 @@ pub trait Store: Reader {
     /// fetch, and a failed fetch is an error and never an empty store.
     fn refresh(&self) -> Result<Freshness, StoreError>;
 
-    /// Write `edit` as one atomic step with `message`. When another writer
-    /// moves the tip first, `hook` says what the edit becomes on the new tip.
+    /// Write `edit` as one step with `message`. When another writer
+    /// moves the tip first, `hook` says what the edit becomes on the new tip. The base
+    /// is the tip the store held when the call began, which is what the caller's reads saw,
+    /// so a write after a stale read goes through the hook too.
     fn apply(
         &self,
         edit: &Edit,

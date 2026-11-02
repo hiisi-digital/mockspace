@@ -10,8 +10,14 @@ use crate::path::{under, validate_path};
 use crate::reader::Reader;
 use crate::store::{Applied, Freshness, Store};
 
+/// A file being written, beside its target; never listed.
+const TMP_PREFIX: &str = ".mockspace-store-tmp-";
+static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// A store that is a directory. The merge hook is never called: a directory has
-/// one state, and whoever shares it shares the filesystem's own ordering.
+/// one state, and whoever shares it shares the filesystem's own ordering. An edit is
+/// validated whole before anything is written, but the files are then written one
+/// by one, each by rename: an I/O failure part way leaves the earlier files in place.
 #[derive(Debug, Clone)]
 pub struct DirStore {
     root: PathBuf,
@@ -47,6 +53,9 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), StoreError
     };
     for entry in entries {
         let entry = entry.map_err(io_err(format!("reading `{}`", dir.display())))?;
+        if entry.file_name().to_string_lossy().starts_with(TMP_PREFIX) {
+            continue;
+        }
         let path = entry.path();
         if entry
             .file_type()
@@ -106,6 +115,7 @@ impl Store for DirStore {
         _hook: &dyn MergeHook,
     ) -> Result<Applied, StoreError> {
         edit.validate()?;
+        edit.check_against(self)?;
         let mut changed = false;
         for (path, bytes) in edit.entries() {
             let file = self.file(path);
@@ -119,7 +129,11 @@ impl Store for DirStore {
                             .map_err(io_err(format!("creating `{}`", parent.display())))?;
                     }
                     // written beside the target and renamed over it, so a reader never sees half a file
-                    let tmp = file.with_extension(format!("tmp-{}", std::process::id()));
+                    let tmp = file.with_file_name(format!(
+                        "{TMP_PREFIX}{}-{}",
+                        std::process::id(),
+                        TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    ));
                     fs::write(&tmp, bytes)
                         .map_err(io_err(format!("writing `{}`", tmp.display())))?;
                     fs::rename(&tmp, &file)
