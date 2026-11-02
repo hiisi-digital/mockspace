@@ -599,6 +599,9 @@ pub(crate) fn print_help() -> ExitCode {
     println!();
     println!("    --scope and --doc-only are verified against what is staged: a");
     println!("    narrower claim than the staged set is refused rather than obeyed.");
+    println!("    --deps-unchanged is the pre-push hook's claim that the pushed range");
+    println!("    changes no manifest, lockfile, deny.toml or .cargo/config; it is not");
+    println!("    verified, and with --strict it stands the dependency gate down.");
     println!();
     println!("Configuration lives in mockspace.toml at the repo root.");
     println!();
