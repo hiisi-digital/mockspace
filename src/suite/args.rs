@@ -82,7 +82,19 @@ impl Invocation {
     /// As written: sorting the words would make `--features a --target b`
     /// and `--features b --target a` one flavour.
     pub fn flavour(&self) -> String {
-        self.passed.join(" ")
+        // Which part of the tests a partition runs changes nothing about what is
+        // compiled, so every partition of a run is one flavour. Keyed by it, each
+        // `count:n/m` wrote a directory of its own that nothing else read.
+        let mut words: Vec<&str> = Vec::new();
+        let mut passed = self.passed.iter();
+        while let Some(a) = passed.next() {
+            if a == "--partition" {
+                passed.next();
+            } else if !a.starts_with("--partition=") {
+                words.push(a);
+            }
+        }
+        words.join(" ")
     }
 
     /// Whether the caller narrowed which tests run within a package, so a
@@ -224,6 +236,22 @@ mod tests {
         assert_eq!(i.exclude, vec!["e"]);
         assert!(i.workspace);
         assert!(i.passed.is_empty());
+    }
+
+    /// The partitions of one run share a flavour, and a partition of a features run
+    /// does not share the plain one's.
+    #[test]
+    fn every_partition_of_a_run_is_one_flavour() {
+        let whole = parse(&["--features", "editor"]).flavour();
+        for p in [
+            &["--features", "editor", "--partition", "count:1/3"][..],
+            &["--partition", "count:2/3", "--features", "editor"],
+            &["--features", "editor", "--partition=hash:3/4"],
+        ] {
+            assert_eq!(parse(p).flavour(), whole, "{p:?}");
+        }
+        assert_ne!(parse(&["--partition", "count:1/3"]).flavour(), whole);
+        assert_eq!(parse(&["--partition", "count:1/3"]).flavour(), "");
     }
 
     /// The flavour keeps a features run apart from a plain one, and does not
