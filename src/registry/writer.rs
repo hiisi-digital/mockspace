@@ -13,7 +13,10 @@
 //! of [`validate`], [`validate_row_references`] or [`validate_provenance`] that the registry
 //! before the write raised fewer times. A write that fails them is refused and no store
 //! is touched. A finding the registry already had, as often as it had it, is not the write's,
-//! and does not stop it.
+//! and does not stop it. The gate's document-reference check
+//! (`refs_unresolved`) reads the documents generation wrote, which the writer has no way to render,
+//! so a row a document names can be removed by a write; the commit gate catches that.
+//! (`a_row_a_document_names_can_be_removed_by_a_write_the_writer_cannot_see_the_documents`)
 //!
 //! When another writer moves a ref first, the merge driver of registry files
 //! (`registry_merge`) is the race handler: it merges the file as it was when this write began,

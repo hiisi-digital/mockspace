@@ -190,3 +190,51 @@ fn findings_the_registry_already_had_are_not_new_however_many() {
     super::refuse_new(&had, had.clone()).expect("the same findings, counted the same");
     super::refuse_new(&had, found(&["[b] y", "[a] x"])).expect("fewer findings is not new");
 }
+
+/// A document of the tree resolved against the registry as `stores` holds it now, and the tokens
+/// the generation's own scan (`unresolved_in_generated`) finds left in it.
+fn dangling_in(cfg: &Config, stores: &RegistryStores, document: &str) -> Vec<String> {
+    let reg = load_registry_from(stores, &cfg.registry_namespaces, None).unwrap();
+    let rendered = resolve_all(
+        document,
+        &cfg.registry_namespaces,
+        &reg,
+        &cfg.registry_roots,
+        &cfg.repo_root,
+        &cfg.docs_dir,
+        cfg,
+    );
+    unresolved_in_generated(&rendered)
+}
+
+/// The gate's document-reference check (`refs_unresolved`) reads the documents generation wrote,
+/// and the writer reads rows. A document names a row from a template the generation plan
+/// enumerates (the crate map is read from cargo, the placeholders from the whole run), and
+/// `render_all` writes into the tree's documents directory, so the writer has neither the
+/// documents to look at nor a place to render them without running the whole generation per
+/// write. This states what that leaves: the writer accepts the removal of a row a document names,
+/// and the document is dangling afterwards. The commit gate is where it is caught, as it is for a
+/// row removed in the tree.
+#[test]
+fn a_row_a_document_names_can_be_removed_by_a_write_the_writer_cannot_see_the_documents() {
+    let w = World::new();
+    let cfg = w.clone_of("a", true);
+    let s = stores(&cfg);
+    let writer = RegistryWriter::new(&cfg, &s);
+    writer
+        .write(&put("ticket/t.toml", &row("one", "One")), "add one")
+        .unwrap();
+    let document = "Tracked as {{ ticket::one }}.\n";
+    assert!(
+        dangling_in(&cfg, &s, document).is_empty(),
+        "control: with the row present the reference resolves"
+    );
+    writer
+        .write(&[("ticket/t.toml".to_string(), None)], "remove one")
+        .expect("no check of the writer reads a document");
+    assert_eq!(
+        dangling_in(&cfg, &s, document),
+        ["{{ ticket::one }}"],
+        "the document dangles now, and only the gate's scan of generated documents sees it"
+    );
+}
