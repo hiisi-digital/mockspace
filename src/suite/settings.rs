@@ -265,6 +265,12 @@ impl RawTest {
                 })?
             },
         };
+        if self.history.as_ref().is_some_and(|h| h.dir.is_some()) {
+            return Err(
+                "[test.history] names a `dir`, which is the key of a [[registry.store]]; a test history has no directory"
+                    .into(),
+            );
+        }
         Ok(TestSettings {
             heavy_after_secs,
             heavy_threads,
@@ -294,6 +300,16 @@ mod tests {
     fn parse(text: &str) -> Result<TestSettings, String> {
         let raw: RawTest = toml_edit::de::from_str(text).map_err(|e| e.to_string())?;
         raw.resolve()
+    }
+
+    #[test]
+    fn a_history_declaration_naming_a_registry_directory_is_refused_at_load() {
+        let err = parse("[history]\ndir = \"ticket\"\n").unwrap_err();
+        assert!(err.contains("history") && err.contains("dir"), "{err}");
+        assert!(
+            parse("[history]\nnamespace = \"x\"\n").is_ok(),
+            "control: the same declaration without a directory reads"
+        );
     }
 
     #[test]

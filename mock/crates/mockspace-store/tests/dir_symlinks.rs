@@ -96,3 +96,23 @@ fn a_dangling_symlink_is_listed_by_name_and_reads_as_absent() {
     assert_eq!(s.list("").unwrap(), ["dangling.toml"]);
     assert_eq!(s.read("dangling.toml").unwrap(), None);
 }
+
+#[test]
+fn a_write_through_a_symlink_with_a_relative_target_lands_beside_the_link() {
+    let d = tempfile::tempdir().unwrap();
+    let root = d.path().join("root");
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::write(root.join("real.toml"), "old").unwrap();
+    // `sub/f.toml` points at `../real.toml`, resolved from the directory of the link
+    symlink("../real.toml", root.join("sub/f.toml")).unwrap();
+    let s = DirStore::new(&root);
+    s.apply(&Edit::new().put("sub/f.toml", "new"), "m", &Reapply)
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(root.join("real.toml")).unwrap(), "new");
+    assert!(
+        std::fs::symlink_metadata(root.join("sub/f.toml"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
