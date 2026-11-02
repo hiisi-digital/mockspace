@@ -1205,11 +1205,14 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     .collect();
                 if doc_only {
                     eprintln!(
-                        "  scoped to: {} (doc-only: source lints skipped)",
+                        "  scoped to: {} (doc-only: source lints skipped; cross-crate lints read every crate)",
                         names.join(", ")
                     );
                 } else {
-                    eprintln!("  scoped to: {}", names.join(", "));
+                    eprintln!(
+                        "  scoped to: {} (cross-crate lints read every crate)",
+                        names.join(", ")
+                    );
                 }
                 let violations = lint::run_lints(
                     &crates,

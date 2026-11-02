@@ -6,15 +6,21 @@
 //! A scoped run narrows the per-crate lints and leaves the cross-crate ones whole.
 //!
 //! The pre-commit and the pre-push hook scope a run to the crates a change touches. A lint that
-//! compares crates with each other (`single-source`) judges a set of crates, and a name defined in
-//! a touched crate and in an untouched one is a clash however few crates were named. Handed only
-//! the scoped crates, it passed the commit that added the second definition, and the clash reached
-//! the trunk with every later landing stopped by it.
+//! compares crates with each other (`single-source`, `no-duplicate-fn`, `undocumented-type`)
+//! judges a set of crates, and a name defined in a touched crate and in an untouched one is a
+//! clash however few crates were named. Handed only the scoped crates, `single-source` passed the
+//! commit that added the second definition, and the clash reached the trunk with every later
+//! landing stopped by it.
+//!
+//! The law the tests hold: for a scope naming a crate, the cross-crate verdict of the run is the
+//! verdict of the unscoped run over the same tree, in every lint mode, and the per-crate lints
+//! answer for the named crates alone. A count is compared rather than "above zero", so a finding
+//! reported twice fails too.
 
 use std::fs;
 use std::path::Path;
 
-use mockspace_lint_rules::{LintMode, LintPack, RegistryView};
+use mockspace_lint_rules::{LintMode, LintPack, PathFilter, RegistryView};
 
 use crate::config::Config;
 
@@ -24,11 +30,7 @@ fn repo(root: &Path, crates: &[(&str, &str)]) -> Config {
     for (name, lib) in crates {
         let dir = mock.join("crates").join(name);
         fs::create_dir_all(dir.join("src")).unwrap();
-        fs::write(
-            dir.join("Cargo.toml"),
-            format!("[package]\nname = \"{name}\"\n"),
-        )
-        .unwrap();
+        fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"{name}\"\n")).unwrap();
         fs::write(dir.join("src/lib.rs"), lib).unwrap();
     }
     let mut cfg = Config::from_dir(&mock);
@@ -39,17 +41,18 @@ fn repo(root: &Path, crates: &[(&str, &str)]) -> Config {
     cfg
 }
 
-/// The blocking count of the commit gate's run with `scope`, which `None` leaves unscoped.
-fn violations(cfg: &Config, scope: Option<&[&str]>) -> usize {
+/// The blocking count of a run in `mode`, `doc_only` as given, with `scope`, which `None` leaves
+/// unscoped.
+fn run(cfg: &Config, mode: LintMode, scope: Option<&[&str]>, doc_only: bool) -> usize {
     let crates = crate::parse::discover_crates_in(&cfg.src_dirs, &cfg.crate_prefix);
     let scope: Option<Vec<String>> = scope.map(|s| s.iter().map(|c| (*c).to_string()).collect());
     crate::lint::run_lints(
         &crates,
         &cfg.src_dirs,
         &cfg.mock_dir,
-        LintMode::Commit,
+        mode,
         scope.as_deref(),
-        false,
+        doc_only,
         &cfg.proc_macro_crates,
         cfg.lint_proc_macro_source,
         &cfg.crate_prefix,
@@ -62,8 +65,26 @@ fn violations(cfg: &Config, scope: Option<&[&str]>) -> usize {
     )
 }
 
+/// The commit gate's run with `scope`.
+fn violations(cfg: &Config, scope: Option<&[&str]>) -> usize {
+    run(cfg, LintMode::Commit, scope, false)
+}
+
+/// Every mode a hook runs the engine in: the commit hook, the build, and the push hook's `--strict`.
+fn modes() -> [LintMode; 3] {
+    [LintMode::Commit, LintMode::Build, LintMode::Push]
+}
+
 const PLACED: &str = "/// A placement.\npub struct Placed;\n";
 const OTHER: &str = "/// Something else.\npub struct Elsewhere;\n";
+const THIRD: &str = "/// A third thing.\npub struct Third;\n";
+const SHARED_FN: &str = "/// Shared.\npub fn shared() {}\n";
+const OWN_FN: &str = "/// Own.\npub fn own() {}\n";
+
+/// The design document of a crate, naming each type given, which is what `undocumented-type` reads.
+fn design(root: &Path, krate: &str, names: &str) {
+    fs::write(root.join("mock/crates").join(krate).join("DESIGN.md.tmpl"), names).unwrap();
+}
 
 #[test]
 fn a_type_defined_in_a_scoped_crate_and_an_unscoped_one_is_a_clash() {
@@ -93,23 +114,114 @@ fn the_clash_is_found_by_the_unscoped_run_and_not_found_where_there_is_none() {
 }
 
 #[test]
-fn a_cross_crate_lint_reports_what_it_finds_whichever_crates_the_scope_names() {
-    // A lint that compares crates judges the whole set, and the scope narrows the lints that judge
-    // one crate at a time. A clash between two crates the scope does not name is reported too, so a
-    // red the trunk already carries stops the next commit as it stops the next landing, rather than
-    // passing here and stopping there. A decision, pinned: a per-crate finding in an unscoped crate
-    // is not reported (the next test). Fails under the same mutation as the test above.
+fn every_scope_reaches_the_verdict_of_the_unscoped_run_in_every_mode() {
+    // The law, over every non-empty subset of three crates, two of which clash. Fails under the
+    // same mutation as the first test, and when a finding is reported once per scoped crate.
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = repo(tmp.path(), &[
-        ("sim-a", OTHER),
-        ("sim-b", PLACED),
-        ("sim-c", PLACED),
-    ]);
+    let cfg = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", PLACED), ("sim-c", OTHER)]);
+    design(tmp.path(), "sim-c", "Placed Elsewhere");
+    let names = ["sim-a", "sim-b", "sim-c"];
+    for mode in modes() {
+        let whole = run(&cfg, mode, None, false);
+        assert!(whole > 0, "the control: the unscoped run finds the clash in {mode:?}");
+        for bits in 1..8_usize {
+            let scope: Vec<&str> =
+                (0..3).filter(|i| bits & (1 << i) != 0).map(|i| names[i]).collect();
+            assert_eq!(
+                run(&cfg, mode, Some(&scope), false),
+                whole,
+                "scope {scope:?} in {mode:?} reached another verdict than the unscoped run"
+            );
+        }
+    }
+    // The control the other way: with the clash renamed away, every scope passes.
+    let tmp = tempfile::tempdir().unwrap();
+    let clean = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", OTHER), ("sim-c", THIRD)]);
+    design(tmp.path(), "sim-c", "Placed Elsewhere Third");
+    for mode in modes() {
+        assert_eq!(run(&clean, mode, None, false), 0, "the fixture is clean in {mode:?}");
+        assert_eq!(run(&clean, mode, Some(&["sim-a"]), false), 0);
+    }
+}
+
+#[test]
+fn a_function_defined_in_a_scoped_crate_and_an_unscoped_one_is_a_duplicate() {
+    // The second cross-crate lint the same defect hid: `no-duplicate-fn`. Fails under the same
+    // mutation as the first test.
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo(tmp.path(), &[("sim-a", SHARED_FN), ("sim-b", SHARED_FN)]);
     assert!(violations(&cfg, Some(&["sim-a"])) > 0);
-    assert!(
-        violations(&cfg, None) > 0,
-        "the control: the clash is there"
+    let tmp = tempfile::tempdir().unwrap();
+    let apart = repo(tmp.path(), &[("sim-a", SHARED_FN), ("sim-b", OWN_FN)]);
+    assert_eq!(violations(&apart, Some(&["sim-a"])), 0, "the control: two functions, two names");
+}
+
+#[test]
+fn a_type_documented_in_an_unscoped_crate_is_documented() {
+    // The refusal the scope used to give without cause: `undocumented-type` gathers the design
+    // documents of every crate it is handed, and a scoped run handed one crate refused a type the
+    // next crate's document names. Fails under the same mutation as the first test.
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", OTHER)]);
+    design(tmp.path(), "sim-b", "Placed Elsewhere");
+    assert_eq!(run(&cfg, LintMode::Build, None, false), 0);
+    assert_eq!(run(&cfg, LintMode::Build, Some(&["sim-a"]), false), 0);
+    // The control: with no document naming it the lint is live, scoped or not.
+    let tmp = tempfile::tempdir().unwrap();
+    let bare = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", OTHER)]);
+    assert!(run(&bare, LintMode::Build, None, false) > 0);
+    assert!(run(&bare, LintMode::Build, Some(&["sim-a"]), false) > 0);
+}
+
+#[test]
+fn a_crate_filter_on_a_cross_crate_lint_still_binds_under_a_scope() {
+    // `single-source` bound to `sim-a` and `sim-b`: a scope naming only the unbound `sim-c` still
+    // sees their clash, and a clash with a crate the lint does not bind is not seen at all. Fails
+    // when the scope narrows what the lint is handed (the first half) or when the filter is
+    // dropped for a scoped run (the second).
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cfg = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", PLACED), ("sim-c", OTHER)]);
+    design(tmp.path(), "sim-c", "Placed Elsewhere");
+    cfg.lint_overrides.crates.insert(
+        "single-source".to_string(),
+        PathFilter {
+            include: vec!["sim-a".to_string(), "sim-b".to_string()],
+            exclude: vec![],
+        },
     );
+    assert!(violations(&cfg, None) > 0, "the control: the bound pair clashes");
+    assert_eq!(violations(&cfg, Some(&["sim-c"])), violations(&cfg, None));
+    cfg.lint_overrides.crates.insert(
+        "single-source".to_string(),
+        PathFilter {
+            include: vec!["sim-a".to_string(), "sim-c".to_string()],
+            exclude: vec![],
+        },
+    );
+    assert_eq!(violations(&cfg, None), 0, "the clash is with a crate the lint does not bind");
+    assert_eq!(violations(&cfg, Some(&["sim-a"])), 0);
+}
+
+#[test]
+fn a_scope_naming_a_crate_the_repository_no_longer_has_still_reads_every_crate() {
+    // The commit that deletes a crate names it and finds nothing, and what the rest of the
+    // workspace holds is still its to answer for. Fails when a scope is read as the crates found
+    // (`reads_every_crate` asking whether any scoped crate exists).
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", PLACED)]);
+    assert_eq!(violations(&cfg, Some(&["sim-gone"])), violations(&cfg, None));
+    assert!(violations(&cfg, Some(&["sim-gone"])) > 0, "the control: there is a clash to find");
+}
+
+#[test]
+fn a_doc_only_scoped_run_skips_the_source_lints_as_the_unscoped_one_does() {
+    // `--doc-only` skips the source lints, the cross-crate ones included, and handing them more
+    // crates does not bring them back.
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", PLACED)]);
+    assert_eq!(run(&cfg, LintMode::Commit, Some(&["sim-a"]), true), 0);
+    assert_eq!(run(&cfg, LintMode::Commit, None, true), 0);
+    assert!(violations(&cfg, Some(&["sim-a"])) > 0, "the control: without the flag it is found");
 }
 
 #[test]
@@ -118,10 +230,7 @@ fn a_per_crate_lint_still_reads_only_the_scoped_crates() {
     // scope does not name is that crate's to answer for, at its own commit. Fails when the
     // per-crate pass runs on every crate loaded (`if scoped {` read as `if true {`).
     let tmp = tempfile::tempdir().unwrap();
-    let mut cfg = repo(tmp.path(), &[
-        ("sim-a", OTHER),
-        ("sim-b", "use std::fmt;\n"),
-    ]);
+    let mut cfg = repo(tmp.path(), &[("sim-a", OTHER), ("sim-b", "use std::fmt;\n")]);
     let rule: std::collections::HashMap<String, String> = [
         ("rule.no-std.scope", "sim-*"),
         ("rule.no-std.forbidden", "std::*"),
@@ -130,17 +239,9 @@ fn a_per_crate_lint_still_reads_only_the_scoped_crates() {
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
-    cfg.lint_overrides
-        .params
-        .insert("forbidden-imports".to_string(), rule);
-    assert!(
-        violations(&cfg, None) > 0,
-        "the control: the lint finds it when it reads the crate"
-    );
-    assert!(
-        violations(&cfg, Some(&["sim-b"])) > 0,
-        "and when the scope names the crate"
-    );
+    cfg.lint_overrides.params.insert("forbidden-imports".to_string(), rule);
+    assert!(violations(&cfg, None) > 0, "the control: the lint finds it when it reads the crate");
+    assert!(violations(&cfg, Some(&["sim-b"])) > 0, "and when the scope names the crate");
     assert_eq!(violations(&cfg, Some(&["sim-a"])), 0);
 }
 

@@ -277,11 +277,17 @@ fn walk_rs(dir: &Path, crate_dir: &Path, out: &mut Vec<CrateSourceFile>) {
 ///   - `Push`: most strict (pre-push hook)
 ///
 /// When `scope` is `Some`, the per-crate lints run on the crates in the list
-/// only. This is used by the hooks to lint only the crates a change touches.
-/// The cross-crate lints still read every crate, since a clash between a
-/// touched crate and an untouched one is the change's to answer for; a scope
-/// naming no crate the repository has reads none. When `None`, all crates are
-/// linted (build/push mode).
+/// only. This is used by the hooks to lint only the crates a change touches
+/// (the pre-commit hook the staged ones, the pre-push hook the pushed ones).
+/// The cross-crate lints read every crate whatever the scope, bound by their
+/// own `crates` filter, and report every finding they have: a clash between a
+/// touched crate and an untouched one is the change's to answer for, and the
+/// verdict a hook reaches is then the verdict the landing gate reaches over the
+/// same tree, so a red the trunk already carries stops the next commit as it
+/// stops the next landing. A standing finding comes off the gate through a
+/// lint's `crates` binding, which op approves, and never through the scope. A
+/// scope naming no crate at all (`--scope infra`) reads none. When `None`,
+/// every lint runs over every crate.
 ///
 /// When `doc_only` is true, source-only lints are skipped. This allows
 /// doc-only commits during DOC phase without being blocked by
@@ -367,9 +373,11 @@ pub fn run_lints(
     let in_scope = |name: &str| scope.is_none_or(|names| names.iter().any(|n| n == name));
     // A cross-crate lint judges the whole set of crates, so a scope that names a crate still
     // hands it every other one: a name defined in a touched crate and in an untouched one is a
-    // clash however few crates the hook named. A scope that names no crate the repository has
-    // (`--scope infra`, the commit touching none) reads none, as it always did.
-    let reads_every_crate = crates.keys().any(|name| in_scope(name));
+    // clash however few crates the hook named. The scope is read as named, not as found: the
+    // commit that deletes a crate names it and finds nothing, and what it leaves undocumented
+    // elsewhere is its to answer for. Only a scope naming no crate at all (`--scope infra`, the
+    // commit touching none) reads none, as it always did.
+    let reads_every_crate = scope.is_none_or(|names| !names.is_empty());
 
     for (crate_name, info) in crates {
         let scoped = in_scope(crate_name);
