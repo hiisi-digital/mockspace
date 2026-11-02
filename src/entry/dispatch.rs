@@ -936,12 +936,29 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         }
     }
 
+    // --scope restricts linting to specific crates
+    let scope_arg = args
+        .iter()
+        .position(|a| a == "--scope")
+        .map(|i| args.get(i + 1).map(|s| s.as_str()).unwrap_or(""));
+
+    let is_infra_only = scope_arg == Some("infra");
+
     // Pre-push dependency gate: cargo-deny (advisories, license compatibility
     // across the transitive graph, bans, sources). Blocks on a real violation;
     // skipped when deny.toml or cargo-deny is absent. Config-gated (deny_check,
-    // default true).
-    if mode == LintMode::Push && cfg.deny_check {
-        match crate::deny::check(&cfg.repo_root, cfg.deny_check) {
+    // default true). Stands down at `--scope infra`, which the pre-push hook
+    // passes only for a range that changes no manifest, lockfile or deny config
+    // (see `deny::Gate::StandDown`), so a push of registry rows alone does not pay
+    // for a check of a dependency graph it did not touch.
+    match crate::deny::gate(mode == LintMode::Push, cfg.deny_check, scope_arg) {
+        crate::deny::Gate::Off => {},
+        crate::deny::Gate::StandDown => {
+            eprintln!(
+                "--- deny: skipped, --scope infra (the pushed range changes no manifest, lockfile or deny config) ---"
+            );
+        },
+        crate::deny::Gate::Run => match crate::deny::check(&cfg.repo_root, cfg.deny_check) {
             Ok(actions) => {
                 for action in actions {
                     eprintln!("--- deny: {action} ---");
@@ -952,16 +969,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 eprintln!("BLOCKED: {msg}");
                 return ExitCode::FAILURE;
             },
-        }
+        },
     }
-
-    // --scope restricts linting to specific crates
-    let scope_arg = args
-        .iter()
-        .position(|a| a == "--scope")
-        .map(|i| args.get(i + 1).map(|s| s.as_str()).unwrap_or(""));
-
-    let is_infra_only = scope_arg == Some("infra");
 
     // --- Detect nuked workspace ---
     // Verify the claims the narrowing flags make. Each exists to skip work that

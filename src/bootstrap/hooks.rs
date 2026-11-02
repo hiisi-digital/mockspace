@@ -551,12 +551,21 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     fi
     PUSH_FILES=$(git diff --name-only --no-renames "$remote_sha".."$local_sha" -- "$MOCK_DIR/" 2>/dev/null || true)
     PUSH_CHANGED=$(ms_union "$(ms_crates_of "$PUSH_FILES")" "$(ms_ws_crates_of "$PUSH_FILES")")
+    # A dependency input anywhere in the repository, not only under the mock
+    # directory the diff above is limited to: cargo-deny reads manifests,
+    # lockfiles and its config. The repo-lints scope below is what lets the
+    # dependency gate stand down, so a ref that touches one is not for it. A diff
+    # that fails to run counts as a change, which keeps the gate.
+    PUSH_DEPS=""
+    if ! git diff --quiet "$remote_sha".."$local_sha" -- '*Cargo.toml' '*Cargo.lock' '*deny.toml' 2>/dev/null; then
+        PUSH_DEPS=1
+    fi
     if [ -z "$PUSH_CHANGED" ]; then
         # Registry rows are read by the repo lints and by no crate's, so a ref
         # that changes nothing else under the mock directory is for them alone.
         # Anything else that reaches no crate keeps the full run it always had.
         PUSH_OTHER=$(printf '%s\n' "$PUSH_FILES" | grep -v -e '^$' -e "^$MOCK_DIR/registry/" || true)
-        if [ -n "$PUSH_FILES" ] && [ -z "$PUSH_OTHER" ]; then
+        if [ -n "$PUSH_FILES" ] && [ -z "$PUSH_OTHER" ] && [ -z "$PUSH_DEPS" ]; then
             PUSH_REPO_ONLY=1
         else
             PUSH_NOT_REGISTRY=1

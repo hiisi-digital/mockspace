@@ -385,6 +385,46 @@ fn a_push_of_registry_rows_alone_names_the_repo_lints_scope() {
     assert!(!out.contains("scope: full project"), "hook said:\n{out}");
 }
 
+/// The repo-lints scope is also what lets the dependency gate stand down, since
+/// a push that changes no manifest cannot change what cargo-deny reads. So a row
+/// pushed beside a manifest, a lockfile or the deny config does not get it,
+/// wherever in the repository the dependency input sits: the diff the hook takes
+/// for the mock directory alone would not see the ones outside it.
+#[test]
+fn a_registry_row_beside_a_dependency_input_anywhere_is_not_repo_lints_only() {
+    for input in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "deny.toml",
+        "tools/probe/Cargo.toml",
+        "mock/benches/support/Cargo.lock",
+    ] {
+        let out = push_says(KASKI, &[
+            ("mock/registry/ticket/items/a.toml", "id = \"a\"\n"),
+            (input, "x = 1\n"),
+        ]);
+        assert!(
+            !out.contains("scope: repo lints only"),
+            "{input}: a pushed dependency input must keep the dependency gate:\n{out}"
+        );
+        assert!(
+            out.contains("scope: full project"),
+            "{input}: hook said:\n{out}"
+        );
+    }
+}
+
+/// The control for the arm above: a file outside the mock directory that
+/// cargo-deny does not read leaves the registry row's scope as it was.
+#[test]
+fn a_registry_row_beside_a_file_cargo_deny_does_not_read_stays_repo_lints_only() {
+    let out = push_says(KASKI, &[
+        ("mock/registry/ticket/items/a.toml", "id = \"a\"\n"),
+        ("docs/notes.md", "x\n"),
+    ]);
+    assert!(out.contains("scope: repo lints only"), "hook said:\n{out}");
+}
+
 
 #[test]
 fn an_empty_declaration_is_a_documentation_repository() {

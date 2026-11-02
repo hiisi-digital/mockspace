@@ -275,6 +275,17 @@ cannot be read at all is the one case that still blocks rather than skips, since
 broken manifest says nothing about whether it is clean. Set `deny_check = false` to
 opt out.
 
+A passing run prints one line per workspace root and nothing of what cargo-deny itself
+printed, which is every duplicate and unused allowance it found. A failing run shows
+only the error diagnostics and the closing summary line, or the last forty lines of the
+output when cargo-deny failed without one.
+
+The generated pre-push hook scopes a push that changes only registry rows to the repo
+lints (`--scope infra`), and the dependency gate stands down at that scope, because such
+a push cannot have changed what cargo-deny reads. The hook gives a push that touches a
+`Cargo.toml`, a `Cargo.lock` or a `deny.toml` anywhere in the repository, not only under
+the mock directory, the full scope instead, so the gate runs for it.
+
 ### Tests: `[test]`
 
 `cargo mock test` runs the workspace members under cargo-nextest where it is installed,

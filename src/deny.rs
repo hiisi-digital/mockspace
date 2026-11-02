@@ -21,7 +21,13 @@
 //! blocks rather than being skipped: `cargo metadata` failing outright says
 //! nothing about whether the manifest is clean. Opt out with
 //! `deny_check = false` in `mockspace.toml`.
+//!
+//! A pass is silent: what cargo-deny prints is not shown unless the check fails,
+//! and then only its errors ([`failure_text`]). The gate also stands down for a
+//! push at `--scope infra` ([`gate`]), which the pre-push hook passes only for a
+//! range that changes no `Cargo.toml`, `Cargo.lock` or `deny.toml`.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -94,12 +100,15 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
                 ));
             },
             RootAction::RunDeny => {
-                if run_deny(&root, &config) {
-                    actions.push(format!("deny_check: cargo deny check passed ({where_})"));
-                } else {
-                    return Err(format!(
-                        "cargo deny check failed in {where_} (license/advisory/ban/source violation)"
-                    ));
+                match run_deny(&root, &config) {
+                    Ok(()) => {
+                        actions.push(format!("deny_check: cargo deny check passed ({where_})"));
+                    },
+                    Err(why) => {
+                        return Err(format!(
+                            "cargo deny check failed in {where_} (license/advisory/ban/source violation)\n{why}"
+                        ));
+                    },
                 }
             },
         }
@@ -238,18 +247,108 @@ fn cargo_deny_installed() -> bool {
         .unwrap_or(false)
 }
 
-/// Run `cargo deny --config <config> check` in `root`. `true` on a clean check.
-fn run_deny(root: &Path, config: &Path) -> bool {
-    Command::new("cargo")
+/// Run `cargo deny --config <config> check` in `root`. `Ok` on a clean check,
+/// and silent: a pass hands back nothing of what cargo-deny printed, which on a
+/// graph with a few hundred crates is every duplicate, every unused allowance and
+/// every inclusion graph it knows, measured at 91,924 lines for one push of
+/// registry rows across twenty-odd roots. `Err` carries what explains a failure,
+/// per [`failure_text`].
+fn run_deny(root: &Path, config: &Path) -> Result<(), String> {
+    run_deny_with(OsStr::new("cargo"), root, config)
+}
+
+/// [`run_deny`] with the program named, which is what lets a test stand in for
+/// `cargo` and print whatever it likes.
+fn run_deny_with(program: &OsStr, root: &Path, config: &Path) -> Result<(), String> {
+    let out = Command::new(program)
         .arg("deny")
         .arg("--config")
         .arg(config)
         .arg("check")
         .current_dir(root)
-        .stdout(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("could not run `cargo deny`: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(failure_text(&String::from_utf8_lossy(&out.stderr)))
+}
+
+/// How many trailing lines of the stream a failure with no `error` diagnostic in
+/// it keeps.
+const FAILURE_TAIL_LINES: usize = 40;
+
+/// What of cargo-deny's rendered diagnostics explains a failed check: the
+/// blocks that open with an `error` header, up to the next header of any
+/// severity, and the closing `advisories ... sources ...` summary. The warnings
+/// are what fill the stream on a passing run too and say nothing about why this
+/// one failed. A failure with no `error` block in it, cargo-deny dying on
+/// something that is not a diagnostic, keeps the last
+/// [`FAILURE_TAIL_LINES`] lines instead, since keeping nothing would make it a
+/// failure that says nothing.
+fn failure_text(stderr: &str) -> String {
+    let mut kept = String::new();
+    let mut keep = false;
+    for line in stderr.lines() {
+        if let Some(error) = diagnostic_header(line) {
+            keep = error;
+        } else if line.starts_with("advisories ") {
+            keep = true;
+        }
+        if keep {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+    if !kept.is_empty() {
+        return kept;
+    }
+    let lines: Vec<&str> = stderr.lines().collect();
+    let from = lines.len().saturating_sub(FAILURE_TAIL_LINES);
+    lines[from ..].join("\n")
+}
+
+/// Whether `line` opens a rendered diagnostic, and if it does whether that one
+/// is an error. A header is flush left and reads `error[code]:`, `warning:`,
+/// `note[code]:` or `help:`; the lines under it are indented or blank.
+fn diagnostic_header(line: &str) -> Option<bool> {
+    for severity in ["error", "warning", "note", "help"] {
+        let Some(rest) = line.strip_prefix(severity) else {
+            continue;
+        };
+        if rest.starts_with(':') || rest.starts_with('[') {
+            return Some(severity == "error");
+        }
+    }
+    None
+}
+
+/// Whether the pre-push dependency gate runs on this invocation.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Gate {
+    /// Not a push, or `deny_check = false`: nothing to say about it.
+    Off,
+    /// Run it.
+    Run,
+    /// A push at the repo-lints scope. The pre-push hook passes `--scope infra`
+    /// only after taking the pushed range's diff and finding in it no
+    /// `Cargo.toml`, `Cargo.lock` or `deny.toml` anywhere in the repository, which
+    /// are what cargo-deny reads, so the range cannot have changed its answer.
+    StandDown,
+}
+
+/// Which of the three this invocation is. `push` is whether the run is the
+/// pre-push one, `enabled` is `deny_check` from the config, and `scope` is the
+/// `--scope` argument as given.
+pub fn gate(push: bool, enabled: bool, scope: Option<&str>) -> Gate {
+    if !push || !enabled {
+        Gate::Off
+    } else if scope == Some("infra") {
+        Gate::StandDown
+    } else {
+        Gate::Run
+    }
 }
 
 /// Every workspace root under `repo_root`: directories whose `Cargo.toml`
@@ -617,6 +716,118 @@ mod tests {
             "a root produced no action line, so it was dropped rather than \
              checked or skipped: {actions:?}"
         );
+    }
+
+    /// A stand-in for `cargo` that writes `stderr` to its standard error, `stdout`
+    /// to its standard output, and exits with `code`. Whatever it prints, the
+    /// gate has to account for: nothing it prints may reach the caller's own
+    /// streams on a pass, and a failure has to carry what explains it.
+    fn stub_cargo(dir: &Path, stdout: &str, stderr: &str, code: i32) -> PathBuf {
+        let path = dir.join("stub-cargo");
+        let script = format!(
+            "#!/usr/bin/env bash\ncat <<'OUT'\n{stdout}OUT\ncat >&2 <<'ERR'\n{stderr}ERR\nexit {code}\n"
+        );
+        crate::test_exec::write_executable(&path, script.as_bytes());
+        path
+    }
+
+    /// What cargo-deny prints for a graph with one rejected licence among many
+    /// warnings: the diagnostics rendered one after another, and a summary.
+    fn deny_output_with_one_error() -> String {
+        let mut out = String::new();
+        for n in 0 .. 300 {
+            out.push_str(&format!(
+                "warning[duplicate]: found 2 duplicate entries for crate 'dup{n}'\n   \u{250c}\u{2500} Cargo.lock:{n}:1\n   \u{2502}\n   \u{2502} dup{n} 1.0.0\n\n"
+            ));
+        }
+        out.push_str(
+            "error[rejected]: failed to satisfy license requirements\n   \u{250c}\u{2500} one/Cargo.toml:5:11\n   \u{2502}\n 5 \u{2502} license = \"MIT\"\n   \u{2502}           ^^^ rejected: license is not explicitly allowed\n\n",
+        );
+        out.push_str("warning[license-not-encountered]: license was not encountered\n\n");
+        out.push_str("advisories ok, bans ok, licenses FAILED, sources ok\n");
+        out
+    }
+
+    #[test]
+    fn a_clean_check_hands_back_nothing_whatever_it_printed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cargo = stub_cargo(
+            tmp.path(),
+            "stdout noise\n",
+            &deny_output_with_one_error(),
+            0,
+        );
+        assert_eq!(
+            run_deny_with(cargo.as_os_str(), tmp.path(), &tmp.path().join("deny.toml")),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_failed_check_carries_its_errors_and_none_of_its_warnings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cargo = stub_cargo(tmp.path(), "", &deny_output_with_one_error(), 1);
+        let err = run_deny_with(cargo.as_os_str(), tmp.path(), &tmp.path().join("deny.toml"))
+            .expect_err("a non-zero exit is a failed check");
+        assert!(
+            err.contains("error[rejected]") && err.contains("license = \"MIT\""),
+            "the error that explains the failure is missing:\n{err}"
+        );
+        assert!(
+            err.contains("licenses FAILED"),
+            "the summary line is missing:\n{err}"
+        );
+        assert!(
+            !err.contains("warning[duplicate]") && !err.contains("dup299"),
+            "warnings reached the failure:\n{err}"
+        );
+        assert!(
+            !err.contains("license-not-encountered"),
+            "a warning after the error reached the failure:\n{err}"
+        );
+    }
+
+    #[test]
+    fn a_failure_with_no_error_diagnostic_carries_the_tail_of_what_was_printed() {
+        // cargo-deny dying on something that is not a diagnostic (a fetch, a
+        // panic, a manifest it cannot parse) has no `error[` block to keep, and
+        // dropping it all would turn the failure into one that says nothing.
+        let tmp = tempfile::tempdir().unwrap();
+        let noise: String = (1 ..= 100).map(|n| format!("noise-{n:03}\n")).collect();
+        let cargo = stub_cargo(tmp.path(), "", &noise, 101);
+        let err = run_deny_with(cargo.as_os_str(), tmp.path(), &tmp.path().join("deny.toml"))
+            .expect_err("a non-zero exit is a failed check");
+        assert!(err.contains("noise-100"), "the tail is missing:\n{err}");
+        assert!(
+            !err.contains("noise-001"),
+            "the whole stream was kept rather than its tail:\n{err}"
+        );
+    }
+
+    #[test]
+    fn a_cargo_that_cannot_run_is_a_failure_that_names_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = run_deny_with(
+            tmp.path().join("no-such-cargo").as_os_str(),
+            tmp.path(),
+            &tmp.path().join("deny.toml"),
+        )
+        .expect_err("a program that is not there did not pass");
+        assert!(err.contains("could not run"), "said:\n{err}");
+    }
+
+    #[test]
+    fn the_dependency_gate_runs_on_a_push_and_stands_down_for_the_repo_lints_scope() {
+        // Off: not a push, or switched off in the config. Run: a push at any scope
+        // but `infra`. Stand down: a push whose hook found no dependency input
+        // in the pushed range, which it says by passing `--scope infra`.
+        assert_eq!(gate(true, true, None), Gate::Run);
+        assert_eq!(gate(true, true, Some("kaski-sim,kaski-world")), Gate::Run);
+        assert_eq!(gate(true, true, Some("infra")), Gate::StandDown);
+        assert_eq!(gate(false, true, None), Gate::Off);
+        assert_eq!(gate(false, true, Some("infra")), Gate::Off);
+        assert_eq!(gate(true, false, None), Gate::Off);
+        assert_eq!(gate(true, false, Some("infra")), Gate::Off);
     }
 
     #[test]
