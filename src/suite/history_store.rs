@@ -298,9 +298,6 @@ pub fn store_of(cfg: &crate::config::Config) -> Result<Box<dyn Store>, String> {
                 &cfg.mock_dir,
             ))))
         },
-        Some(decl) if decl.dir.is_some() => {
-            Err("`dir` names a directory of the registry, and a test history has none".into())
-        },
         Some(decl) => Ok(Box::new(decl.open(&cfg.repo_root, "test-history")?)),
     }
 }
