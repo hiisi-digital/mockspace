@@ -94,7 +94,6 @@ fn unescape(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
-
 /// A work count a test reported on its stderr: what it did, so a timing can be
 /// read per unit of work rather than as plain seconds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,11 +127,16 @@ pub fn work_lines(xml: &str, marker: &str) -> Vec<Work> {
             &rest[tag_end .. rest.find("</testcase>").unwrap_or(rest.len())]
         };
         // A flaky pass nests the failed attempts' stderr inside `<flakyFailure>` ahead of
-        // the testcase's own, so the last `<system-err>` is the passing attempt's. A test
-        // that fails every retry has the first attempt's stderr and time at testcase
-        // level, which is still a consistent pair.
-        let found = body.rfind("<system-err>").map(|s| {
-            let err = &body[s + "<system-err>".len() ..];
+        // the testcase's own, so only what follows the last failed attempt's element is
+        // the passing attempt's. A test that fails every retry yields no count here.
+        let own = body
+            .rfind("</flakyFailure>")
+            .into_iter()
+            .chain(body.rfind("</rerunFailure>"))
+            .max()
+            .map_or(body, |at| &body[at..]);
+        let found = own.rfind("<system-err>").map(|s| {
+            let err = &own[s + "<system-err>".len() ..];
             unescape(&err[.. err.find("</system-err>").unwrap_or(err.len())])
         });
         let last = found.as_deref().and_then(|err| {
@@ -282,5 +286,21 @@ PROJ-WORK beings 7 &amp; more</system-err>
         let w = work_lines(xml, "PROJ-WORK");
         assert_eq!(w.len(), 1);
         assert_eq!(w[0].n, 500);
+    }
+
+    /// The marker only on stdout, and a flaky pass whose final attempt printed
+    /// nothing, give no count: neither is the testcase's own stderr.
+    #[test]
+    fn stdout_alone_and_a_failed_attempts_stderr_are_not_the_count() {
+        let xml = r#"<testsuites><testsuite name="s">
+        <testcase name="out_only" classname="s" time="1.000">
+            <system-out>PROJ-WORK ticks 9</system-out>
+        </testcase>
+        <testcase name="silent_final" classname="s" time="1.000">
+            <flakyFailure message="x" type="t"><system-err>PROJ-WORK ticks 1</system-err></flakyFailure>
+        </testcase>
+        </testsuite></testsuites>"#;
+        assert_eq!(work_lines(xml, "PROJ-WORK"), vec![]);
+        assert_eq!(parse(xml).len(), 2);
     }
 }

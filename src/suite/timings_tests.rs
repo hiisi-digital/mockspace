@@ -114,5 +114,67 @@ fn a_spooled_run_leaves_no_temp_file_and_run_ids_differ() {
         .collect();
     assert_eq!(left, vec!["r1.ndjson".to_string()]);
     std::fs::remove_dir_all(&dir).unwrap();
-    assert_ne!(run_id(5), run_id(5), "two runs in one second must not share an id");
+    let base = run_id_from(5, 1, 100, "/w", 0);
+    assert_ne!(base, run_id_from(5, 1, 101, "/w", 0), "the pid alone");
+    assert_ne!(base, run_id_from(5, 1, 100, "/v", 0), "the working directory alone");
+    assert_ne!(base, run_id_from(5, 2, 100, "/w", 0), "the nanosecond alone");
+    assert_ne!(base, run_id_from(5, 1, 100, "/w", 1), "the counter alone");
+}
+
+/// The whole step: a report with a passing test's work line in, one shard of
+/// rows out, the count on the right row. That the call in `mod.rs` is made is
+/// the nextest end-to-end tests' to show; this pins what the call does.
+#[test]
+fn a_report_in_becomes_a_shard_with_the_work_on_the_right_row() {
+    let state = std::env::temp_dir().join(format!("mock-timings-run-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&state);
+    let report = r#"<testsuites><testsuite name="sim">
+        <testcase name="walks" classname="sim" time="1.500"><system-err>MOCK-WORK ticks 7
+</system-err></testcase>
+        <testcase name="plain" classname="sim" time="0.010"/>
+        </testsuite></testsuites>"#;
+    let cases = super::super::junit::parse(report);
+    let passed = vec!["-j".to_string(), "3".to_string()];
+    record_run(
+        &Run {
+            state:       &state,
+            flavour:     "default",
+            profile:     "dev",
+            passed:      &passed,
+            report,
+            load_before: Some(0.25),
+            threads_env: None,
+            commit:      "abc1234-dirty",
+            fingerprint: None,
+        },
+        &cases,
+        "MOCK-WORK",
+    );
+    let shards = walk(&state.join(SPOOL_DIR));
+    assert_eq!(shards.len(), 1, "{shards:?}");
+    let rows: Vec<TestSample> = std::fs::read_to_string(&shards[0])
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 2);
+    let walks = rows.iter().find(|r| r.test == "walks").unwrap();
+    assert_eq!((walks.work_unit.as_deref(), walks.work_n), (Some("ticks"), Some(7)));
+    assert_eq!((walks.secs, walks.test_threads, walks.commit.as_str()), (1.5, 3, "abc1234-dirty"));
+    assert_eq!(walks.load_1m_before, Some(0.25));
+    assert_eq!(rows.iter().find(|r| r.test == "plain").unwrap().work_n, None);
+    std::fs::remove_dir_all(&state).unwrap();
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).unwrap() {
+        let p = e.unwrap().path();
+        if p.is_dir() {
+            out.extend(walk(&p));
+        } else {
+            out.push(p);
+        }
+    }
+    out
 }

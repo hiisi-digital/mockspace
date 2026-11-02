@@ -118,15 +118,22 @@ pub fn spool(spool: &Path, rows: &[TestSample]) -> std::io::Result<Option<PathBu
 /// A run id unique across machines of one class: the time to the nanosecond, the
 /// process id and a hash of the working directory, since containers reuse low pids.
 pub fn run_id(ts: u64) -> String {
-    use std::hash::{Hash, Hasher};
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos());
-    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default();
     let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    run_id_from(ts, nanos, std::process::id(), &cwd, n)
+}
+
+/// The id from its inputs, so each can be varied alone: the second, the nanosecond,
+/// the process, the working directory and a counter for ids made in one process.
+pub fn run_id_from(ts: u64, nanos: u32, pid: u32, cwd: &str, n: u64) -> String {
+    use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    std::env::current_dir().ok().hash(&mut h);
-    std::process::id().hash(&mut h);
+    cwd.hash(&mut h);
+    pid.hash(&mut h);
     format!("{ts}-{nanos:09}-{:08x}-{n}", h.finish() as u32)
 }
 
