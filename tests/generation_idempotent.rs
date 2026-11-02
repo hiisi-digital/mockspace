@@ -153,7 +153,8 @@ fn passthrough_templates_expand_placeholders() {
         "fixture must start with no docs/ so the render path owns creating it"
     );
 
-    let registry = mockspace::registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+    let registry = mockspace::registry::load_registry_in_dir(&cfg.mock_dir, &cfg.registry_namespaces)
+        .expect("the registry directory reads");
     let written = {
         let plan = mockspace::document::plan(&cfg, &Default::default());
         mockspace::document::render_all(&plan, &ph, &registry, &cfg)

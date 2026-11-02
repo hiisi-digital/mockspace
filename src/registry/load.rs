@@ -27,29 +27,19 @@ fn value_to_string(v: &toml_edit::Item) -> String {
     }
 }
 
-/// Load every registry row declared under `<mock>/registry/`, from the directory.
+/// Load every registry row declared under `<mock>/registry/`, from the directory, or say why it
+/// could not be read: a directory that cannot be walked is an error, never a registry with no rows.
 ///
 /// Rows whose namespace is not declared are skipped rather than rejected: a
 /// project may keep unrelated TOML in the tree, and refusing to start over an
 /// unknown key would be the wrong failure. This is the directory form every project
 /// has had; [`load_registry_from`] takes the stores a project declares, and is what
 /// the engine itself calls.
-pub fn load_registry(mock_dir: &Path, namespaces: &[RegistryNamespace]) -> Registry {
-    load_registry_of(mock_dir, namespaces, None)
-}
-
-/// [`load_registry`] for the namespaces in `wanted` only, from the directory.
-pub fn load_registry_of(
+pub fn load_registry_in_dir(
     mock_dir: &Path,
     namespaces: &[RegistryNamespace],
-    wanted: Option<&BTreeSet<String>>,
-) -> Registry {
-    load_registry_from(&RegistryStores::directory(mock_dir), namespaces, wanted).unwrap_or_else(
-        |e| {
-            eprintln!("  registry: {e}");
-            Registry::default()
-        },
-    )
+) -> Result<Registry, RegistryStoreError> {
+    load_registry_from(&RegistryStores::directory(mock_dir), namespaces, None)
 }
 
 /// Load the rows of the namespaces in `wanted` only, or every row when it is `None`, from
@@ -58,7 +48,6 @@ pub fn load_registry_of(
 /// A file whose text never writes a `[[key]]` header of a wanted namespace is not parsed at
 /// all, which is where the time goes on a registry holding one very large namespace. Such a
 /// file is also left out of `files_read`, because it was not read as registry data.
-///
 pub fn load_registry_from(
     stores: &RegistryStores,
     namespaces: &[RegistryNamespace],
@@ -88,7 +77,10 @@ pub(crate) fn rows_of_texts(
 ) -> Registry {
     let mut reg = Registry::default();
     let known: BTreeSet<&str> = namespaces.iter().map(|n| n.key.as_str()).collect();
-    let source_of = |rel: &str| rel.split('/').fold(root.to_path_buf(), |p, part| p.join(part));
+    let source_of = |rel: &str| {
+        rel.split('/')
+            .fold(root.to_path_buf(), |p, part| p.join(part))
+    };
     let all_files: Vec<PathBuf> = files.iter().map(|(r, _)| source_of(r)).collect();
     let mut read = Vec::new();
     let needles: Vec<String> = wanted
@@ -195,19 +187,7 @@ fn namespace_names_in<'a>(text: &'a str, keys: &BTreeSet<&str>) -> BTreeSet<&'a 
 /// and a name of a declared namespace written in the text of a loaded row, where a reference
 /// to it would sit. An expression asking what refers to or rests on a row (`refsto`,
 /// `sourcesof`) can be answered by any row, so it loads all of them.
-pub fn load_registry_for_expr(
-    mock_dir: &Path,
-    namespaces: &[RegistryNamespace],
-    expr: &str,
-) -> Registry {
-    load_registry_for_expr_from(&RegistryStores::directory(mock_dir), namespaces, expr)
-        .unwrap_or_else(|e| {
-            eprintln!("  registry: {e}");
-            Registry::default()
-        })
-}
-
-/// [`load_registry_for_expr`] over `stores`.
+/// The rows an expression reads, from `stores`: only the namespaces it names, and those they refer to.
 pub fn load_registry_for_expr_from(
     stores: &RegistryStores,
     namespaces: &[RegistryNamespace],
@@ -218,8 +198,10 @@ pub fn load_registry_for_expr_from(
     }
     let keys: BTreeSet<&str> = namespaces.iter().map(|n| n.key.as_str()).collect();
     let ref_fields = super::model::reference_fields(namespaces);
-    let mut wanted: BTreeSet<String> =
-        namespace_names_in(expr, &keys).into_iter().map(String::from).collect();
+    let mut wanted: BTreeSet<String> = namespace_names_in(expr, &keys)
+        .into_iter()
+        .map(String::from)
+        .collect();
     loop {
         let reg = load_registry_from(stores, namespaces, Some(&wanted))?;
         let mut reach: BTreeSet<String> = BTreeSet::new();
@@ -237,7 +219,9 @@ pub fn load_registry_for_expr_from(
                 // A `ref` field holds `namespace::slug` bare, with no `{{ }}` around it.
                 if text.contains("{{") || refs.is_some_and(|r| r.contains(field)) {
                     reach.extend(
-                        namespace_names_in(text, &keys).into_iter().map(String::from),
+                        namespace_names_in(text, &keys)
+                            .into_iter()
+                            .map(String::from),
                     );
                 }
             }

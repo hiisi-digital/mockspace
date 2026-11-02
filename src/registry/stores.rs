@@ -66,25 +66,6 @@ impl std::fmt::Display for RegistryStoreError {
 
 impl std::error::Error for RegistryStoreError {}
 
-/// A `[[registry.store]]` of `mockspace.toml`: one directory of the registry kept on a git ref.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-#[cfg_attr(test, derive(serde::Serialize))]
-#[serde(default)]
-pub struct RegistryStoreDecl {
-    /// The directory under `<mock>/registry/` whose files the ref holds.
-    pub dir:       String,
-    /// The ref namespace, `refs/mock/<namespace>`. Defaults to `registry/<dir>`.
-    pub namespace: Option<String>,
-    /// The remote the ref is fetched from and pushed to. Defaults to `origin`.
-    pub remote:    Option<String>,
-    /// `branch` (the default: `refs/heads/mock/<namespace>` on the remote, which a host that
-    /// takes no ref outside `refs/heads` accepts) or `ref` (`refs/mock/<namespace>` on both sides).
-    pub form:      Option<String>,
-}
-
-/// The keys of a `[[registry.store]]`, for the unknown-key check of the config.
-pub const STORE_KEYS: &[&str] = &["dir", "namespace", "remote", "form"];
-
 struct Mount {
     dir:   String,
     store: Box<dyn Store>,
@@ -114,16 +95,17 @@ impl RegistryStores {
     pub fn from_decls(
         mock_dir: &Path,
         repo_root: &Path,
-        decls: &[RegistryStoreDecl],
+        decls: &[RefDecl],
     ) -> Result<Self, RegistryStoreError> {
         let mut out = Self::directory(mock_dir);
         for d in decls {
-            let dir = d.dir.trim_matches('/');
+            let dir = d.dir.as_deref().unwrap_or("").trim_matches('/');
             if dir.is_empty() {
-                return Err(RegistryStoreError::Declared("`dir` is empty".into()));
+                return Err(RegistryStoreError::Declared(
+                    "`dir` is missing or empty".into(),
+                ));
             }
             let store = d
-                .on_ref()
                 .open(repo_root, &format!("registry/{dir}"))
                 .map_err(|why| RegistryStoreError::Declared(format!("`{dir}`: {why}")))?;
             out = out.mount(dir, Box::new(store))?;
@@ -307,12 +289,16 @@ impl crate::config::Config {
     }
 }
 
-/// Where a namespace is kept on a git ref: the part of a declaration that every store on a ref
-/// shares, whether it holds registry files or test history.
+/// Where a namespace is kept on a git ref: the one declaration of a store on a ref, read with the
+/// same strictness whether it holds registry files (`[[registry.store]]`) or test history
+/// (`[test.history]`), so a misspelt key refuses the config in both.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(serde::Serialize))]
 #[serde(default, deny_unknown_fields)]
 pub struct RefDecl {
+    /// The directory under `<mock>/registry/` whose files the ref holds. A `[[registry.store]]`
+    /// names one and a `[test.history]` has none, which the config refuses when it loads.
+    pub dir:       Option<String>,
     /// The ref namespace, `refs/mock/<namespace>`. Each user of it has its own default.
     pub namespace: Option<String>,
     /// The remote the ref is fetched from and pushed to. Defaults to `origin`.
@@ -338,13 +324,7 @@ impl RefDecl {
     }
 }
 
-impl RegistryStoreDecl {
-    /// The ref this declaration keeps the directory on.
-    pub fn on_ref(&self) -> RefDecl {
-        RefDecl {
-            namespace: self.namespace.clone(),
-            remote:    self.remote.clone(),
-            form:      self.form.clone(),
-        }
-    }
-}
+
+#[cfg(test)]
+#[path = "stores_tests.rs"]
+mod tests;

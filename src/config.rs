@@ -127,7 +127,7 @@ pub struct Config {
     pub registry_namespaces:    Vec<crate::registry::RegistryNamespace>,
     /// The `[[registry.store]]` declarations: directories of the registry kept on a git ref.
     /// Empty means the whole registry is the directory, as it is for every project today.
-    pub registry_stores:        Vec<crate::registry::RegistryStoreDecl>,
+    pub registry_stores:        Vec<crate::registry::RefDecl>,
     /// Whether to also emit a single document containing every deep dive.
     ///
     /// Off by default. Each deep dive already renders as a sibling of its
@@ -584,7 +584,7 @@ struct RawRegistry {
     namespace: Vec<crate::registry::RegistryNamespace>,
     /// Directories of the registry kept on a git ref instead of the tree.
     #[serde(rename = "store")]
-    store: Vec<crate::registry::RegistryStoreDecl>,
+    store: Vec<crate::registry::RefDecl>,
 }
 
 #[derive(Deserialize, Default)]

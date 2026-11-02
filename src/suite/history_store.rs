@@ -182,6 +182,26 @@ impl History {
     }
 }
 
+impl History {
+    /// Keeps a run in `store`, the way a run does: the guard of the writer is asked only for a
+    /// history kept on a ref (`[test.history]`), because a directory in the tree has the commit
+    /// guard and nothing else to ask.
+    pub fn keep(
+        &self,
+        cfg: &crate::config::Config,
+        store: &dyn Store,
+        scope: &Scope,
+        fp: &super::fingerprint::Fingerprints,
+    ) -> Result<Applied, HistoryError> {
+        self.save_to(
+            store,
+            scope,
+            cfg.test.history.is_some().then_some(&fp.full),
+            "test history",
+        )
+    }
+}
+
 /// The race handler: the merge of the history files.
 struct Race {
     /// The touched files as the write found them.
@@ -223,6 +243,9 @@ impl MergeHook for Race {
                     .map_err(|why| refuse(format!("{path}: {why}")))?;
                     next.put(path, merged.text)
                 },
+                // the winner removed a file this run read: the member is gone or ran with nothing, and
+                // putting our copy back would undo that, so it stands and the next run settles it
+                (Some(_), None) if base.is_some() => next,
                 (Some(o), _) => next.put(path, o),
             };
         }

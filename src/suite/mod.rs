@@ -293,15 +293,15 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
             }
         }
         if let Some(store) = &history_store
-            && let Err(e) = history.save_to(
+            && let Err(e) = history.keep(
+                cfg,
                 store.as_ref(),
                 &history::Scope {
                     flavour:   &flavour,
                     ran:       &run_members,
                     workspace: &graph.members,
                 },
-                cfg.test.history.is_some().then_some(&fp.full),
-                "test history",
+                fp,
             )
         {
             eprintln!("note: could not keep this run's history: {e}");

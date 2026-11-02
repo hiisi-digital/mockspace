@@ -1413,13 +1413,6 @@ name = "mockspace-rs-attrs"
 version = "0.1.0"
 
 [[package]]
-name = "mockspace-store"
-version = "0.1.0"
-dependencies = [
- "tempfile",
-]
-
-[[package]]
 name = "mockspace-template"
 version = "0.1.0"
 dependencies = [

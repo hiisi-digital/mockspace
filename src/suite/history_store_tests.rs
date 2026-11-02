@@ -380,3 +380,99 @@ fn a_green_the_winner_recorded_at_our_fingerprint_is_not_dropped_by_the_rebase()
     let after = History::load_from(&sa).unwrap();
     assert_eq!(after.flavour("").unwrap().green["m1"].full, "fp1");
 }
+
+fn fingerprints(pairs: &[(&str, &str)]) -> crate::suite::fingerprint::Fingerprints {
+    crate::suite::fingerprint::Fingerprints {
+        full: now(pairs),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_run_keeps_its_history_under_the_guard_when_the_history_is_declared() {
+    let remote = Remote::new();
+    let cfg = project(&remote, "a", true);
+    let (_, kept) = History::open(&cfg);
+    let kept = kept.expect("a declared history opens a store");
+    let m = members(&["m1"]);
+    let fp = fingerprints(&[("m1", "fp1")]);
+    hist("m1", "fp1", &["t"])
+        .keep(&cfg, kept.as_ref(), &scope(&m, &m), &fp)
+        .unwrap();
+    let tip = remote.tip(REF);
+    // the run failed on a tree whose fingerprint is still the one the green was made at
+    let err = hist("m1", "", &["t"])
+        .keep(&cfg, kept.as_ref(), &scope(&m, &m), &fp)
+        .unwrap_err();
+    assert!(
+        matches!(&err, HistoryError::Nulled(f) if f == &["m1"]),
+        "{err}"
+    );
+    assert_eq!(remote.tip(REF), tip, "the refused write never reached the ref");
+}
+
+#[test]
+fn a_run_keeps_its_history_without_the_guard_when_none_is_declared() {
+    let remote = Remote::new();
+    let cfg = project(&remote, "a", false);
+    let (_, kept) = History::open(&cfg);
+    let kept = kept.expect("the directory opens");
+    let m = members(&["m1"]);
+    let fp = fingerprints(&[("m1", "fp1")]);
+    hist("m1", "fp1", &["t"])
+        .keep(&cfg, kept.as_ref(), &scope(&m, &m), &fp)
+        .unwrap();
+    // the commit guard is the directory's, so the same removal lands here
+    hist("m1", "", &["t"])
+        .keep(&cfg, kept.as_ref(), &scope(&m, &m), &fp)
+        .unwrap();
+    let back = History::load_from(kept.as_ref()).unwrap();
+    assert!(back.flavour("").unwrap().green.is_empty());
+}
+
+#[test]
+#[should_panic(expected = "a test history has no directory")]
+fn a_history_declaration_naming_a_registry_directory_refuses_the_config_as_an_unknown_key_does() {
+    let remote = Remote::new();
+    let root = remote.clone_dir("a");
+    let text = format!("{}dir = \"ticket\"\n", config_text(true));
+    std::fs::write(root.join("mock/mockspace.toml"), text).unwrap();
+    let _ = Config::from_dir(&root.join("mock"));
+}
+
+#[test]
+fn a_file_the_winner_removed_is_not_put_back_by_the_merge() {
+    let remote = Remote::new();
+    let (a, b) = (project(&remote, "a", true), project(&remote, "b", true));
+    let (sa, sb) = (opened(&a), opened(&b));
+    let m = members(&["m1"]);
+    hist("m1", "fp1", &["first"])
+        .save_to(&sa, &scope(&m, &m), None, "seed")
+        .unwrap();
+    sb.refresh().unwrap();
+    // B has read the history as it is, and A then finds the workspace no longer has m1
+    let none: Vec<String> = Vec::new();
+    History::load_from(&sa)
+        .unwrap()
+        .save_to(&sa, &scope(&none, &none), None, "m1 is gone")
+        .unwrap();
+    assert!(remote.file(REF, "default/m1.json").is_none(), "control: A removed it");
+    // B records one more test of m1 on what it read, and loses the race to A
+    hist("m1", "fp1", &["first", "from_b"])
+        .save_to(&sb, &scope(&m, &m), None, "b")
+        .unwrap();
+    assert!(
+        remote.file(REF, "default/m1.json").is_none(),
+        "the winner's removal stands: the member is gone, and the next run that covers it writes it afresh"
+    );
+}
+
+#[test]
+#[should_panic(expected = "unknown field `fom`")]
+fn a_misspelt_key_in_a_history_declaration_refuses_the_config() {
+    let remote = Remote::new();
+    let root = remote.clone_dir("a");
+    let text = format!("{}fom = \"ref\"\n", config_text(true));
+    std::fs::write(root.join("mock/mockspace.toml"), text).unwrap();
+    let _ = Config::from_dir(&root.join("mock"));
+}
