@@ -67,7 +67,9 @@ impl RefStore {
         let spec = self.pair.fetch_refspec();
         let depth = self.depth.map(|d| d.to_string());
         let mut args = vec!["fetch", "-q"];
-        if let Some(d) = &depth {
+        // Depth only for the first fetch. A later depth-limited fetch makes the new tip a
+        // shallow root, and the old tip is then no longer reachable from it.
+        if let (Some(d), None) = (&depth, &old) {
             args.extend(["--depth", d]);
         }
         args.extend([self.remote.as_str(), spec.as_str()]);
@@ -203,13 +205,14 @@ impl RefStore {
                         .git
                         .must(&["hash-object", "-w", "--stdin"], &[], Some(bytes))?
                         .text();
-                    lines.push_str(&format!("100644 {blob}\t{path}\n"));
+                    lines.push_str(&format!("100644 {blob}\t{path}\0"));
                 },
-                None => lines.push_str(&format!("0 {ZERO_OID}\t{path}\n")),
+                None => lines.push_str(&format!("0 {ZERO_OID}\t{path}\0")),
             }
         }
+        // NUL-terminated, so a path git would read as C-quoted (one that begins with `"`) is a path
         self.git.must(
-            &["update-index", "--index-info"],
+            &["update-index", "-z", "--index-info"],
             &env,
             Some(lines.as_bytes()),
         )?;

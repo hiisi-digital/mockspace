@@ -11,7 +11,7 @@ Each change was made to `src/ref_store.rs`, the tests were run, and the source w
 
 A remote that lies about an accepted push is covered by a git shim in `ref_store.rs` (`a_push_the_remote_took_but_reported_failed_is_not_applied_twice`); the `Verify` error itself (the remote does not hold a commit it accepted) has no test, because a local bare repository cannot be made to drop an accepted push.
 
-## Added after the first review pass
+## Added after the probe and the first build
 
 | Change | Red tests |
 | --- | --- |
@@ -22,7 +22,7 @@ A remote that lies about an accepted push is covered by a git shim in `ref_store
 
 The reported-failed push and the dropped connection use a stand-in for the `git` command (`RefStore::with_git_program`), a shell script that runs the real git.
 
-## Added after the second review pass
+## Races, rewrites and unknown outcomes
 
 | Change | Red tests |
 | --- | --- |
@@ -32,3 +32,11 @@ The reported-failed push and the dropped connection use a stand-in for the `git`
 | A push that dropped on every attempt is reported as a lost race | `a_push_that_keeps_dropping_is_reported_as_that_and_not_as_a_lost_race` |
 | `.GIT`, `git~1` and the like are accepted as store paths | `path::tests::paths_that_leave_or_confuse_are_refused`, and the directory backend of the conformance suite |
 | An accepted push whose check cannot reach the remote is an error | `an_accepted_push_whose_check_could_not_reach_the_remote_is_landed_and_unconfirmed` |
+
+## Quoted paths, shallow refresh and unknown outcomes
+
+| Change | Red tests |
+| --- | --- |
+| Index records are LF-separated, so a path beginning with a quote is read as C-quoted and removes another file | `ref_backend_in_ref_form`, `ref_backend_in_branch_form` (the quoted-path case in `conformance.rs`) |
+| Every fetch is depth-limited, so the new tip is a shallow root and the old tip no longer descends | `a_shallow_store_keeps_refreshing_after_another_writer_moves_the_remote` |
+| A push that landed with every later fetch dropped returns a plain fetch error, read as never pushed | `a_push_that_landed_with_every_later_fetch_dropped_is_an_unknown_outcome_not_a_plain_failure` |

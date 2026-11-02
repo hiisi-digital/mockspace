@@ -53,6 +53,14 @@ pub enum StoreError {
         commit:     String,
         detail:     String,
     },
+    /// A push was sent and the remote could not be asked afterwards whether it landed.
+    /// The edit may be on the remote already, so a caller whose edit is not idempotent
+    /// must not apply it again before a refresh shows whether one of `commits` is held.
+    OutcomeUnknown {
+        remote_ref: String,
+        commits:    Vec<String>,
+        detail:     String,
+    },
     /// Writers kept winning the race until the attempts ran out.
     RaceLost {
         attempts: u32,
@@ -133,6 +141,17 @@ impl fmt::Display for StoreError {
                 write!(
                     f,
                     "pushed {commit} to `{remote_ref}` but could not confirm the remote holds it: {detail}"
+                )
+            },
+            Self::OutcomeUnknown {
+                remote_ref,
+                commits,
+                detail,
+            } => {
+                write!(
+                    f,
+                    "pushed {} to `{remote_ref}` and could not learn whether it landed: {detail}",
+                    commits.join(", ")
                 )
             },
             Self::RaceLost {

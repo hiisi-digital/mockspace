@@ -68,7 +68,7 @@ impl Edit {
 impl Edit {
     /// The edit against the state it is to be written on: a file may not be put where a
     /// directory of files stands, nor below a path that is a file, unless the same edit
-    /// removes what is in the way. Both backends refuse the same edits.
+    /// removes what is in the way. Both backends refuse the same edits, a path beginning with a double quote included.
     pub fn check_against(&self, base: &dyn crate::reader::Reader) -> Result<(), StoreError> {
         let existing: std::collections::BTreeSet<String> = base.list("")?.into_iter().collect();
         let removed = |p: &str| matches!(self.files.get(p), Some(None));

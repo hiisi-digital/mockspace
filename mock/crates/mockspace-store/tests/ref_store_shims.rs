@@ -129,7 +129,7 @@ fn a_shallow_writer_overtaken_after_its_push_still_knows_it_landed() {
     assert_eq!(git(&w.bare, &["show", &format!("{MOCK_REF}~1:late")]), "y");
 }
 
-// --- cases the second review found ---------------------------------------------------------------
+// --- landed pushes whose follow-up fetch also dropped ---
 
 #[test]
 fn a_push_that_landed_whose_follow_up_fetch_also_dropped_is_still_not_applied_twice() {
@@ -243,4 +243,76 @@ fn a_store_reads_what_it_saw_even_when_another_store_on_the_clone_moves_the_loca
         .apply(&Edit::new().put("counter", "2\n"), "bump", &Bump)
         .unwrap();
     assert_eq!(w.file(MOCK_REF, "counter").as_deref(), Some("3"));
+}
+
+// --- shallow refresh and unknown outcomes ---
+
+#[test]
+fn a_shallow_store_keeps_refreshing_after_another_writer_moves_the_remote() {
+    let w = World::new();
+    let long = store(&w, "long");
+    for i in 0 .. 3 {
+        long.apply(&Edit::new().put(format!("f{i}"), "x"), "c", &Reapply)
+            .unwrap();
+    }
+    let shallow = RefStore::new(
+        w.clone_dir("shallow"),
+        w.remote(),
+        RefPair::ref_form(NS).unwrap(),
+    )
+    .with_retry(RetryPolicy::immediate(2))
+    .with_depth(1);
+    shallow.refresh().unwrap();
+    long.apply(&Edit::new().put("more", "y"), "more", &Reapply)
+        .unwrap();
+    shallow
+        .refresh()
+        .expect("a remote that only moved forward is not a rewrite");
+    assert_eq!(shallow.read("more").unwrap().as_deref(), Some(&b"y"[..]));
+    long.apply(&Edit::new().put("again", "z"), "again", &Reapply)
+        .unwrap();
+    let applied = shallow
+        .apply(&Edit::new().put("mine", "m"), "mine", &Reapply)
+        .unwrap();
+    assert!(applied.changed);
+    assert_eq!(w.commits(MOCK_REF), 6);
+}
+
+#[test]
+fn a_push_that_landed_with_every_later_fetch_dropped_is_an_unknown_outcome_not_a_plain_failure() {
+    let w = World::new();
+    store(&w, "a")
+        .apply(&Edit::new().put("counter", "1\n"), "one", &Reapply)
+        .unwrap();
+    let pushed = w.dir.path().join("pushed");
+    let shim = git_shim(
+        &w,
+        &format!(
+            "    git \"$@\"; touch '{}'; echo 'fatal: the remote end hung up unexpectedly' >&2; exit 128",
+            pushed.display()
+        ),
+        &format!(
+            "    if [ -e '{}' ]; then echo 'fatal: the remote end hung up unexpectedly' >&2; exit 128; fi",
+            pushed.display()
+        ),
+    );
+    let b = RefStore::new(w.clone_dir("b"), w.remote(), RefPair::ref_form(NS).unwrap())
+        .with_retry(RetryPolicy::immediate(2))
+        .with_git_program(&shim);
+    b.refresh().unwrap();
+    let err = b
+        .apply(&Edit::new().put("counter", "2\n"), "bump", &Bump)
+        .unwrap_err();
+    match err {
+        StoreError::OutcomeUnknown {
+            commits,
+            ..
+        } => assert!(!commits.is_empty()),
+        other => panic!("{other}"),
+    }
+    assert_eq!(
+        w.file(MOCK_REF, "counter").as_deref(),
+        Some("2"),
+        "it did land"
+    );
 }

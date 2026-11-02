@@ -14,7 +14,7 @@ pub struct RefPair {
 }
 
 /// Which form a namespace takes on the remote. The branch form is the default: measured
-/// from a cloud container on 2 November 2026 (by console-coord, not by this crate's probe),
+/// from a cloud container on 2 November 2026 (not by this crate's probe; the ticket `the_cloud_git_proxy_refuses_pushes_to_refs_outside_refs` of kaski holds the record),
 /// the proxy accepted a push of `refs/heads/mock/probe` and hung up on `refs/mock/probe` and
 /// `refs/notes/mock-probe`. The ref form is for a host that takes it, a self-hosted one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

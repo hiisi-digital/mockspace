@@ -248,6 +248,23 @@ fn suite(store: &dyn Store, first_refresh: Freshness) {
         )
         .unwrap_err();
     assert!(matches!(err, StoreError::InvalidPath { .. }), "{err}");
+
+    // a path that begins with a double quote is that path, and removing it removes only it
+    store
+        .apply(
+            &Edit::new().put("keep.txt", "k").put("\"q\"", "quoted"),
+            "quotes",
+            &Reapply,
+        )
+        .unwrap();
+    store
+        .apply(&Edit::new().remove("\"keep.txt\""), "rm", &Reapply)
+        .unwrap();
+    assert_eq!(store.read("keep.txt").unwrap().as_deref(), Some(&b"k"[..]));
+    assert_eq!(
+        store.read("\"q\"").unwrap().as_deref(),
+        Some(&b"quoted"[..])
+    );
 }
 
 #[test]

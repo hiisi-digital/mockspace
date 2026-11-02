@@ -189,7 +189,17 @@ impl Store for RefStore {
                         e @ StoreError::Fetch {
                             ..
                         },
-                    ) if is_last => return Err(e),
+                    ) if is_last && unconfirmed.is_empty() => return Err(e),
+                    Err(StoreError::Fetch {
+                        detail,
+                        ..
+                    }) if is_last => {
+                        return Err(StoreError::OutcomeUnknown {
+                            remote_ref: self.pair.remote().to_owned(),
+                            commits: unconfirmed,
+                            detail,
+                        });
+                    },
                     Err(StoreError::Fetch {
                         ..
                     }) => {
@@ -259,11 +269,17 @@ impl Store for RefStore {
                         });
                     }
                 },
-                Err(
-                    e @ StoreError::Fetch {
-                        ..
-                    },
-                ) if is_last => return Err(e),
+                Err(StoreError::Fetch {
+                    detail,
+                    ..
+                }) if is_last => {
+                    unconfirmed.push(commit);
+                    return Err(StoreError::OutcomeUnknown {
+                        remote_ref: self.pair.remote().to_owned(),
+                        commits: unconfirmed,
+                        detail,
+                    });
+                },
                 Err(StoreError::Fetch {
                     ..
                 }) => unconfirmed.push(commit),

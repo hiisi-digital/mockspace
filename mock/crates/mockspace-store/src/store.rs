@@ -47,7 +47,9 @@ pub trait Store: Reader {
     /// Write `edit` as one step with `message`. When another writer
     /// moves the tip first, `hook` says what the edit becomes on the new tip. The base
     /// is the tip the store held when the call began, which is what the caller's reads saw,
-    /// so a write after a stale read goes through the hook too.
+    /// so, on a backend that keeps history, a write after a stale read goes through the hook
+    /// too. The directory backend keeps no history and does not call the hook: a lost update
+    /// on it is possible, and a caller that needs the guarantee uses the ref backend.
     fn apply(
         &self,
         edit: &Edit,
