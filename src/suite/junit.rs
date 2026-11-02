@@ -94,6 +94,70 @@ fn unescape(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
+/// A work count a test reported on its stderr: what it did, so a timing can be
+/// read per unit of work rather than as plain seconds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Work {
+    pub binary: String,
+    pub name:   String,
+    /// What was counted, such as `ticks` or `beings`.
+    pub unit:   String,
+    pub n:      u64,
+}
+
+/// The work counts in a report, one per test that printed a well-formed
+/// `<marker> <unit> <n>` line.
+///
+/// The marker is the caller's, so the scanner names no project. A line whose
+/// count is not a number is ignored, and the test's case is still returned by
+/// [`parse`]: a bad work line costs the count, never the timing. A test that
+/// prints the line twice reports its last one.
+pub fn work_lines(xml: &str, marker: &str) -> Vec<Work> {
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some(at) = rest.find("<testcase") {
+        rest = &rest[at + "<testcase".len() ..];
+        let Some(tag_end) = rest.find('>') else {
+            break;
+        };
+        let tag = &rest[.. tag_end];
+        let body = if tag.ends_with('/') {
+            ""
+        } else {
+            &rest[tag_end .. rest.find("</testcase>").unwrap_or(rest.len())]
+        };
+        // A flaky pass nests the failed attempts' stderr inside `<flakyFailure>` ahead of
+        // the testcase's own, so only what follows the last failed attempt's element is
+        // the passing attempt's. A test that fails every retry yields no count here.
+        let own = body
+            .rfind("</flakyFailure>")
+            .into_iter()
+            .chain(body.rfind("</rerunFailure>"))
+            .max()
+            .map_or(body, |at| &body[at..]);
+        let found = own.rfind("<system-err>").map(|s| {
+            let err = &own[s + "<system-err>".len() ..];
+            unescape(&err[.. err.find("</system-err>").unwrap_or(err.len())])
+        });
+        let last = found.as_deref().and_then(|err| {
+            // The last line carrying the marker stands; if it is malformed the
+            // test has no count, rather than an older line's.
+            let line = err.lines().rev().find(|l| l.split_whitespace().next() == Some(marker))?;
+            let mut w = line.split_whitespace().skip(1);
+            let unit = w.next()?.to_string();
+            let n = w.next()?.parse().ok()?;
+            w.next().is_none().then_some((unit, n))
+        });
+        if let (Some((unit, n)), Some(name), Some(binary)) =
+            (last, attr(tag, "name"), attr(tag, "classname"))
+        {
+            out.push(Work { binary, name, unit, n });
+        }
+        rest = &rest[tag_end ..];
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,5 +217,90 @@ mod tests {
     fn nothing_in_nothing_out() {
         assert!(parse("").is_empty());
         assert!(parse("<testsuites></testsuites>").is_empty());
+    }
+
+    const WORKED: &str = r#"<testsuites>
+    <testsuite name="sim" tests="4">
+        <testcase name="walks" classname="sim" time="3.250">
+            <system-out>PROJ-WORK ignored_in_out 9</system-out>
+            <system-err>noise
+PROJ-WORK ticks 1200
+</system-err>
+        </testcase>
+        <testcase name="bad_count" classname="sim" time="0.500">
+            <system-err>PROJ-WORK ticks abc</system-err>
+        </testcase>
+        <testcase name="plain" classname="sim" time="0.100"/>
+        <testcase name="twice" classname="sim" time="1.000">
+            <system-err>PROJ-WORK beings 5
+PROJ-WORK beings 7 &amp; more</system-err>
+        </testcase>
+    </testsuite>
+</testsuites>"#;
+
+    #[test]
+    fn a_work_line_on_stderr_gives_the_count_for_its_test() {
+        let w = work_lines(WORKED, "PROJ-WORK");
+        assert_eq!(w, vec![Work {
+            binary: "sim".into(),
+            name:   "walks".into(),
+            unit:   "ticks".into(),
+            n:      1200,
+        }]);
+    }
+
+    /// `PROJ-WORK ticks abc` yields no count, and the case is still read, so
+    /// the sample is recorded with plain seconds.
+    #[test]
+    fn a_work_line_that_is_not_a_number_loses_the_count_and_never_the_timing() {
+        assert!(work_lines(WORKED, "PROJ-WORK").iter().all(|w| w.name != "bad_count"));
+        let cases = parse(WORKED);
+        let bad = cases.iter().find(|c| c.name == "bad_count").unwrap();
+        assert_eq!(bad.secs, 0.5);
+        assert!(cases.iter().any(|c| c.name == "plain" && c.secs == 0.1));
+    }
+
+    /// Stdout is not the channel, a line with extra words is not the shape,
+    /// and another marker is another project's.
+    #[test]
+    fn only_the_exact_shape_on_stderr_under_the_callers_marker_counts() {
+        let names = |m: &str| -> Vec<String> {
+            work_lines(WORKED, m).into_iter().map(|w| w.name).collect()
+        };
+        assert_eq!(names("OTHER-WORK"), Vec::<String>::new());
+        assert!(!names("PROJ-WORK").contains(&"twice".to_string()));
+    }
+
+    /// nextest nests the earlier attempts' stderr inside `<flakyFailure>` ahead of
+    /// the testcase's own, and the count belongs to the last attempt.
+    #[test]
+    fn a_flaky_tests_count_is_the_final_attempts_not_the_first() {
+        let xml = r#"<testsuites><testsuite name="s">
+        <testcase name="flaky" classname="s" time="2.000">
+            <flakyFailure message="x" type="test failure">
+                <system-err>PROJ-WORK ticks 1</system-err>
+            </flakyFailure>
+            <system-err>PROJ-WORK ticks 500</system-err>
+        </testcase>
+        </testsuite></testsuites>"#;
+        let w = work_lines(xml, "PROJ-WORK");
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].n, 500);
+    }
+
+    /// The marker only on stdout, and a flaky pass whose final attempt printed
+    /// nothing, give no count: neither is the testcase's own stderr.
+    #[test]
+    fn stdout_alone_and_a_failed_attempts_stderr_are_not_the_count() {
+        let xml = r#"<testsuites><testsuite name="s">
+        <testcase name="out_only" classname="s" time="1.000">
+            <system-out>PROJ-WORK ticks 9</system-out>
+        </testcase>
+        <testcase name="silent_final" classname="s" time="1.000">
+            <flakyFailure message="x" type="t"><system-err>PROJ-WORK ticks 1</system-err></flakyFailure>
+        </testcase>
+        </testsuite></testsuites>"#;
+        assert_eq!(work_lines(xml, "PROJ-WORK"), vec![]);
+        assert_eq!(parse(xml).len(), 2);
     }
 }

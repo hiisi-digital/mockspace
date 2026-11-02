@@ -34,6 +34,9 @@ pub struct TestSettings {
     pub lean:             bool,
     /// The debug info a crate gets when it needs symbols.
     pub debug:            DebugLevel,
+    /// The first word of the stderr line a test prints to report the work it did
+    /// (`<marker> <unit> <n>`), so its timing can be read per unit of work.
+    pub work_marker:      String,
 }
 
 /// The debug info cargo can be asked for, less none: what a crate that needs
@@ -137,6 +140,9 @@ pub const DEFAULT_HEAVY_THREADS: u32 = 1;
 /// alone, so a test is killed for hanging rather than for being slow.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 900;
 
+/// The first word of a test's work line unless `[test] work_marker` names another.
+pub const DEFAULT_WORK_MARKER: &str = "MOCK-WORK";
+
 impl TestSettings {
     /// Whether a commit runs the tests: at `warn` or `error`, never below.
     pub fn commit_runs(&self) -> bool {
@@ -159,6 +165,7 @@ impl Default for TestSettings {
             opt_level:        BTreeMap::new(),
             lean:             true,
             debug:            DebugLevel::LineTablesOnly,
+            work_marker:      DEFAULT_WORK_MARKER.to_string(),
         }
     }
 }
@@ -175,6 +182,7 @@ pub(crate) struct RawTest {
     opt_level:        BTreeMap<String, RawOpt>,
     lean:             Option<bool>,
     debug:            Option<RawDebug>,
+    work_marker:      Option<String>,
 }
 
 /// A debug level as written: cargo's own spelling, a number, a word or a bool.
@@ -260,6 +268,15 @@ impl RawTest {
             opt_level,
             lean: self.lean.unwrap_or(d.lean),
             debug,
+            work_marker: match self.work_marker {
+                None => d.work_marker,
+                Some(m) if !m.is_empty() && !m.contains(char::is_whitespace) => m,
+                Some(m) => {
+                    return Err(format!(
+                        "[test] work_marker is one word without whitespace; got {m:?}"
+                    ));
+                },
+            },
         })
     }
 }
@@ -417,6 +434,16 @@ mod tests {
         for bad in ["0", "false", "\"none\"", "\"line\"", "3", "\"\""] {
             let e = parse(&format!("debug = {bad}\n")).unwrap_err();
             assert!(e.contains("[test] debug"), "{bad}: {e}");
+        }
+    }
+
+    #[test]
+    fn the_work_marker_is_one_word_and_defaults_to_the_upstream_one() {
+        assert_eq!(parse("").unwrap().work_marker, "MOCK-WORK");
+        assert_eq!(parse("work_marker = \"PROJ-WORK\"\n").unwrap().work_marker, "PROJ-WORK");
+        for bad in ["\"\"", "\"TWO WORDS\""] {
+            let e = parse(&format!("work_marker = {bad}\n")).unwrap_err();
+            assert!(e.contains("work_marker"), "{bad}: {e}");
         }
     }
 }

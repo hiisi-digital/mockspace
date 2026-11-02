@@ -43,6 +43,7 @@ pub mod nextest;
 mod report;
 pub mod select;
 pub mod settings;
+pub mod timings;
 pub mod units;
 
 use std::path::{Path, PathBuf};
@@ -208,6 +209,9 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
 
     let packages: Vec<String> = plan.run.iter().map(|(n, _)| n.clone()).collect();
     let filter = nextest::filterset(inv.filter.as_deref(), &plan.skip, &plan.reuse, &plan.rerun);
+    let load_before = mockspace_bench_harness::env::load_1m();
+    let commit = mockspace_bench_harness::env::collect_git_commit_marked();
+    let threads_env = std::env::var("NEXTEST_TEST_THREADS").ok();
     let status = nextest::command(&nextest::RunSpec {
         mock_dir:     &cfg.mock_dir,
         tool_config:  &tool_config,
@@ -220,9 +224,24 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     .status();
     let code = status.as_ref().ok().and_then(|s| s.code());
 
-    let cases = std::fs::read_to_string(&junit)
-        .map(|x| junit::parse(&x))
-        .unwrap_or_default();
+    let report = std::fs::read_to_string(&junit).unwrap_or_default();
+    let cases = junit::parse(&report);
+    // Every test of the run is timed and spooled, whatever the plan did with it.
+    timings::record_run(
+        &timings::Run {
+            state:       &state,
+            flavour:     &flavour,
+            profile:     &profile,
+            passed:      &inv.passed,
+            report:      &report,
+            load_before,
+            threads_env: threads_env.as_deref(),
+            commit:      &commit,
+            fingerprint: fp.as_ref(),
+        },
+        &cases,
+        &cfg.test.work_marker,
+    );
     // What failed is what the next run builds with symbols, recorded whether or
     // not a fingerprint could be taken.
     failed.settle(

@@ -244,6 +244,15 @@ fn the_report_is_a_file_of_ours_that_the_config_names() {
     );
 }
 
+/// Without this nextest writes `<system-err>` for failures only, so a passing
+/// test's work line never reaches the report.
+#[test]
+fn a_passing_tests_output_is_kept_so_its_work_line_reaches_the_report() {
+    let t = tool_config(&TestSettings::default(), &[], Path::new("junit.xml"));
+    let junit = t.split("[profile.default.junit]").nth(1).expect("a junit table");
+    assert!(junit.lines().any(|l| l == "store-success-output = true"), "{t}");
+}
+
 /// Whatever the path holds, the config stays TOML that says that path.
 #[test]
 fn a_path_with_quotes_and_backslashes_is_escaped_into_the_config() {

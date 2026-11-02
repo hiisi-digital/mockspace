@@ -56,7 +56,7 @@ pub fn tool_config(s: &TestSettings, heavy: &[(String, String)], junit: &Path) -
     // Quoted and escaped as TOML, whatever characters the path holds.
     let _ = writeln!(
         t,
-        "[profile.default.junit]\npath = {}",
+        "[profile.default.junit]\npath = {}\n# A passing test's stderr carries its work line, and nextest keeps it only on request.\nstore-success-output = true",
         toml_edit::Value::from(junit.to_string_lossy().as_ref())
     );
     for filter in heavy_filters(heavy) {
