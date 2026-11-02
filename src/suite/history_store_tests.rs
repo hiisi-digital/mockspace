@@ -466,3 +466,13 @@ fn a_file_the_winner_removed_is_not_put_back_by_the_merge() {
         "the winner's removal stands: the member is gone, and the next run that covers it writes it afresh"
     );
 }
+
+#[test]
+#[should_panic(expected = "unknown field `fom`")]
+fn a_misspelt_key_in_a_history_declaration_refuses_the_config() {
+    let remote = Remote::new();
+    let root = remote.clone_dir("a");
+    let text = format!("{}fom = \"ref\"\n", config_text(true));
+    std::fs::write(root.join("mock/mockspace.toml"), text).unwrap();
+    let _ = Config::from_dir(&root.join("mock"));
+}

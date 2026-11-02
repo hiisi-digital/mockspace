@@ -16,8 +16,8 @@
 //! and does not stop it. The dangling-reference scan
 //! (`refs_unresolved`) reads the documents a generation run wrote, which the writer has no way to
 //! render, so a row a document names can be removed by a write. A generation run (`cargo mock`)
-//! reports it; the commit gate's lint-only path does not run the scan, and a write to a ref makes
-//! no commit.
+//! reports it; the pre-commit and pre-push hooks run lint-only and never reach the scan, and a
+//! write to a ref makes no commit. FIXME(9bf0671ca0e0): nothing checks it before a generation run.
 //! (`a_row_a_document_names_can_be_removed_by_a_write_the_writer_cannot_see_the_documents`)
 //!
 //! When another writer moves a ref first, the merge driver of registry files

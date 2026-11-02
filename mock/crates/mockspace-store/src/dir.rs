@@ -139,13 +139,16 @@ impl Store for DirStore {
             let file = self.file(path);
             // a symlinked file is written through to what it points at, as `fs::write` did, and
             // the link stays; removal takes the link itself
+            let link = file.clone();
             let file = if bytes.is_some() { through_links(&file) } else { file };
             match bytes {
                 Some(bytes) => {
                     if self.read(path)?.as_deref() == Some(bytes) {
                         continue;
                     }
-                    if let Some(parent) = file.parent() {
+                    // directories are made for the store's own path, never for where a link leads, which
+                    // `fs::write` did not make either
+                    if let Some(parent) = link.parent() {
                         fs::create_dir_all(parent)
                             .map_err(io_err(format!("creating `{}`", parent.display())))?;
                     }
@@ -189,11 +192,12 @@ impl Store for DirStore {
 }
 
 /// `file` with each symlink it is, one after another, replaced by what it points at (a link that
-/// points at nothing yet by where it points, which a write then creates). A path that is not a
-/// link, or a chain longer than any filesystem follows, comes back as it was.
+/// points at nothing yet by where it points, which a write then creates if its directory is there). A path that is not a
+/// link, or a chain longer than any filesystem follows, comes back as it was, and the write that
+/// follows it then fails as the read before it does.
 fn through_links(file: &Path) -> PathBuf {
     let mut at = file.to_path_buf();
-    for _ in 0..40 {
+    for _ in 0 .. 40 {
         match fs::read_link(&at) {
             Ok(to) => {
                 at = match at.parent() {

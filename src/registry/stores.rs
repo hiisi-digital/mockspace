@@ -297,7 +297,7 @@ impl crate::config::Config {
 #[serde(default, deny_unknown_fields)]
 pub struct RefDecl {
     /// The directory under `<mock>/registry/` whose files the ref holds. A `[[registry.store]]`
-    /// names one and a `[test.history]` has none, which is refused where the history opens.
+    /// names one and a `[test.history]` has none, which the config refuses when it loads.
     pub dir:       Option<String>,
     /// The ref namespace, `refs/mock/<namespace>`. Each user of it has its own default.
     pub namespace: Option<String>,

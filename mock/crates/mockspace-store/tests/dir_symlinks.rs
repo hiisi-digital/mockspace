@@ -102,17 +102,73 @@ fn a_write_through_a_symlink_with_a_relative_target_lands_beside_the_link() {
     let d = tempfile::tempdir().unwrap();
     let root = d.path().join("root");
     std::fs::create_dir_all(root.join("sub")).unwrap();
-    std::fs::write(root.join("real.toml"), "old").unwrap();
-    // `sub/f.toml` points at `../real.toml`, resolved from the directory of the link
-    symlink("../real.toml", root.join("sub/f.toml")).unwrap();
+    std::fs::write(root.join("target-of-the-relative-link.toml"), "old").unwrap();
+    // `sub/f.toml` points at `../target-of-the-relative-link.toml`, resolved from the link's directory
+    symlink(
+        "../target-of-the-relative-link.toml",
+        root.join("sub/f.toml"),
+    )
+    .unwrap();
     let s = DirStore::new(&root);
     s.apply(&Edit::new().put("sub/f.toml", "new"), "m", &Reapply)
         .unwrap();
-    assert_eq!(std::fs::read_to_string(root.join("real.toml")).unwrap(), "new");
+    assert_eq!(
+        std::fs::read_to_string(root.join("target-of-the-relative-link.toml")).unwrap(),
+        "new"
+    );
+    // resolved from the working directory instead, the write would land outside the tempdir
+    assert!(!std::path::Path::new("../target-of-the-relative-link.toml").exists());
     assert!(
         std::fs::symlink_metadata(root.join("sub/f.toml"))
             .unwrap()
             .file_type()
             .is_symlink()
+    );
+}
+
+#[test]
+fn a_write_through_a_cycle_of_links_fails_and_leaves_the_link() {
+    // `fs::write` followed links until the system gave up and then failed (ELOOP)
+    let d = tempfile::tempdir().unwrap();
+    let root = d.path().join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    symlink("b.toml", root.join("a.toml")).unwrap();
+    symlink("a.toml", root.join("b.toml")).unwrap();
+    let s = DirStore::new(&root);
+    let err = s
+        .apply(&Edit::new().put("a.toml", "x"), "m", &Reapply)
+        .unwrap_err();
+    assert!(
+        matches!(err, mockspace_store::StoreError::Io { .. }),
+        "{err}"
+    );
+    assert!(
+        std::fs::symlink_metadata(root.join("a.toml"))
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the link was replaced by a file"
+    );
+}
+
+#[test]
+fn a_write_to_a_link_whose_target_directory_is_missing_fails_and_creates_nothing() {
+    // `fs::write` did not create directories, so a link into a directory that is not there fails
+    let d = tempfile::tempdir().unwrap();
+    let root = d.path().join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    let outside = d.path().join("outside");
+    symlink(outside.join("deeper/f.toml"), root.join("f.toml")).unwrap();
+    let s = DirStore::new(&root);
+    let err = s
+        .apply(&Edit::new().put("f.toml", "x"), "m", &Reapply)
+        .unwrap_err();
+    assert!(
+        matches!(err, mockspace_store::StoreError::Io { .. }),
+        "{err}"
+    );
+    assert!(
+        !outside.exists(),
+        "a directory was created outside the store"
     );
 }
