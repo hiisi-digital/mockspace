@@ -11,11 +11,11 @@ members = [
     "benches",
     "benches/variants/multiply-xor",
     "benches/variants/bitwise-rotate",
+    # Held by this workspace although it sits below `mock/`, which is a workspace of its own: the
+    # engine depends on it by path, and a path dependency below the root is a member of the root, so
+    # the crate cannot also be a member of `mock/`, which excludes it.
+    "mock/crates/mockspace-store",
 ]
-# `mock/` is a workspace of its own (the v2 crates), and the engine takes `mockspace-store` from it by
-# path. A path dependency below the root is a member of the root workspace unless excluded, which a
-# git checkout refuses as "a member of the wrong workspace".
-exclude = ["mock"]
 
 [package]
 name = "mockspace"
