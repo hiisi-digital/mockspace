@@ -82,91 +82,94 @@ fn the_commit_branches_pass_these_arguments() {
     }
 }
 
+/// What a push of `files` on top of a base commit hands the launcher, one row for each
+/// branch of the pre-push hook: the label, the files, the arguments.
+pub(super) const PUSH_TABLE: &[(&str, &[(&str, &str)], &str)] = &[
+    (
+        "one crate",
+        &[(CONSOLE_SRC, "fn x() {}\n")],
+        "mock --lint-only --strict --scope console-core",
+    ),
+    (
+        "no crate",
+        &[("README.md", "x\n")],
+        "mock --lint-only --strict",
+    ),
+    (
+        "registry row beside source: bounded to the crate",
+        &[(CONSOLE_SRC, "fn x() {}\n"), ("mock/registry/tenets.toml", "x = 1\n")],
+        "mock --lint-only --strict --scope console-core",
+    ),
+    (
+        "registry row alone: the repo lints and no crate's, and the claim the range changes no dependency input",
+        &[("mock/registry/tenets.toml", "x = 1\n")],
+        "mock --lint-only --strict --scope infra --deps-unchanged",
+    ),
+    (
+        "registry rows alone, a ticket and its page under docs",
+        &[("mock/registry/ticket/items/a.toml", "x = 1\n"), ("docs/TICKET-MOVE.md", "x\n")],
+        "mock --lint-only --strict --scope infra --deps-unchanged",
+    ),
+    (
+        "registry row beside a file outside the mock directory that cargo-deny does not read: the claim stays",
+        &[("mock/registry/ticket/items/a.toml", "id = \"a\"\n"), ("docs/notes.md", "x\n")],
+        "mock --lint-only --strict --scope infra --deps-unchanged",
+    ),
+    (
+        "registry row beside a note: the full run a push of anything else has",
+        &[("mock/registry/tenets.toml", "x = 1\n"), ("mock/notes.md", "x\n")],
+        "mock --lint-only --strict",
+    ),
+    // A dependency input outside the mock directory, which the diff the hook takes of the mock
+    // directory does not see: each keeps the dependency gate with no claim made, and the full
+    // scope, which `mock/benches/support/Cargo.lock` does not discriminate since it sits under
+    // the mock directory and is caught as a file that is not a registry row either way.
+    (
+        "registry row beside the root manifest",
+        &[("mock/registry/ticket/items/a.toml", "x = 1\n"), ("Cargo.toml", "x = 1\n")],
+        "mock --lint-only --strict",
+    ),
+    (
+        "registry row beside the root lockfile",
+        &[("mock/registry/ticket/items/a.toml", "x = 1\n"), ("Cargo.lock", "x = 1\n")],
+        "mock --lint-only --strict",
+    ),
+    (
+        "registry row beside the deny config",
+        &[("mock/registry/ticket/items/a.toml", "x = 1\n"), ("deny.toml", "x = 1\n")],
+        "mock --lint-only --strict",
+    ),
+    (
+        "registry row beside a nested manifest",
+        &[
+            ("mock/registry/ticket/items/a.toml", "x = 1\n"),
+            ("tools/probe/Cargo.toml", "x = 1\n"),
+        ],
+        "mock --lint-only --strict",
+    ),
+    (
+        "registry row beside cargo's config, where [source] and [patch] sit",
+        &[
+            ("mock/registry/ticket/items/a.toml", "x = 1\n"),
+            (".cargo/config.toml", "x = 1\n"),
+        ],
+        "mock --lint-only --strict",
+    ),
+    (
+        "project lint alone: every crate",
+        &[("mock/lints/a.rs", "fn x() {}\n")],
+        "mock --lint-only --strict",
+    ),
+    (
+        "config alone: every crate",
+        &[("mock/mockspace.toml", "x = 1\n")],
+        "mock --lint-only --strict",
+    ),
+];
+
 #[test]
 fn the_push_branches_pass_these_arguments() {
-    let table: &[(&str, &[(&str, &str)], &str)] = &[
-        (
-            "one crate",
-            &[(CONSOLE_SRC, "fn x() {}\n")],
-            "mock --lint-only --strict --scope console-core",
-        ),
-        (
-            "no crate",
-            &[("README.md", "x\n")],
-            "mock --lint-only --strict",
-        ),
-        (
-            "registry row beside source: bounded to the crate",
-            &[(CONSOLE_SRC, "fn x() {}\n"), ("mock/registry/tenets.toml", "x = 1\n")],
-            "mock --lint-only --strict --scope console-core",
-        ),
-        (
-            "registry row alone: the repo lints and no crate's, and the claim the range changes no dependency input",
-            &[("mock/registry/tenets.toml", "x = 1\n")],
-            "mock --lint-only --strict --scope infra --deps-unchanged",
-        ),
-        (
-            "registry rows alone, a ticket and its page under docs",
-            &[("mock/registry/ticket/items/a.toml", "x = 1\n"), ("docs/TICKET-MOVE.md", "x\n")],
-            "mock --lint-only --strict --scope infra --deps-unchanged",
-        ),
-        (
-            "registry row beside a file outside the mock directory that cargo-deny does not read: the claim stays",
-            &[("mock/registry/ticket/items/a.toml", "id = \"a\"\n"), ("docs/notes.md", "x\n")],
-            "mock --lint-only --strict --scope infra --deps-unchanged",
-        ),
-        (
-            "registry row beside a note: the full run a push of anything else has",
-            &[("mock/registry/tenets.toml", "x = 1\n"), ("mock/notes.md", "x\n")],
-            "mock --lint-only --strict",
-        ),
-        // A dependency input outside the mock directory, which the diff the hook takes of the mock
-        // directory does not see: each keeps the dependency gate with no claim made, and the full
-        // scope, which `mock/benches/support/Cargo.lock` does not discriminate since it sits under
-        // the mock directory and is caught as a file that is not a registry row either way.
-        (
-            "registry row beside the root manifest",
-            &[("mock/registry/ticket/items/a.toml", "x = 1\n"), ("Cargo.toml", "x = 1\n")],
-            "mock --lint-only --strict",
-        ),
-        (
-            "registry row beside the root lockfile",
-            &[("mock/registry/ticket/items/a.toml", "x = 1\n"), ("Cargo.lock", "x = 1\n")],
-            "mock --lint-only --strict",
-        ),
-        (
-            "registry row beside the deny config",
-            &[("mock/registry/ticket/items/a.toml", "x = 1\n"), ("deny.toml", "x = 1\n")],
-            "mock --lint-only --strict",
-        ),
-        (
-            "registry row beside a nested manifest",
-            &[
-                ("mock/registry/ticket/items/a.toml", "x = 1\n"),
-                ("tools/probe/Cargo.toml", "x = 1\n"),
-            ],
-            "mock --lint-only --strict",
-        ),
-        (
-            "registry row beside cargo's config, where [source] and [patch] sit",
-            &[
-                ("mock/registry/ticket/items/a.toml", "x = 1\n"),
-                (".cargo/config.toml", "x = 1\n"),
-            ],
-            "mock --lint-only --strict",
-        ),
-        (
-            "project lint alone: every crate",
-            &[("mock/lints/a.rs", "fn x() {}\n")],
-            "mock --lint-only --strict",
-        ),
-        (
-            "config alone: every crate",
-            &[("mock/mockspace.toml", "x = 1\n")],
-            "mock --lint-only --strict",
-        ),
-    ];
-    for (what, files, want) in table {
+    for (what, files, want) in PUSH_TABLE {
         let (out, args) = push_run(KASKI, files);
         assert_eq!(args, *want, "{what}: hook said:\n{out}");
     }
@@ -305,3 +308,27 @@ fn a_dependency_input_in_either_of_two_refs_keeps_the_dependency_gate() {
         );
     }
 }
+
+/// What the pre-push hook prints, and the launcher calls it made, for `lines` on
+/// stdin after a commit of `files` on top of a base commit. The base sha is
+/// substituted for `{base}` and the new head for `{head}` in each line.
+pub(super) fn push_lines(files: &[(&str, &str)], lines: &[&str]) -> (String, Vec<String>) {
+    let tmp = fixture();
+    let root = tmp.path();
+    stage(root, &[("README", "base\n")]);
+    git(root, &["commit", "-q", "-m", "base"]);
+    let base = git(root, &["rev-parse", "HEAD"]);
+    stage(root, files);
+    git(root, &["commit", "-q", "-m", "work"]);
+    let head = git(root, &["rev-parse", "HEAD"]);
+    let stdin: String = lines
+        .iter()
+        .map(|l| format!("{}\n", l.replace("{base}", &base).replace("{head}", &head)))
+        .collect();
+    run_full(
+        &gen_pre_push("mock", &HookLayout::of(KASKI), &root.join("no-user-hook")),
+        root,
+        &stdin,
+    )
+}
+
