@@ -260,7 +260,7 @@ fn a_heavy_test_whose_binary_is_gone_is_neither_planned_nor_skipped() {
     );
     let cfg = crate::suite::nextest::tool_config(&Default::default(), &p.heavy, std::path::Path::new("junit.xml"));
     assert!(!cfg.contains("figure_preview"), "{cfg}");
-    let filter = crate::suite::nextest::filterset(None, &p.skip, &[]).unwrap();
+    let filter = crate::suite::nextest::filterset(None, &p.skip, &[], &Default::default()).unwrap();
     assert!(!filter.contains("figure_preview"), "{filter}");
 }
 
@@ -538,6 +538,7 @@ fn a_failure_at_the_same_inputs_takes_the_pass_away() {
     let failed = BinaryOutcomes {
         passed: vec![],
         failed: vec!["render::a".to_string()],
+        red:    vec![],
     };
     failed.apply(h.flavour_mut(""));
     assert!(
@@ -548,6 +549,7 @@ fn a_failure_at_the_same_inputs_takes_the_pass_away() {
     let passed = BinaryOutcomes {
         passed: vec![("render::a".to_string(), fp.bins["render::a"].clone())],
         failed: vec![],
+        red:    vec![],
     };
     passed.apply(h.flavour_mut(""));
     assert!(reused(&h).contains(&"render::a".to_string()));
@@ -575,3 +577,6 @@ fn a_binary_holding_no_test_is_settled_with_the_members_that_ran() {
     ]);
     assert!(idle_binaries(&p_without_web, &l, &fp, false).is_empty());
 }
+
+#[path = "select_red_tests.rs"]
+mod red;

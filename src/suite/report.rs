@@ -102,6 +102,19 @@ pub fn plan_text(
             let _ = writeln!(t, "               and {} more", p.reuse.len() - NAMED_SKIPS);
         }
     }
+    if !p.rerun.is_empty() {
+        let _ = writeln!(
+            t,
+            "    rerun    {} test binary(ies) narrowed to the tests that failed at inputs that have not moved:",
+            p.rerun.len()
+        );
+        for (bin, names) in p.rerun.iter().take(NAMED_SKIPS) {
+            let _ = writeln!(t, "               {bin}: {}", names.join(", "));
+        }
+        if p.rerun.len() > NAMED_SKIPS {
+            let _ = writeln!(t, "               and {} more", p.rerun.len() - NAMED_SKIPS);
+        }
+    }
     for (why, label) in [(SkipWhy::Cached, "cached"), (SkipWhy::Deferred, "deferred")] {
         let names: Vec<String> = p
             .skip
@@ -203,6 +216,7 @@ mod tests {
                 why:    SkipWhy::Cached,
             }],
             reuse:   vec!["mesh::it".to_string(), "mesh::gait".to_string()],
+            rerun:   Default::default(),
         };
         let t = plan_text(
             &p,

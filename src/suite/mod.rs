@@ -202,7 +202,7 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     let _ = std::fs::remove_file(&junit);
 
     let packages: Vec<String> = plan.run.iter().map(|(n, _)| n.clone()).collect();
-    let filter = nextest::filterset(inv.filter.as_deref(), &plan.skip, &plan.reuse);
+    let filter = nextest::filterset(inv.filter.as_deref(), &plan.skip, &plan.reuse, &plan.rerun);
     let status = nextest::command(&nextest::RunSpec {
         mock_dir:     &cfg.mock_dir,
         tool_config:  &tool_config,
@@ -277,6 +277,12 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     }
 
     report::outcome(&plan, &cases, cfg.test.heavy_after_secs);
+    if status.as_ref().is_ok_and(|s| s.success())
+        && let Some(why) = select::empty_filtered_run(&plan, &cases, inv.narrowed())
+    {
+        eprintln!("mock test: {why}");
+        return Some(ExitCode::FAILURE);
+    }
     Some(if status.is_ok_and(|s| s.success()) {
         ExitCode::SUCCESS
     } else {

@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::fingerprint::Fingerprints;
 use super::graph::Graph;
-use super::history::{Flavour, Green, History};
+use super::history::{Flavour, Green, History, Red};
 use super::junit::{Case, Outcome, package_of};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +69,10 @@ pub struct Plan {
     /// Test binaries of the members that run which are left out, since their
     /// inputs have not moved since they last ran whole and passed.
     pub reuse:   Vec<String>,
+    /// Test binaries of the members that run whose last whole run failed at the
+    /// fingerprint they have now, by the tests that failed. Every other test in
+    /// them passed then and stands, so only these run.
+    pub rerun:   BTreeMap<String, Vec<String>>,
 }
 
 impl Plan {
@@ -79,6 +83,10 @@ impl Plan {
         self.heavy.retain(|(b, n)| exists(b, n));
         self.skip.retain(|s| exists(&s.binary, &s.name));
         self.reuse.retain(|b| live.contains_key(b));
+        // A name gone from a binary leaves nothing sound to narrow to, so the
+        // binary runs whole.
+        self.rerun
+            .retain(|b, names| live.get(b).is_some_and(|t| names.iter().all(|n| t.contains(n))));
     }
 }
 
@@ -128,6 +136,22 @@ pub fn plan(i: &Inputs) -> Plan {
             .collect();
     }
     let reused: BTreeSet<&str> = p.reuse.iter().map(String::as_str).collect();
+
+    // A binary that failed in some tests at the inputs it has now runs only those:
+    // the rest passed in that same run. Without the cache, or on a full run,
+    // nothing is taken on an earlier pass.
+    if i.cache && i.mode != Mode::Full {
+        p.rerun = f
+            .red
+            .iter()
+            .filter(|(bin, red)| {
+                running.contains(package_of(bin))
+                    && !reused.contains(bin.as_str())
+                    && i.fp.of_binary(bin) == Some(&red.at)
+            })
+            .map(|(bin, red)| (bin.clone(), red.names.clone()))
+            .collect();
+    }
 
     p.heavy = i
         .history
@@ -204,6 +228,29 @@ pub fn greens(plan: &Plan, cases: &[Case], complete: bool) -> Vec<String> {
         .collect()
 }
 
+/// Why a run that was narrowed by the caller and ran no test at all is a failure
+/// rather than a success, when the plan left tests out.
+///
+/// The filter may name only tests the plan left out as cached or deferred, or
+/// binaries it left out whole, or the passing tests of a binary it narrowed to
+/// its failures; the run then starts nothing and `--no-tests=warn` lets it exit
+/// green. Printing green for tests that did not run is the answer this refuses.
+pub fn empty_filtered_run(plan: &Plan, cases: &[Case], filtered: bool) -> Option<String> {
+    let ran = cases.iter().any(|c| c.outcome != Outcome::Skipped);
+    let cached = plan.skip.iter().filter(|s| s.why == SkipWhy::Cached).count();
+    let deferred = plan.skip.iter().filter(|s| s.why == SkipWhy::Deferred).count();
+    let (reused, narrowed) = (plan.reuse.len(), plan.rerun.len());
+    if !filtered || ran || cached + deferred + reused + narrowed == 0 {
+        return None;
+    }
+    Some(format!(
+        "the filter matched no test that ran, and the plan left tests out: {cached} heavy tests \
+         cached, {deferred} deferred by --cheap, {reused} binaries passed at their current \
+         inputs, {narrowed} narrowed to their failures; this ran nothing, so it is no pass. Ask \
+         again with --full or --no-cache to run what the filter names"
+    ))
+}
+
 /// The record a green member keeps: its fingerprint, its own inputs and the
 /// shared inputs of its closure.
 pub fn green_record(name: &str, fp: &Fingerprints, graph: &Graph) -> Green {
@@ -224,6 +271,10 @@ pub struct BinaryOutcomes {
     pub passed: Vec<(String, String)>,
     /// Binaries in which a test failed, whose record of a pass is no longer true.
     pub failed: Vec<String>,
+    /// Of those, the ones that ran whole with nothing deferred: each by the tests
+    /// that failed, at the fingerprint it failed at, so the next run at it runs
+    /// those alone.
+    pub red:    Vec<(String, Red)>,
 }
 
 impl BinaryOutcomes {
@@ -234,7 +285,15 @@ impl BinaryOutcomes {
         for bin in &self.failed {
             record.bins.remove(bin);
         }
+        // A pass or a failure replaces whatever was said of the binary before.
+        for bin in self.passed.iter().map(|(b, _)| b) {
+            record.red.remove(bin);
+        }
+        for bin in &self.failed {
+            record.red.remove(bin);
+        }
         record.bins.extend(self.passed);
+        record.red.extend(self.red);
     }
 }
 
@@ -264,13 +323,25 @@ pub fn binary_outcomes(
         .map(|s| s.binary.as_str())
         .collect();
     let mut verdict: BTreeMap<&str, bool> = BTreeMap::new();
+    let mut red: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
     for c in cases {
         let ok = verdict.entry(c.binary.as_str()).or_insert(true);
         *ok &= c.outcome != Outcome::Fail;
+        if c.outcome == Outcome::Fail {
+            red.entry(c.binary.as_str()).or_default().insert(c.name.clone());
+        }
     }
     for (bin, ok) in verdict {
         if !ok {
             out.failed.push(bin.to_string());
+            // Deferred heavy tests are neither passed nor failed, so a binary
+            // holding some is run whole next time rather than narrowed.
+            if !deferred.contains(bin)
+                && let Some(at) = fp.of_binary(bin)
+            {
+                let names = red.remove(bin).unwrap_or_default().into_iter().collect();
+                out.red.push((bin.to_string(), Red { at: at.clone(), names }));
+            }
         } else if !deferred.contains(bin)
             && let Some(at) = fp.of_binary(bin)
         {
