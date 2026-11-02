@@ -243,6 +243,9 @@ impl MergeHook for Race {
                     .map_err(|why| refuse(format!("{path}: {why}")))?;
                     next.put(path, merged.text)
                 },
+                // the winner removed a file this run read: the member is gone or ran with nothing, and
+                // putting our copy back would undo that, so it stands and the next run settles it
+                (Some(_), None) if base.is_some() => next,
                 (Some(o), _) => next.put(path, o),
             };
         }

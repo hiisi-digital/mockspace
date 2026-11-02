@@ -444,3 +444,30 @@ fn a_history_declaration_naming_a_registry_directory_is_refused_at_open() {
         "a history has no directory, so the declaration is not one the engine can open"
     );
 }
+
+#[test]
+fn a_file_the_winner_removed_is_not_put_back_by_the_merge() {
+    let remote = Remote::new();
+    let (a, b) = (project(&remote, "a", true), project(&remote, "b", true));
+    let (sa, sb) = (opened(&a), opened(&b));
+    let m = members(&["m1"]);
+    hist("m1", "fp1", &["first"])
+        .save_to(&sa, &scope(&m, &m), None, "seed")
+        .unwrap();
+    sb.refresh().unwrap();
+    // B has read the history as it is, and A then finds the workspace no longer has m1
+    let none: Vec<String> = Vec::new();
+    History::load_from(&sa)
+        .unwrap()
+        .save_to(&sa, &scope(&none, &none), None, "m1 is gone")
+        .unwrap();
+    assert!(remote.file(REF, "default/m1.json").is_none(), "control: A removed it");
+    // B records one more test of m1 on what it read, and loses the race to A
+    hist("m1", "fp1", &["first", "from_b"])
+        .save_to(&sb, &scope(&m, &m), None, "b")
+        .unwrap();
+    assert!(
+        remote.file(REF, "default/m1.json").is_none(),
+        "the winner's removal stands: the member is gone, and the next run that covers it writes it afresh"
+    );
+}
