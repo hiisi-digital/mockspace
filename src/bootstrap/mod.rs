@@ -75,6 +75,8 @@ mod hooks_src_dirs_tests;
 #[cfg(test)]
 mod hooks_src_dirs_branch_tests;
 #[cfg(test)]
+mod hooks_src_dirs_delete_tests;
+#[cfg(test)]
 mod hooks_src_dirs_nuke_tests;
 #[cfg(test)]
 mod hooks_src_dirs_move_tests;
