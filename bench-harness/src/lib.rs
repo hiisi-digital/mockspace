@@ -58,6 +58,8 @@ pub mod report;
 pub mod sample;
 pub mod spec;
 pub mod summary;
+pub mod test_baseline;
+pub mod test_sample;
 pub mod tree;
 pub mod validation;
 pub mod workload;
