@@ -6,7 +6,9 @@
 //! The one way registry files are written to a store.
 //!
 //! A write to a ref skips the commit gate, because nothing is committed in a work tree, so the
-//! checks the gate runs over the registry data run here instead, before the write: the files
+//! checks the gate runs over the registry data run here instead, before the write (and, for a
+//! directory kept on a ref, the schema check of `taplo` over a copy laid out as the tree would
+//! be): the files
 //! must read as TOML with an `id` on every row, and the registry they make must raise no finding
 //! of [`validate`], [`validate_row_references`] or [`validate_provenance`] that the registry
 //! before the write did not already raise. A write that fails them is refused and no store
@@ -36,7 +38,10 @@ pub struct RegistryWriter<'a> {
 
 impl<'a> RegistryWriter<'a> {
     pub fn new(cfg: &'a Config, stores: &'a RegistryStores) -> Self {
-        Self { cfg, stores }
+        Self {
+            cfg,
+            stores,
+        }
     }
 
     /// Put (`Some`) or remove (`None`) the files at these paths under the registry root, as one
@@ -55,16 +60,30 @@ impl<'a> RegistryWriter<'a> {
             .cloned()
             .collect();
         let after = overlay(before.clone(), changes);
-        refuse_new(&self.problems(&before, &BTreeSet::new()), self.problems(&after, &changed))?;
+        let on_ref = held != ".";
+        let now = self.problems(&after, &changed, on_ref);
+        // a check that could not run is not a check that found nothing, new finding or not
+        let unrun: Vec<String> = now
+            .iter()
+            .filter(|p| p.starts_with("[schema-unavailable]"))
+            .cloned()
+            .collect();
+        if !unrun.is_empty() {
+            return Err(RegistryStoreError::Refused(unrun));
+        }
+        refuse_new(&self.problems(&before, &BTreeSet::new(), on_ref), now)?;
         let hook = Race {
             writer: self,
             held: held.clone(),
             base,
             changed,
         };
-        store
-            .apply(&edit, message, &hook)
-            .map_err(|source| RegistryStoreError::Store { held, source })
+        store.apply(&edit, message, &hook).map_err(|source| {
+            RegistryStoreError::Store {
+                held,
+                source,
+            }
+        })
     }
 
     /// Every file of the registry. Where `tip` is given, the files it holds replace those the
@@ -76,15 +95,26 @@ impl<'a> RegistryWriter<'a> {
             if tip.is_some_and(|(held, _)| held != "." && under(held, &rel)) {
                 continue;
             }
-            let text = self.stores.read(&rel)?.and_then(|b| String::from_utf8(b).ok());
+            let text = self
+                .stores
+                .read(&rel)?
+                .and_then(|b| String::from_utf8(b).ok());
             out.push((rel, text));
         }
         if let Some((held, reader)) = tip.filter(|(h, _)| *h != ".") {
-            let fail = |source| RegistryStoreError::Store { held: held.to_string(), source };
+            let fail = |source| {
+                RegistryStoreError::Store {
+                    held: held.to_string(),
+                    source,
+                }
+            };
             for inner in reader.list("").map_err(fail)? {
                 let rel = format!("{held}/{inner}");
                 if is_registry_file(&rel) {
-                    let text = reader.read(&inner).map_err(fail)?.and_then(|b| String::from_utf8(b).ok());
+                    let text = reader
+                        .read(&inner)
+                        .map_err(fail)?
+                        .and_then(|b| String::from_utf8(b).ok());
                     out.push((rel, text));
                 }
             }
@@ -93,13 +123,64 @@ impl<'a> RegistryWriter<'a> {
         Ok(out)
     }
 
+    /// What `taplo` finds in `files` laid out as the registry is in the tree. The gate checks the
+    /// working tree, which does not hold the rows kept on a ref, so a write to a ref runs the same
+    /// check over a copy of the registry as it would stand: the generated config and schemas of the
+    /// tree beside the files.
+    fn schema_problems(&self, files: &Files) -> Vec<String> {
+        let cfg = self.cfg;
+        let scratch = Scratch::new();
+        let mock_rel = cfg
+            .mock_dir
+            .strip_prefix(&cfg.repo_root)
+            .unwrap_or(std::path::Path::new("mock"));
+        let laid = (|| -> std::io::Result<()> {
+            std::fs::copy(
+                cfg.repo_root.join(".taplo.toml"),
+                scratch.0.join(".taplo.toml"),
+            )?;
+            let schemas = |root: &std::path::Path| {
+                crate::build_dir::target_dir(root)
+                    .join("mockspace")
+                    .join("registry-schemas")
+            };
+            let to = schemas(&scratch.0);
+            std::fs::create_dir_all(&to)?;
+            for e in std::fs::read_dir(schemas(&cfg.repo_root))? {
+                let e = e?;
+                std::fs::copy(e.path(), to.join(e.file_name()))?;
+            }
+            for (rel, text) in files {
+                let Some(text) = text else { continue };
+                let at = scratch.0.join(mock_rel).join("registry").join(rel);
+                std::fs::create_dir_all(at.parent().unwrap_or(&scratch.0))?;
+                std::fs::write(at, text)?;
+            }
+            Ok(())
+        })();
+        if let Err(e) = laid {
+            return vec![format!(
+                "[schema-unavailable] the registry could not be laid out for the schema check: {e}"
+            )];
+        }
+        match check_schemas(&scratch.0, &cfg.registry_namespaces, None) {
+            SchemaCheck::Ran { failures } => failures.into_iter().map(|f| format!("[schema] {f}")).collect(),
+            SchemaCheck::Unavailable if files.is_empty() => Vec::new(),
+            SchemaCheck::Unavailable => vec!["[schema-unavailable] taplo is not installed, so the shape of rows on a ref is unverified".to_string()],
+        }
+    }
+
     /// What the checks find in `files`. `changed` names the files this write touches, which
     /// must also read as TOML and give every row an `id`: the loader skips such a file or row
     /// and says so, and a skipped row is a row the write silently lost.
-    fn problems(&self, files: &Files, changed: &BTreeSet<String>) -> Vec<String> {
+    fn problems(&self, files: &Files, changed: &BTreeSet<String>, on_ref: bool) -> Vec<String> {
         let cfg = self.cfg;
         let mut out = Vec::new();
-        let known: BTreeSet<&str> = cfg.registry_namespaces.iter().map(|n| n.key.as_str()).collect();
+        let known: BTreeSet<&str> = cfg
+            .registry_namespaces
+            .iter()
+            .map(|n| n.key.as_str())
+            .collect();
         for (rel, text) in files.iter().filter(|(r, _)| changed.contains(r)) {
             let Some(text) = text else { continue };
             match text.parse::<toml_edit::DocumentMut>() {
@@ -107,21 +188,59 @@ impl<'a> RegistryWriter<'a> {
                 Ok(doc) => {
                     for (key, item) in doc.iter().filter(|(k, _)| known.contains(k)) {
                         let rows = item.as_array_of_tables().into_iter().flat_map(|t| t.iter());
-                        if rows.into_iter().any(|t| t.get("id").and_then(|v| v.as_str()).is_none()) {
-                            out.push(format!("[row-without-id] a [[{key}]] row in {rel} has no id"));
+                        if rows
+                            .into_iter()
+                            .any(|t| t.get("id").and_then(|v| v.as_str()).is_none())
+                        {
+                            out.push(format!(
+                                "[row-without-id] a [[{key}]] row in {rel} has no id"
+                            ));
                         }
                     }
                 },
             }
         }
-        let reg = rows_of_texts(self.stores.root(), files.clone(), &cfg.registry_namespaces, None);
+        let reg = rows_of_texts(
+            self.stores.root(),
+            files.clone(),
+            &cfg.registry_namespaces,
+            None,
+        );
         let ns = &cfg.registry_namespaces;
         let findings = validate(ns, &reg)
             .into_iter()
             .chain(validate_row_references(&reg, ns))
-            .chain(validate_provenance(&cfg.repo_root, &cfg.registry_roots, &cfg.frozen_roots, &reg, ns));
+            .chain(validate_provenance(
+                &cfg.repo_root,
+                &cfg.registry_roots,
+                &cfg.frozen_roots,
+                &reg,
+                ns,
+            ));
         out.extend(findings.map(|f| format!("[{}] {}", f.kind, f.message)));
+        if on_ref {
+            out.extend(self.schema_problems(files));
+        }
         out
+    }
+}
+
+/// A directory under the system temp directory, removed when it goes out of scope.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn new() -> Self {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("mockspace-schema-{}-{n}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        Self(dir)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
@@ -153,7 +272,11 @@ struct Race<'a, 'b> {
 
 impl Race<'_, '_> {
     fn rel(&self, inner: &str) -> String {
-        if self.held == "." { inner.to_string() } else { format!("{}/{inner}", self.held) }
+        if self.held == "." {
+            inner.to_string()
+        } else {
+            format!("{}/{inner}", self.held)
+        }
     }
 
     fn text_of(bytes: Option<Vec<u8>>) -> Option<String> {
@@ -172,19 +295,34 @@ impl MergeHook for Race<'_, '_> {
             let theirs = Self::text_of(tip.read(inner).map_err(|e| refuse(e.to_string()))?);
             let merged: Option<Vec<u8>> = match (bytes, &theirs) {
                 (Some(b), None) if base.is_none() => Some(b.to_vec()),
-                (Some(_), None) => return Err(refuse(format!("{rel} was removed by the other writer"))),
+                (Some(_), None) => {
+                    return Err(refuse(format!("{rel} was removed by the other writer")));
+                },
                 (Some(b), Some(t)) if base.as_deref() == Some(t.as_str()) => Some(b.to_vec()),
                 (Some(b), Some(t)) => {
-                    let ours = std::str::from_utf8(b).map_err(|_| refuse(format!("{rel} is not UTF-8")))?;
-                    let out = crate::registry_merge::merge_text(base.as_deref().unwrap_or(""), ours, t, 7)
-                        .map_err(|why| refuse(format!("{rel}: {}", why.0)))?;
+                    let ours = std::str::from_utf8(b)
+                        .map_err(|_| refuse(format!("{rel} is not UTF-8")))?;
+                    let out = crate::registry_merge::merge_text(
+                        base.as_deref().unwrap_or(""),
+                        ours,
+                        t,
+                        7,
+                    )
+                    .map_err(|why| refuse(format!("{rel}: {}", why.0)))?;
                     if out.conflicts > 0 {
-                        return Err(refuse(format!("{rel}: {} block(s) changed on both sides", out.conflicts)));
+                        return Err(refuse(format!(
+                            "{rel}: {} block(s) changed on both sides",
+                            out.conflicts
+                        )));
                     }
                     Some(out.text.into_bytes())
                 },
                 (None, t) if t.as_deref() == base.as_deref() || t.is_none() => None,
-                (None, _) => return Err(refuse(format!("{rel} was changed by the other writer, and this write removes it"))),
+                (None, _) => {
+                    return Err(refuse(format!(
+                        "{rel} was changed by the other writer, and this write removes it"
+                    )));
+                },
             };
             next = match &merged {
                 Some(b) => next.put(inner, b.clone()),
@@ -193,10 +331,17 @@ impl MergeHook for Race<'_, '_> {
             changes.push((rel, merged));
         }
         let held = (self.held.as_str(), tip);
-        let on_tip = self.writer.current(Some(held)).map_err(|e| refuse(e.to_string()))?;
-        let after = overlay(on_tip.clone(), &changes);
-        refuse_new(&self.writer.problems(&on_tip, &BTreeSet::new()), self.writer.problems(&after, &self.changed))
+        let on_tip = self
+            .writer
+            .current(Some(held))
             .map_err(|e| refuse(e.to_string()))?;
+        let after = overlay(on_tip.clone(), &changes);
+        let on_ref = self.held != ".";
+        refuse_new(
+            &self.writer.problems(&on_tip, &BTreeSet::new(), on_ref),
+            self.writer.problems(&after, &self.changed, on_ref),
+        )
+        .map_err(|e| refuse(e.to_string()))?;
         Ok(next)
     }
 }

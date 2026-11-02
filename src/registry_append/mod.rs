@@ -99,7 +99,10 @@ fn step(cfg: &Config, args: &[&str]) -> Result<(), String> {
     let ask = parse(args)?;
     let stores = cfg.registry_stores().map_err(|e| e.to_string())?;
     let rel = file_of(cfg, &stores, &ask)?;
-    if !ask.local {
+    // A delegate edits the tree, and the tree's copy of a directory kept on a ref is hidden, so
+    // what it wrote there would be lost: the write goes through the writer.
+    let kept_on_a_ref = stores.route(&rel).1 != ".";
+    if !ask.local && !kept_on_a_ref {
         if let Some(delegate) = hook::find(&cfg.repo_root) {
             let target = format!("{}::{}", ask.ns, ask.id);
             let taken = hook::run(

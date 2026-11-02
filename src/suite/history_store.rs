@@ -9,39 +9,29 @@
 //! `<flavour>/<member>.json` from the root of the store. [`History::load_from`] reads them from
 //! any [`Reader`], and [`History::save_to`] writes a run's records as one edit of a store.
 //!
-//! **The writer carries the guard.** `mock check-test-history` refuses a commit that nulls a
-//! member's green record it has no reason to, because a run cut short can leave a file without
-//! one. A write to a ref is one commit built whole, so a run cannot be cut short inside it, and
-//! no commit hook sees it; the writer asks the same question of its own edit instead. A green
-//! may go from a file only when the run covered the member, or the workspace no longer has it,
-//! or the merge rule of [`super::history_merge`] drops it, which is the case after a lost race.
-//! Anything else is refused before it is pushed. The commit guard stays for a directory kept
-//! in the tree, where it is still the only place the question is asked.
-
-use std::collections::BTreeSet;
+//! **What the writer guarantees.** An edit names only the members the run covered and the members
+//! the workspace no longer has, so a green record of a member the run did not cover is never in
+//! it, and survives a lost race byte for byte. It is not the commit guard: `mock check-test-history`
+//! also excuses a null when the member's fingerprint inputs were touched, which needs the
+//! commit's changed paths, and a write to a ref has no commit hook. The commit guard stays for a
+//! directory kept in the tree. A run cut short is held off by `complete` in `super` (the run module), ahead
+//! of the save.
 
 use mockspace_store::{Applied, Edit, MergeHook, MergeRefusal, Reader, Store, StoreError};
 
-use super::history::{History, MemberFile, Scope, VERSION, flavour_dir, member_files, PREVIOUS};
-use super::history_merge::{Later, merged_green};
+use super::history::{History, MemberFile, PREVIOUS, Scope, VERSION, flavour_dir, member_files};
+use super::history_merge::Later;
 
 /// Why a history could not be read or written.
 #[derive(Debug)]
 pub enum HistoryError {
     Store(StoreError),
-    /// The guard refused the write: each entry is a file whose green record the edit would remove.
-    Nulled(Vec<String>),
 }
 
 impl std::fmt::Display for HistoryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Store(e) => write!(f, "{e}"),
-            Self::Nulled(files) => write!(
-                f,
-                "the write would remove the green record of {}, members the run did not cover",
-                files.join(", ")
-            ),
         }
     }
 }
@@ -79,7 +69,9 @@ impl History {
             if path.split('/').count() != 2 || member_of(&path).is_none() {
                 continue;
             }
-            if let Some(m) = record_at(reader, &path)?.filter(|m| m.version == VERSION || m.version == PREVIOUS) {
+            if let Some(m) =
+                record_at(reader, &path)?.filter(|m| m.version == VERSION || m.version == PREVIOUS)
+            {
                 h.absorb(m);
             }
         }
@@ -132,7 +124,10 @@ impl History {
         for (member, m) in wanted.into_iter().filter(|(member, _)| scope.ran(member)) {
             let path = format!("{dir}/{member}.json");
             let text = m.render();
-            if reader.read(&path)?.is_some_and(|old| old == text.as_bytes()) {
+            if reader
+                .read(&path)?
+                .is_some_and(|old| old == text.as_bytes())
+            {
                 continue;
             }
             edit = edit.put(path, text);
@@ -141,9 +136,7 @@ impl History {
     }
 
     /// Writes a run's records to `store` as one edit with `message`, on the state the store
-    /// last saw (a store is refreshed once, when it is opened). The write is
-    /// refused, and nothing is pushed, when it would remove a green record the run has no claim
-    /// to; a lost race is settled file by file with [`super::history_merge`].
+    /// last saw (a store is refreshed once, when it is opened). A lost race is settled file by file with [`super::history_merge`].
     pub fn save_to(
         &self,
         store: &dyn Store,
@@ -151,8 +144,6 @@ impl History {
         message: &str,
     ) -> Result<Applied, HistoryError> {
         let edit = self.plan(store, scope)?;
-        let may_null = |path: &str| member_of(path).is_some_and(|m| scope.ran(m) || scope.gone(m));
-        refuse_nulls(store, &edit, &may_null)?;
         let ours = edit.clone();
         let base = ours
             .entries()
@@ -160,53 +151,36 @@ impl History {
             .collect::<Result<Vec<_>, StoreError>>()?;
         let race = Race {
             base,
-            members: ours
-                .entries()
-                .filter_map(|(p, _)| member_of(p).map(String::from))
-                .filter(|m| scope.ran(m) || scope.gone(m))
-                .collect(),
         };
         Ok(store.apply(&edit, message, &race)?)
     }
 }
 
-/// The files of `edit` that remove a green record `reader` holds, where `may_null` does not excuse it.
-fn refuse_nulls(
-    reader: &dyn Reader,
-    edit: &Edit,
-    may_null: &dyn Fn(&str) -> bool,
-) -> Result<(), HistoryError> {
-    let mut nulled = Vec::new();
-    for (path, bytes) in edit.entries() {
-        let had = record_at(reader, path)?.and_then(|m| m.green).is_some();
-        let has = bytes
-            .and_then(|b| std::str::from_utf8(b).ok())
-            .and_then(|t| MemberFile::parse(t).ok())
-            .and_then(|m| m.green)
-            .is_some();
-        if had && !has && !may_null(path) {
-            nulled.push(path.to_string());
-        }
-    }
-    if nulled.is_empty() { Ok(()) } else { Err(HistoryError::Nulled(nulled)) }
-}
-
-/// The race handler: the merge of the history files, then the guard again.
+/// The race handler: the merge of the history files.
 struct Race {
     /// The touched files as the write found them.
-    base:    Vec<(String, Option<Vec<u8>>)>,
-    /// The members whose green this run may drop.
-    members: BTreeSet<String>,
+    base: Vec<(String, Option<Vec<u8>>)>,
 }
 
 impl MergeHook for Race {
     fn rebase(&self, tip: &dyn Reader, ours: &Edit) -> Result<Edit, MergeRefusal> {
         let refuse = |why: String| MergeRefusal(why);
-        let text = |b: Option<&[u8]>| b.and_then(|b| std::str::from_utf8(b).ok()).map(String::from);
+        let text = |b: Option<&[u8]>| {
+            b.and_then(|b| std::str::from_utf8(b).ok())
+                .map(String::from)
+        };
         let mut next = Edit::new();
         for (path, bytes) in ours.entries() {
-            let base = self.base.iter().find(|(p, _)| p == path).and_then(|(_, b)| text(b.as_deref()));
-            let theirs = text(tip.read(path).map_err(|e| refuse(e.to_string()))?.as_deref());
+            let base = self
+                .base
+                .iter()
+                .find(|(p, _)| p == path)
+                .and_then(|(_, b)| text(b.as_deref()));
+            let theirs = text(
+                tip.read(path)
+                    .map_err(|e| refuse(e.to_string()))?
+                    .as_deref(),
+            );
             next = match (text(bytes), theirs) {
                 // our removal of a file the winner changed does not stand: its record is kept and the next run settles it
                 (None, Some(t)) if base.as_deref() != Some(t.as_str()) => next,
@@ -224,33 +198,19 @@ impl MergeHook for Race {
                 (Some(o), _) => next.put(path, o),
             };
         }
-        // the merge rule drops a green where both sides moved it, which is no loss
-        let by_rule = |path: &str| {
-            let sides = (
-                self.base.iter().find(|(p, _)| p == path).and_then(|(_, b)| green_of(b.as_deref())),
-                ours.entries().find(|(p, _)| *p == path).and_then(|(_, b)| green_of(b)),
-                tip.read(path).ok().flatten().and_then(|b| green_of(Some(&b))),
-            );
-            merged_green(&sides.0, &sides.1, &sides.2).0.is_none()
-        };
-        let may_null = |path: &str| member_of(path).is_some_and(|m| self.members.contains(m)) || by_rule(path);
-        refuse_nulls(tip, &next, &may_null).map_err(|e| refuse(e.to_string()))?;
         Ok(next)
     }
-}
-
-fn green_of(bytes: Option<&[u8]>) -> Option<super::history::Green> {
-    bytes
-        .and_then(|b| std::str::from_utf8(b).ok())
-        .and_then(|t| MemberFile::parse(t).ok())
-        .and_then(|m| m.green)
 }
 
 /// The store of a project's test history: the directory under `<mock>/test-history`, or the
 /// git ref `[test.history]` declares.
 pub fn store_of(cfg: &crate::config::Config) -> Result<Box<dyn Store>, String> {
     match &cfg.test.history {
-        None => Ok(Box::new(mockspace_store::DirStore::new(History::dir(&cfg.mock_dir)))),
+        None => {
+            Ok(Box::new(mockspace_store::DirStore::new(History::dir(
+                &cfg.mock_dir,
+            ))))
+        },
         Some(decl) => Ok(Box::new(decl.open(&cfg.repo_root, "test-history")?)),
     }
 }
@@ -269,8 +229,16 @@ impl History {
         match opened {
             Ok((h, s)) => (h, Some(s)),
             Err(e) => {
-                eprintln!("note: the test history could not be read: {e}; every member runs, and nothing is cached or recorded");
-                (History { version: VERSION, ..History::default() }, None)
+                eprintln!(
+                    "note: the test history could not be read: {e}; every member runs, and nothing is cached or recorded"
+                );
+                (
+                    History {
+                        version: VERSION,
+                        ..History::default()
+                    },
+                    None,
+                )
             },
         }
     }

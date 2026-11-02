@@ -19,7 +19,11 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
         .env_remove("GIT_INDEX_FILE")
         .output()
         .expect("spawn git");
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
 
@@ -35,7 +39,10 @@ impl Remote {
         let bare = tmp.path().join("remote.git");
         std::fs::create_dir(&bare).unwrap();
         git(&bare, &["init", "-q", "--bare"]);
-        Self { tmp, bare }
+        Self {
+            tmp,
+            bare,
+        }
     }
 
     /// A repository `name` whose `origin` is the bare one, with a `mock/` directory in it.
@@ -43,13 +50,22 @@ impl Remote {
         let root = self.tmp.path().join(name);
         std::fs::create_dir_all(root.join("mock")).unwrap();
         git(&root, &["init", "-q"]);
-        git(&root, &["remote", "add", "origin", self.bare.to_str().unwrap()]);
+        git(&root, &[
+            "remote",
+            "add",
+            "origin",
+            self.bare.to_str().unwrap(),
+        ]);
         root
     }
 
     /// The commit at `reference` on the remote, if there is one.
     pub(crate) fn tip(&self, reference: &str) -> Option<String> {
-        let out = git(&self.bare, &["for-each-ref", "--format=%(objectname)", reference]);
+        let out = git(&self.bare, &[
+            "for-each-ref",
+            "--format=%(objectname)",
+            reference,
+        ]);
         (!out.is_empty()).then_some(out)
     }
 

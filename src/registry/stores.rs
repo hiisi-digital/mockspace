@@ -41,14 +41,24 @@ pub enum RegistryStoreError {
 impl std::fmt::Display for RegistryStoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Store { held, source } => write!(f, "the registry store of `{held}`: {source}"),
+            Self::Store {
+                held,
+                source,
+            } => write!(f, "the registry store of `{held}`: {source}"),
             Self::Refused(why) => {
-                write!(f, "the registry checks refused the write, nothing was stored:")?;
+                write!(
+                    f,
+                    "the registry checks refused the write, nothing was stored:"
+                )?;
                 why.iter().try_for_each(|w| write!(f, "\n  {w}"))
             },
             Self::Declared(why) => write!(f, "[[registry.store]]: {why}"),
             Self::SpansStores(held) => {
-                write!(f, "one write may land in one store, and this one touches {}", held.join(", "))
+                write!(
+                    f,
+                    "one write may land in one store, and this one touches {}",
+                    held.join(", ")
+                )
             },
         }
     }
@@ -124,9 +134,11 @@ impl RegistryStores {
     /// Keep the files under `dir` in `store` instead of the tree.
     pub fn mount(mut self, dir: &str, store: Box<dyn Store>) -> Result<Self, RegistryStoreError> {
         let dir = dir.trim_matches('/').to_string();
-        mockspace_store::validate_path(&dir).map_err(|source| RegistryStoreError::Store {
-            held: dir.clone(),
-            source,
+        mockspace_store::validate_path(&dir).map_err(|source| {
+            RegistryStoreError::Store {
+                held: dir.clone(),
+                source,
+            }
         })?;
         if self.mounts.iter().any(|m| {
             m.dir == dir
@@ -137,7 +149,10 @@ impl RegistryStores {
                 "`{dir}` overlaps a directory already mounted"
             )));
         }
-        self.mounts.push(Mount { dir, store });
+        self.mounts.push(Mount {
+            dir,
+            store,
+        });
         Ok(self)
     }
 
@@ -153,14 +168,18 @@ impl RegistryStores {
             return Ok(());
         }
         let held = |h: &str| h.to_string();
-        self.default.refresh().map_err(|source| RegistryStoreError::Store {
-            held: held("."),
-            source,
+        self.default.refresh().map_err(|source| {
+            RegistryStoreError::Store {
+                held: held("."),
+                source,
+            }
         })?;
         for m in &self.mounts {
-            m.store.refresh().map_err(|source| RegistryStoreError::Store {
-                held: m.dir.clone(),
-                source,
+            m.store.refresh().map_err(|source| {
+                RegistryStoreError::Store {
+                    held: m.dir.clone(),
+                    source,
+                }
             })?;
         }
         *done = true;
@@ -177,11 +196,13 @@ impl RegistryStores {
     /// as that store names it.
     pub(crate) fn route<'a>(&'a self, rel: &str) -> (&'a dyn Store, String, String) {
         match self.mount_of(rel) {
-            Some(m) => (
-                m.store.as_ref(),
-                m.dir.clone(),
-                rel[m.dir.len()..].trim_start_matches('/').to_string(),
-            ),
+            Some(m) => {
+                (
+                    m.store.as_ref(),
+                    m.dir.clone(),
+                    rel[m.dir.len() ..].trim_start_matches('/').to_string(),
+                )
+            },
             None => (self.default.as_ref(), ".".into(), rel.to_string()),
         }
     }
@@ -193,9 +214,11 @@ impl RegistryStores {
         self.refresh()?;
         let mut out: Vec<String> = Vec::new();
         let listed = |store: &dyn Store, held: &str| {
-            store.list("").map_err(|source| RegistryStoreError::Store {
-                held: held.to_string(),
-                source,
+            store.list("").map_err(|source| {
+                RegistryStoreError::Store {
+                    held: held.to_string(),
+                    source,
+                }
             })
         };
         for p in listed(self.default.as_ref(), ".")? {
@@ -217,18 +240,29 @@ impl RegistryStores {
     pub fn read(&self, rel: &str) -> Result<Option<Vec<u8>>, RegistryStoreError> {
         self.refresh()?;
         let (store, held, inner) = self.route(rel);
-        store.read(&inner).map_err(|source| RegistryStoreError::Store { held, source })
+        store.read(&inner).map_err(|source| {
+            RegistryStoreError::Store {
+                held,
+                source,
+            }
+        })
     }
 
     /// The path a file has in the tree, which is what a row says it was declared in.
     pub fn source_of(&self, rel: &str) -> PathBuf {
-        rel.split('/').fold(self.root.clone(), |p, part| p.join(part))
+        rel.split('/')
+            .fold(self.root.clone(), |p, part| p.join(part))
     }
 
     /// The path under the root a `source` names, if it lies under it.
     pub fn rel_of(&self, source: &Path) -> Option<String> {
         let rel = source.strip_prefix(&self.root).ok()?;
-        Some(rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"))
+        Some(
+            rel.components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/"),
+        )
     }
 
     /// An edit as the store holding `rel` names its paths. Every entry must be held by the same store.
@@ -259,7 +293,10 @@ impl RegistryStores {
 /// Whether `rel` is a file the registry loads: a `*.toml` not under a directory whose name begins with a dot.
 pub(crate) fn is_registry_file(rel: &str) -> bool {
     let parts: Vec<&str> = rel.split('/').collect();
-    rel.ends_with(".toml") && parts[.. parts.len() - 1].iter().all(|d| !d.starts_with('.'))
+    rel.ends_with(".toml")
+        && parts[.. parts.len() - 1]
+            .iter()
+            .all(|d| !d.starts_with('.'))
 }
 
 impl crate::config::Config {
