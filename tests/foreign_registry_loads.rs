@@ -109,7 +109,7 @@ fn namespaces_with_files_but_no_rows(
 /// Whether `path` mentions `key` at the top level at all, in any table shape.
 ///
 /// **Deliberately wider than the loader's own predicate, and that is the whole
-/// value of it.** `load_registry` accepts only an array of tables
+/// value of it.** `load_registry_in_dir` accepts only an array of tables
 /// (`as_array_of_tables()`), so a file writing `[law]` where it meant `[[law]]`
 /// hits that arm, `continue`s, and produces no rows **with nothing printed**.
 /// That is the single-vs-double-bracket slip, it is the one drop path the
@@ -142,7 +142,7 @@ fn a_foreign_registry_parses_and_validates() {
     // was in the mock dir and therefore refused half of them, which is a test
     // re-implementing, worse, a decision the library had already made.
     //
-    // The mock dir still has to be the mock dir. `load_registry` reads
+    // The mock dir still has to be the mock dir. `load_registry_in_dir` reads
     // `<mock_dir>/registry`, so pointing this at a repo root finds the config
     // and none of the rows.
     let cfg = mockspace::config::Config::from_dir(&mock_dir);
@@ -155,7 +155,8 @@ fn a_foreign_registry_parses_and_validates() {
     );
     eprintln!("namespaces declared: {}", namespaces.len());
 
-    let reg = mockspace::registry::load_registry(&mock_dir, namespaces);
+    let reg = mockspace::registry::load_registry_in_dir(&mock_dir, namespaces)
+        .expect("the registry directory reads");
     eprintln!("rows loaded:         {}", reg.rows.len());
     for (ns, slugs) in &reg.by_namespace {
         eprintln!("  {ns:<24} {} rows", slugs.len());
@@ -369,7 +370,8 @@ fn the_drop_detection_reports_a_namespace_with_files_and_no_rows() {
             .collect::<Vec<_>>()
     );
 
-    let reg = mockspace::registry::load_registry(mock, &cfg.registry_namespaces);
+    let reg = mockspace::registry::load_registry_in_dir(mock, &cfg.registry_namespaces)
+        .expect("the registry directory reads");
     let found = namespaces_with_files_but_no_rows(&cfg.registry_namespaces, &reg);
     assert_eq!(
         found,
@@ -391,7 +393,8 @@ fn the_drop_detection_reports_a_namespace_with_files_and_no_rows() {
         "[[ghostns]]\nid = \"real\"\n",
     )
     .unwrap();
-    let reg = mockspace::registry::load_registry(mock, &cfg.registry_namespaces);
+    let reg = mockspace::registry::load_registry_in_dir(mock, &cfg.registry_namespaces)
+        .expect("the registry directory reads");
     assert_eq!(
         reg.by_namespace.get("ghostns").map(Vec::len),
         Some(1),
@@ -470,7 +473,8 @@ type = "ref[]"
          inspects a citation. Parsed: {ref_fields:?}"
     );
 
-    let reg = mockspace::registry::load_registry(mock, &cfg.registry_namespaces);
+    let reg = mockspace::registry::load_registry_in_dir(mock, &cfg.registry_namespaces)
+        .expect("the registry directory reads");
     assert_eq!(reg.rows.len(), 2, "the fixture's own rows did not load");
 
     let findings = mockspace::registry::validate_provenance(
@@ -532,7 +536,8 @@ fn the_drop_detection_sees_a_drop_in_a_file_nested_two_levels_deep() {
     .unwrap();
 
     let cfg = mockspace::config::Config::from_dir(mock);
-    let reg = mockspace::registry::load_registry(mock, &cfg.registry_namespaces);
+    let reg = mockspace::registry::load_registry_in_dir(mock, &cfg.registry_namespaces)
+        .expect("the registry directory reads");
 
     // Premise, not subject: the loader reached the nested file.
     assert!(
@@ -581,7 +586,8 @@ fn the_drop_detection_follows_the_table_key_not_the_file_name() {
     .unwrap();
 
     let cfg = mockspace::config::Config::from_dir(mock);
-    let reg = mockspace::registry::load_registry(mock, &cfg.registry_namespaces);
+    let reg = mockspace::registry::load_registry_in_dir(mock, &cfg.registry_namespaces)
+        .expect("the registry directory reads");
 
     assert!(
         reg.by_namespace.get("law").is_none_or(Vec::is_empty),
@@ -601,7 +607,7 @@ fn the_drop_detection_follows_the_table_key_not_the_file_name() {
 /// The drop detection sees the single-vs-double-bracket slip, which is the one
 /// drop the loader really is silent about.
 ///
-/// `load_registry` accepts only an array of tables. A file writing `[law]`
+/// `load_registry_in_dir` accepts only an array of tables. A file writing `[law]`
 /// where it meant `[[law]]` reaches `as_array_of_tables()`, gets `None`,
 /// `continue`s, and produces no rows **with nothing printed**. Every other drop
 /// path is either loud (a missing `id`, a TOML parse failure) or deliberate (a
@@ -626,7 +632,8 @@ fn the_drop_detection_sees_a_plain_table_where_an_array_was_meant() {
     std::fs::write(mock.join("registry/law.toml"), "[law]\nid = \"a\"\n").unwrap();
 
     let cfg = mockspace::config::Config::from_dir(mock);
-    let reg = mockspace::registry::load_registry(mock, &cfg.registry_namespaces);
+    let reg = mockspace::registry::load_registry_in_dir(mock, &cfg.registry_namespaces)
+        .expect("the registry directory reads");
 
     // Premise, not subject: the loader read the file and produced nothing.
     assert!(

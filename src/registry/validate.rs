@@ -674,7 +674,7 @@ pub fn namespace_root_collisions(
     // Two declarations under one key, which nothing refused and which the
     // engine itself does not resolve consistently.
     //
-    // A key is global over the whole of `<mock>/registry/`: `load_registry`
+    // A key is global over the whole of `<mock>/registry/`: `load_registry_in_dir`
     // builds one set of known keys and walks the tree against it, and a row is
     // addressed `<namespace>::<slug>` with no part of its path in the address.
     // So a second declaration does not partition anything. It supplies a

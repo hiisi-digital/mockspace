@@ -7,9 +7,9 @@
 //! and the `[[registry.store]]` declaration. Real git and a real bare repository throughout.
 
 use super::*;
-use crate::registry::test_world::*;
 use crate::config::Config;
-use crate::registry::{RegistryWriter, load_registry_from};
+use crate::registry::test_world::*;
+use crate::registry::{RegistryWriter, load_registry_from, load_registry_in_dir};
 
 #[test]
 fn the_directory_stays_the_default_and_reads_as_it_always_did() {
@@ -156,3 +156,20 @@ fn a_form_that_is_neither_branch_nor_ref_is_refused_at_open() {
     assert!(matches!(err, RegistryStoreError::Declared(_)), "{err}");
 }
 
+#[test]
+fn a_registry_directory_that_cannot_be_read_is_an_error_and_never_an_empty_registry() {
+    let w = World::new();
+    let cfg = w.clone_of("a", false);
+    // the directory form of the loader, as the integration tests call it
+    let ok = load_registry_in_dir(&cfg.mock_dir, &cfg.registry_namespaces).unwrap();
+    assert!(
+        ok.rows.is_empty(),
+        "control: a project with no rows loads empty"
+    );
+    // the registry path holds a file where a directory should be, so it cannot be walked
+    let registry = cfg.mock_dir.join("registry");
+    std::fs::remove_dir_all(&registry).ok();
+    std::fs::write(&registry, "not a directory").unwrap();
+    let err = load_registry_in_dir(&cfg.mock_dir, &cfg.registry_namespaces).unwrap_err();
+    assert!(matches!(err, RegistryStoreError::Store { .. }), "{err}");
+}
