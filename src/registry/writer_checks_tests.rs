@@ -213,8 +213,8 @@ fn dangling_in(cfg: &Config, stores: &RegistryStores, document: &str) -> Vec<Str
 /// `render_all` writes into the tree's documents directory, so the writer has neither the
 /// documents to look at nor a place to render them without running the whole generation per
 /// write. This states what that leaves: the writer accepts the removal of a row a document names,
-/// and the document is dangling afterwards. The commit gate is where it is caught, as it is for a
-/// row removed in the tree.
+/// and the document is dangling afterwards. A full generation run reports it; the pre-commit and
+/// pre-push hooks run lint-only and do not.
 #[test]
 fn a_row_a_document_names_can_be_removed_by_a_write_the_writer_cannot_see_the_documents() {
     let w = World::new();
@@ -235,6 +235,6 @@ fn a_row_a_document_names_can_be_removed_by_a_write_the_writer_cannot_see_the_do
     assert_eq!(
         dangling_in(&cfg, &s, document),
         ["{{ ticket::one }}"],
-        "the document dangles now, and only the gate's scan of generated documents sees it"
+        "the document dangles now, and only the scan of a generation run sees it"
     );
 }
