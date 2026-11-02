@@ -40,6 +40,115 @@ pub struct EnvMeta {
     /// Hardware counter frequency in Hz; used by the harness to convert
     /// raw counter ticks into nanoseconds.
     pub counter_freq: u64,
+    /// Coarse machine label (see [`machine_class`]), so timings from different
+    /// hardware are never pooled. Carries no hostname, user, MAC or serial.
+    pub machine_class: String,
+    /// Logical CPUs available to this process; zero when unknown.
+    pub cpus_online: u64,
+    /// One-minute load average at collection; `None` when unreadable.
+    pub load_1m: Option<f64>,
+}
+
+/// The facts a machine class is derived from. Nothing in here identifies a
+/// machine: the CPU brand is reduced to a family token and never passed through.
+#[derive(Clone, Copy, Debug)]
+pub struct MachineFacts<'a> {
+    /// `std::env::consts::OS`.
+    pub os:        &'a str,
+    /// `std::env::consts::ARCH`.
+    pub arch:      &'a str,
+    /// Logical CPUs; zero when unknown.
+    pub cpus:      u64,
+    /// Whether the process runs inside a container.
+    pub container: bool,
+    /// CPU brand string, free-form.
+    pub cpu_brand: &'a str,
+}
+
+/// A coarse label such as `linux-x86_64-c16-container-amd`: os, arch, core-count
+/// bucket (the next of 2, 4, 8, 16, 32, 64), container or bare, and cpu family.
+///
+/// Every part is drawn from a closed vocabulary or a bucket, so a hostname or
+/// serial inside the brand string cannot reach the label.
+#[must_use]
+pub fn machine_class(f: &MachineFacts<'_>) -> String {
+    let bucket = match f.cpus {
+        0 => "cx".to_string(),
+        n => format!("c{}", [2, 4, 8, 16, 32, 64].into_iter().find(|b| n <= *b).unwrap_or(64)),
+    };
+    format!(
+        "{}-{}-{}-{}-{}",
+        token(f.os),
+        token(f.arch),
+        bucket,
+        if f.container { "container" } else { "bare" },
+        cpu_family(f.cpu_brand),
+    )
+}
+
+/// The os or arch as a token: lowercase ascii letters, digits and `_`, anything
+/// else dropped, so the label has no separator inside a part.
+fn token(s: &str) -> String {
+    let t: String = s
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    if t.is_empty() { "unknown".into() } else { t }
+}
+
+/// The CPU family from a brand string, from a closed list; `other` otherwise.
+fn cpu_family(brand: &str) -> &'static str {
+    let b = brand.to_ascii_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|n| b.contains(n));
+    if has(&["apple"]) {
+        "apple"
+    } else if has(&["intel", "xeon"]) {
+        "intel"
+    } else if has(&["amd", "epyc", "ryzen"]) {
+        "amd"
+    } else if has(&["graviton", "neoverse", "arm"]) {
+        "arm"
+    } else {
+        "other"
+    }
+}
+
+/// The first field of `/proc/loadavg` (`0.52 0.58 0.59 1/467 12345`).
+#[must_use]
+pub fn parse_proc_loadavg(s: &str) -> Option<f64> {
+    s.split_whitespace().next()?.parse().ok().filter(|v: &f64| v.is_finite())
+}
+
+/// The first number of `sysctl -n vm.loadavg` (`{ 1.52 1.60 1.71 }`).
+#[must_use]
+pub fn parse_sysctl_loadavg(s: &str) -> Option<f64> {
+    s.split_whitespace()
+        .find(|w| *w != "{")?
+        .parse()
+        .ok()
+        .filter(|v: &f64| v.is_finite())
+}
+
+/// The one-minute load average now, or `None` where the platform gives none.
+#[must_use]
+pub fn load_1m() -> Option<f64> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("sysctl").args(["-n", "vm.loadavg"]).output().ok()?;
+        parse_sysctl_loadavg(&String::from_utf8(out.stdout).ok()?)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        parse_proc_loadavg(&std::fs::read_to_string("/proc/loadavg").ok()?)
+    }
+}
+
+fn in_container() -> bool {
+    std::path::Path::new("/.dockerenv").exists()
+        || std::fs::read_to_string("/proc/1/cgroup").is_ok_and(|s| {
+            ["docker", "kubepods", "containerd", "lxc"].iter().any(|k| s.contains(k))
+        })
 }
 
 /// Collect environment metadata for the current process.
@@ -52,8 +161,19 @@ pub struct EnvMeta {
 /// counter frequency. Any individual collection step that fails leaves
 /// the corresponding field empty (no panic).
 pub fn collect_env_meta() -> EnvMeta {
+    let cpu = collect_cpu();
+    let cpus = std::thread::available_parallelism().map_or(0, |n| n.get() as u64);
     EnvMeta {
-        cpu:          collect_cpu(),
+        machine_class: machine_class(&MachineFacts {
+            os:        std::env::consts::OS,
+            arch:      std::env::consts::ARCH,
+            cpus,
+            container: in_container(),
+            cpu_brand: &cpu,
+        }),
+        cpus_online:   cpus,
+        load_1m:       load_1m(),
+        cpu,
         os:           collect_os(),
         rustc:        collect_rustc(),
         git_commit:   {
@@ -136,4 +256,47 @@ fn collect_timestamp() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn facts(brand: &str) -> MachineFacts<'_> {
+        MachineFacts { os: "linux", arch: "x86_64", cpus: 12, container: false, cpu_brand: brand }
+    }
+
+    #[test]
+    fn the_class_is_os_arch_core_bucket_kind_and_family() {
+        assert_eq!(machine_class(&facts("AMD EPYC 7B13")), "linux-x86_64-c16-bare-amd");
+        let c = MachineFacts { container: true, cpus: 2, ..facts("Intel(R) Xeon(R)") };
+        assert_eq!(machine_class(&c), "linux-x86_64-c2-container-intel");
+    }
+
+    /// A hostname riding in the brand string, or in os or arch, must not reach
+    /// the label: the family comes from a closed list and the rest is tokenised.
+    #[test]
+    fn a_hostname_in_the_inputs_never_reaches_the_label() {
+        let label = machine_class(&facts("Mystery CPU on build-host-7f3a.example.com"));
+        assert_eq!(label, "linux-x86_64-c16-bare-other");
+        let f = MachineFacts { os: "linux-ip-10-0-0-5", ..facts("x") };
+        assert!(!machine_class(&f).contains("10-0-0-5"));
+    }
+
+    #[test]
+    fn unknown_cores_get_their_own_bucket_rather_than_the_smallest() {
+        let f = MachineFacts { cpus: 0, ..facts("x") };
+        assert!(machine_class(&f).contains("-cx-"));
+        let f = MachineFacts { cpus: 500, ..facts("x") };
+        assert!(machine_class(&f).contains("-c64-"));
+    }
+
+    #[test]
+    fn both_load_formats_read_their_first_number_and_refuse_junk() {
+        assert_eq!(parse_proc_loadavg("0.52 0.58 0.59 1/467 12345\n"), Some(0.52));
+        assert_eq!(parse_sysctl_loadavg("{ 1.52 1.60 1.71 }\n"), Some(1.52));
+        assert_eq!(parse_proc_loadavg(""), None);
+        assert_eq!(parse_proc_loadavg("NaN 1 2"), None);
+        assert_eq!(parse_sysctl_loadavg("{ }"), None);
+    }
 }
