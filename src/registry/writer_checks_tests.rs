@@ -167,3 +167,26 @@ fn a_reference_cycle_made_by_a_write_is_refused() {
     );
     assert_eq!(w.remote_ref(), None);
 }
+
+fn found(items: &[&str]) -> Vec<String> {
+    items.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn a_second_finding_of_the_same_words_is_new() {
+    // the writer's findings are counted: a write that adds a second row failing the same way
+    // as one the registry already had raises one more finding than before
+    let err = super::refuse_new(&found(&["[duplicate-id] x"]), found(&["[duplicate-id] x", "[duplicate-id] x"]))
+        .unwrap_err();
+    assert!(
+        matches!(&err, RegistryStoreError::Refused(f) if f == &["[duplicate-id] x"]),
+        "{err}"
+    );
+}
+
+#[test]
+fn findings_the_registry_already_had_are_not_new_however_many() {
+    let had = found(&["[a] x", "[a] x", "[b] y"]);
+    super::refuse_new(&had, had.clone()).expect("the same findings, counted the same");
+    super::refuse_new(&had, found(&["[b] y", "[a] x"])).expect("fewer findings is not new");
+}

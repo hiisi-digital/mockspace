@@ -11,8 +11,9 @@
 //! be): the files
 //! must read as TOML with an `id` on every row, and the registry they make must raise no finding
 //! of [`validate`], [`validate_row_references`] or [`validate_provenance`] that the registry
-//! before the write did not already raise. A write that fails them is refused and no store
-//! is touched. A finding the registry already had is not the write's, and does not stop it.
+//! before the write raised fewer times. A write that fails them is refused and no store
+//! is touched. A finding the registry already had, as often as it had it, is not the write's,
+//! and does not stop it.
 //!
 //! When another writer moves a ref first, the merge driver of registry files
 //! (`registry_merge`) is the race handler: it merges the file as it was when this write began,
@@ -331,7 +332,22 @@ fn overlay(mut files: Files, changes: &[(String, Option<Vec<u8>>)]) -> Files {
 }
 
 fn refuse_new(old: &[String], new: Vec<String>) -> Result<(), RegistryStoreError> {
-    let fresh: Vec<String> = new.into_iter().filter(|p| !old.contains(p)).collect();
+    // counted, not looked up: a write that adds a second row failing the way a standing one does
+    // raises one finding more than before, and that one is the write's
+    let mut had: BTreeMap<&str, usize> = BTreeMap::new();
+    for p in old {
+        *had.entry(p.as_str()).or_default() += 1;
+    }
+    let fresh: Vec<String> = new
+        .into_iter()
+        .filter(|p| match had.get_mut(p.as_str()) {
+            Some(n) if *n > 0 => {
+                *n -= 1;
+                false
+            },
+            _ => true,
+        })
+        .collect();
     if fresh.is_empty() { Ok(()) } else { Err(RegistryStoreError::Refused(fresh)) }
 }
 
