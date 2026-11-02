@@ -204,6 +204,8 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     let packages: Vec<String> = plan.run.iter().map(|(n, _)| n.clone()).collect();
     let filter = nextest::filterset(inv.filter.as_deref(), &plan.skip, &plan.reuse);
     let load_before = mockspace_bench_harness::env::load_1m();
+    let commit = mockspace_bench_harness::env::collect_git_commit_marked();
+    let threads_env = std::env::var("NEXTEST_TEST_THREADS").ok();
     let status = nextest::command(&nextest::RunSpec {
         mock_dir:     &cfg.mock_dir,
         tool_config:  &tool_config,
@@ -227,6 +229,8 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
             passed:      &inv.passed,
             report:      &report,
             load_before,
+            threads_env: threads_env.as_deref(),
+            commit:      &commit,
             fingerprint: fp.as_ref(),
         },
         &cases,

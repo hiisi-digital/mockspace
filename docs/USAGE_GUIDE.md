@@ -458,7 +458,7 @@ work_marker = "MOCK-WORK"  # first word of the stderr line a test prints to repo
 sim-core = 3             # 0 to 3, "s" or "z"; members not named keep their manifest's
 ```
 
-Every `mock test` run writes one row per test (name, binary, seconds, outcome, machine class, profile, test threads, load before and after, and a work count where the test reported one) as a shard under `target/mockspace-test-state/timings-spool/samples/<yyyy-mm>/<machine-class>/`. A test reports work by printing `MOCK-WORK <unit> <n>` on stderr, `ticks 1200` for instance; `work_marker` renames the first word. Nextest is told to keep a passing test's stderr for this.
+Every `mock test` run writes one row per test (name, binary, seconds, outcome, machine class, profile, test threads, load before and after, and a work count where the test reported one) as a shard under `<mock>/target/mockspace-test-state/timings-spool/samples/<yyyy-mm>/<machine-class>/`. A test reports work by printing `MOCK-WORK <unit> <n>` on stderr, `ticks 1200` for instance; `work_marker` renames the first word. Nextest is told to keep a passing test's stderr for this.
 
 ### Lints
 

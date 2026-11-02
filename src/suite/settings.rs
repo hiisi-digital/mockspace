@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn the_work_marker_is_one_word_and_defaults_to_the_upstream_one() {
         assert_eq!(parse("").unwrap().work_marker, "MOCK-WORK");
-        assert_eq!(parse("work_marker = \"KASKI-WORK\"\n").unwrap().work_marker, "KASKI-WORK");
+        assert_eq!(parse("work_marker = \"PROJ-WORK\"\n").unwrap().work_marker, "PROJ-WORK");
         for bad in ["\"\"", "\"TWO WORDS\""] {
             let e = parse(&format!("work_marker = {bad}\n")).unwrap_err();
             assert!(e.contains("work_marker"), "{bad}: {e}");

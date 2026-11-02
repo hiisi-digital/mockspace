@@ -122,28 +122,43 @@ pub fn run_id(ts: u64) -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos());
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut h = std::collections::hash_map::DefaultHasher::new();
     std::env::current_dir().ok().hash(&mut h);
     std::process::id().hash(&mut h);
-    format!("{ts}-{nanos:09}-{:08x}", h.finish() as u32)
+    format!("{ts}-{nanos:09}-{:08x}-{n}", h.finish() as u32)
 }
 
-/// The test threads a run used: the `-j` / `--test-threads` it was given, else
-/// the cpus. Both `-j N`, `-jN` and `--test-threads=N` are read.
-pub fn test_threads(passed: &[String], cpus: u64) -> u64 {
+/// The test threads a run used: nextest's `-j`, `--jobs` or `--test-threads` in any
+/// of its spellings (`-j N`, `-jN`, `-j=N`, `--jobs N`, `--jobs=N`, and the same for
+/// `--test-threads`), else `env` (`NEXTEST_TEST_THREADS`), else the cpus. A negative
+/// count means the cpus less that many, and `num-cpus` the cpus.
+pub fn test_threads(passed: &[String], env: Option<&str>, cpus: u64) -> u64 {
+    let count = |v: &str| -> Option<u64> {
+        let v = v.trim();
+        if v == "num-cpus" {
+            return Some(cpus.max(1));
+        }
+        match v.parse::<i64>().ok()? {
+            0 => None,
+            n if n > 0 => Some(n as u64),
+            n => Some(cpus.saturating_sub(n.unsigned_abs()).max(1)),
+        }
+    };
     let mut it = passed.iter();
     while let Some(a) = it.next() {
-        let value = if a == "-j" || a == "--test-threads" {
-            it.next().map(String::as_str)
-        } else {
-            a.strip_prefix("--test-threads=")
-                .or_else(|| a.strip_prefix("-j"))
+        let value = match a.as_str() {
+            "-j" | "--jobs" | "--test-threads" => it.next().map(String::as_str),
+            _ => ["--test-threads=", "--jobs=", "-j=", "-j"]
+                .iter()
+                .find_map(|p| a.strip_prefix(p)),
         };
-        if let Some(n) = value.and_then(|v| v.parse::<u64>().ok()).filter(|n| *n > 0) {
+        if let Some(n) = value.and_then(count) {
             return n;
         }
     }
-    cpus
+    env.and_then(count).unwrap_or(cpus)
 }
 
 /// Where the spool lives under the test state directory.
@@ -157,6 +172,8 @@ pub struct Run<'a> {
     pub passed:      &'a [String],
     pub report:      &'a str,
     pub load_before: Option<f64>,
+    pub threads_env: Option<&'a str>,
+    pub commit:      &'a str,
     pub fingerprint: Option<&'a super::fingerprint::Fingerprints>,
 }
 
@@ -166,14 +183,13 @@ pub struct Run<'a> {
 pub fn record_run(run: &Run<'_>, cases: &[Case], work_marker: &str) {
     let env = mockspace_bench_harness::env::collect_run_env();
     let id = run_id(env.timestamp);
-    let commit = mockspace_bench_harness::env::collect_git_commit_marked();
-    let facts = RunFacts {
+        let facts = RunFacts {
         env:            &env,
         run:            &id,
-        commit:         &commit,
+        commit:         run.commit,
         flavour:        run.flavour,
         profile:        run.profile,
-        test_threads:   test_threads(run.passed, env.cpus_online),
+        test_threads:   test_threads(run.passed, run.threads_env, env.cpus_online),
         load_1m_before: run.load_before,
         load_1m_after:  mockspace_bench_harness::env::load_1m(),
     };

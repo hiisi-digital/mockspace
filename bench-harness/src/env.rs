@@ -66,7 +66,7 @@ pub struct MachineFacts<'a> {
 }
 
 /// A coarse label such as `linux-x86_64-c16-container-amd`: os, arch, core-count
-/// bucket (the next of 2, 4, 8, 16, 32, 64), container or bare, and cpu family.
+/// bucket (the next power of two, at least 2), container or bare, and cpu family.
 ///
 /// Every part is drawn from a closed vocabulary or a bucket, so a hostname or
 /// serial inside the brand string cannot reach the label.
@@ -74,7 +74,7 @@ pub struct MachineFacts<'a> {
 pub fn machine_class(f: &MachineFacts<'_>) -> String {
     let bucket = match f.cpus {
         0 => "cx".to_string(),
-        n => format!("c{}", [2, 4, 8, 16, 32, 64].into_iter().find(|b| n <= *b).unwrap_or(64)),
+        n => format!("c{}", n.next_power_of_two().max(2)),
     };
     format!(
         "{}-{}-{}-{}-{}",
@@ -89,9 +89,15 @@ pub fn machine_class(f: &MachineFacts<'_>) -> String {
 /// The os or arch from a closed list, `other` for anything outside it, so free text
 /// (a hostname inside an os string) cannot reach the label.
 fn token(s: &str) -> &'static str {
-    const KNOWN: [&str; 14] = [
-        "linux", "macos", "windows", "freebsd", "netbsd", "openbsd", "android", "ios",
-        "x86_64", "aarch64", "arm", "riscv64", "x86", "wasm32",
+    // The values `std::env::consts::OS` and `ARCH` take.
+    const KNOWN: [&str; 54] = [
+        "linux", "macos", "windows", "freebsd", "netbsd", "openbsd", "dragonfly", "android",
+        "ios", "tvos", "watchos", "solaris", "illumos", "haiku", "redox", "fuchsia", "wasi",
+        "emscripten", "vxworks", "cygwin", "aix", "nto", "espidf", "horizon", "l4re", "hurd",
+        "x86", "x86_64", "arm", "aarch64", "arm64ec", "loongarch64", "m68k", "csky", "mips",
+        "mips64", "mips32r6", "mips64r6", "powerpc", "powerpc64", "riscv32", "riscv64", "s390x",
+        "sparc", "sparc64", "hexagon", "wasm32", "wasm64", "xtensa", "avr", "msp430", "nvptx64",
+        "bpf", "amdgpu",
     ];
     KNOWN.iter().copied().find(|k| *k == s).unwrap_or("other")
 }
@@ -143,11 +149,28 @@ pub fn load_1m() -> Option<f64> {
     }
 }
 
+/// Whether the facts a process can read say it runs in a container.
+#[must_use]
+pub fn container_from(
+    dockerenv: bool,
+    containerenv: bool,
+    systemd_container: &str,
+    cgroup: &str,
+) -> bool {
+    dockerenv
+        || containerenv
+        || !systemd_container.trim().is_empty()
+        || ["docker", "kubepods", "containerd", "lxc"].iter().any(|k| cgroup.contains(k))
+}
+
 fn in_container() -> bool {
-    std::path::Path::new("/.dockerenv").exists()
-        || std::fs::read_to_string("/proc/1/cgroup").is_ok_and(|s| {
-            ["docker", "kubepods", "containerd", "lxc"].iter().any(|k| s.contains(k))
-        })
+    let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
+    container_from(
+        std::path::Path::new("/.dockerenv").exists(),
+        std::path::Path::new("/run/.containerenv").exists(),
+        &read("/run/systemd/container"),
+        &read("/proc/1/cgroup"),
+    )
 }
 
 /// Collect environment metadata for the current process.
@@ -316,7 +339,9 @@ mod tests {
         let f = MachineFacts { cpus: 0, ..facts("x") };
         assert!(machine_class(&f).contains("-cx-"));
         let f = MachineFacts { cpus: 500, ..facts("x") };
-        assert!(machine_class(&f).contains("-c64-"));
+        assert!(machine_class(&f).contains("-c512-"));
+        let f = MachineFacts { cpus: 192, ..facts("x") };
+        assert!(machine_class(&f).contains("-c256-"), "a big box is not pooled with a 64-core one");
     }
 
     #[test]
@@ -326,5 +351,22 @@ mod tests {
         assert_eq!(parse_proc_loadavg(""), None);
         assert_eq!(parse_proc_loadavg("NaN 1 2"), None);
         assert_eq!(parse_sysctl_loadavg("{ }"), None);
+    }
+
+    /// Docker's marker file, podman's, systemd's `/run/systemd/container` (what this
+    /// cloud container shows, with no `.dockerenv`) and a cgroup path each say so alone.
+    #[test]
+    fn each_container_signal_alone_makes_it_a_container() {
+        assert!(!container_from(false, false, "\n", "0::/\n"));
+        assert!(container_from(true, false, "", ""));
+        assert!(container_from(false, true, "", ""));
+        assert!(container_from(false, false, "docker\n", "0::/\n"));
+        assert!(container_from(false, false, "", "12:cpu:/kubepods/x\n"));
+    }
+
+    #[test]
+    fn an_arch_outside_the_x86_and_arm_families_is_not_pooled_with_them() {
+        let f = MachineFacts { arch: "powerpc64", ..facts("x") };
+        assert!(machine_class(&f).contains("-powerpc64-"));
     }
 }

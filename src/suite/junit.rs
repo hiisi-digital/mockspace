@@ -127,8 +127,10 @@ pub fn work_lines(xml: &str, marker: &str) -> Vec<Work> {
         } else {
             &rest[tag_end .. rest.find("</testcase>").unwrap_or(rest.len())]
         };
-        // The testcase's own stderr is its last: nextest nests the earlier attempts'
-        // inside `<flakyFailure>` and `<rerunFailure>` ahead of it.
+        // A flaky pass nests the failed attempts' stderr inside `<flakyFailure>` ahead of
+        // the testcase's own, so the last `<system-err>` is the passing attempt's. A test
+        // that fails every retry has the first attempt's stderr and time at testcase
+        // level, which is still a consistent pair.
         let found = body.rfind("<system-err>").map(|s| {
             let err = &body[s + "<system-err>".len() ..];
             unescape(&err[.. err.find("</system-err>").unwrap_or(err.len())])
@@ -216,25 +218,25 @@ mod tests {
     const WORKED: &str = r#"<testsuites>
     <testsuite name="sim" tests="4">
         <testcase name="walks" classname="sim" time="3.250">
-            <system-out>KASKI-WORK ignored_in_out 9</system-out>
+            <system-out>PROJ-WORK ignored_in_out 9</system-out>
             <system-err>noise
-KASKI-WORK ticks 1200
+PROJ-WORK ticks 1200
 </system-err>
         </testcase>
         <testcase name="bad_count" classname="sim" time="0.500">
-            <system-err>KASKI-WORK ticks abc</system-err>
+            <system-err>PROJ-WORK ticks abc</system-err>
         </testcase>
         <testcase name="plain" classname="sim" time="0.100"/>
         <testcase name="twice" classname="sim" time="1.000">
-            <system-err>KASKI-WORK beings 5
-KASKI-WORK beings 7 &amp; more</system-err>
+            <system-err>PROJ-WORK beings 5
+PROJ-WORK beings 7 &amp; more</system-err>
         </testcase>
     </testsuite>
 </testsuites>"#;
 
     #[test]
     fn a_work_line_on_stderr_gives_the_count_for_its_test() {
-        let w = work_lines(WORKED, "KASKI-WORK");
+        let w = work_lines(WORKED, "PROJ-WORK");
         assert_eq!(w, vec![Work {
             binary: "sim".into(),
             name:   "walks".into(),
@@ -243,11 +245,11 @@ KASKI-WORK beings 7 &amp; more</system-err>
         }]);
     }
 
-    /// `KASKI-WORK ticks abc` yields no count, and the case is still read, so
+    /// `PROJ-WORK ticks abc` yields no count, and the case is still read, so
     /// the sample is recorded with plain seconds.
     #[test]
     fn a_work_line_that_is_not_a_number_loses_the_count_and_never_the_timing() {
-        assert!(work_lines(WORKED, "KASKI-WORK").iter().all(|w| w.name != "bad_count"));
+        assert!(work_lines(WORKED, "PROJ-WORK").iter().all(|w| w.name != "bad_count"));
         let cases = parse(WORKED);
         let bad = cases.iter().find(|c| c.name == "bad_count").unwrap();
         assert_eq!(bad.secs, 0.5);
@@ -262,7 +264,7 @@ KASKI-WORK beings 7 &amp; more</system-err>
             work_lines(WORKED, m).into_iter().map(|w| w.name).collect()
         };
         assert_eq!(names("OTHER-WORK"), Vec::<String>::new());
-        assert!(!names("KASKI-WORK").contains(&"twice".to_string()));
+        assert!(!names("PROJ-WORK").contains(&"twice".to_string()));
     }
 
     /// nextest nests the earlier attempts' stderr inside `<flakyFailure>` ahead of
@@ -272,12 +274,12 @@ KASKI-WORK beings 7 &amp; more</system-err>
         let xml = r#"<testsuites><testsuite name="s">
         <testcase name="flaky" classname="s" time="2.000">
             <flakyFailure message="x" type="test failure">
-                <system-err>KASKI-WORK ticks 1</system-err>
+                <system-err>PROJ-WORK ticks 1</system-err>
             </flakyFailure>
-            <system-err>KASKI-WORK ticks 500</system-err>
+            <system-err>PROJ-WORK ticks 500</system-err>
         </testcase>
         </testsuite></testsuites>"#;
-        let w = work_lines(xml, "KASKI-WORK");
+        let w = work_lines(xml, "PROJ-WORK");
         assert_eq!(w.len(), 1);
         assert_eq!(w[0].n, 500);
     }

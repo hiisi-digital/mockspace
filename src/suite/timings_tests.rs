@@ -35,15 +35,15 @@ fn no_fp(_: &str) -> Option<String> {
 fn a_fast_test_is_recorded_like_a_slow_one() {
     let e = env();
     let cases = [
-        case("kaski-sim", "quick", 0.2, Outcome::Pass),
-        case("kaski-sim", "slow", 90.0, Outcome::Fail),
-        case("kaski-sim::it", "skipped_one", 0.0, Outcome::Skipped),
+        case("sim-core", "quick", 0.2, Outcome::Pass),
+        case("sim-core", "slow", 90.0, Outcome::Fail),
+        case("sim-core::it", "skipped_one", 0.0, Outcome::Skipped),
     ];
     let r = rows(&facts(&e), &cases, &[], &no_fp);
     assert_eq!(r.len(), 3);
     assert_eq!((r[0].test.as_str(), r[0].secs, r[0].outcome.as_str()), ("quick", 0.2, "pass"));
     assert_eq!(r[1].outcome, "fail");
-    assert_eq!((r[2].member.as_str(), r[2].outcome.as_str()), ("kaski-sim", "skipped"));
+    assert_eq!((r[2].member.as_str(), r[2].outcome.as_str()), ("sim-core", "skipped"));
     assert!(r.iter().all(|x| x.machine_class == "linux-x86_64-c8-bare-amd"));
     assert!(r.iter().all(|x| x.profile == "dev" && x.test_threads == 4));
 }
@@ -79,12 +79,40 @@ fn a_shard_round_trips_and_a_second_write_of_it_is_refused() {
 }
 
 #[test]
-fn threads_come_from_the_flag_in_any_spelling_else_the_cpus() {
+fn threads_come_from_every_spelling_nextest_takes_else_the_env_else_the_cpus() {
     let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    assert_eq!(test_threads(&a(&["-j", "3"]), 8), 3);
-    assert_eq!(test_threads(&a(&["-j5"]), 8), 5);
-    assert_eq!(test_threads(&a(&["--test-threads=2"]), 8), 2);
-    assert_eq!(test_threads(&a(&["--test-threads", "6"]), 8), 6);
-    assert_eq!(test_threads(&a(&["-j", "0"]), 8), 8);
-    assert_eq!(test_threads(&a(&[]), 8), 8);
+    for (args, want) in [
+        (&["-j", "3"][..], 3),
+        (&["-j5"], 5),
+        (&["-j=4"], 4),
+        (&["--jobs", "7"], 7),
+        (&["--jobs=9"], 9),
+        (&["--test-threads=2"], 2),
+        (&["--test-threads", "6"], 6),
+        (&["-j", "num-cpus"], 8),
+        (&["-j", "-2"], 6),
+        (&["-j", "-20"], 1),
+        (&["-j", "0"], 8),
+        (&[], 8),
+    ] {
+        assert_eq!(test_threads(&a(args), None, 8), want, "{args:?}");
+    }
+    assert_eq!(test_threads(&a(&[]), Some("3"), 8), 3);
+    assert_eq!(test_threads(&a(&["-j", "5"]), Some("3"), 8), 5, "the flag wins over the env");
+}
+
+#[test]
+fn a_spooled_run_leaves_no_temp_file_and_run_ids_differ() {
+    let dir = std::env::temp_dir().join(format!("mock-timings-tmp-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let e = env();
+    let r = rows(&facts(&e), &[case("sim", "a", 0.25, Outcome::Pass)], &[], &no_fp);
+    let path = spool(&dir, &r).unwrap().unwrap();
+    let left: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, vec!["r1.ndjson".to_string()]);
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_ne!(run_id(5), run_id(5), "two runs in one second must not share an id");
 }

@@ -9,8 +9,9 @@
 //! of different cells are never pooled. The baseline is the median of the last
 //! [`WINDOW`] clean samples, and a new sample is `Suspect` when its modified
 //! z-score (median absolute deviation) passes [`Z_LIMIT`] or it is over
-//! [`RATIO_LIMIT`] times the median. A cell with fewer than [`WARMING`] clean
-//! samples flags nothing: there is not yet a spread to judge against.
+//! [`RATIO_LIMIT`] times the median or under that fraction of it, alike in both
+//! directions, so a test that stopped doing its work is held out as readily as one
+//! that stalled. A cell with fewer than [`WARMING`] clean samples flags nothing: there is not yet a spread to judge against.
 //!
 //! This only judges. The verdict store that keeps a `Suspect` out of the
 //! aggregate until it is cleared or confirmed is a later step.
@@ -23,7 +24,7 @@ pub const WINDOW: usize = 20;
 pub const WARMING: usize = 8;
 /// The modified z-score past which a sample is suspect.
 pub const Z_LIMIT: f64 = 6.0;
-/// A sample over this many times the baseline median is suspect.
+/// A sample over this many times the baseline median, or under that fraction of it, is suspect.
 pub const RATIO_LIMIT: f64 = 3.0;
 
 /// What the statistic says of one new sample.
@@ -52,7 +53,7 @@ pub fn judge(clean: &[f64], sample: f64) -> Judgement {
     let med = median(window);
     let devs: Vec<f64> = window.iter().map(|x| (x - med).abs()).collect();
     let mad = median(&devs);
-    let by_ratio = med > 0.0 && sample > RATIO_LIMIT * med;
+    let by_ratio = med > 0.0 && (sample > RATIO_LIMIT * med || sample < med / RATIO_LIMIT);
     let by_z = mad > 0.0 && 0.6745 * (sample - med).abs() / mad > Z_LIMIT;
     if by_ratio || by_z { Judgement::Suspect } else { Judgement::Clean }
 }
@@ -107,5 +108,16 @@ mod tests {
     fn a_sample_that_is_not_a_number_is_never_clean() {
         assert_eq!(judge(&JITTER, f64::NAN), Judgement::Suspect);
         assert_eq!(judge(&JITTER, f64::INFINITY), Judgement::Suspect);
+    }
+
+    /// Slow and fast are judged alike, with or without a spread in the history.
+    #[test]
+    fn a_sample_far_below_the_baseline_is_as_suspect_as_one_far_above() {
+        let flat = [2.0; 10];
+        assert_eq!(judge(&flat, 0.5), Judgement::Suspect);
+        assert_eq!(judge(&flat, 8.0), Judgement::Suspect);
+        assert_eq!(judge(&JITTER, 0.3), Judgement::Suspect);
+        assert_eq!(judge(&JITTER, 3.5), Judgement::Suspect);
+        assert_eq!(judge(&flat, 1.0), Judgement::Clean);
     }
 }
