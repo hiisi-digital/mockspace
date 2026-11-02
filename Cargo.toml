@@ -11,9 +11,9 @@ members = [
     "benches",
     "benches/variants/multiply-xor",
     "benches/variants/bitwise-rotate",
-    # Held by this workspace although it sits below `mock/`, which is a workspace of its own: the
-    # engine depends on it by path, and a path dependency below the root is a member of the root, so
-    # the crate cannot also be a member of `mock/`, which excludes it.
+    # v2 code, kept under `mock/` and built here, since the v1 engine takes it by path. `mock/` is a
+    # workspace of its own, and a path dependency below this root is a member of this one, so the
+    # crate is not a member of `mock/`.
     "mock/crates/mockspace-store",
 ]
 
