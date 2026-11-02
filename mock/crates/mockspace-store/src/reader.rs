@@ -10,7 +10,9 @@ pub trait Reader {
     fn read(&self, path: &str) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Every file path at or under `prefix` (the empty prefix is all of them),
-    /// sorted. A prefix names whole components: `a` matches `a/b`, never `ab`.
+    /// sorted. A prefix names whole components: `a` matches `a/b`, never `ab`. A directory store
+    /// also lists an entry that is not a directory but cannot be read, a symlink to nothing, and
+    /// `read` gives `None` for it; `snapshot` leaves it out.
     fn list(&self, prefix: &str) -> Result<Vec<String>, StoreError>;
 
     /// Every file and its bytes, in path order.
