@@ -9,13 +9,19 @@
 //! `<flavour>/<member>.json` from the root of the store. [`History::load_from`] reads them from
 //! any [`Reader`], and [`History::save_to`] writes a run's records as one edit of a store.
 //!
-//! **What the writer guarantees.** An edit names only the members the run covered and the members
-//! the workspace no longer has, so a green record of a member the run did not cover is never in
-//! it, and survives a lost race byte for byte. It is not the commit guard: `mock check-test-history`
-//! also excuses a null when the member's fingerprint inputs were touched, which needs the
-//! commit's changed paths, and a write to a ref has no commit hook. The commit guard stays for a
-//! directory kept in the tree. A run cut short is held off by `complete` in `super` (the run module), ahead
-//! of the save.
+//! **The writer carries the guard.** `mock check-test-history` refuses a commit that nulls a
+//! member's green record while touching nothing its tests are built from, because a run cut short
+//! or a flaky test leaves exactly that, and a write to a ref has no commit hook to ask. The
+//! writer asks the same question of its own edit: a green may go from a file only when the
+//! member's fingerprint now differs from the one the record was made at (its inputs moved), when
+//! the workspace no longer has the member. After a lost race the merge of [`super::history_merge`]
+//! keeps a green the winner recorded, so the rebase cannot null one. Anything else is refused before it is pushed,
+//! and nothing is written. The guard runs for a history kept on a ref only; a directory in the
+//! tree keeps the commit guard as its only place the question is asked. An edit names only the
+//! members the run covered and those the workspace no longer has, so the record of any other
+//! member stands untouched whichever way the guard goes.
+
+use std::collections::BTreeMap;
 
 use mockspace_store::{Applied, Edit, MergeHook, MergeRefusal, Reader, Store, StoreError};
 
@@ -26,12 +32,22 @@ use super::history_merge::Later;
 #[derive(Debug)]
 pub enum HistoryError {
     Store(StoreError),
+    /// The guard refused the write: each entry is a member whose green record the run would remove
+    /// although nothing its tests are built from moved since it was recorded.
+    Nulled(Vec<String>),
 }
 
 impl std::fmt::Display for HistoryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Store(e) => write!(f, "{e}"),
+            Self::Nulled(members) => {
+                write!(
+                    f,
+                    "the run would remove the green record of {}, whose inputs have not moved: a run cut short or a flaky test leaves that, so nothing is written; run it again",
+                    members.join(", ")
+                )
+            },
         }
     }
 }
@@ -136,14 +152,22 @@ impl History {
     }
 
     /// Writes a run's records to `store` as one edit with `message`, on the state the store
-    /// last saw (a store is refreshed once, when it is opened). A lost race is settled file by file with [`super::history_merge`].
+    /// last saw. `guard` is each member's fingerprint now, for a store the commit guard does not
+    /// cover, and refuses an edit that removes a green recorded at the fingerprint a member still has (a store is refreshed once, when it is opened). A lost race is settled file by file with [`super::history_merge`].
     pub fn save_to(
         &self,
         store: &dyn Store,
         scope: &Scope,
+        guard: Option<&BTreeMap<String, String>>,
         message: &str,
     ) -> Result<Applied, HistoryError> {
         let edit = self.plan(store, scope)?;
+        if let Some(now) = guard {
+            let nulled = nulls(store, &edit, now)?;
+            if !nulled.is_empty() {
+                return Err(HistoryError::Nulled(nulled));
+            }
+        }
         let ours = edit.clone();
         let base = ours
             .entries()
@@ -200,6 +224,33 @@ impl MergeHook for Race {
         }
         Ok(next)
     }
+}
+
+fn green_of(bytes: Option<&[u8]>) -> Option<super::history::Green> {
+    bytes
+        .and_then(|b| std::str::from_utf8(b).ok())
+        .and_then(|t| MemberFile::parse(t).ok())
+        .and_then(|m| m.green)
+}
+
+/// The members whose green record `edit` removes from `reader` although their fingerprint in `now`
+/// is the one it was recorded at.
+fn nulls(
+    reader: &dyn Reader,
+    edit: &Edit,
+    now: &BTreeMap<String, String>,
+) -> Result<Vec<String>, StoreError> {
+    let mut out = Vec::new();
+    for (path, bytes) in edit.entries() {
+        let Some(member) = member_of(path) else { continue };
+        let Some(had) = record_at(reader, path)?.and_then(|m| m.green) else {
+            continue;
+        };
+        if green_of(bytes).is_none() && now.get(member) == Some(&had.full) {
+            out.push(member.to_string());
+        }
+    }
+    Ok(out)
 }
 
 /// The store of a project's test history: the directory under `<mock>/test-history`, or the

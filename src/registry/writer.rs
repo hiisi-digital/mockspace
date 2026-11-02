@@ -52,15 +52,29 @@ impl<'a> RegistryWriter<'a> {
         message: &str,
     ) -> Result<Applied, RegistryStoreError> {
         let (store, held, edit) = self.stores.edit_in(changes)?;
-        let before = self.current(None)?;
+        let on_ref = held != ".";
         let changed: BTreeSet<String> = changes.iter().map(|(p, _)| p.clone()).collect();
+        // A directory in the tree is checked by the commit gate over the whole registry, so a write
+        // to it reads and checks only the files it touches, as `registry-append` always cost.
+        let before = if on_ref {
+            self.current(None)?
+        } else {
+            let mut files = Files::new();
+            for rel in &changed {
+                let text = self
+                    .stores
+                    .read(rel)?
+                    .and_then(|b| String::from_utf8(b).ok());
+                files.push((rel.clone(), text));
+            }
+            files
+        };
         let base: BTreeMap<String, Option<String>> = before
             .iter()
             .filter(|(r, _)| changed.contains(r))
             .cloned()
             .collect();
         let after = overlay(before.clone(), changes);
-        let on_ref = held != ".";
         let now = self.problems(&after, &changed, on_ref);
         // a check that could not run is not a check that found nothing, new finding or not
         let unrun: Vec<String> = now
@@ -164,7 +178,20 @@ impl<'a> RegistryWriter<'a> {
             )];
         }
         match check_schemas(&scratch.0, &cfg.registry_namespaces, None) {
-            SchemaCheck::Ran { failures } => failures.into_iter().map(|f| format!("[schema] {f}")).collect(),
+            SchemaCheck::Ran { failures } => {
+                // taplo names the files it read, and the copy sits in a directory of its own each time
+                let (scratch_root, tree_root) = (scratch.0.to_string_lossy(), cfg.repo_root.to_string_lossy());
+                // taplo ends its log with a summary line that it does not always flush before it exits, and
+                // it names nothing, so it is left out: a finding present in one run and absent in the next
+                // would read as new
+                let mut seen = BTreeSet::new();
+                failures
+                    .into_iter()
+                    .filter(|f| !f.contains("operation failed"))
+                    .map(|f| format!("[schema] {}", f.replace(scratch_root.as_ref(), tree_root.as_ref())))
+                    .filter(|f| seen.insert(f.clone()))
+                    .collect()
+            },
             SchemaCheck::Unavailable if files.is_empty() => Vec::new(),
             SchemaCheck::Unavailable => vec!["[schema-unavailable] taplo is not installed, so the shape of rows on a ref is unverified".to_string()],
         }
@@ -200,6 +227,9 @@ impl<'a> RegistryWriter<'a> {
                 },
             }
         }
+        if !on_ref {
+            return out;
+        }
         let reg = rows_of_texts(
             self.stores.root(),
             files.clone(),
@@ -219,6 +249,20 @@ impl<'a> RegistryWriter<'a> {
             ));
         out.extend(findings.map(|f| format!("[{}] {}", f.kind, f.message)));
         if on_ref {
+            // the gate counts the cycles `resolve_data` names among the registry findings
+            let (_, cycles) = resolve_data(
+                ns,
+                &reg,
+                &cfg.registry_roots,
+                &cfg.repo_root,
+                &cfg.docs_dir,
+                cfg,
+            );
+            out.extend(
+                cycles
+                    .into_iter()
+                    .map(|f| format!("[{}] {}", f.kind, f.message)),
+            );
             out.extend(self.schema_problems(files));
         }
         out
@@ -306,7 +350,7 @@ impl MergeHook for Race<'_, '_> {
                         base.as_deref().unwrap_or(""),
                         ours,
                         t,
-                        7,
+                        crate::registry_merge::DEFAULT_MARKER,
                     )
                     .map_err(|why| refuse(format!("{rel}: {}", why.0)))?;
                     if out.conflicts > 0 {

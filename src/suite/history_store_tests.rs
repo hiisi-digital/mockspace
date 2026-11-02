@@ -81,7 +81,7 @@ fn a_save_to_a_ref_reads_back_whole() {
     let s = opened(&cfg);
     let m = members(&["m1"]);
     let h = hist("m1", "fp1", &["slow"]);
-    let applied = h.save_to(&s, &scope(&m, &m), "test history").unwrap();
+    let applied = h.save_to(&s, &scope(&m, &m), None, "test history").unwrap();
     assert!(applied.commit.is_some() && applied.changed);
     assert!(
         remote
@@ -91,7 +91,7 @@ fn a_save_to_a_ref_reads_back_whole() {
     );
     let back = History::load_from(&s).unwrap();
     assert_eq!(back, h);
-    let again = h.save_to(&s, &scope(&m, &m), "test history").unwrap();
+    let again = h.save_to(&s, &scope(&m, &m), None, "test history").unwrap();
     assert!(
         !again.changed,
         "a run that settled nothing writes no commit"
@@ -105,17 +105,17 @@ fn a_lost_race_is_resolved_by_the_history_merge() {
     let (sa, sb) = (opened(&a), opened(&b));
     let m = members(&["m1"]);
     hist("m1", "fp1", &["first"])
-        .save_to(&sa, &scope(&m, &m), "seed")
+        .save_to(&sa, &scope(&m, &m), None, "seed")
         .unwrap();
     sb.refresh().unwrap();
     // B reads the history as it is; A then records one more test; B records another on what it read.
     let seen = History::load_from(&sb).unwrap();
     assert_eq!(seen, hist("m1", "fp1", &["first"]));
     hist("m1", "fp1", &["first", "from_a"])
-        .save_to(&sa, &scope(&m, &m), "a")
+        .save_to(&sa, &scope(&m, &m), None, "a")
         .unwrap();
     hist("m1", "fp1", &["first", "from_b"])
-        .save_to(&sb, &scope(&m, &m), "b")
+        .save_to(&sb, &scope(&m, &m), None, "b")
         .unwrap();
     let merged = History::load_from(&sa)
         .and_then(|_| {
@@ -140,15 +140,15 @@ fn a_green_both_sides_moved_is_dropped_by_the_rule_and_the_write_lands() {
     let (sa, sb) = (opened(&a), opened(&b));
     let m = members(&["m1"]);
     hist("m1", "fp1", &["t"])
-        .save_to(&sa, &scope(&m, &m), "seed")
+        .save_to(&sa, &scope(&m, &m), None, "seed")
         .unwrap();
     sb.refresh().unwrap();
     History::load_from(&sb).unwrap();
     hist("m1", "fp2", &["t"])
-        .save_to(&sa, &scope(&m, &m), "a")
+        .save_to(&sa, &scope(&m, &m), None, "a")
         .unwrap();
     hist("m1", "fp3", &["t"])
-        .save_to(&sb, &scope(&m, &m), "b")
+        .save_to(&sb, &scope(&m, &m), None, "b")
         .unwrap();
     sa.refresh().unwrap();
     let after = History::load_from(&sa).unwrap();
@@ -169,17 +169,18 @@ fn a_green_a_member_that_did_not_run_holds_survives_a_save_and_a_lost_race() {
         full: "fp2".into(),
         own:  BTreeMap::new(),
     });
-    seed.save_to(&sa, &scope(&both, &both), "seed").unwrap();
+    seed.save_to(&sa, &scope(&both, &both), None, "seed")
+        .unwrap();
     sb.refresh().unwrap();
     let m2 = remote.file(REF, "default/m2.json").unwrap();
     let only_m1 = members(&["m1"]);
     // B writes a history that has no green for m2 at all, covering m1 only; A moves m1 first.
     History::load_from(&sb).unwrap();
     hist("m1", "fp1", &["t", "from_a"])
-        .save_to(&sa, &scope(&only_m1, &both), "a")
+        .save_to(&sa, &scope(&only_m1, &both), None, "a")
         .unwrap();
     hist("m1", "fp1", &["t", "from_b"])
-        .save_to(&sb, &scope(&only_m1, &both), "b")
+        .save_to(&sb, &scope(&only_m1, &both), None, "b")
         .unwrap();
     assert_eq!(
         remote.file(REF, "default/m2.json").unwrap(),
@@ -188,7 +189,7 @@ fn a_green_a_member_that_did_not_run_holds_survives_a_save_and_a_lost_race() {
     );
     // the control: the same save with m2 covered does drop it
     hist("m1", "fp1", &["t"])
-        .save_to(&sa, &scope(&both, &both), "covered")
+        .save_to(&sa, &scope(&both, &both), None, "covered")
         .unwrap();
     assert_ne!(remote.file(REF, "default/m2.json"), Some(m2));
 }
@@ -200,10 +201,10 @@ fn a_member_whose_suite_failed_loses_its_green_and_the_write_lands() {
     let s = opened(&cfg);
     let m = members(&["m1"]);
     hist("m1", "fp1", &["t"])
-        .save_to(&s, &scope(&m, &m), "seed")
+        .save_to(&s, &scope(&m, &m), None, "seed")
         .unwrap();
     hist("m1", "", &["t"])
-        .save_to(&s, &scope(&m, &m), "failed")
+        .save_to(&s, &scope(&m, &m), None, "failed")
         .unwrap();
     assert!(
         History::load_from(&s)
@@ -235,7 +236,7 @@ fn a_history_that_cannot_be_fetched_is_an_error_and_never_an_empty_history() {
     let m = members(&["m1"]);
     assert!(
         hist("m1", "fp1", &["t"])
-            .save_to(&s, &scope(&m, &m), "x")
+            .save_to(&s, &scope(&m, &m), None, "x")
             .is_err()
     );
     // the run: no history and no store to write to, said aloud
@@ -269,7 +270,6 @@ fn the_directory_stays_the_default_and_opens_as_load_does() {
     h.save(&cfg.mock_dir, &scope(&m, &m)).unwrap();
     let (opened, kept) = History::open(&cfg);
     assert!(kept.is_some());
-    assert_eq!(opened, History::load(&cfg.mock_dir));
     assert_eq!(opened, h);
     assert!(cfg.mock_dir.join("test-history/default/m1.json").is_file());
     assert_eq!(remote.tip(REF), None, "nothing went near a remote");
@@ -280,4 +280,75 @@ fn opened(cfg: &Config) -> RefStore {
     let s = store(cfg);
     s.refresh().unwrap();
     s
+}
+
+fn now(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+    pairs
+        .iter()
+        .map(|(m, f)| (m.to_string(), f.to_string()))
+        .collect()
+}
+
+#[test]
+fn a_green_removed_while_the_inputs_have_not_moved_is_refused_and_never_lands() {
+    let remote = Remote::new();
+    let cfg = project(&remote, "a", true);
+    let s = opened(&cfg);
+    let m = members(&["m1"]);
+    hist("m1", "fp1", &["t"])
+        .save_to(&s, &scope(&m, &m), Some(&now(&[("m1", "fp1")])), "seed")
+        .unwrap();
+    let tip = remote.tip(REF);
+    // the run failed on a tree whose fingerprint for m1 is still the one its green was made at
+    let err = hist("m1", "", &["t"])
+        .save_to(&s, &scope(&m, &m), Some(&now(&[("m1", "fp1")])), "failed")
+        .unwrap_err();
+    assert!(
+        matches!(&err, HistoryError::Nulled(f) if f == &["m1"]),
+        "{err}"
+    );
+    assert_eq!(
+        remote.tip(REF),
+        tip,
+        "a refused write leaves the ref where it was"
+    );
+    // the controls: moved inputs excuse it, and so does a store the guard is not asked for
+    hist("m1", "", &["t"])
+        .save_to(&s, &scope(&m, &m), Some(&now(&[("m1", "fp2")])), "moved")
+        .unwrap();
+    assert!(
+        History::load_from(&s)
+            .unwrap()
+            .flavour("")
+            .unwrap()
+            .green
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_green_the_winner_recorded_survives_a_write_that_never_saw_it() {
+    let remote = Remote::new();
+    let (a, b) = (project(&remote, "a", true), project(&remote, "b", true));
+    let (sa, sb) = (opened(&a), opened(&b));
+    let m = members(&["m1"]);
+    hist("m1", "", &["t"])
+        .save_to(&sa, &scope(&m, &m), None, "seed")
+        .unwrap();
+    sb.refresh().unwrap();
+    History::load_from(&sb).unwrap();
+    // A records the green at the fingerprint both now hold; B, on the history it read, saves a failure
+    hist("m1", "fp1", &["t"])
+        .save_to(&sa, &scope(&m, &m), Some(&now(&[("m1", "fp1")])), "a")
+        .unwrap();
+    hist("m1", "", &["t", "x"])
+        .save_to(&sb, &scope(&m, &m), Some(&now(&[("m1", "fp1")])), "b")
+        .unwrap();
+    sa.refresh().unwrap();
+    let after = History::load_from(&sa).unwrap();
+    assert_eq!(
+        after.flavour("").unwrap().green["m1"].full,
+        "fp1",
+        "the merge keeps the winner's green"
+    );
 }

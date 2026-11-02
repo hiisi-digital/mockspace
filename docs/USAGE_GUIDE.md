@@ -507,7 +507,7 @@ The registry is the `*.toml` files under `<mock>/registry/`, and by default it i
 ```toml
 [[registry.store]]
 dir = "ticket"           # the directory under <mock>/registry/ the ref holds
-namespace = "ticket"     # optional: its name under refs/heads/mock/registry/, default the directory
+namespace = "registry/ticket"  # optional: the ref is refs/heads/mock/<namespace>; this is the default for dir = "ticket"
 remote = "origin"        # optional
 form = "branch"          # optional: "branch" (refs/heads/mock/...) or "ref" (refs/mock/...)
 ```

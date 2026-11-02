@@ -185,7 +185,7 @@ impl History {
     /// version, or not a record at all. Taking the memory for the whole directory
     /// deleted every one of those, and rewrote an older record without its green.
     pub fn save(&self, mock_dir: &Path, scope: &Scope) -> Result<(), String> {
-        self.save_to(&DirStore::new(Self::dir(mock_dir)), scope, "test history")
+        self.save_to(&DirStore::new(Self::dir(mock_dir)), scope, None, "test history")
             .map(|_| ())
             .map_err(|e| e.to_string())
     }

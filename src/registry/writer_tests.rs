@@ -425,3 +425,104 @@ fn a_row_the_schema_refuses_never_reaches_the_ref() {
     .unwrap();
     assert!(w.remote_file("t.toml").unwrap().contains("Now titled"));
 }
+
+#[test]
+fn a_failed_fetch_reaches_the_callers_as_an_error_too() {
+    let w = World::new();
+    let cfg = w.clone_of("a", true);
+    git(&cfg.repo_root, &[
+        "remote",
+        "set-url",
+        "origin",
+        w.tmp.join("gone.git").to_str().unwrap(),
+    ]);
+    assert!(
+        matches!(
+            load_registry_for(&cfg),
+            Err(RegistryStoreError::Store {
+                source: StoreError::Fetch { .. },
+                ..
+            })
+        ),
+        "the engine's load"
+    );
+    let stores = cfg.registry_stores().unwrap();
+    assert!(
+        load_registry_for_expr_from(&stores, &cfg.registry_namespaces, "ticket").is_err(),
+        "the query's load"
+    );
+    // the control: the same project with a reachable remote loads
+    let fine = World::new();
+    let ok = fine.clone_of("b", true);
+    assert!(load_registry_for(&ok).is_ok());
+}
+
+#[test]
+fn the_checks_that_need_no_taplo_refuse_on_their_own() {
+    let w = World::new();
+    let cfg = w.clone_of("a", false);
+    let s = RegistryStores::directory(&cfg.mock_dir);
+    let writer = RegistryWriter::new(&cfg, &s);
+    let changed: BTreeSet<String> = ["bad.toml".to_string(), "noid.toml".to_string()].into();
+    let files: Files = vec![
+        ("bad.toml".into(), Some("[[ticket]\nid =".into())),
+        (
+            "noid.toml".into(),
+            Some("[[ticket]]\ntitle = \"x\"\n".into()),
+        ),
+    ];
+    let found = writer.problems(&files, &changed, false);
+    assert!(
+        found.iter().any(|p| p.starts_with("[not-toml] bad.toml")),
+        "{found:?}"
+    );
+    assert!(
+        found.iter().any(|p| p.starts_with("[row-without-id]")),
+        "{found:?}"
+    );
+    assert!(
+        writer
+            .problems(
+                &vec![("ok.toml".into(), Some(row("a", "A")))],
+                &["ok.toml".to_string()].into(),
+                false
+            )
+            .is_empty()
+    );
+    // and through the write, on a directory: the refused file is not written
+    let err = writer
+        .write(&put("bad.toml", "[[ticket]\nid ="), "x")
+        .unwrap_err();
+    assert!(matches!(err, RegistryStoreError::Refused(_)), "{err}");
+    assert!(!cfg.mock_dir.join("registry/bad.toml").exists());
+}
+
+#[test]
+fn a_schema_failure_already_in_the_tree_does_not_block_a_valid_ref_write() {
+    let w = World::new();
+    let cfg = w.clone_of("a", true);
+    let tree = cfg.mock_dir.join("registry/other.toml");
+    std::fs::create_dir_all(tree.parent().unwrap()).unwrap();
+    std::fs::write(&tree, "[[ticket]]\nid = \"untitled\"\n").unwrap();
+    let s = stores(&cfg);
+    RegistryWriter::new(&cfg, &s)
+        .write(&put("ticket/t.toml", &row("one", "One")), "add one")
+        .expect("a finding the registry already had is not this write's");
+    assert!(w.remote_file("t.toml").is_some());
+}
+
+#[test]
+fn a_reference_cycle_made_by_a_write_is_refused() {
+    let w = World::new();
+    let cfg = w.clone_of("a", true);
+    let s = stores(&cfg);
+    let cyc = "[[ticket]]\nid = \"a\"\ntitle = \"{{ ticket::b::title }}\"\n\n[[ticket]]\nid = \"b\"\ntitle = \"{{ ticket::a::title }}\"\n";
+    let err = RegistryWriter::new(&cfg, &s)
+        .write(&put("ticket/t.toml", cyc), "cycle")
+        .unwrap_err();
+    assert!(
+        matches!(&err, RegistryStoreError::Refused(f) if f.iter().any(|p| p.contains("cycle"))),
+        "{err}"
+    );
+    assert_eq!(w.remote_ref(), None);
+}

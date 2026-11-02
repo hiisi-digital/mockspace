@@ -300,6 +300,7 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
                     ran:       &run_members,
                     workspace: &graph.members,
                 },
+                cfg.test.history.is_some().then_some(&fp.full),
                 "test history",
             )
         {
