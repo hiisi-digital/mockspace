@@ -305,3 +305,83 @@ fn a_dependency_input_in_either_of_two_refs_keeps_the_dependency_gate() {
         );
     }
 }
+
+/// What the pre-push hook prints, and the launcher calls it made, for `lines` on
+/// stdin after a commit of `files` on top of a base commit. The base sha is
+/// substituted for `{base}` and the new head for `{head}` in each line.
+fn push_lines(files: &[(&str, &str)], lines: &[&str]) -> (String, Vec<String>) {
+    let tmp = fixture();
+    let root = tmp.path();
+    stage(root, &[("README", "base\n")]);
+    git(root, &["commit", "-q", "-m", "base"]);
+    let base = git(root, &["rev-parse", "HEAD"]);
+    stage(root, files);
+    git(root, &["commit", "-q", "-m", "work"]);
+    let head = git(root, &["rev-parse", "HEAD"]);
+    let stdin: String = lines
+        .iter()
+        .map(|l| format!("{}\n", l.replace("{base}", &base).replace("{head}", &head)))
+        .collect();
+    run_full(
+        &gen_pre_push("mock", &HookLayout::of(KASKI), &root.join("no-user-hook")),
+        root,
+        &stdin,
+    )
+}
+
+/// A push that only deletes refs publishes no commit, so there is nothing for
+/// the launcher to lint. It used to fall through to the full project scope under
+/// "no crate changes" and run the whole lint pass to delete a branch.
+#[test]
+fn a_push_that_only_deletes_refs_runs_no_lint() {
+    let zeros = "0".repeat(40);
+    let one = format!("(delete) {zeros} refs/heads/gone {{base}}");
+    let two = format!("(delete) {zeros} refs/heads/other {{base}}");
+    for (what, lines) in [
+        ("one deleted ref", vec![one.as_str()]),
+        ("two deleted refs", vec![one.as_str(), two.as_str()]),
+    ] {
+        let (out, calls) = push_lines(&[("docs/x.md", "x\n")], &lines);
+        assert!(
+            !out.contains("scope: full project"),
+            "{what}: hook said:\n{out}"
+        );
+        assert!(
+            calls.iter().all(|c| !c.contains("--lint-only")),
+            "{what}: the launcher was called: {calls:?}"
+        );
+        assert!(
+            out.contains("scope: none (the push deletes refs and publishes no commit)"),
+            "{what}: hook said:\n{out}"
+        );
+        assert!(
+            out.contains("pre-push: validation passed."),
+            "{what}: hook said:\n{out}"
+        );
+    }
+}
+
+/// The control for the arm above: a deletion beside a ref that does publish a
+/// commit leaves the scope to that ref, in either order, so the delete line
+/// vouches for nothing about the other.
+#[test]
+fn a_deleted_ref_beside_a_published_one_keeps_the_scope_of_the_published_one() {
+    let zeros = "0".repeat(40);
+    let gone = format!("(delete) {zeros} refs/heads/gone {{base}}");
+    let pushed = "refs/heads/m {head} refs/heads/m {base}".to_string();
+    for lines in [
+        vec![gone.as_str(), pushed.as_str()],
+        vec![pushed.as_str(), gone.as_str()],
+    ] {
+        let (out, calls) = push_lines(&[(CONSOLE_SRC, "fn x() {}\n")], &lines);
+        assert_eq!(
+            scope_call(&calls),
+            "mock --lint-only --strict --scope console-core",
+            "hook said:\n{out}"
+        );
+        assert!(
+            !out.contains("scope: none"),
+            "the publishing ref was skipped:\n{out}"
+        );
+    }
+}

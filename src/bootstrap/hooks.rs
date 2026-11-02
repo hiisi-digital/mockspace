@@ -523,12 +523,17 @@ FULL_REASON=""
 CHANGED_CRATES=""
 PUSH_REPO_ONLY=""
 PUSH_NOT_REGISTRY=""
+PUSH_REFS=0
+PUSH_DELETES=0
 while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     if [ -z "$local_sha" ]; then
         continue
     fi
-    # Delete-only push (local_sha all zeros): nothing to lint.
+    PUSH_REFS=$((PUSH_REFS + 1))
+    # A deleted ref (local_sha all zeros) publishes no commit, so it adds nothing to lint.
+    # It is counted, because a push of nothing but deletions has no scope at all (below).
     if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+        PUSH_DELETES=$((PUSH_DELETES + 1))
         continue
     fi
     if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
@@ -593,7 +598,18 @@ if [ -n "$CHANGED_CRATES" ]; then
         | sed 's/,$//')
 fi
 
-if ms_nuked; then
+# Every line was a deletion: no commit is published, so there is nothing for the launcher to
+# lint. Without this the loop above leaves every scope variable empty, which is what a push
+# with no crate changes looks like too, and the push ran the full project to delete a branch.
+# A deletion beside a ref that publishes a commit leaves the scope to that ref.
+PUSH_DELETE_ONLY=""
+if [ "$PUSH_REFS" -gt 0 ] && [ "$PUSH_REFS" -eq "$PUSH_DELETES" ]; then
+    PUSH_DELETE_ONLY=1
+fi
+
+if [ -n "$PUSH_DELETE_ONLY" ]; then
+    echo "  scope: none (the push deletes refs and publishes no commit)"
+elif ms_nuked; then
     echo "  nuked workspace: skipping source checks"
     ARGS=(--lint-only --strict --doc-only)
 elif [ -z "$FULL_REASON" ] && [ -z "$CHANGED_CRATES" ] && [ -n "$PUSH_REPO_ONLY" ] && [ -z "$PUSH_NOT_REGISTRY" ]; then
@@ -611,7 +627,7 @@ else
     ARGS=(--lint-only --strict --scope "$CHANGED_CRATES")
 fi
 
-if ! cargo mock "${{ARGS[@]}}" 2>&1; then
+if [ -z "$PUSH_DELETE_ONLY" ] && ! cargo mock "${{ARGS[@]}}" 2>&1; then
     echo ""
     echo "BLOCKED: mockspace validation failed."
     exit 1
