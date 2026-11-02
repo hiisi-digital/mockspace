@@ -10,9 +10,13 @@
 //! decided by what the remote holds afterwards. Git's output is read for one thing only:
 //! a push that changed nothing on the remote is retried when its words name a dropped
 //! connection or a locked ref, and is final otherwise.
+//!
+//! Each store remembers the tip it last saw (a refresh, or its own write), reads from
+//! that commit, and takes it as the base of its next write. Another store on the same
+//! clone moving the local ref does not change what this one read.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use crate::commit_reader::CommitReader;
 use crate::edit::Edit;
@@ -25,21 +29,26 @@ use crate::refs::RefPair;
 use crate::retry::{RetryPolicy, transient_push_output};
 use crate::store::{Applied, Freshness, Store};
 
-const ZERO_OID: &str = "0000000000000000000000000000000000000000";
-const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-static INDEX_COUNTER: AtomicU64 = AtomicU64::new(0);
+/// What this store knows of the remote.
+pub(crate) enum Seen {
+    /// Nothing yet: no refresh and no write.
+    Unknown,
+    /// The remote was asked and has no such ref.
+    Empty,
+    /// The commit this store last saw at the tip.
+    Tip(String),
+}
 
 /// A namespace on a remote's ref, mirrored in a private local ref of `repo`.
 pub struct RefStore {
-    repo:            PathBuf,
-    git:             Git,
-    remote:          String,
-    pair:            RefPair,
-    identity:        Identity,
-    retry:           RetryPolicy,
-    depth:           Option<u32>,
-    /// Set by a fetch that asked the remote and was told it has no such ref.
-    confirmed_empty: AtomicBool,
+    pub(crate) repo:     PathBuf,
+    pub(crate) git:      Git,
+    pub(crate) remote:   String,
+    pub(crate) pair:     RefPair,
+    pub(crate) identity: Identity,
+    pub(crate) retry:    RetryPolicy,
+    pub(crate) depth:    Option<u32>,
+    seen:                Mutex<Seen>,
 }
 
 impl RefStore {
@@ -55,7 +64,7 @@ impl RefStore {
             identity: Identity::default(),
             retry: RetryPolicy::default(),
             depth: None,
-            confirmed_empty: AtomicBool::new(false),
+            seen: Mutex::new(Seen::Unknown),
         }
     }
 
@@ -85,7 +94,9 @@ impl RefStore {
         &self.pair
     }
 
-    /// The commit at the local ref, if there is one.
+    /// The commit at the local ref, if there is one. Shared by every store on the clone,
+    /// so it is not what this store's reads saw; `read` and `list` use the tip this store
+    /// last refreshed to or wrote.
     pub fn local_tip(&self) -> Result<Option<String>, StoreError> {
         let spec = format!("{}^{{commit}}", self.pair.local());
         let out = self
@@ -103,209 +114,29 @@ impl RefStore {
         }
     }
 
-    fn reader_at(&self, commit: Option<String>) -> CommitReader {
-        CommitReader::new(self.repo.clone(), commit)
+    fn set_seen(&self, seen: Seen) {
+        *self.seen.lock().unwrap_or_else(|e| e.into_inner()) = seen;
     }
 
-    fn fetch_error(&self, detail: String) -> StoreError {
-        StoreError::Fetch {
-            remote: self.remote.clone(),
-            refspec: self.pair.fetch_refspec(),
-            detail,
-        }
-    }
-
-    /// Whether the remote, which answered, holds the ref. Asked of `ls-remote`
-    /// and compared by exact name; the words of a failed fetch are not parsed.
-    fn remote_holds_ref(&self) -> Result<bool, String> {
-        let out = self
-            .git
-            .run(&["ls-remote", &self.remote, self.pair.remote()], &[], None)
-            .map_err(|e| e.to_string())?;
-        if !out.ok() {
-            return Err(out.stderr);
-        }
-        let want = self.pair.remote();
-        Ok(out
-            .text()
-            .lines()
-            .any(|l| l.split('\t').nth(1) == Some(want)))
-    }
-
-    /// Run `git -C repo remote-add`-free fetch: remote and refspec are arguments.
-    fn fetch_once(&self) -> Result<Freshness, StoreError> {
-        let spec = self.pair.fetch_refspec();
-        let depth = self.depth.map(|d| d.to_string());
-        let mut args = vec!["fetch", "-q"];
-        if let Some(d) = &depth {
-            args.extend(["--depth", d]);
-        }
-        args.extend([self.remote.as_str(), spec.as_str()]);
-        let out = self.git.run(&args, &[], None)?;
-        if out.ok() {
-            self.confirmed_empty.store(false, Ordering::SeqCst);
-            return match self.local_tip()? {
-                Some(tip) => {
-                    Ok(Freshness::Fetched {
-                        tip,
-                    })
-                },
-                None => {
-                    Err(self.fetch_error("fetch reported success but left no local ref".into()))
-                },
-            };
-        }
-        // The fetch failed. Either the remote answered and has no such ref (a store
-        // not yet written), or it did not answer. Only the remote can say which.
-        match self.remote_holds_ref() {
-            Ok(false) => {
-                match self.local_tip()? {
-                    None => {
-                        self.confirmed_empty.store(true, Ordering::SeqCst);
-                        Ok(Freshness::Empty)
-                    },
-                    Some(local_tip) => {
-                        Err(StoreError::RemoteLostRef {
-                            remote_ref: self.pair.remote().to_owned(),
-                            local_tip,
-                        })
-                    },
-                }
-            },
-            Ok(true) => Err(self.fetch_error(out.stderr)),
-            Err(ls) => Err(self.fetch_error(format!("{}; ls-remote: {ls}", out.stderr))),
+    fn seen_tip(&self) -> Option<String> {
+        match &*self.seen.lock().unwrap_or_else(|e| e.into_inner()) {
+            Seen::Tip(t) => Some(t.clone()),
+            _ => None,
         }
     }
 
-    /// Build one commit holding `edit` on `tip`. `None` when it changes nothing.
-    fn build_commit(
-        &self,
-        tip: Option<&str>,
-        edit: &Edit,
-        message: &str,
-    ) -> Result<Option<String>, StoreError> {
-        let git_dir = self
-            .git
-            .must(&["rev-parse", "--absolute-git-dir"], &[], None)?
-            .text();
-        let index = PathBuf::from(git_dir).join(format!(
-            "mockspace-store-{}-{}.idx",
-            std::process::id(),
-            INDEX_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _guard = RemoveOnDrop(index.clone());
-        let index_s = index.to_string_lossy().into_owned();
-        let env = [("GIT_INDEX_FILE", index_s.as_str())];
-        if let Some(tip) = tip {
-            self.git.must(&["read-tree", tip], &env, None)?;
-        }
-        let mut lines = String::new();
-        for (path, bytes) in edit.entries() {
-            match bytes {
-                Some(bytes) => {
-                    let blob = self
-                        .git
-                        .must(&["hash-object", "-w", "--stdin"], &[], Some(bytes))?
-                        .text();
-                    lines.push_str(&format!("100644 {blob}\t{path}\n"));
-                },
-                None => lines.push_str(&format!("0 {ZERO_OID}\t{path}\n")),
-            }
-        }
-        self.git.must(
-            &["update-index", "--index-info"],
-            &env,
-            Some(lines.as_bytes()),
-        )?;
-        let tree = self.git.must(&["write-tree"], &env, None)?.text();
-        let tip_tree = match tip {
-            Some(t) => {
-                self.git
-                    .must(&["rev-parse", &format!("{t}^{{tree}}")], &[], None)?
-                    .text()
-            },
-            None => EMPTY_TREE.to_owned(),
-        };
-        if tree == tip_tree {
-            return Ok(None);
-        }
-        let ident = [
-            ("GIT_AUTHOR_NAME", self.identity.name.as_str()),
-            ("GIT_AUTHOR_EMAIL", self.identity.email.as_str()),
-            ("GIT_COMMITTER_NAME", self.identity.name.as_str()),
-            ("GIT_COMMITTER_EMAIL", self.identity.email.as_str()),
-        ];
-        let mut args = vec!["commit-tree", tree.as_str()];
-        if let Some(tip) = tip {
-            args.extend(["-p", tip]);
-        }
-        args.extend(["-m", message]);
-        Ok(Some(self.git.must(&args, &ident, None)?.text()))
-    }
-
-    /// Whether the remote's tip has `commit` in its history. The tip is fetched into a
-    /// scratch ref without the depth limit, so a shallow store, whose own ref is cut short,
-    /// can still tell a commit that is held from one that is not.
-    fn remote_holds(&self, commit: &str) -> Result<bool, StoreError> {
-        let scratch = format!(
-            "refs/mockspace-store/probe-{}-{}",
-            std::process::id(),
-            INDEX_COUNTER.fetch_add(1, Ordering::Relaxed)
-        );
-        let spec = format!("+{}:{scratch}", self.pair.remote());
-        let fetched = self
-            .git
-            .run(&["fetch", "-q", &self.remote, &spec], &[], None)?;
-        if !fetched.ok() {
-            return match self.remote_holds_ref() {
-                Ok(false) => Ok(false),
-                _ => Err(self.fetch_error(fetched.stderr)),
-            };
-        }
-        let held = self.git.run(
-            &["merge-base", "--is-ancestor", commit, &scratch],
-            &[],
-            None,
-        );
-        let _ = self.git.run(&["update-ref", "-d", &scratch], &[], None);
-        match held?.code {
-            Some(0) => Ok(true),
-            Some(1) => Ok(false),
-            _ => {
-                Err(StoreError::Git {
-                    command: format!("merge-base --is-ancestor {commit} {scratch}"),
-                    detail:  "neither an answer nor a refusal".into(),
+    /// The reader for what this store last saw. A store that has not heard from the
+    /// remote does not know whether the namespace is empty, and says so.
+    fn committed(&self) -> Result<CommitReader, StoreError> {
+        match &*self.seen.lock().unwrap_or_else(|e| e.into_inner()) {
+            Seen::Tip(t) => Ok(self.reader_at(Some(t.clone()))),
+            Seen::Empty => Ok(self.reader_at(None)),
+            Seen::Unknown => {
+                Err(StoreError::NotFetched {
+                    local_ref: self.pair.local().to_owned(),
                 })
             },
         }
-    }
-
-    /// After an accepted push: the remote must now hold the commit.
-    fn verify_pushed(&self, commit: &str) -> Result<(), StoreError> {
-        let verify = |detail: String| {
-            StoreError::Verify {
-                remote_ref: self.pair.remote().to_owned(),
-                commit: commit.to_owned(),
-                detail,
-            }
-        };
-        match self.remote_holds(commit) {
-            Ok(true) => Ok(()),
-            Ok(false) => {
-                Err(verify(
-                    "the remote's tip does not have it in its history".into(),
-                ))
-            },
-            Err(e) => Err(verify(e.to_string())),
-        }
-    }
-}
-
-struct RemoveOnDrop(PathBuf);
-
-impl Drop for RemoveOnDrop {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
     }
 }
 
@@ -319,25 +150,17 @@ impl Reader for RefStore {
     }
 }
 
-impl RefStore {
-    /// The reader for the local tip. A missing ref is an empty store only when a
-    /// fetch has asked the remote and heard that it has none.
-    fn committed(&self) -> Result<CommitReader, StoreError> {
-        match self.local_tip()? {
-            Some(tip) => Ok(self.reader_at(Some(tip))),
-            None if self.confirmed_empty.load(Ordering::SeqCst) => Ok(self.reader_at(None)),
-            None => {
-                Err(StoreError::NotFetched {
-                    local_ref: self.pair.local().to_owned(),
-                })
-            },
-        }
-    }
-}
-
 impl Store for RefStore {
     fn refresh(&self) -> Result<Freshness, StoreError> {
-        self.fetch_once()
+        let fresh = self.fetch_once()?;
+        match &fresh {
+            Freshness::Fetched {
+                tip,
+            } => self.set_seen(Seen::Tip(tip.clone())),
+            Freshness::Empty => self.set_seen(Seen::Empty),
+            Freshness::Local => {},
+        }
+        Ok(fresh)
     }
 
     fn apply(
@@ -349,11 +172,14 @@ impl Store for RefStore {
         edit.validate()?;
         let attempts = self.retry.attempts.max(1);
         let mut current = edit.clone();
-        // The tip the edit was computed on: the local ref as it stands now, which is what the
-        // caller's reads saw. Any other tip, after the refresh or after a lost race, sends
-        // the edit through the hook.
-        let mut built_on: Option<String> = self.local_tip()?;
+        // The tip this store's reads saw. Any other tip, after the refresh or after a lost
+        // race, sends the edit through the hook.
+        let mut built_on: Option<String> = self.seen_tip();
         let mut refreshed = false;
+        // commits pushed whose outcome the remote could not be asked about
+        let mut unconfirmed: Vec<String> = Vec::new();
+        // the words of the last push that failed without a race, for the end of the attempts
+        let mut stuck: Option<String> = None;
         for attempt in 1 ..= attempts {
             let is_last = attempt == attempts;
             if !refreshed {
@@ -374,6 +200,11 @@ impl Store for RefStore {
                 }
             }
             refreshed = false;
+            for commit in &unconfirmed {
+                if self.remote_holds(commit)? {
+                    return Ok(self.landed(commit.clone(), attempt, true));
+                }
+            }
             let tip = self.local_tip()?;
             if built_on != tip {
                 current = hook.rebase(&self.reader_at(tip.clone()), edit)?;
@@ -382,10 +213,14 @@ impl Store for RefStore {
             built_on = tip.clone();
             current.check_against(&self.reader_at(tip.clone()))?;
             let Some(commit) = self.build_commit(tip.as_deref(), &current, message)? else {
+                if let Some(t) = &tip {
+                    self.set_seen(Seen::Tip(t.clone()));
+                }
                 return Ok(Applied {
-                    commit:   tip,
-                    changed:  false,
-                    attempts: attempt,
+                    commit:    tip,
+                    changed:   false,
+                    attempts:  attempt,
+                    confirmed: true,
                 });
             };
             let lease = format!(
@@ -400,12 +235,8 @@ impl Store for RefStore {
             if out.ok() {
                 self.git
                     .must(&["update-ref", self.pair.local(), &commit], &[], None)?;
-                self.verify_pushed(&commit)?;
-                return Ok(Applied {
-                    commit:   Some(commit),
-                    changed:  true,
-                    attempts: attempt,
-                });
+                let confirmed = self.verify_pushed(&commit)?;
+                return Ok(self.landed(commit, attempt, confirmed));
             }
             // The push reported a failure. What the remote holds says what happened: our
             // commit already there (accepted, then the connection dropped), a tip that moved
@@ -414,14 +245,13 @@ impl Store for RefStore {
                 Ok(_) => {
                     refreshed = true;
                     if self.remote_holds(&commit)? {
-                        return Ok(Applied {
-                            commit:   Some(commit),
-                            changed:  true,
-                            attempts: attempt,
-                        });
+                        return Ok(self.landed(commit, attempt, true));
                     }
-                    let lost = self.local_tip()? != tip;
-                    if !lost && !transient_push_output(&out.stderr) {
+                    if self.local_tip()? != tip {
+                        stuck = None;
+                    } else if transient_push_output(&out.stderr) {
+                        stuck = Some(out.stderr);
+                    } else {
                         return Err(StoreError::PushRefused {
                             remote:     self.remote.clone(),
                             remote_ref: self.pair.remote().to_owned(),
@@ -436,15 +266,38 @@ impl Store for RefStore {
                 ) if is_last => return Err(e),
                 Err(StoreError::Fetch {
                     ..
-                }) => {},
+                }) => unconfirmed.push(commit),
                 Err(e) => return Err(e),
             }
             if !is_last {
                 self.retry.sleep_after(attempt);
             }
         }
-        Err(StoreError::RaceLost {
+        match stuck {
+            Some(detail) => {
+                Err(StoreError::PushRefused {
+                    remote: self.remote.clone(),
+                    remote_ref: self.pair.remote().to_owned(),
+                    detail,
+                })
+            },
+            None => {
+                Err(StoreError::RaceLost {
+                    attempts,
+                })
+            },
+        }
+    }
+}
+
+impl RefStore {
+    fn landed(&self, commit: String, attempts: u32, confirmed: bool) -> Applied {
+        self.set_seen(Seen::Tip(commit.clone()));
+        Applied {
+            commit: Some(commit),
+            changed: true,
             attempts,
-        })
+            confirmed,
+        }
     }
 }

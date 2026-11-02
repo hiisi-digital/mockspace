@@ -16,7 +16,7 @@ Cases 1 to 3, 5 to 7 and 11 of `probe.out`.
 4. A shallow fetch with the refspec (`--depth 1 +refs/mock/registry/probe:refs/mock/registry/probe`) gives the tip and one commit of history, both into an empty repository and into a shallow clone (case 5a, 5b).
 5. The branch form fetches into a private local ref (`+refs/heads/mock/probe:refs/mock-local/branch-form`). The local ref and the remote ref are a pair, so moving a namespace from the ref form to the branch form changes the remote half only (case 6).
 6. `--force-with-lease=<ref>:<expected>` moves the ref when the remote still holds the expectation (case 7).
-7. After a lost race the loser fetches the new tip and pushes a commit that has both tips as parents, on a lease of the new tip. The remote tip is that merge commit (case 11, 11b).
+7. After a lost race the loser fetches the new tip and pushes on a lease of it. The probe builds a commit with both tips as parents (case 11, 11b); `mockspace-store` does not, it asks its merge hook what the edit is on the new tip and writes one linear commit there, so history stays a line.
 
 ## Cases that must fail, and did
 

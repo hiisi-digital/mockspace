@@ -28,6 +28,13 @@ pub enum StoreError {
         refspec: String,
         detail:  String,
     },
+    /// The remote tip does not descend from the one this clone holds: history was rewritten
+    /// there. The local ref is left as it was.
+    RemoteRewrote {
+        remote_ref: String,
+        local_tip:  String,
+        remote_tip: String,
+    },
     /// The remote no longer has a ref this store holds locally. Silently
     /// dropping the local copy would lose data, so it is an error.
     RemoteLostRef {
@@ -91,6 +98,16 @@ impl fmt::Display for StoreError {
                 detail,
             } => {
                 write!(f, "fetch of `{refspec}` from `{remote}` failed: {detail}")
+            },
+            Self::RemoteRewrote {
+                remote_ref,
+                local_tip,
+                remote_tip,
+            } => {
+                write!(
+                    f,
+                    "remote `{remote_ref}` is at {remote_tip}, which does not descend from {local_tip} held here; history was rewritten there, and is not followed"
+                )
             },
             Self::RemoteLostRef {
                 remote_ref,

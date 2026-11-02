@@ -11,7 +11,7 @@ use crate::reader::Reader;
 use crate::store::{Applied, Freshness, Store};
 
 /// A file being written, beside its target; never listed.
-const TMP_PREFIX: &str = ".mockspace-store-tmp-";
+pub(crate) const TMP_PREFIX: &str = ".mockspace-store-tmp-";
 static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// A store that is a directory. The merge hook is never called: a directory has
@@ -117,7 +117,10 @@ impl Store for DirStore {
         edit.validate()?;
         edit.check_against(self)?;
         let mut changed = false;
-        for (path, bytes) in edit.entries() {
+        // removals first, so a file can take the place of a directory it empties
+        let removals = edit.entries().filter(|e| e.1.is_none());
+        let puts = edit.entries().filter(|e| e.1.is_some());
+        for (path, bytes) in removals.chain(puts) {
             let file = self.file(path);
             match bytes {
                 Some(bytes) => {
@@ -146,7 +149,13 @@ impl Store for DirStore {
                             changed = true;
                             prune_empty_dirs(&self.root, file.parent());
                         },
-                        Err(e) if e.kind() == io::ErrorKind::NotFound => {},
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                io::ErrorKind::NotFound
+                                    | io::ErrorKind::NotADirectory
+                                    | io::ErrorKind::IsADirectory
+                            ) => {},
                         Err(e) => return Err(io_err(format!("removing `{}`", file.display()))(e)),
                     }
                 },
@@ -156,6 +165,7 @@ impl Store for DirStore {
             commit: None,
             changed,
             attempts: 1,
+            confirmed: true,
         })
     }
 }

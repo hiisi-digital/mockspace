@@ -48,7 +48,12 @@ impl Edit {
         for (i, a) in paths.iter().enumerate() {
             for b in &paths[i + 1 ..] {
                 let a_is_put = matches!(self.files.get(a.as_str()), Some(Some(_)));
-                if a_is_put && b.starts_with(a.as_str()) && b[a.len() ..].starts_with('/') {
+                let b_is_put = matches!(self.files.get(b.as_str()), Some(Some(_)));
+                if a_is_put
+                    && b_is_put
+                    && b.starts_with(a.as_str())
+                    && b[a.len() ..].starts_with('/')
+                {
                     return Err(StoreError::InvalidPath {
                         path: (*b).clone(),
                         why:  "lies under another path of the same edit",

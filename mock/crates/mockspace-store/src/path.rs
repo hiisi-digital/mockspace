@@ -24,11 +24,21 @@ pub fn validate_path(path: &str) -> Result<(), StoreError> {
         match part {
             "" => return bad("empty component"),
             "." | ".." => return bad("dot component"),
-            ".git" => return bad("a component named `.git`"),
+            _ if part.starts_with(crate::dir::TMP_PREFIX) => {
+                return bad("a name the directory backend keeps for files in flight");
+            },
+            _ if is_git_name(part) => return bad("a name git treats as its own"),
             _ => {},
         }
     }
     Ok(())
+}
+
+/// `.git` as git itself reads it: in any case, with trailing dots or spaces (as NTFS drops
+/// them), and as the short name `git~1`. Git skips such a path silently when asked to store it.
+fn is_git_name(part: &str) -> bool {
+    let trimmed = part.trim_end_matches(['.', ' ']).to_ascii_lowercase();
+    trimmed == ".git" || trimmed == "git~1"
 }
 
 /// Whether `path` is the entry `prefix` or lies under it. The empty prefix

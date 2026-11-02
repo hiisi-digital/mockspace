@@ -140,3 +140,44 @@ impl MergeHook for Recording {
         Ok(ours.clone())
     }
 }
+
+pub const NS: &str = "registry/probe";
+pub const MOCK_REF: &str = "refs/mock/registry/probe";
+
+/// A ref store in a fresh clone directory, on the ref form of `NS`.
+pub fn store(w: &World, name: &str) -> mockspace_store::RefStore {
+    mockspace_store::RefStore::new(
+        w.clone_dir(name),
+        w.remote(),
+        mockspace_store::RefPair::ref_form(NS).unwrap(),
+    )
+    .with_retry(mockspace_store::RetryPolicy::immediate(4))
+}
+
+/// Adds one to the `counter` file of the tip that won, whatever the edit was.
+pub struct Bump;
+
+impl MergeHook for Bump {
+    fn rebase(&self, tip: &dyn Reader, _ours: &Edit) -> Result<Edit, MergeRefusal> {
+        let n: u32 = String::from_utf8(tip.read("counter").unwrap().unwrap())
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        Ok(Edit::new().put("counter", format!("{}\n", n + 1)))
+    }
+}
+
+/// A stand-in for the `git` command: it runs the real one, and for `push` and for `fetch` it
+/// first runs the matching shell snippet (empty for none), which may `exit`. `"$@"` is the real
+/// arguments.
+pub fn git_shim(w: &World, on_push: &str, on_fetch: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let p = w.dir.path().join("git-shim");
+    let body = format!(
+        "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = push ]; then\n  :\n{on_push}\n  fi\n  if [ \"$a\" = fetch ]; then\n  :\n{on_fetch}\n  fi\ndone\nexec git \"$@\"\n"
+    );
+    std::fs::write(&p, body).unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}

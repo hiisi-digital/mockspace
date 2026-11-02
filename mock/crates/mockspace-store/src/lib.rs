@@ -12,7 +12,7 @@
 //! Plain git only: the crate runs the `git` command and asks no forge anything.
 //!
 //! Scope against the v2 spec: this store writes history, which suits a namespace that keeps
-//! its past (registry rows, tickets, test history, bench results). The spec makes the round
+//! its past (registry rows, tickets, test history; spec line 1513 and 1521 make bench results orphan, which this crate does not write). The spec makes the round
 //! and task refs orphan (`mockspace-v2-spec.md` line 1521), and this crate does not write
 //! those. Nor does it preserve a losing commit on a `-conflict-<host>-<ts>` side branch
 //! before a reset (spec section 24, step 12c); a [`Refuse`] drops it. Both are owed by
@@ -32,6 +32,7 @@ mod identity;
 mod merge;
 mod path;
 mod reader;
+mod ref_ops;
 mod ref_store;
 mod refs;
 mod retry;

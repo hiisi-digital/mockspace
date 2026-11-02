@@ -75,6 +75,43 @@ fn suite(store: &dyn Store, first_refresh: Freshness) {
     // a directory is not a file
     assert_eq!(store.read("a").unwrap(), None);
 
+    // removing what is not there, or a directory, or something under a file, is not an error
+    store
+        .apply(&Edit::new().put("rm/file", "f"), "rm", &Reapply)
+        .unwrap();
+    for gone in ["rm/file/under", "rm", "nothing/at/all"] {
+        let r = store
+            .apply(&Edit::new().remove(gone), "rm", &Reapply)
+            .unwrap();
+        assert!(!r.changed, "{gone}");
+    }
+    assert_eq!(store.read("rm/file").unwrap().as_deref(), Some(&b"f"[..]));
+    // a directory becomes a file in one edit, and a file a directory
+    store
+        .apply(&Edit::new().put("swap/dir/x", "x"), "d", &Reapply)
+        .unwrap();
+    store
+        .apply(
+            &Edit::new()
+                .remove("swap/dir/x")
+                .put("swap/dir", "now a file"),
+            "d2f",
+            &Reapply,
+        )
+        .unwrap();
+    assert_eq!(
+        store.read("swap/dir").unwrap().as_deref(),
+        Some(&b"now a file"[..])
+    );
+    store
+        .apply(
+            &Edit::new().remove("swap/dir").put("swap/dir/y", "y"),
+            "f2d",
+            &Reapply,
+        )
+        .unwrap();
+    assert_eq!(store.list("swap").unwrap(), ["swap/dir/y"]);
+
     // a file and a directory of one name, against what is already stored
     store
         .apply(
@@ -168,7 +205,19 @@ fn suite(store: &dyn Store, first_refresh: Freshness) {
     assert_eq!(store.list("never").unwrap(), Vec::<String>::new());
 
     // a path that leaves the store is refused and nothing of the edit is written
-    for bad in ["../escape", "/abs", "a//b", ".git/x", ""] {
+    for bad in [
+        "../escape",
+        "/abs",
+        "a//b",
+        ".git/x",
+        "",
+        ".GIT/x",
+        "a/.Git/y",
+        "git~1/x",
+        ".git./x",
+        "a/.git /x",
+        ".mockspace-store-tmp-1-1",
+    ] {
         let err = store
             .apply(
                 &Edit::new().put("ok.txt", "1").put(bad, "2"),

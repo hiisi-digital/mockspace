@@ -24,11 +24,14 @@ pub enum Freshness {
 pub struct Applied {
     /// The commit now at the tip, for a backend that keeps history. `None` for
     /// a directory, and for a ref that is still empty after an empty edit.
-    pub commit:   Option<String>,
+    pub commit:    Option<String>,
     /// False when the edit changed nothing and no commit was written.
-    pub changed:  bool,
+    pub changed:   bool,
     /// Push attempts it took, 1 when nobody else was writing.
-    pub attempts: u32,
+    pub attempts:  u32,
+    /// False when the push was accepted but the remote could not be asked afterwards whether it
+    /// holds the commit. The write stands; the next refresh settles it.
+    pub confirmed: bool,
 }
 
 /// A place the data of one namespace lives: a directory, or a git ref.
