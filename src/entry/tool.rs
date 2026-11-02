@@ -326,8 +326,7 @@ pub(crate) fn run(
                 }
             },
             Err(why) => {
-                eprintln!("{name}: INCONCLUSIVE, so the run says nothing about the tree.");
-                eprintln!("  {why}");
+                eprintln!("{}", inconclusive_message(name, "the tree", &why));
                 unobserved = true;
             },
         }
@@ -361,8 +360,7 @@ pub(crate) fn run(
         Outcome::Inconclusive {
             reason,
         } => {
-            eprintln!("{name}: INCONCLUSIVE, so the run says nothing about the corpus.");
-            eprintln!("  {reason}");
+            eprintln!("{}", inconclusive_message(name, "the corpus", reason));
             ExitCode::FAILURE
         },
         Outcome::Findings(findings) => {
@@ -409,6 +407,18 @@ fn wrote_message(name: &str, wrote: &[String]) -> String {
         s.push('\n');
     }
     s
+}
+
+/// What a run that could not answer prints: the reason on the first line, and
+/// the line saying what the run is worth under it.
+///
+/// A tool that refuses a request, a missing flag or a state its kind does not
+/// declare, reports `Inconclusive` like a tool whose control failed, and the
+/// header used to come first. A refusal then read as the instrument failing,
+/// with the sentence that said why pushed under it. The reason leads now, so
+/// the first line a reader or an agent sees is the one that says what to fix.
+fn inconclusive_message(name: &str, about: &str, reason: &str) -> String {
+    format!("{name}: {reason}\n{name}: INCONCLUSIVE, so the run says nothing about {about}.")
 }
 
 /// The closing line of a tool that read something and found nothing to report.

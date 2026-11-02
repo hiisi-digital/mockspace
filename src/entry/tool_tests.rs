@@ -84,6 +84,41 @@ fn the_closing_line_says_what_was_read_and_claims_no_verdict() {
 }
 
 #[test]
+fn an_inconclusive_run_leads_with_its_reason() {
+    // The case that must fail: the header used to print first and the reason
+    // under it, so a refused `ticket-add` opened on INCONCLUSIVE and read as
+    // the tool failing. The first line has to be the sentence that says why.
+    let msg = inconclusive_message("ticket-add", "the corpus", "the kind `task` takes no state `open`");
+    let mut lines = msg.lines();
+    let first = lines.next().unwrap_or("");
+    assert!(first.contains("takes no state `open`"), "the reason leads: {msg:?}");
+    assert!(!first.contains("INCONCLUSIVE"), "the header must not lead: {msg:?}");
+    let last = msg.lines().last().unwrap_or("");
+    assert!(last.contains("INCONCLUSIVE"), "the header still closes it: {msg:?}");
+}
+
+#[test]
+fn an_inconclusive_run_names_the_tool_and_what_it_says_nothing_about() {
+    // Both subjects the runner prints, and a different one each, so a
+    // hard-coded `the corpus` cannot pass for the tree arm.
+    let corpus = inconclusive_message("canon", "the corpus", "no registry");
+    let tree = inconclusive_message("canon", "the tree", "no git");
+    assert!(corpus.contains("canon: no registry"), "{corpus:?}");
+    assert!(corpus.ends_with("says nothing about the corpus."), "{corpus:?}");
+    assert!(tree.ends_with("says nothing about the tree."), "{tree:?}");
+    assert_ne!(corpus, tree);
+}
+
+#[test]
+fn a_multi_line_reason_stays_whole_above_the_header() {
+    // A reason can run to several lines (the missing-flags refusal names
+    // them all). None of it may fall below the header.
+    let msg = inconclusive_message("ticket-add", "the corpus", "missing --kind\nmissing --title");
+    let header = msg.find("INCONCLUSIVE").expect("the header is in the message");
+    assert!(msg.find("missing --title").expect("the second line") < header, "{msg:?}");
+}
+
+#[test]
 fn a_name_that_merely_starts_with_a_builtin_is_allowed() {
     // `checkers` is not `check`. A prefix match here would refuse real
     // tool names for no reason, and the suggestion machinery already
