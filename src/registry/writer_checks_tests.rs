@@ -176,8 +176,11 @@ fn found(items: &[&str]) -> Vec<String> {
 fn a_second_finding_of_the_same_words_is_new() {
     // the writer's findings are counted: a write that adds a second row failing the same way
     // as one the registry already had raises one more finding than before
-    let err = super::refuse_new(&found(&["[duplicate-id] x"]), found(&["[duplicate-id] x", "[duplicate-id] x"]))
-        .unwrap_err();
+    let err = super::refuse_new(
+        &found(&["[duplicate-id] x"]),
+        found(&["[duplicate-id] x", "[duplicate-id] x"]),
+    )
+    .unwrap_err();
     assert!(
         matches!(&err, RegistryStoreError::Refused(f) if f == &["[duplicate-id] x"]),
         "{err}"
@@ -213,10 +216,10 @@ fn dangling_in(cfg: &Config, stores: &RegistryStores, document: &str) -> Vec<Str
 /// `render_all` writes into the tree's documents directory, so the writer has neither the
 /// documents to look at nor a place to render them without running the whole generation per
 /// write. This states what that leaves: the writer accepts the removal of a row a document names,
-/// and the document is dangling afterwards. A full generation run reports it; the pre-commit and
-/// pre-push hooks run lint-only and do not.
+/// and the document is dangling afterwards. A full generation run reports it, and so does a commit concluding a merge and the
+/// post-merge and post-rewrite hooks; a plain lint-only commit or push does not.
 #[test]
-fn a_row_a_document_names_can_be_removed_by_a_write_the_writer_cannot_see_the_documents() {
+fn a_known_gap_the_writer_lets_a_row_a_document_names_be_removed() {
     let w = World::new();
     let cfg = w.clone_of("a", true);
     let s = stores(&cfg);

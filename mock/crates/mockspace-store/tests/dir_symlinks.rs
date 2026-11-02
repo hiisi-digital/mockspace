@@ -1,6 +1,6 @@
-//! What the directory backend does with a symlink, which is what the walk of the registry and the
-//! `fs::write` of the test history did before both went through a store: a symlinked directory is
-//! walked into, a symlinked file is written through, and neither lets a cycle or a dangling link
+//! What the directory backend does with a symlink, which is what the walk and the `fs::write` of the
+//! registry did before it went through a store (the test history replaced a link with a rename, and
+//! now writes through it): a symlinked directory is walked into, a symlinked file is written through, and neither lets a cycle or a dangling link
 //! hang or fail a listing.
 
 #![cfg(unix)]

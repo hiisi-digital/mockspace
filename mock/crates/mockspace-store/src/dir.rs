@@ -19,8 +19,9 @@ static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// validated whole before anything is written, but the files are then written one
 /// by one, each by rename: an I/O failure part way leaves the earlier files in place.
 ///
-/// A symlinked directory is walked into and a symlinked file is written through, as the walk of
-/// the registry and the `fs::write` of the test history did before they used a store.
+/// A symlinked directory is walked into and a symlinked file is written through, as the walk and
+/// the `fs::write` of the registry did before it used a store. The test history wrote a temporary
+/// file and renamed it over the path, which replaced a link; through a store it writes through one.
 #[derive(Debug, Clone)]
 pub struct DirStore {
     root: PathBuf,
