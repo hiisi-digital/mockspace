@@ -38,6 +38,7 @@ pub mod history_guard;
 pub mod history_merge;
 pub mod junit;
 pub mod live;
+pub mod lock;
 pub mod nextest;
 mod report;
 pub mod select;
