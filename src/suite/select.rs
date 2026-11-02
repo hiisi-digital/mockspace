@@ -347,7 +347,7 @@ impl BinaryOutcomes {
 /// that stops at its first failure (`--fail-fast`, `--max-fail`) exits as one
 /// that finished and leaves the tests it never started out of the report. A
 /// binary counts as having run whole only when every test it lists appears in
-/// the report, was skipped by the plan as already passed, or was left out by a
+/// the report, was skipped by the plan as cached (a deferred one is held back by the callers), or was left out by a
 /// narrowing to its failures. A failed binary is narrowed to later only when
 /// that holds; a passed one is recorded unless it is known not to hold, and where
 /// `live` is unknown a pass is judged as it always was.
@@ -426,10 +426,14 @@ impl<'a> Coverage<'a> {
     }
 
     /// Whether the run covered every test the binary lists: each is in the report,
-    /// was skipped by the plan as already passed, or was left out by a narrowing
+    /// was skipped by the plan as cached or deferred (the callers hold deferred back), or was left out by a narrowing
     /// to failures. `None` where the listing does not hold the binary.
     fn whole(&self, bin: &str) -> Option<bool> {
         let tests = self.live?.get(bin)?;
+        // A binary the plan left out whole passed at these inputs and is covered.
+        if self.plan.reuse.iter().any(|b| b == bin) {
+            return Some(true);
+        }
         Some(tests.iter().all(|t| {
             self.reported.contains(&(bin, t.as_str()))
                 || self.skipped.contains(&(bin, t.as_str()))

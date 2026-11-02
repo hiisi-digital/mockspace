@@ -348,3 +348,39 @@ fn a_binary_left_out_whole_is_not_also_narrowed() {
     assert!(p.reuse.contains(&"render::b".to_string()));
     assert!(p.rerun.is_empty());
 }
+
+/// Fail, fix, rerun: the member is green once the narrowed rerun passes, though
+/// its other binaries were left out whole, and the run after that runs nothing.
+#[test]
+fn a_member_with_reused_binaries_turns_green_when_its_rerun_passes() {
+    let (fp, mut h) = run_with_one_red();
+    let p = plan_for(Mode::Changed, true, &fp, &h);
+    assert_eq!(p.reuse, vec!["render::a"]);
+    let fixed = [case("render::b", "two", Outcome::Pass)];
+    let green = greens(&p, &fixed, true, Some(&listed()));
+    assert!(green.contains(&"render".to_string()), "{green:?}");
+    let o = binary_outcomes(&p, &fixed, &fp, true, Some(&listed()));
+    o.apply(h.flavour_mut(""));
+    for name in &green {
+        h.flavour_mut("")
+            .green
+            .insert(name.clone(), green_record(name, &fp, &graph()));
+    }
+    let after = plan_for(Mode::Changed, true, &fp, &h);
+    assert!(!names(&after).contains(&"render"), "{:?}", after.run);
+}
+
+/// A red binary of a member that is not running is not narrowed to.
+#[test]
+fn a_red_binary_of_a_member_that_does_not_run_is_not_in_the_plan() {
+    let (fp, mut h) = run_with_one_red();
+    let f = h.flavour_mut("");
+    for n in all() {
+        f.green.insert(n.clone(), green_record(&n, &fp, &graph()));
+    }
+    let p = plan_for(Mode::Changed, true, &fp, &h);
+    assert!(
+        p.run.is_empty() && p.rerun.is_empty() && p.rerun_listed.is_empty(),
+        "{p:?}"
+    );
+}

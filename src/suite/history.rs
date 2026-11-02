@@ -79,7 +79,8 @@ pub struct Red {
     /// The names that failed, sorted.
     pub names: Vec<String>,
     /// A digest of the tests the binary listed when it failed ([`super::live::digest`]).
-    /// A narrowing stands only while the listing is the same; absent, it never does.
+    /// A narrowing stands only while the listing is the same, and only against a
+    /// listing that was read; absent, it never does.
     #[serde(default)]
     pub listed: String,
 }

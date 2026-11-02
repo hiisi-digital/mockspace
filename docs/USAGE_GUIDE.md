@@ -329,8 +329,8 @@ and selects which to run rather than running them all:
   and cargo and nextest configuration, and the cargo config `mock test` generates from
   `[test.opt_level]`. A change to a member's library reaches that member and everything
   depending on it, and nothing else; a change to a workspace input, that table included,
-  reruns every member. A lockfile that does not parse, or lacks the member, moves every
-  member as it did before. What the lock cannot say is which cargo features the build
+  reruns every member. A lockfile that does not parse moves every
+  member as it did before, and a member the lock does not hold moves with the whole file. What the lock cannot say is which cargo features the build
   unifies across members, so a feature that one member's dependency turns on for
   another's is seen only through the manifests, as it always was.
 - **Within a member that runs, an integration-test binary runs when its own inputs

@@ -178,6 +178,11 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     };
     if let Some(live) = &live {
         plan.retain_live(live);
+    } else {
+        // A narrowing stands only against the listing it was made with, and
+        // none was read, so every binary runs whole.
+        plan.rerun.clear();
+        plan.rerun_listed.clear();
     }
 
     report::plan(&plan, inv, &fp_or_empty, cfg);
