@@ -127,7 +127,9 @@ pub fn work_lines(xml: &str, marker: &str) -> Vec<Work> {
         } else {
             &rest[tag_end .. rest.find("</testcase>").unwrap_or(rest.len())]
         };
-        let found = body.find("<system-err>").map(|s| {
+        // The testcase's own stderr is its last: nextest nests the earlier attempts'
+        // inside `<flakyFailure>` and `<rerunFailure>` ahead of it.
+        let found = body.rfind("<system-err>").map(|s| {
             let err = &body[s + "<system-err>".len() ..];
             unescape(&err[.. err.find("</system-err>").unwrap_or(err.len())])
         });
@@ -261,5 +263,22 @@ KASKI-WORK beings 7 &amp; more</system-err>
         };
         assert_eq!(names("OTHER-WORK"), Vec::<String>::new());
         assert!(!names("KASKI-WORK").contains(&"twice".to_string()));
+    }
+
+    /// nextest nests the earlier attempts' stderr inside `<flakyFailure>` ahead of
+    /// the testcase's own, and the count belongs to the last attempt.
+    #[test]
+    fn a_flaky_tests_count_is_the_final_attempts_not_the_first() {
+        let xml = r#"<testsuites><testsuite name="s">
+        <testcase name="flaky" classname="s" time="2.000">
+            <flakyFailure message="x" type="test failure">
+                <system-err>KASKI-WORK ticks 1</system-err>
+            </flakyFailure>
+            <system-err>KASKI-WORK ticks 500</system-err>
+        </testcase>
+        </testsuite></testsuites>"#;
+        let w = work_lines(xml, "KASKI-WORK");
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].n, 500);
     }
 }

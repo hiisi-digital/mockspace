@@ -37,13 +37,16 @@ pub enum Judgement {
 
 /// Judge `sample` against the cell's clean history, oldest first.
 ///
-/// Only the last [`WINDOW`] entries count. A history with no spread (every
-/// sample equal, so a zero deviation) falls back to the ratio alone, since a
+/// Only the last [`WINDOW`] entries count. A history with no spread (a zero
+/// deviation, which holds whenever over half the samples are equal) falls back to the ratio alone, since a
 /// z-score over zero is no statistic.
 #[must_use]
 pub fn judge(clean: &[f64], sample: f64) -> Judgement {
     if clean.len() < WARMING {
         return Judgement::Warming;
+    }
+    if !sample.is_finite() {
+        return Judgement::Suspect;
     }
     let window = &clean[clean.len().saturating_sub(WINDOW) ..];
     let med = median(window);
@@ -94,6 +97,15 @@ mod tests {
     fn only_the_last_window_makes_the_baseline() {
         let mut h = vec![10.0; 30];
         h.extend(JITTER.iter().cycle().take(WINDOW));
+        // Against the old era 10.0 is the median and 1.0 an outlier; against the
+        // window it is the other way round, so this holds only if the window is cut.
         assert_eq!(judge(&h, 1.0), Judgement::Clean);
+        assert_eq!(judge(&h, 10.0), Judgement::Suspect);
+    }
+
+    #[test]
+    fn a_sample_that_is_not_a_number_is_never_clean() {
+        assert_eq!(judge(&JITTER, f64::NAN), Judgement::Suspect);
+        assert_eq!(judge(&JITTER, f64::INFINITY), Judgement::Suspect);
     }
 }

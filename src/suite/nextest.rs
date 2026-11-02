@@ -56,7 +56,7 @@ pub fn tool_config(s: &TestSettings, heavy: &[(String, String)], junit: &Path) -
     // Quoted and escaped as TOML, whatever characters the path holds.
     let _ = writeln!(
         t,
-        "[profile.default.junit]\npath = {}",
+        "[profile.default.junit]\npath = {}\n# A passing test's stderr carries its work line, and nextest keeps it only on request.\nstore-success-output = true",
         toml_edit::Value::from(junit.to_string_lossy().as_ref())
     );
     if !heavy.is_empty() {
@@ -343,6 +343,15 @@ mod tests {
             t.contains("[profile.default.junit]\npath = \"/w/mock/target/mockspace-test-state/junit.xml\"\n"),
             "{t}"
         );
+    }
+
+    /// Without this nextest writes `<system-err>` for failures only, so a passing
+    /// test's work line never reaches the report.
+    #[test]
+    fn a_passing_tests_output_is_kept_so_its_work_line_reaches_the_report() {
+        let t = tool_config(&TestSettings::default(), &[], Path::new("junit.xml"));
+        let junit = t.split("[profile.default.junit]").nth(1).expect("a junit table");
+        assert!(junit.lines().any(|l| l == "store-success-output = true"), "{t}");
     }
 
     /// Whatever the path holds, the config stays TOML that says that path.

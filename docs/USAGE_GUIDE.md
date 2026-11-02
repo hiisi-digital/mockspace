@@ -451,11 +451,14 @@ timeout_secs = 900       # a test still running after this long fails
 commit = "off"           # a lint level: warn runs `mock test --cheap` on commit, error also blocks
 lean = true              # build every crate without debug info unless it needs symbols; false leaves the profile alone
 debug = "line-tables-only"  # what a crate that needs symbols gets: 1, 2, "limited", "full", "line-tables-only" or "line-directives-only"
+work_marker = "MOCK-WORK"  # first word of the stderr line a test prints to report its work, `MOCK-WORK <unit> <n>`
 
 [test.opt_level]         # optional: the opt level a member is built at under `mock test`,
                          # nextest or `--plain`; a name that is no member is ignored
 sim-core = 3             # 0 to 3, "s" or "z"; members not named keep their manifest's
 ```
+
+Every `mock test` run writes one row per test (name, binary, seconds, outcome, machine class, profile, test threads, load before and after, and a work count where the test reported one) as a shard under `target/mockspace-test-state/timings-spool/samples/<yyyy-mm>/<machine-class>/`. A test reports work by printing `MOCK-WORK <unit> <n>` on stderr, `ticks 1200` for instance; `work_marker` renames the first word. Nextest is told to keep a passing test's stderr for this.
 
 ### Lints
 

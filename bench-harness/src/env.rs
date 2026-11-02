@@ -86,15 +86,14 @@ pub fn machine_class(f: &MachineFacts<'_>) -> String {
     )
 }
 
-/// The os or arch as a token: lowercase ascii letters, digits and `_`, anything
-/// else dropped, so the label has no separator inside a part.
-fn token(s: &str) -> String {
-    let t: String = s
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
-        .map(|c| c.to_ascii_lowercase())
-        .collect();
-    if t.is_empty() { "unknown".into() } else { t }
+/// The os or arch from a closed list, `other` for anything outside it, so free text
+/// (a hostname inside an os string) cannot reach the label.
+fn token(s: &str) -> &'static str {
+    const KNOWN: [&str; 14] = [
+        "linux", "macos", "windows", "freebsd", "netbsd", "openbsd", "android", "ios",
+        "x86_64", "aarch64", "arm", "riscv64", "x86", "wasm32",
+    ];
+    KNOWN.iter().copied().find(|k| *k == s).unwrap_or("other")
 }
 
 /// The CPU family from a brand string, from a closed list; `other` otherwise.
@@ -176,24 +175,53 @@ pub fn collect_env_meta() -> EnvMeta {
         cpu,
         os:           collect_os(),
         rustc:        collect_rustc(),
-        git_commit:   {
-            // A dirty tree suffix keeps every recorded number traceable
-            // to an exact source state, not just a nearby commit.
-            let mut c = collect_git_commit();
-            if !c.is_empty() {
-                let dirty = std::process::Command::new("git")
-                    .args(["status", "--porcelain"])
-                    .output()
-                    .map(|o| !o.stdout.is_empty())
-                    .unwrap_or(false);
-                if dirty {
-                    c.push_str("-dirty");
-                }
-            }
-            c
-        },
+        git_commit:   collect_git_commit_marked(),
         timestamp:    collect_timestamp(),
         counter_freq: mockspace_bench_core::counter::counter_frequency(),
+    }
+}
+
+/// The short commit, with `-dirty` when the tree has uncommitted changes, so a
+/// number stays traceable to an exact source state and not a nearby commit.
+/// Empty outside a git tree.
+#[must_use]
+pub fn collect_git_commit_marked() -> String {
+    let mut c = collect_git_commit();
+    if !c.is_empty() {
+        let dirty = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .output()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false);
+        if dirty {
+            c.push_str("-dirty");
+        }
+    }
+    c
+}
+
+/// Only what a test run's rows carry: machine class, cpus, load and the time.
+///
+/// Cheap by design. [`collect_env_meta`] also calibrates the hardware counter
+/// (seconds of sleeping) and shells out to `rustc` and `git`, none of which a
+/// test row uses, and a test run must not pay that.
+#[must_use]
+pub fn collect_run_env() -> EnvMeta {
+    let cpu = collect_cpu();
+    let cpus = std::thread::available_parallelism().map_or(0, |n| n.get() as u64);
+    EnvMeta {
+        machine_class: machine_class(&MachineFacts {
+            os:        std::env::consts::OS,
+            arch:      std::env::consts::ARCH,
+            cpus,
+            container: in_container(),
+            cpu_brand: &cpu,
+        }),
+        cpus_online:   cpus,
+        load_1m:       load_1m(),
+        cpu,
+        timestamp:     collect_timestamp(),
+        ..EnvMeta::default()
     }
 }
 
@@ -279,8 +307,8 @@ mod tests {
     fn a_hostname_in_the_inputs_never_reaches_the_label() {
         let label = machine_class(&facts("Mystery CPU on build-host-7f3a.example.com"));
         assert_eq!(label, "linux-x86_64-c16-bare-other");
-        let f = MachineFacts { os: "linux-ip-10-0-0-5", ..facts("x") };
-        assert!(!machine_class(&f).contains("10-0-0-5"));
+        let f = MachineFacts { os: "linux-ip-10-0-0-5", arch: "host-a1b2", ..facts("x") };
+        assert_eq!(machine_class(&f), "other-other-c16-bare-other");
     }
 
     #[test]

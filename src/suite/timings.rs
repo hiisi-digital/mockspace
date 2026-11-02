@@ -83,7 +83,7 @@ pub fn rows(
 
 /// Write a run's rows as one new shard under `spool` and return its path.
 ///
-/// The shard is written to a temp name beside it and renamed, so a reader never
+/// The shard is written to a temp name beside it and hard-linked into place, so a reader never
 /// sees half a shard, and a name already taken is an error rather than an
 /// overwrite. Nothing is written for no rows.
 pub fn spool(spool: &Path, rows: &[TestSample]) -> std::io::Result<Option<PathBuf>> {
@@ -100,14 +100,32 @@ pub fn spool(spool: &Path, rows: &[TestSample]) -> std::io::Result<Option<PathBu
     let dir = path.parent().expect("a shard path has a parent");
     std::fs::create_dir_all(dir)?;
     let tmp = path.with_extension("ndjson.tmp");
-    let mut f = std::fs::File::create(&tmp)?;
-    for r in rows {
-        serde_json::to_writer(&mut f, r).map_err(std::io::Error::other)?;
-        f.write_all(b"\n")?;
-    }
-    f.sync_all()?;
-    std::fs::rename(&tmp, &path)?;
+    let written = (|| {
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        for r in rows {
+            serde_json::to_writer(&mut f, r).map_err(std::io::Error::other)?;
+            f.write_all(b"\n")?;
+        }
+        f.sync_all()?;
+        // A hard link fails when the name is taken, where a rename would replace it.
+        std::fs::hard_link(&tmp, &path)
+    })();
+    let _ = std::fs::remove_file(&tmp);
+    written?;
     Ok(Some(path))
+}
+
+/// A run id unique across machines of one class: the time to the nanosecond, the
+/// process id and a hash of the working directory, since containers reuse low pids.
+pub fn run_id(ts: u64) -> String {
+    use std::hash::{Hash, Hasher};
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    std::env::current_dir().ok().hash(&mut h);
+    std::process::id().hash(&mut h);
+    format!("{ts}-{nanos:09}-{:08x}", h.finish() as u32)
 }
 
 /// The test threads a run used: the `-j` / `--test-threads` it was given, else
@@ -146,9 +164,9 @@ pub struct Run<'a> {
 /// class, the load before and after, and any work lines. A failure to write is
 /// a note on stderr and never the run's result.
 pub fn record_run(run: &Run<'_>, cases: &[Case], work_marker: &str) {
-    let env = mockspace_bench_harness::collect_env_meta();
-    let id = format!("{}-{}", env.timestamp, std::process::id());
-    let commit = mockspace_bench_harness::history::git_commit();
+    let env = mockspace_bench_harness::env::collect_run_env();
+    let id = run_id(env.timestamp);
+    let commit = mockspace_bench_harness::env::collect_git_commit_marked();
     let facts = RunFacts {
         env:            &env,
         run:            &id,
