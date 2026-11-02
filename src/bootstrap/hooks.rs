@@ -553,11 +553,14 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     PUSH_CHANGED=$(ms_union "$(ms_crates_of "$PUSH_FILES")" "$(ms_ws_crates_of "$PUSH_FILES")")
     # A dependency input anywhere in the repository, not only under the mock
     # directory the diff above is limited to: cargo-deny reads manifests,
-    # lockfiles and its config. The repo-lints scope below is what lets the
-    # dependency gate stand down, so a ref that touches one is not for it. A diff
-    # that fails to run counts as a change, which keeps the gate.
+    # lockfiles, its own config and cargo's (`[source]` and `[patch]` sit in
+    # `.cargo/config`). A push free of them in every ref is what `--deps-unchanged`
+    # below claims, and what lets the dependency gate stand down, so a ref that
+    # touches one is not for it. A diff that fails to run counts as a change,
+    # which keeps the gate. What cargo-deny reads from outside the repository, the
+    # advisory database and the yank state of a crate, moves with no push at all.
     PUSH_DEPS=""
-    if ! git diff --quiet "$remote_sha".."$local_sha" -- '*Cargo.toml' '*Cargo.lock' '*deny.toml' 2>/dev/null; then
+    if ! git diff --quiet "$remote_sha".."$local_sha" -- '*Cargo.toml' '*Cargo.lock' '*deny.toml' '*.cargo/config*' 2>/dev/null; then
         PUSH_DEPS=1
     fi
     if [ -z "$PUSH_CHANGED" ]; then
@@ -599,7 +602,7 @@ elif [ -z "$FULL_REASON" ] && [ -z "$CHANGED_CRATES" ] && [ -n "$PUSH_REPO_ONLY"
     # The flag is checked against whatever is staged when the push runs, not against the pushed commits, so it
     # would also vouch for nothing about them.
     echo "  scope: repo lints only (the push changes nothing a crate's lints read)"
-    ARGS=(--lint-only --strict --scope infra)
+    ARGS=(--lint-only --strict --scope infra --deps-unchanged)
 elif [ -n "$FULL_REASON" ] || [ -z "$CHANGED_CRATES" ]; then
     echo "  scope: full project (${{FULL_REASON:-no crate changes}})"
     ARGS=(--lint-only --strict)

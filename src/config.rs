@@ -171,9 +171,10 @@ pub struct Config {
     pub auto_clippy_fix: bool,
     /// Run `cargo deny check` on push against the repo's `deny.toml` (advisories,
     /// license compatibility, bans, sources). Blocks on a violation; skipped when
-    /// cargo-deny or the config is absent, and for a push at `--scope infra`, which
-    /// the hook passes only for a range that changes no manifest, lockfile or
-    /// `deny.toml`. Silent on a pass. Default true.
+    /// cargo-deny or the config is absent, and for a push carrying `--deps-unchanged`,
+    /// which only the generated hook sends, for a range that changes no manifest,
+    /// lockfile, `deny.toml` or `.cargo/config*`. A pass shows one line per
+    /// workspace root. Default true.
     pub deny_check:      bool,
 
     /// Everything read from `mock/agent/config.toml`. Grouped rather than

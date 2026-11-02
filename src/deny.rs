@@ -22,10 +22,11 @@
 //! nothing about whether the manifest is clean. Opt out with
 //! `deny_check = false` in `mockspace.toml`.
 //!
-//! A pass is silent: what cargo-deny prints is not shown unless the check fails,
-//! and then only its errors ([`failure_text`]). The gate also stands down for a
-//! push at `--scope infra` ([`gate`]), which the pre-push hook passes only for a
-//! range that changes no `Cargo.toml`, `Cargo.lock` or `deny.toml`.
+//! A pass shows one line per root and none of what cargo-deny printed; a failure
+//! shows only its errors, its summary line and its exit status
+//! ([`failure_text`]). The gate also stands down for a push whose range the hook
+//! claims changes no `Cargo.toml`, `Cargo.lock`, `deny.toml` or `.cargo/config*`
+//! ([`Claim`], [`gate`]).
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -247,21 +248,25 @@ fn cargo_deny_installed() -> bool {
         .unwrap_or(false)
 }
 
-/// Run `cargo deny --config <config> check` in `root`. `Ok` on a clean check,
-/// and silent: a pass hands back nothing of what cargo-deny printed, which on a
-/// graph with a few hundred crates is every duplicate, every unused allowance and
-/// every inclusion graph it knows, measured at 91,924 lines for one push of
-/// registry rows across twenty-odd roots. `Err` carries what explains a failure,
-/// per [`failure_text`].
+/// Run `cargo deny --color never --config <config> check` in `root`. `Ok` on a
+/// clean check, and silent: a pass hands back nothing of what cargo-deny
+/// printed, which on a graph with a few hundred crates is every duplicate, every
+/// unused allowance and every inclusion graph it knows. `Err` carries what
+/// explains a failure, per [`failure_text`].
 fn run_deny(root: &Path, config: &Path) -> Result<(), String> {
     run_deny_with(OsStr::new("cargo"), root, config)
 }
 
 /// [`run_deny`] with the program named, which is what lets a test stand in for
-/// `cargo` and print whatever it likes.
+/// `cargo` and print whatever it likes. `--color never` is what keeps the
+/// headers [`failure_text`] reads plain text whatever `CARGO_TERM_COLOR` says,
+/// and both streams are captured, since cargo-deny writes its diagnostics to
+/// stderr and its closing summary line to stdout.
 fn run_deny_with(program: &OsStr, root: &Path, config: &Path) -> Result<(), String> {
     let out = Command::new(program)
         .arg("deny")
+        .arg("--color")
+        .arg("never")
         .arg("--config")
         .arg(config)
         .arg("check")
@@ -272,41 +277,55 @@ fn run_deny_with(program: &OsStr, root: &Path, config: &Path) -> Result<(), Stri
     if out.status.success() {
         return Ok(());
     }
-    Err(failure_text(&String::from_utf8_lossy(&out.stderr)))
+    Err(failure_text(
+        &String::from_utf8_lossy(&out.stderr),
+        &String::from_utf8_lossy(&out.stdout),
+        out.status.code(),
+    ))
 }
 
 /// How many trailing lines of the stream a failure with no `error` diagnostic in
 /// it keeps.
 const FAILURE_TAIL_LINES: usize = 40;
 
-/// What of cargo-deny's rendered diagnostics explains a failed check: the
+/// What of cargo-deny's output explains a failed check: from `stderr`, the
 /// blocks that open with an `error` header, up to the next header of any
-/// severity, and the closing `advisories ... sources ...` summary. The warnings
-/// are what fill the stream on a passing run too and say nothing about why this
-/// one failed. A failure with no `error` block in it, cargo-deny dying on
-/// something that is not a diagnostic, keeps the last
-/// [`FAILURE_TAIL_LINES`] lines instead, since keeping nothing would make it a
-/// failure that says nothing.
-fn failure_text(stderr: &str) -> String {
+/// severity; from `stdout`, the closing `advisories ... sources ...` summary
+/// line; and the exit status, which tells a failed check (4) from a configuration
+/// cargo-deny could not read (1). The warnings are what fill the stream on a
+/// passing run too and say nothing about why this one failed. A failure with no
+/// `error` block in it, cargo-deny dying on something that is not a diagnostic,
+/// keeps the last [`FAILURE_TAIL_LINES`] lines of `stderr` instead, since keeping
+/// nothing would make it a failure that says nothing.
+fn failure_text(stderr: &str, stdout: &str, code: Option<i32>) -> String {
     let mut kept = String::new();
     let mut keep = false;
     for line in stderr.lines() {
         if let Some(error) = diagnostic_header(line) {
             keep = error;
-        } else if line.starts_with("advisories ") {
-            keep = true;
         }
         if keep {
             kept.push_str(line);
             kept.push('\n');
         }
     }
-    if !kept.is_empty() {
-        return kept;
+    if kept.is_empty() {
+        let lines: Vec<&str> = stderr.lines().collect();
+        let from = lines.len().saturating_sub(FAILURE_TAIL_LINES);
+        for line in &lines[from ..] {
+            kept.push_str(line);
+            kept.push('\n');
+        }
     }
-    let lines: Vec<&str> = stderr.lines().collect();
-    let from = lines.len().saturating_sub(FAILURE_TAIL_LINES);
-    lines[from ..].join("\n")
+    for line in stdout.lines().filter(|l| l.starts_with("advisories ")) {
+        kept.push_str(line);
+        kept.push('\n');
+    }
+    match code {
+        Some(code) => kept.push_str(&format!("cargo deny exited with status {code}\n")),
+        None => kept.push_str("cargo deny was ended by a signal\n"),
+    }
+    kept
 }
 
 /// Whether `line` opens a rendered diagnostic, and if it does whether that one
@@ -324,31 +343,52 @@ fn diagnostic_header(line: &str) -> Option<bool> {
     None
 }
 
+/// What the caller says of the dependency inputs of a push. The pre-push hook is
+/// the one sender of [`Claim::DepsUnchanged`] (`--deps-unchanged`): it takes each
+/// pushed range's diff and sends it only when no `Cargo.toml`, `Cargo.lock`,
+/// `deny.toml` or `.cargo/config*` anywhere in the repository is in it. The engine
+/// does not see the range, so this is the hook's claim and not something it
+/// checked; a hook generated before the flag existed cannot send it, so a stale
+/// hook keeps the gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Claim {
+    /// Nothing is said, which is every hand run and every older hook.
+    None,
+    /// The hook's claim that the pushed range changes no dependency input.
+    DepsUnchanged,
+}
+
 /// Whether the pre-push dependency gate runs on this invocation.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Gate {
+pub(crate) enum Gate {
     /// Not a push, or `deny_check = false`: nothing to say about it.
     Off,
     /// Run it.
     Run,
-    /// A push at the repo-lints scope. The pre-push hook passes `--scope infra`
-    /// only after taking the pushed range's diff and finding in it no
-    /// `Cargo.toml`, `Cargo.lock` or `deny.toml` anywhere in the repository, which
-    /// are what cargo-deny reads, so the range cannot have changed its answer.
+    /// A push whose range, by the hook's claim, cannot have changed what
+    /// cargo-deny reads from the repository. What it reads from outside it, the
+    /// advisory database and the yank state of a crate, moves with no push at all
+    /// and is only seen by a push that runs the gate.
     StandDown,
 }
 
 /// Which of the three this invocation is. `push` is whether the run is the
-/// pre-push one, `enabled` is `deny_check` from the config, and `scope` is the
-/// `--scope` argument as given.
-pub fn gate(push: bool, enabled: bool, scope: Option<&str>) -> Gate {
+/// pre-push one, `enabled` is `deny_check` from the config, and `claim` is what
+/// the caller said of the pushed range's dependency inputs.
+pub(crate) fn gate(push: bool, enabled: bool, claim: Claim) -> Gate {
     if !push || !enabled {
         Gate::Off
-    } else if scope == Some("infra") {
+    } else if claim == Claim::DepsUnchanged {
         Gate::StandDown
     } else {
         Gate::Run
     }
+}
+
+/// Whether the repository has a `deny.toml` for the gate to run against, which is
+/// what makes saying it stood down worth a line.
+pub(crate) fn has_config(repo_root: &Path) -> bool {
+    repo_root.join("deny.toml").is_file()
 }
 
 /// Every workspace root under `repo_root`: directories whose `Cargo.toml`
@@ -718,22 +758,30 @@ mod tests {
         );
     }
 
-    /// A stand-in for `cargo` that writes `stderr` to its standard error, `stdout`
-    /// to its standard output, and exits with `code`. Whatever it prints, the
-    /// gate has to account for: nothing it prints may reach the caller's own
-    /// streams on a pass, and a failure has to carry what explains it.
+    /// A stand-in for `cargo` that records its arguments one to a line in `argv`
+    /// beside it, writes `stderr` to its standard error, `stdout` to its standard
+    /// output, and exits with `code`. Whatever it prints, the gate has to account
+    /// for: nothing it prints may reach the caller's own streams on a pass, and a
+    /// failure has to carry what explains it. Like cargo-deny, it puts the
+    /// diagnostics on stderr and the closing summary line on stdout.
     fn stub_cargo(dir: &Path, stdout: &str, stderr: &str, code: i32) -> PathBuf {
         let path = dir.join("stub-cargo");
         let script = format!(
-            "#!/usr/bin/env bash\ncat <<'OUT'\n{stdout}OUT\ncat >&2 <<'ERR'\n{stderr}ERR\nexit {code}\n"
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > '{argv}'\ncat <<'OUT'\n{stdout}OUT\ncat >&2 <<'ERR'\n{stderr}ERR\nexit {code}\n",
+            argv = dir.join("argv").display(),
         );
         crate::test_exec::write_executable(&path, script.as_bytes());
         path
     }
 
+    /// Runs the stub in `dir` the way the gate runs `cargo`.
+    fn run_stub(dir: &Path, cargo: &Path) -> Result<(), String> {
+        run_deny_with(cargo.as_os_str(), dir, &dir.join("deny.toml"))
+    }
+
     /// What cargo-deny prints for a graph with one rejected licence among many
-    /// warnings: the diagnostics rendered one after another, and a summary.
-    fn deny_output_with_one_error() -> String {
+    /// warnings: the diagnostics rendered one after another, on stderr.
+    fn deny_diagnostics_with_one_error() -> String {
         let mut out = String::new();
         for n in 0 .. 300 {
             out.push_str(&format!(
@@ -744,38 +792,75 @@ mod tests {
             "error[rejected]: failed to satisfy license requirements\n   \u{250c}\u{2500} one/Cargo.toml:5:11\n   \u{2502}\n 5 \u{2502} license = \"MIT\"\n   \u{2502}           ^^^ rejected: license is not explicitly allowed\n\n",
         );
         out.push_str("warning[license-not-encountered]: license was not encountered\n\n");
-        out.push_str("advisories ok, bans ok, licenses FAILED, sources ok\n");
         out
     }
 
+    /// The summary line, which cargo-deny 0.20 writes to stdout.
+    const DENY_SUMMARY: &str = "advisories ok, bans ok, licenses FAILED, sources ok\n";
+
     #[test]
-    fn a_clean_check_hands_back_nothing_whatever_it_printed() {
+    #[cfg(target_os = "linux")]
+    fn a_clean_check_leaves_the_callers_streams_alone_whatever_it_printed() {
+        // The stub notes in a file when its stderr or stdout is the very stream its
+        // parent has, which is what inheriting them is. Returning Ok(()) says
+        // nothing of that, since Ok(()) carries nothing: the 91,924 lines a push
+        // of registry rows used to pour out were a pass that inherited stderr.
         let tmp = tempfile::tempdir().unwrap();
-        let cargo = stub_cargo(
-            tmp.path(),
-            "stdout noise\n",
-            &deny_output_with_one_error(),
-            0,
+        let path = tmp.path().join("stub-cargo");
+        let script = format!(
+            "#!/usr/bin/env bash\nfor fd in 1 2; do\n  if [ \"$(readlink /proc/self/fd/$fd)\" = \"$(readlink /proc/$PPID/fd/$fd)\" ]; then echo shared >> '{shared}'; fi\ndone\necho noise\necho noise >&2\nexit 0\n",
+            shared = tmp.path().join("shared").display(),
         );
-        assert_eq!(
-            run_deny_with(cargo.as_os_str(), tmp.path(), &tmp.path().join("deny.toml")),
-            Ok(())
+        crate::test_exec::write_executable(&path, script.as_bytes());
+        assert_eq!(run_stub(tmp.path(), &path), Ok(()));
+        assert!(
+            !tmp.path().join("shared").exists(),
+            "the check shared the caller's own stream, so what it printed on a pass reached it"
         );
     }
 
     #[test]
-    fn a_failed_check_carries_its_errors_and_none_of_its_warnings() {
+    fn the_check_is_run_with_plain_colour_and_the_one_config() {
+        // `--color never` is what keeps the headers the filter reads plain text
+        // when CARGO_TERM_COLOR forces colour, and `check` with `--config` is what
+        // makes it the repo's one config over every root. A stub that ignores its
+        // arguments passes whatever they are, so they are read back.
         let tmp = tempfile::tempdir().unwrap();
-        let cargo = stub_cargo(tmp.path(), "", &deny_output_with_one_error(), 1);
-        let err = run_deny_with(cargo.as_os_str(), tmp.path(), &tmp.path().join("deny.toml"))
-            .expect_err("a non-zero exit is a failed check");
+        let cargo = stub_cargo(tmp.path(), "", "", 0);
+        assert_eq!(run_stub(tmp.path(), &cargo), Ok(()));
+        let argv = std::fs::read_to_string(tmp.path().join("argv")).unwrap();
+        let config = tmp.path().join("deny.toml");
+        assert_eq!(argv.lines().collect::<Vec<_>>(), [
+            "deny",
+            "--color",
+            "never",
+            "--config",
+            config.to_str().unwrap(),
+            "check"
+        ]);
+    }
+
+    #[test]
+    fn a_failed_check_carries_its_errors_its_summary_and_its_status_and_no_warnings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cargo = stub_cargo(
+            tmp.path(),
+            DENY_SUMMARY,
+            &deny_diagnostics_with_one_error(),
+            4,
+        );
+        let err = run_stub(tmp.path(), &cargo).expect_err("a non-zero exit is a failed check");
         assert!(
             err.contains("error[rejected]") && err.contains("license = \"MIT\""),
             "the error that explains the failure is missing:\n{err}"
         );
         assert!(
             err.contains("licenses FAILED"),
-            "the summary line is missing:\n{err}"
+            "the summary line, which is on stdout, is missing:\n{err}"
+        );
+        assert!(
+            err.contains("exited with status 4"),
+            "the exit status is missing:\n{err}"
         );
         assert!(
             !err.contains("warning[duplicate]") && !err.contains("dup299"),
@@ -788,20 +873,57 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_with_no_error_diagnostic_carries_the_tail_of_what_was_printed() {
+    fn an_error_block_ends_at_the_next_header_of_any_severity() {
+        // Two error blocks with a note, a help and a warning between and after
+        // them: what is kept is the two blocks, and none of the other three, which
+        // is the difference between `note` and `help` being headers and being
+        // lines of the error above them.
+        let tmp = tempfile::tempdir().unwrap();
+        let stderr = "error[a]: first\n  first body\nnote[x]: a note\n  note body\nhelp: a help\n  help body\nerror[b]: second\n  second body\nwarning: a warning\n  warning body\n";
+        let cargo = stub_cargo(tmp.path(), "", stderr, 4);
+        let err = run_stub(tmp.path(), &cargo).expect_err("a non-zero exit is a failed check");
+        for kept in ["error[a]: first", "first body", "error[b]: second", "second body"] {
+            assert!(err.contains(kept), "{kept:?} was dropped:\n{err}");
+        }
+        for dropped in ["a note", "note body", "a help", "help body", "a warning", "warning body"] {
+            assert!(!err.contains(dropped), "{dropped:?} was kept:\n{err}");
+        }
+    }
+
+    #[test]
+    fn a_failure_with_no_error_diagnostic_carries_exactly_the_last_forty_lines() {
         // cargo-deny dying on something that is not a diagnostic (a fetch, a
         // panic, a manifest it cannot parse) has no `error[` block to keep, and
         // dropping it all would turn the failure into one that says nothing.
         let tmp = tempfile::tempdir().unwrap();
         let noise: String = (1 ..= 100).map(|n| format!("noise-{n:03}\n")).collect();
         let cargo = stub_cargo(tmp.path(), "", &noise, 101);
-        let err = run_deny_with(cargo.as_os_str(), tmp.path(), &tmp.path().join("deny.toml"))
-            .expect_err("a non-zero exit is a failed check");
-        assert!(err.contains("noise-100"), "the tail is missing:\n{err}");
-        assert!(
-            !err.contains("noise-001"),
-            "the whole stream was kept rather than its tail:\n{err}"
+        let err = run_stub(tmp.path(), &cargo).expect_err("a non-zero exit is a failed check");
+        assert_eq!(
+            err.lines().filter(|l| l.starts_with("noise-")).count(),
+            FAILURE_TAIL_LINES,
+            "{err}"
         );
+        assert_eq!(FAILURE_TAIL_LINES, 40);
+        assert!(
+            err.contains("noise-100") && err.contains("noise-061"),
+            "{err}"
+        );
+        assert!(
+            !err.contains("noise-060"),
+            "more than the tail was kept:\n{err}"
+        );
+        assert!(err.contains("exited with status 101"), "{err}");
+    }
+
+    #[test]
+    fn a_failure_that_printed_nothing_still_names_its_status() {
+        // The blank reason: cargo-deny killed before it said anything left the
+        // person blocked by a push with an empty message.
+        let tmp = tempfile::tempdir().unwrap();
+        let cargo = stub_cargo(tmp.path(), "", "", 1);
+        let err = run_stub(tmp.path(), &cargo).expect_err("a non-zero exit is a failed check");
+        assert_eq!(err, "cargo deny exited with status 1\n");
     }
 
     #[test]
@@ -817,17 +939,16 @@ mod tests {
     }
 
     #[test]
-    fn the_dependency_gate_runs_on_a_push_and_stands_down_for_the_repo_lints_scope() {
-        // Off: not a push, or switched off in the config. Run: a push at any scope
-        // but `infra`. Stand down: a push whose hook found no dependency input
-        // in the pushed range, which it says by passing `--scope infra`.
-        assert_eq!(gate(true, true, None), Gate::Run);
-        assert_eq!(gate(true, true, Some("kaski-sim,kaski-world")), Gate::Run);
-        assert_eq!(gate(true, true, Some("infra")), Gate::StandDown);
-        assert_eq!(gate(false, true, None), Gate::Off);
-        assert_eq!(gate(false, true, Some("infra")), Gate::Off);
-        assert_eq!(gate(true, false, None), Gate::Off);
-        assert_eq!(gate(true, false, Some("infra")), Gate::Off);
+    fn the_dependency_gate_runs_on_a_push_and_stands_down_only_on_the_hooks_claim() {
+        // Off: not a push, or switched off in the config. Run: a push with no claim
+        // made, which is every hand run and every hook generated before the claim
+        // existed. Stand down: a push the hook says changes no dependency input.
+        assert_eq!(gate(true, true, Claim::None), Gate::Run);
+        assert_eq!(gate(true, true, Claim::DepsUnchanged), Gate::StandDown);
+        assert_eq!(gate(false, true, Claim::None), Gate::Off);
+        assert_eq!(gate(false, true, Claim::DepsUnchanged), Gate::Off);
+        assert_eq!(gate(true, false, Claim::None), Gate::Off);
+        assert_eq!(gate(true, false, Claim::DepsUnchanged), Gate::Off);
     }
 
     #[test]
@@ -982,6 +1103,43 @@ mod tests {
         assert!(
             err.contains("cargo deny check failed"),
             "blocked, but named the wrong reason: {err}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs cargo-deny"]
+    fn a_real_failure_under_forced_colour_still_carries_its_error_and_its_summary() {
+        require_cargo_deny();
+        // The failure the filter had under CARGO_TERM_COLOR=always: every header
+        // opens with an escape, none matched, and the tail of the stream, all of it
+        // warnings, was shown in place of the error. The program run is a wrapper
+        // that forces colour in the environment and hands every argument on, which
+        // is the one thing a stand-in `cargo` printing plain text cannot show.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write_license_denial_fixture(root, ".");
+        let wrapper = root.join("coloured-cargo");
+        crate::test_exec::write_executable(
+            &wrapper,
+            b"#!/usr/bin/env bash\nexport CARGO_TERM_COLOR=always\nexec cargo \"$@\"\n",
+        );
+        let err = run_deny_with(wrapper.as_os_str(), root, &root.join("deny.toml"))
+            .expect_err("the fixture's crate fails its licence check");
+        assert!(
+            err.contains("error[rejected]"),
+            "the error is missing:\n{err}"
+        );
+        assert!(
+            err.contains("licenses FAILED"),
+            "the summary line, which is on stdout, is missing:\n{err}"
+        );
+        assert!(
+            err.contains("exited with status 4"),
+            "the status is missing:\n{err}"
+        );
+        assert!(
+            !err.contains('\u{1b}'),
+            "colour reached the failure:\n{err}"
         );
     }
 }
