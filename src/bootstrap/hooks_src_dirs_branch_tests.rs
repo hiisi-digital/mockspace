@@ -16,6 +16,7 @@ use super::hooks_src_dirs_tests::{
     git,
     push_run,
     run_full,
+    scope_call,
     stage,
 };
 use super::*;
@@ -56,10 +57,7 @@ fn the_commit_branches_pass_these_arguments() {
         ),
         (
             "registry rows alone, a ticket and its page under docs",
-            &[
-                ("mock/registry/ticket/items/a.toml", "x = 1\n"),
-                ("docs/TICKET-MOVE.md", "x\n"),
-            ],
+            &[("mock/registry/ticket/items/a.toml", "x = 1\n"), ("docs/TICKET-MOVE.md", "x\n")],
             "mock --lint-only --commit --scope infra --doc-only",
         ),
         (
@@ -103,21 +101,58 @@ fn the_push_branches_pass_these_arguments() {
             "mock --lint-only --strict --scope console-core",
         ),
         (
-            "registry row alone: the repo lints and no crate's",
+            "registry row alone: the repo lints and no crate's, and the claim the range changes no dependency input",
             &[("mock/registry/tenets.toml", "x = 1\n")],
-            "mock --lint-only --strict --scope infra",
+            "mock --lint-only --strict --scope infra --deps-unchanged",
         ),
         (
             "registry rows alone, a ticket and its page under docs",
-            &[
-                ("mock/registry/ticket/items/a.toml", "x = 1\n"),
-                ("docs/TICKET-MOVE.md", "x\n"),
-            ],
-            "mock --lint-only --strict --scope infra",
+            &[("mock/registry/ticket/items/a.toml", "x = 1\n"), ("docs/TICKET-MOVE.md", "x\n")],
+            "mock --lint-only --strict --scope infra --deps-unchanged",
+        ),
+        (
+            "registry row beside a file outside the mock directory that cargo-deny does not read: the claim stays",
+            &[("mock/registry/ticket/items/a.toml", "id = \"a\"\n"), ("docs/notes.md", "x\n")],
+            "mock --lint-only --strict --scope infra --deps-unchanged",
         ),
         (
             "registry row beside a note: the full run a push of anything else has",
             &[("mock/registry/tenets.toml", "x = 1\n"), ("mock/notes.md", "x\n")],
+            "mock --lint-only --strict",
+        ),
+        // A dependency input outside the mock directory, which the diff the hook takes of the mock
+        // directory does not see: each keeps the dependency gate with no claim made, and the full
+        // scope, which `mock/benches/support/Cargo.lock` does not discriminate since it sits under
+        // the mock directory and is caught as a file that is not a registry row either way.
+        (
+            "registry row beside the root manifest",
+            &[("mock/registry/ticket/items/a.toml", "x = 1\n"), ("Cargo.toml", "x = 1\n")],
+            "mock --lint-only --strict",
+        ),
+        (
+            "registry row beside the root lockfile",
+            &[("mock/registry/ticket/items/a.toml", "x = 1\n"), ("Cargo.lock", "x = 1\n")],
+            "mock --lint-only --strict",
+        ),
+        (
+            "registry row beside the deny config",
+            &[("mock/registry/ticket/items/a.toml", "x = 1\n"), ("deny.toml", "x = 1\n")],
+            "mock --lint-only --strict",
+        ),
+        (
+            "registry row beside a nested manifest",
+            &[
+                ("mock/registry/ticket/items/a.toml", "x = 1\n"),
+                ("tools/probe/Cargo.toml", "x = 1\n"),
+            ],
+            "mock --lint-only --strict",
+        ),
+        (
+            "registry row beside cargo's config, where [source] and [patch] sit",
+            &[
+                ("mock/registry/ticket/items/a.toml", "x = 1\n"),
+                (".cargo/config.toml", "x = 1\n"),
+            ],
             "mock --lint-only --strict",
         ),
         (
@@ -210,6 +245,63 @@ fn the_full_scope_is_given_its_own_reason() {
         assert!(
             out.contains(&format!("scope: full project {reason}")),
             "{what}: hook said:\n{out}"
+        );
+    }
+}
+
+/// The arguments the pre-push hook hands the launcher for a push of two refs at
+/// once: `first` is committed on the base and pushed as one ref, `second` on top
+/// of that and pushed as the other, and `swap` puts the second ref's line first.
+fn push_two_refs(first: &[(&str, &str)], second: &[(&str, &str)], swap: bool) -> (String, String) {
+    let tmp = fixture();
+    let root = tmp.path();
+    stage(root, &[("README", "base\n")]);
+    git(root, &["commit", "-q", "-m", "base"]);
+    let base = git(root, &["rev-parse", "HEAD"]);
+    stage(root, first);
+    git(root, &["commit", "-q", "-m", "first"]);
+    let one = git(root, &["rev-parse", "HEAD"]);
+    stage(root, second);
+    git(root, &["commit", "-q", "-m", "second"]);
+    let two = git(root, &["rev-parse", "HEAD"]);
+    let mut lines = vec![
+        format!("refs/heads/a {one} refs/heads/a {base}\n"),
+        format!("refs/heads/b {two} refs/heads/b {one}\n"),
+    ];
+    if swap {
+        lines.reverse();
+    }
+    let (printed, calls) = run_full(
+        &gen_pre_push("mock", &HookLayout::of(KASKI), &root.join("no-user-hook")),
+        root,
+        &lines.concat(),
+    );
+    (printed, scope_call(&calls))
+}
+
+/// A dependency input in any one of the refs pushed together keeps the gate for
+/// the whole push, in whichever order git lists them, and two refs of registry
+/// rows alone are the repo-lints scope with its claim, as one is.
+#[test]
+fn a_dependency_input_in_either_of_two_refs_keeps_the_dependency_gate() {
+    let row_a = ("mock/registry/ticket/items/a.toml", "x = 1\n");
+    let row_b = ("mock/registry/ticket/items/b.toml", "x = 1\n");
+    let manifest = ("Cargo.toml", "x = 1\n");
+    for swap in [false, true] {
+        let (out, args) = push_two_refs(&[row_a], &[manifest], swap);
+        assert_eq!(
+            args, "mock --lint-only --strict",
+            "swap {swap}: hook said:\n{out}"
+        );
+        let (out, args) = push_two_refs(&[manifest], &[row_a], swap);
+        assert_eq!(
+            args, "mock --lint-only --strict",
+            "swap {swap}: hook said:\n{out}"
+        );
+        let (out, args) = push_two_refs(&[row_a], &[row_b], swap);
+        assert_eq!(
+            args, "mock --lint-only --strict --scope infra --deps-unchanged",
+            "swap {swap}, the control: hook said:\n{out}"
         );
     }
 }
