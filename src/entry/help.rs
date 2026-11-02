@@ -582,7 +582,7 @@ pub(crate) fn print_help() -> ExitCode {
     println!("    --dir <path>       the mock workspace to act on, instead of");
     println!("                       searching upward from the working directory");
     println!("    --scope <crates>   limit the per-crate lints to a comma-separated crate");
-    println!("                       list; the lints that compare crates read every crate");
+    println!("                       list; every workspace lint reads every crate");
     println!("    --doc-only         limit linting to documentation");
     println!("    --lint-only        lint without regenerating anything");
     println!("    --generate-only    regenerate without checking or linting; the merge");

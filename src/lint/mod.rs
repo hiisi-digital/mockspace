@@ -279,15 +279,15 @@ fn walk_rs(dir: &Path, crate_dir: &Path, out: &mut Vec<CrateSourceFile>) {
 /// When `scope` is `Some`, the per-crate lints run on the crates in the list
 /// only. This is used by the hooks to lint only the crates a change touches
 /// (the pre-commit hook the staged ones, the pre-push hook the pushed ones).
-/// The cross-crate lints read every crate whatever the scope, bound by their
-/// own `crates` filter, and report every finding they have: a clash between a
-/// touched crate and an untouched one is the change's to answer for, and the
-/// verdict a hook reaches is then the verdict the landing gate reaches over the
-/// same tree, so a red the trunk already carries stops the next commit as it
-/// stops the next landing. A standing finding comes off the gate through a
-/// lint's `crates` binding, which op approves, and never through the scope. A
-/// scope naming no crate at all (`--scope infra`) reads none. When `None`,
-/// every lint runs over every crate.
+/// The workspace lints, built-in or from a pack, read every crate whatever the
+/// scope, bound by their own `crates` filter, and report every finding they
+/// have: a clash between a touched crate and an untouched one is the change's
+/// to answer for, and the verdict of a scoped run is then the verdict of an
+/// unscoped run over the same tree, so a finding the tree already carries stops
+/// the next commit as it stops the next push. A standing finding is lifted
+/// through a lint's `crates` binding and never through the scope. A scope
+/// naming no crate at all (`--scope infra`) reads none. When `None`, every lint
+/// runs over every crate.
 ///
 /// When `doc_only` is true, source-only lints are skipped. This allows
 /// doc-only commits during DOC phase without being blocked by

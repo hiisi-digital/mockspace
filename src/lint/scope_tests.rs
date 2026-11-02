@@ -5,12 +5,12 @@
 
 //! A scoped run narrows the per-crate lints and leaves the cross-crate ones whole.
 //!
-//! The pre-commit and the pre-push hook scope a run to the crates a change touches. A lint that
-//! compares crates with each other (`single-source`, `no-duplicate-fn`, `undocumented-type`)
-//! judges a set of crates, and a name defined in a touched crate and in an untouched one is a
-//! clash however few crates were named. Handed only the scoped crates, `single-source` passed the
-//! commit that added the second definition, and the clash reached the trunk with every later
-//! landing stopped by it.
+//! The pre-commit and the pre-push hook scope a run to the crates a change touches. A workspace
+//! lint, built-in or from a pack, judges a set of crates (`single-source`, `no-duplicate-fn` and
+//! `undocumented-type` are the ones these tests drive), and a name defined in a touched crate and
+//! in an untouched one is a clash however few crates were named. Handed only the scoped crates,
+//! `single-source` passed the commit that added the second definition, and the clash reached the
+//! trunk with every later landing stopped by it.
 //!
 //! The law the tests hold: for a scope naming a crate, the cross-crate verdict of the run is the
 //! verdict of the unscoped run over the same tree, in every lint mode, and the per-crate lints
@@ -222,6 +222,24 @@ fn a_doc_only_scoped_run_skips_the_source_lints_as_the_unscoped_one_does() {
     assert_eq!(run(&cfg, LintMode::Commit, Some(&["sim-a"]), true), 0);
     assert_eq!(run(&cfg, LintMode::Commit, None, true), 0);
     assert!(violations(&cfg, Some(&["sim-a"])) > 0, "the control: without the flag it is found");
+}
+
+#[test]
+fn a_doc_only_scoped_run_reads_the_documents_of_every_crate() {
+    // `--doc-only` keeps `undocumented-type`, which reads documents, and it runs at the Build gate
+    // as an error. Handed only the scoped crate it refused a type another crate's document names.
+    // Fails under the same mutation as the first test, which the Commit-mode test above cannot:
+    // there `undocumented-type` only warns, so both of its sides are 0 whatever the scope reads.
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", OTHER)]);
+    design(tmp.path(), "sim-b", "Placed Elsewhere");
+    assert_eq!(run(&cfg, LintMode::Build, Some(&["sim-a"]), true), 0);
+    assert_eq!(run(&cfg, LintMode::Build, None, true), 0);
+    // The control: with no document naming the type the lint is live under the flag, scoped or not.
+    let tmp = tempfile::tempdir().unwrap();
+    let bare = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", OTHER)]);
+    assert!(run(&bare, LintMode::Build, Some(&["sim-a"]), true) > 0);
+    assert!(run(&bare, LintMode::Build, None, true) > 0);
 }
 
 #[test]
