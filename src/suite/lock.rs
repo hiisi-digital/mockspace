@@ -42,11 +42,20 @@ impl Lock {
         let packages = doc.get("package")?.as_array_of_tables()?;
         let mut lock = Lock::default();
         for p in packages {
-            let text = |key: &str| p.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let text = |key: &str| {
+                p.get(key)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string()
+            };
             let mut deps: Vec<String> = p
                 .get("dependencies")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|d| d.as_str().map(str::to_string)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|d| d.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default();
             deps.sort();
             let entry = Entry {
@@ -119,7 +128,6 @@ impl Lock {
             .collect()
     }
 }
-
 
 /// What every digest of a member starts from: the workspace's inputs, the
 /// generated cargo config, and the lock entries the member is built from.

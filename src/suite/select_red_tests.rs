@@ -47,7 +47,10 @@ fn the_next_run_at_the_same_inputs_runs_the_failed_test_alone() {
     let p = plan_for(Mode::Changed, true, &fp, &h);
     assert!(names(&p).contains(&"render"));
     assert_eq!(p.reuse, vec!["render::a"]);
-    assert_eq!(p.rerun, BTreeMap::from([("render::b".to_string(), vec!["two".to_string()])]));
+    assert_eq!(
+        p.rerun,
+        BTreeMap::from([("render::b".to_string(), vec!["two".to_string()])])
+    );
 }
 
 /// The case that must fail: the binary moved, so the earlier run says nothing
@@ -89,8 +92,14 @@ fn a_rerun_settles_the_binary_or_names_what_still_fails() {
 
     let (fp, h) = run_with_one_red();
     let mut p = plan_for(Mode::Changed, true, &fp, &h);
-    p.retain_live(&live(&[("render::a", &["x"]), ("render::b", &["one", "three"])]));
-    assert!(p.rerun.is_empty(), "`two` is gone, so nothing sound to narrow to");
+    p.retain_live(&live(&[
+        ("render::a", &["x"]),
+        ("render::b", &["one", "three"]),
+    ]));
+    assert!(
+        p.rerun.is_empty(),
+        "`two` is gone, so nothing sound to narrow to"
+    );
 }
 
 /// A binary with a heavy test the run deferred was not run whole, so it is no
@@ -122,7 +131,10 @@ fn a_filter_that_ran_nothing_while_the_plan_left_tests_out_is_refused() {
     let (fp, h) = run_with_one_red();
     let p = plan_for(Mode::Changed, true, &fp, &h);
     let refusal = empty_filtered_run(&p, &[], true).expect("a refusal");
-    assert!(refusal.contains("1 binaries passed") && refusal.contains("1 narrowed"), "{refusal}");
+    assert!(
+        refusal.contains("1 binaries passed") && refusal.contains("1 narrowed"),
+        "{refusal}"
+    );
     // Skipped cases ran nothing either.
     assert!(empty_filtered_run(&p, &[case("render::a", "x", Outcome::Skipped)], true).is_some());
     // The controls: a test ran, or nobody filtered, or nothing was left out.
