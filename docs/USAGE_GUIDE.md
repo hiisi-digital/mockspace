@@ -474,8 +474,11 @@ run that finds another writer got there first merges the files with the driver's
 ref that cannot be fetched is an error that is said aloud: the run goes on with every member
 running and records nothing, and never takes the failure for an empty history. The write names
 only the members the run covered and those the workspace no longer has, so the record of any
-other member stands untouched. The commit hook does not see a ref, so the check of
-`check-test-history` covers a record kept in the tree only. Without the table nothing changes:
+other member stands untouched. The commit hook does not see a ref, so the writer asks the question `check-test-history` asks of a
+commit: it refuses a write that removes a member's green record while the member's fingerprint is
+still the one the record was made at (a run cut short or a flaky test leaves that), and asks again of
+the winner's state when another run pushed first. The check of `check-test-history` covers a record
+kept in the tree only. Without the table nothing changes:
 the record stays in `<mock>/test-history` as above.
 
 ```toml

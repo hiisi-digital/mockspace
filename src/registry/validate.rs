@@ -596,7 +596,14 @@ pub(crate) fn check_schemas_with(
                 .lines()
                 .filter(|l| l.contains("error") || l.contains("does not match"))
                 .map(|l| l.trim().to_string())
-                .collect();
+                .collect::<Vec<String>>();
+            // A run that failed is a failure whatever it managed to log: its logger can lose the last
+            // lines when the process exits, and no lines is not the same as no problem.
+            let failures = if failures.is_empty() {
+                vec!["taplo failed and logged no line that names a problem.".to_string()]
+            } else {
+                failures
+            };
             SchemaCheck::Ran {
                 failures,
             }

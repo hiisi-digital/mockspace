@@ -31,9 +31,14 @@ use crate::config::Config;
 type Files = Vec<(String, Option<String>)>;
 
 /// A writer of one project's registry, with the checks of that project's config.
+/// The one finding a failed schema check raises.
+const SCHEMA_FINDING: &str = "[schema] the registry does not match its schema";
+
 pub struct RegistryWriter<'a> {
-    cfg:    &'a Config,
-    stores: &'a RegistryStores,
+    cfg:           &'a Config,
+    stores:        &'a RegistryStores,
+    /// The lines the last schema check failed with, for the refusal that names it.
+    schema_detail: std::cell::RefCell<Vec<String>>,
 }
 
 impl<'a> RegistryWriter<'a> {
@@ -41,6 +46,7 @@ impl<'a> RegistryWriter<'a> {
         Self {
             cfg,
             stores,
+            schema_detail: Default::default(),
         }
     }
 
@@ -75,6 +81,7 @@ impl<'a> RegistryWriter<'a> {
             .cloned()
             .collect();
         let after = overlay(before.clone(), changes);
+        let old = self.problems(&before, &BTreeSet::new(), on_ref);
         let now = self.problems(&after, &changed, on_ref);
         // a check that could not run is not a check that found nothing, new finding or not
         let unrun: Vec<String> = now
@@ -85,7 +92,7 @@ impl<'a> RegistryWriter<'a> {
         if !unrun.is_empty() {
             return Err(RegistryStoreError::Refused(unrun));
         }
-        refuse_new(&self.problems(&before, &BTreeSet::new(), on_ref), now)?;
+        self.refuse_new(&old, now)?;
         let hook = Race {
             writer: self,
             held: held.clone(),
@@ -179,22 +186,46 @@ impl<'a> RegistryWriter<'a> {
         }
         match check_schemas(&scratch.0, &cfg.registry_namespaces, None) {
             SchemaCheck::Ran { failures } => {
-                // taplo names the files it read, and the copy sits in a directory of its own each time
+                // taplo's log is not the same twice: a line it writes in one run is missing from the
+                // next, and it names the copy it read. Only whether it failed is stable, so that is the
+                // finding, and the lines are kept aside to be shown with a refusal.
                 let (scratch_root, tree_root) = (scratch.0.to_string_lossy(), cfg.repo_root.to_string_lossy());
-                // taplo ends its log with a summary line that it does not always flush before it exits, and
-                // it names nothing, so it is left out: a finding present in one run and absent in the next
-                // would read as new
                 let mut seen = BTreeSet::new();
-                failures
+                let lines: Vec<String> = failures
                     .into_iter()
                     .filter(|f| !f.contains("operation failed"))
-                    .map(|f| format!("[schema] {}", f.replace(scratch_root.as_ref(), tree_root.as_ref())))
+                    .map(|f| f.replace(scratch_root.as_ref(), tree_root.as_ref()))
                     .filter(|f| seen.insert(f.clone()))
-                    .collect()
+                    .collect();
+                if lines.is_empty() {
+                    return Vec::new();
+                }
+                *self.schema_detail.borrow_mut() = lines;
+                vec![SCHEMA_FINDING.to_string()]
             },
             SchemaCheck::Unavailable if files.is_empty() => Vec::new(),
             SchemaCheck::Unavailable => vec!["[schema-unavailable] taplo is not installed, so the shape of rows on a ref is unverified".to_string()],
         }
+    }
+
+    /// [`refuse_new`], with the lines of a failed schema check added to what it names.
+    fn refuse_new(&self, old: &[String], new: Vec<String>) -> Result<(), RegistryStoreError> {
+        refuse_new(old, new).map_err(|e| {
+            match e {
+                RegistryStoreError::Refused(mut found)
+                    if found.iter().any(|p| p == SCHEMA_FINDING) =>
+                {
+                    found.extend(
+                        self.schema_detail
+                            .borrow()
+                            .iter()
+                            .map(|l| format!("  taplo: {l}")),
+                    );
+                    RegistryStoreError::Refused(found)
+                },
+                other => other,
+            }
+        })
     }
 
     /// What the checks find in `files`. `changed` names the files this write touches, which
@@ -381,11 +412,11 @@ impl MergeHook for Race<'_, '_> {
             .map_err(|e| refuse(e.to_string()))?;
         let after = overlay(on_tip.clone(), &changes);
         let on_ref = self.held != ".";
-        refuse_new(
-            &self.writer.problems(&on_tip, &BTreeSet::new(), on_ref),
-            self.writer.problems(&after, &self.changed, on_ref),
-        )
-        .map_err(|e| refuse(e.to_string()))?;
+        let old = self.writer.problems(&on_tip, &BTreeSet::new(), on_ref);
+        let now = self.writer.problems(&after, &self.changed, on_ref);
+        self.writer
+            .refuse_new(&old, now)
+            .map_err(|e| refuse(e.to_string()))?;
         Ok(next)
     }
 }

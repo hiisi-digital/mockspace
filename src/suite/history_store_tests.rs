@@ -312,7 +312,7 @@ fn a_green_removed_while_the_inputs_have_not_moved_is_refused_and_never_lands() 
         tip,
         "a refused write leaves the ref where it was"
     );
-    // the controls: moved inputs excuse it, and so does a store the guard is not asked for
+    // the control: moved inputs excuse it
     hist("m1", "", &["t"])
         .save_to(&s, &scope(&m, &m), Some(&now(&[("m1", "fp2")])), "moved")
         .unwrap();
@@ -351,4 +351,32 @@ fn a_green_the_winner_recorded_survives_a_write_that_never_saw_it() {
         "fp1",
         "the merge keeps the winner's green"
     );
+}
+
+#[test]
+fn a_green_the_winner_recorded_at_our_fingerprint_is_not_dropped_by_the_rebase() {
+    let remote = Remote::new();
+    let (a, b) = (project(&remote, "a", true), project(&remote, "b", true));
+    let (sa, sb) = (opened(&a), opened(&b));
+    let m = members(&["m1"]);
+    hist("m1", "fp0", &["t"])
+        .save_to(&sa, &scope(&m, &m), None, "seed")
+        .unwrap();
+    sb.refresh().unwrap();
+    History::load_from(&sb).unwrap();
+    // A passes on the tree both now hold and records the green; B, flaky on the same tree, fails.
+    // B's guard sees the older green it read, which a moved fingerprint excuses; only the rebase
+    // meets the green at the fingerprint B still has.
+    hist("m1", "fp1", &["t"])
+        .save_to(&sa, &scope(&m, &m), Some(&now(&[("m1", "fp1")])), "a")
+        .unwrap();
+    let tip = remote.tip(REF);
+    let err = hist("m1", "", &["t"])
+        .save_to(&sb, &scope(&m, &m), Some(&now(&[("m1", "fp1")])), "b")
+        .unwrap_err();
+    assert!(err.to_string().contains("m1"), "{err}");
+    assert_eq!(remote.tip(REF), tip, "nothing of B's was pushed");
+    sa.refresh().unwrap();
+    let after = History::load_from(&sa).unwrap();
+    assert_eq!(after.flavour("").unwrap().green["m1"].full, "fp1");
 }

@@ -14,8 +14,9 @@
 //! or a flaky test leaves exactly that, and a write to a ref has no commit hook to ask. The
 //! writer asks the same question of its own edit: a green may go from a file only when the
 //! member's fingerprint now differs from the one the record was made at (its inputs moved), when
-//! the workspace no longer has the member. After a lost race the merge of [`super::history_merge`]
-//! keeps a green the winner recorded, so the rebase cannot null one. Anything else is refused before it is pushed,
+//! the workspace no longer has the member. The guard is asked again of the winner's state after a lost race, because the merge rule of
+//! [`super::history_merge`] drops a green the winner moved where this run moved it to nothing,
+//! which the commit guard accepts in a merge commit and a record on a ref does not. Anything else is refused before it is pushed,
 //! and nothing is written. The guard runs for a history kept on a ref only; a directory in the
 //! tree keeps the commit guard as its only place the question is asked. An edit names only the
 //! members the run covered and those the workspace no longer has, so the record of any other
@@ -175,6 +176,7 @@ impl History {
             .collect::<Result<Vec<_>, StoreError>>()?;
         let race = Race {
             base,
+            guard: guard.cloned(),
         };
         Ok(store.apply(&edit, message, &race)?)
     }
@@ -183,7 +185,9 @@ impl History {
 /// The race handler: the merge of the history files.
 struct Race {
     /// The touched files as the write found them.
-    base: Vec<(String, Option<Vec<u8>>)>,
+    base:  Vec<(String, Option<Vec<u8>>)>,
+    /// Each member's fingerprint now, where the writer is the guard.
+    guard: Option<BTreeMap<String, String>>,
 }
 
 impl MergeHook for Race {
@@ -221,6 +225,15 @@ impl MergeHook for Race {
                 },
                 (Some(o), _) => next.put(path, o),
             };
+        }
+        // A write that passed the guard on the state it read can still remove a green once it is
+        // rebased: the merge rule drops a green that the winner moved to the fingerprint this run
+        // still has, when the run moved it to nothing. The guard is asked again, of the tip.
+        if let Some(now) = &self.guard {
+            let nulled = nulls(tip, &next, now).map_err(|e| refuse(e.to_string()))?;
+            if !nulled.is_empty() {
+                return Err(refuse(HistoryError::Nulled(nulled).to_string()));
+            }
         }
         Ok(next)
     }
