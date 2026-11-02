@@ -72,6 +72,8 @@ mod resolved;
 mod rowref;
 mod schema_replay;
 mod stores;
+#[cfg(test)]
+mod test_world;
 mod writer;
 pub(crate) mod validate;
 

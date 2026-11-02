@@ -348,3 +348,7 @@ impl RegistryStoreDecl {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "stores_tests.rs"]
+mod tests;

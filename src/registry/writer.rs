@@ -422,5 +422,9 @@ impl MergeHook for Race<'_, '_> {
 }
 
 #[cfg(test)]
-#[path = "writer_tests.rs"]
-mod tests;
+#[path = "writer_race_tests.rs"]
+mod race_tests;
+
+#[cfg(test)]
+#[path = "writer_checks_tests.rs"]
+mod checks_tests;
