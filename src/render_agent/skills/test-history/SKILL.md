@@ -46,3 +46,7 @@ every flavour's directory.
 
 A file of another member that changed or vanished after a run for some other member is a defect to
 report, not the record doing its job. `git restore <path>` brings it back.
+
+## History kept on a git ref
+
+`[test.history]` in `mockspace.toml` (optional keys `namespace`, default `test-history`; `remote`, default `origin`; `form`, `branch` or `ref`) keeps the files on a git ref instead of under `<mock>/test-history/`, so a run commits nothing to the tree. `cargo mock test` fetches the ref when it starts and writes one commit to it when it ends, pushed with a lease. The commit guard above is then asked by the writer: a green may go from a file only when the run covered the member, the workspace no longer has it, or the merge rule drops it after a lost race. When another run pushed first, the files are merged as the merge driver does and the write is tried again. A ref that cannot be fetched is said aloud and the run goes on with no record and writes none; it is never read as an empty history.

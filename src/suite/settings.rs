@@ -37,6 +37,9 @@ pub struct TestSettings {
     /// The first word of the stderr line a test prints to report the work it did
     /// (`<marker> <unit> <n>`), so its timing can be read per unit of work.
     pub work_marker:      String,
+    /// Where the test history is kept when it is not the directory under `<mock>/test-history`:
+    /// a git ref, fetched and pushed by `mock test` itself.
+    pub history:          Option<crate::registry::RefDecl>,
 }
 
 /// The debug info cargo can be asked for, less none: what a crate that needs
@@ -166,6 +169,7 @@ impl Default for TestSettings {
             lean:             true,
             debug:            DebugLevel::LineTablesOnly,
             work_marker:      DEFAULT_WORK_MARKER.to_string(),
+            history:          None,
         }
     }
 }
@@ -183,6 +187,7 @@ pub(crate) struct RawTest {
     lean:             Option<bool>,
     debug:            Option<RawDebug>,
     work_marker:      Option<String>,
+    history:          Option<crate::registry::RefDecl>,
 }
 
 /// A debug level as written: cargo's own spelling, a number, a word or a bool.
@@ -266,6 +271,7 @@ impl RawTest {
             timeout_secs,
             commit,
             opt_level,
+            history: self.history,
             lean: self.lean.unwrap_or(d.lean),
             debug,
             work_marker: match self.work_marker {

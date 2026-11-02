@@ -5,27 +5,13 @@
 
 //! The registry on a ref: the race, the checks of the writer, a fetch that fails, and the
 //! directory that stays the default. Real git and a real bare repository throughout.
-
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 
 use mockspace_store::{RefPair, RefStore, RetryPolicy, StoreError};
 
 use super::*;
 use crate::config::Config;
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_INDEX_FILE")
-        .output()
-        .expect("spawn git");
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
-    String::from_utf8_lossy(&out.stdout).trim().to_owned()
-}
+use crate::test_remote::{Remote, git};
 
 const CONFIG: &str = r#"project_name = "fixture"
 crate_prefix = "fixture"
@@ -51,47 +37,36 @@ const STORE_DECL: &str = "\n[[registry.store]]\ndir = \"ticket\"\n";
 
 /// A bare remote and any number of clones of it, each a project with the config above.
 struct World {
-    tmp:  tempfile::TempDir,
-    bare: PathBuf,
+    remote: Remote,
+    bare:   PathBuf,
+    tmp:    PathBuf,
 }
+
+const TICKET_REF: &str = "refs/heads/mock/registry/ticket";
 
 impl World {
     fn new() -> Self {
-        let tmp = tempfile::tempdir().unwrap();
-        let bare = tmp.path().join("remote.git");
-        std::fs::create_dir(&bare).unwrap();
-        git(&bare, &["init", "-q", "--bare"]);
-        Self { tmp, bare }
+        let remote = Remote::new();
+        let (bare, tmp) = (remote.bare.clone(), remote.tmp.path().to_path_buf());
+        Self { remote, bare, tmp }
     }
 
     /// A clone whose project mounts `ticket` on the ref (`mounted`) or keeps it in the tree.
     fn clone_of(&self, name: &str, mounted: bool) -> Config {
-        let root = self.tmp.path().join(name);
-        std::fs::create_dir_all(root.join("mock")).unwrap();
-        git(&root, &["init", "-q"]);
-        git(&root, &["remote", "add", "origin", self.bare.to_str().unwrap()]);
+        let root = self.remote.clone_dir(name);
         let config = format!("{CONFIG}{}", if mounted { STORE_DECL } else { "" });
         std::fs::write(root.join("mock/mockspace.toml"), config).unwrap();
         Config::from_dir(&root.join("mock"))
     }
 
     fn remote_ref(&self) -> Option<String> {
-        let out = git(&self.bare, &["for-each-ref", "--format=%(objectname)", "refs/heads/mock/registry/ticket"]);
-        (!out.is_empty()).then_some(out)
+        self.remote.tip(TICKET_REF)
     }
 
     fn remote_file(&self, path: &str) -> Option<String> {
-        Command::new("git")
-            .arg("-C")
-            .arg(&self.bare)
-            .args(["show", &format!("refs/heads/mock/registry/ticket:{path}")])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        self.remote.file(TICKET_REF, path)
     }
 }
-
 /// The ref-mounted stores of `cfg`, with no waiting between attempts.
 fn stores(cfg: &Config) -> RegistryStores {
     let pair = RefPair::branch_form("registry/ticket").unwrap();
@@ -198,7 +173,7 @@ fn a_write_the_checks_pass_alone_but_refuse_after_the_rebase_never_lands() {
 fn a_failed_fetch_is_an_error_and_never_an_empty_registry() {
     let w = World::new();
     let cfg = w.clone_of("a", true);
-    git(&cfg.repo_root, &["remote", "set-url", "origin", w.tmp.path().join("gone.git").to_str().unwrap()]);
+    git(&cfg.repo_root, &["remote", "set-url", "origin", w.tmp.join("gone.git").to_str().unwrap()]);
     let s = stores(&cfg);
     let err = load_registry_from(&s, &cfg.registry_namespaces, None).unwrap_err();
     assert!(matches!(err, RegistryStoreError::Store { source: StoreError::Fetch { .. }, .. }), "{err}");

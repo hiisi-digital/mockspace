@@ -36,6 +36,7 @@ pub mod graph;
 pub mod history;
 pub mod history_guard;
 pub mod history_merge;
+pub mod history_store;
 pub mod junit;
 pub mod live;
 pub mod lock;
@@ -110,7 +111,7 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
         },
     };
     let fp_or_empty = fp.clone().unwrap_or_default();
-    let mut history = history::History::load(&cfg.mock_dir);
+    let (mut history, history_store) = history::History::open(cfg);
     let flavour = inv.flavour();
     let mut plan = select::plan(&Inputs {
         mode:       if fp.is_some() { inv.mode } else { Mode::Full },
@@ -291,11 +292,17 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
                 f.green.remove(name);
             }
         }
-        if let Err(e) = history.save(&cfg.mock_dir, &history::Scope {
-            flavour:   &flavour,
-            ran:       &run_members,
-            workspace: &graph.members,
-        }) {
+        if let Some(store) = &history_store
+            && let Err(e) = history.save_to(
+                store.as_ref(),
+                &history::Scope {
+                    flavour:   &flavour,
+                    ran:       &run_members,
+                    workspace: &graph.members,
+                },
+                "test history",
+            )
+        {
             eprintln!("note: could not keep this run's history: {e}");
         }
     }

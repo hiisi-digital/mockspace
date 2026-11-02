@@ -112,24 +112,11 @@ impl RegistryStores {
             if dir.is_empty() {
                 return Err(RegistryStoreError::Declared("`dir` is empty".into()));
             }
-            let namespace = d.namespace.clone().unwrap_or_else(|| format!("registry/{dir}"));
-            let form = match d.form.as_deref() {
-                None | Some("branch") => RemoteForm::Branch,
-                Some("ref") => RemoteForm::Ref,
-                Some(other) => {
-                    return Err(RegistryStoreError::Declared(format!(
-                        "`{dir}`: form `{other}` is neither `branch` nor `ref`"
-                    )));
-                },
-            };
-            let pair = RefPair::for_namespace(&namespace, form).map_err(|source| {
-                RegistryStoreError::Store {
-                    held: dir.to_string(),
-                    source,
-                }
-            })?;
-            let remote = d.remote.clone().unwrap_or_else(|| "origin".into());
-            out = out.mount(dir, Box::new(RefStore::new(repo_root, remote, pair)))?;
+            let store = d
+                .on_ref()
+                .open(repo_root, &format!("registry/{dir}"))
+                .map_err(|why| RegistryStoreError::Declared(format!("`{dir}`: {why}")))?;
+            out = out.mount(dir, Box::new(store))?;
         }
         Ok(out)
     }
@@ -280,5 +267,47 @@ impl crate::config::Config {
     /// directory mounted on its ref.
     pub fn registry_stores(&self) -> Result<RegistryStores, RegistryStoreError> {
         RegistryStores::from_decls(&self.mock_dir, &self.repo_root, &self.registry_stores)
+    }
+}
+
+/// Where a namespace is kept on a git ref: the part of a declaration that every store on a ref
+/// shares, whether it holds registry files or test history.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize))]
+#[serde(default, deny_unknown_fields)]
+pub struct RefDecl {
+    /// The ref namespace, `refs/mock/<namespace>`. Each user of it has its own default.
+    pub namespace: Option<String>,
+    /// The remote the ref is fetched from and pushed to. Defaults to `origin`.
+    pub remote:    Option<String>,
+    /// `branch` (the default: `refs/heads/mock/<namespace>` on the remote, which a host that
+    /// takes no ref outside `refs/heads` accepts) or `ref` (`refs/mock/<namespace>` on both sides).
+    pub form:      Option<String>,
+}
+
+impl RefDecl {
+    /// The store this declares, over the repository at `repo_root`, for `default_namespace` where
+    /// the declaration names none.
+    pub fn open(&self, repo_root: &Path, default_namespace: &str) -> Result<RefStore, String> {
+        let form = match self.form.as_deref() {
+            None | Some("branch") => RemoteForm::Branch,
+            Some("ref") => RemoteForm::Ref,
+            Some(other) => return Err(format!("form `{other}` is neither `branch` nor `ref`")),
+        };
+        let namespace = self.namespace.as_deref().unwrap_or(default_namespace);
+        let pair = RefPair::for_namespace(namespace, form).map_err(|e| e.to_string())?;
+        let remote = self.remote.clone().unwrap_or_else(|| "origin".into());
+        Ok(RefStore::new(repo_root, remote, pair))
+    }
+}
+
+impl RegistryStoreDecl {
+    /// The ref this declaration keeps the directory on.
+    pub fn on_ref(&self) -> RefDecl {
+        RefDecl {
+            namespace: self.namespace.clone(),
+            remote:    self.remote.clone(),
+            form:      self.form.clone(),
+        }
     }
 }
