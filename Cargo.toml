@@ -11,10 +11,9 @@ members = [
     "benches",
     "benches/variants/multiply-xor",
     "benches/variants/bitwise-rotate",
+    # v2 code, kept under `mock/` and built here, since the v1 engine takes it by path
+    "mock/crates/mockspace-store",
 ]
-# `mock/` is the v2 workspace of its own, and the v1 engine takes `mockspace-store`
-# from it by path: without this the path dependency would be claimed by both.
-exclude = ["mock"]
 
 [package]
 name = "mockspace"

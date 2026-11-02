@@ -6,6 +6,7 @@ description = "The storage backend contract of mockspace: a directory or a git r
 license = "MPL-2.0"
 repository = "https://github.com/hiisi-digital/mockspace"
 publish = false
+workspace = "../../.."
 
 # Plain git only: the crate runs the `git` command and links nothing else, so it
 # needs no forge, no network library and no second implementation of the
