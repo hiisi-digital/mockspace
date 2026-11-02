@@ -32,7 +32,7 @@ use std::process::{Command, ExitCode};
 use scan::Doc;
 
 /// The marker length git uses unless told otherwise.
-const DEFAULT_MARKER: usize = 7;
+pub(crate) const DEFAULT_MARKER: usize = 7;
 
 /// Merge three versions of a registry file's text.
 ///

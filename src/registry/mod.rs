@@ -71,6 +71,8 @@ mod resolve;
 mod resolved;
 mod rowref;
 mod schema_replay;
+mod stores;
+mod writer;
 pub(crate) mod validate;
 
 pub use bounds::*;
@@ -81,6 +83,8 @@ pub use render::*;
 pub use resolve::*;
 pub use resolved::*;
 pub use rowref::*;
+pub use stores::*;
+pub use writer::*;
 pub use validate::*;
 
 #[cfg(test)]
@@ -1495,7 +1499,13 @@ pub fn cmd_query(cfg: &crate::config::Config, expr: &str) -> std::process::ExitC
     }
 
     let namespaces = &cfg.registry_namespaces;
-    let registry = load_registry_for_expr(&cfg.mock_dir, namespaces, expr);
+    let registry = match cfg.registry_stores().and_then(|s| load_registry_for_expr_from(&s, namespaces, expr)) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
     let (registry, _) = resolve_data(
         namespaces,
         &registry,

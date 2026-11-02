@@ -51,13 +51,19 @@ fn a_value_joins_a_one_line_list_and_nothing_else_moves() {
 #[test]
 fn a_value_joins_a_spread_list_on_a_line_of_its_own_with_the_comment_kept() {
     let after = text_after("second", "2026-10-04: d");
-    assert!(after.contains("  \"2026-10-03: c\", # kept\n  \"2026-10-04: d\",\n]"), "{after}");
+    assert!(
+        after.contains("  \"2026-10-03: c\", # kept\n  \"2026-10-04: d\",\n]"),
+        "{after}"
+    );
 }
 
 #[test]
 fn a_row_without_the_field_gets_a_list_of_one() {
     let after = text_after("third", "2026-10-04: d");
-    assert!(after.contains("title = \"Three\"\nanswers = [\"2026-10-04: d\"]"), "{after}");
+    assert!(
+        after.contains("title = \"Three\"\nanswers = [\"2026-10-04: d\"]"),
+        "{after}"
+    );
     assert!(after.starts_with(&FILE[.. FILE.find("id = \"third\"").unwrap()]));
 }
 
@@ -84,8 +90,15 @@ fn a_field_that_is_not_a_list_is_refused() {
 #[test]
 fn the_arguments_are_a_target_a_field_and_a_value() {
     let a = parse(&["ticket::first", "answers", "v"]).unwrap();
-    assert_eq!((a.ns, a.id, a.field, a.value, a.local), ("ticket", "first", "answers", "v", false));
-    assert!(parse(&["--local", "ticket::first", "answers", "v"]).unwrap().local);
+    assert_eq!(
+        (a.ns, a.id, a.field, a.value, a.local),
+        ("ticket", "first", "answers", "v", false)
+    );
+    assert!(
+        parse(&["--local", "ticket::first", "answers", "v"])
+            .unwrap()
+            .local
+    );
     assert!(parse(&["ticket", "answers", "v"]).is_err());
     assert!(parse(&["ticket::", "answers", "v"]).is_err());
     assert!(parse(&["ticket::first", "answers"]).is_err());
@@ -133,4 +146,93 @@ fn a_hook_is_told_the_step_and_its_status_is_the_answer() {
     assert_eq!(go("decline"), Ok(Taken::Declined));
     let err = go("break").unwrap_err();
     assert!(err.contains("status 9") && err.contains("no"), "{err}");
+}
+
+const CONFIG: &str = r#"project_name = "fixture"
+crate_prefix = "fixture"
+
+[[registry.namespace]]
+key = "ticket"
+title = "Tickets"
+description = "Work to do."
+
+[[registry.namespace.field]]
+name = "title"
+type = "string"
+required = true
+description = "What."
+
+[[registry.namespace.field]]
+name = "answers"
+type = "string[]"
+description = "What was said."
+"#;
+
+const ROW: &str = "[[ticket]]\nid = \"one\"\ntitle = \"One\"\n";
+
+/// A project with the config above; `ticket/` is kept on a ref when `mounted`, else in the tree.
+fn project(remote: &crate::test_remote::Remote, mounted: bool) -> crate::config::Config {
+    let root = remote.clone_dir("p");
+    let decl = if mounted { "\n[[registry.store]]\ndir = \"ticket\"\n" } else { "" };
+    std::fs::write(root.join("mock/mockspace.toml"), format!("{CONFIG}{decl}")).unwrap();
+    let cfg = crate::config::Config::from_dir(&root.join("mock"));
+    crate::registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
+    cfg
+}
+
+#[test]
+fn an_append_to_a_row_on_a_ref_goes_through_the_writer_and_skips_a_delegate() {
+    let remote = crate::test_remote::Remote::new();
+    let cfg = project(&remote, true);
+    let stores = cfg.registry_stores().unwrap();
+    crate::registry::RegistryWriter::new(&cfg, &stores)
+        .write(
+            &[("ticket/t.toml".into(), Some(ROW.as_bytes().to_vec()))],
+            "seed",
+        )
+        .unwrap();
+    // a delegate that takes the step whole and writes nowhere: were it asked, the answer would be lost
+    let marker = cfg.repo_root.join("asked");
+    place_hook(
+        &cfg.repo_root,
+        &format!("touch {}\nexit 0", marker.display()),
+    );
+    super::step(&cfg, &["ticket::one", "answers", "said it"]).unwrap();
+    assert!(
+        !marker.exists(),
+        "the delegate edits the tree, so it is not asked about a row kept on a ref"
+    );
+    let held = remote
+        .file("refs/heads/mock/registry/ticket", "t.toml")
+        .unwrap();
+    assert!(held.contains("said it"), "{held}");
+}
+
+#[test]
+fn an_append_in_the_tree_asks_the_delegate_and_without_one_writes_the_file() {
+    let remote = crate::test_remote::Remote::new();
+    let cfg = project(&remote, false);
+    let file = cfg.mock_dir.join("registry/ticket/t.toml");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, ROW).unwrap();
+    super::step(&cfg, &["ticket::one", "answers", "plain"]).unwrap();
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("answers = [\"plain\"]")
+    );
+    let marker = cfg.repo_root.join("asked");
+    place_hook(
+        &cfg.repo_root,
+        &format!("touch {}\nexit 0", marker.display()),
+    );
+    super::step(&cfg, &["ticket::one", "answers", "by hook"]).unwrap();
+    assert!(
+        marker.exists(),
+        "the delegate is asked about a row in the tree"
+    );
+    assert!(
+        !std::fs::read_to_string(&file).unwrap().contains("by hook"),
+        "and it took the step whole"
+    );
 }

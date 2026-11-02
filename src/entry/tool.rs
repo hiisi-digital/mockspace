@@ -228,7 +228,13 @@ pub(crate) fn run(
     } else {
         None
     };
-    let registry = crate::registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+    let registry = match crate::registry::load_registry_for(&cfg) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
     let view = crate::registry::build_view(&registry, &cfg.registry_namespaces);
     let ctx = ToolContext {
         mock_dir: &cfg.mock_dir,

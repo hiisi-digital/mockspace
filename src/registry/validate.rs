@@ -405,6 +405,23 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
     let Some(reg) = doc.get("registry").and_then(|i| i.as_table()) else {
         return out;
     };
+    if let Some(stores) = reg.get("store").and_then(|i| i.as_array_of_tables()) {
+        for table in stores.iter() {
+            let dir = table.get("dir").and_then(|v| v.as_str()).unwrap_or("<no dir>");
+            for (k, _) in table.iter() {
+                if !super::stores::STORE_KEYS.contains(&k) {
+                    out.push(RegistryFinding {
+                        kind:    "unknown-config-key",
+                        message: format!(
+                            "[[registry.store]] `{dir}` declares `{k}`, which mockspace does not \
+                             read. It is discarded silently, so the declaration has no effect."
+                        ),
+                        source:  None,
+                    });
+                }
+            }
+        }
+    }
     let Some(spaces) = reg.get("namespace").and_then(|i| i.as_array_of_tables()) else {
         return out;
     };
@@ -579,7 +596,14 @@ pub(crate) fn check_schemas_with(
                 .lines()
                 .filter(|l| l.contains("error") || l.contains("does not match"))
                 .map(|l| l.trim().to_string())
-                .collect();
+                .collect::<Vec<String>>();
+            // A run that failed is a failure whatever it managed to log: its logger can lose the last
+            // lines when the process exits, and no lines is not the same as no problem.
+            let failures = if failures.is_empty() {
+                vec!["taplo failed and logged no line that names a problem.".to_string()]
+            } else {
+                failures
+            };
             SchemaCheck::Ran {
                 failures,
             }

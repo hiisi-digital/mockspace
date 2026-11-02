@@ -104,3 +104,7 @@ pub use mockspace_lint_rules::{
     Severity,
     WorkspaceLint,
 };
+
+/// A bare repository and its clones, for the tests of stores kept on a git ref.
+#[cfg(test)]
+pub(crate) mod test_remote;

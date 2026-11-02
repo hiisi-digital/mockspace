@@ -20,11 +20,10 @@ mod hook;
 #[cfg(test)]
 mod tests;
 
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::config::Config;
-use crate::registry::load_registry;
+use crate::registry::{RegistryStores, RegistryWriter, load_registry_from};
 
 const USAGE: &str = "usage: cargo mock registry-append <namespace>::<id> <field> <value> [--local]";
 
@@ -56,9 +55,9 @@ fn parse<'a>(args: &[&'a str]) -> Result<Ask<'a>, String> {
     })
 }
 
-/// The file that holds the row, after the namespace and the field are checked against what the
-/// project declares.
-fn file_of(cfg: &Config, ask: &Ask<'_>) -> Result<PathBuf, String> {
+/// The file that holds the row, as a path under the registry root, after the namespace and
+/// the field are checked against what the project declares.
+fn file_of(cfg: &Config, stores: &RegistryStores, ask: &Ask<'_>) -> Result<String, String> {
     let namespace = cfg
         .registry_namespaces
         .iter()
@@ -75,10 +74,14 @@ fn file_of(cfg: &Config, ask: &Ask<'_>) -> Result<PathBuf, String> {
             ask.ns, ask.field, declared.r#type
         ));
     }
-    let reg = load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
-    reg.get(&format!("{}::{}", ask.ns, ask.id))
+    let reg = load_registry_from(stores, &cfg.registry_namespaces, None).map_err(|e| e.to_string())?;
+    let source = reg
+        .get(&format!("{}::{}", ask.ns, ask.id))
         .map(|r| r.source.clone())
-        .ok_or_else(|| format!("no row {}::{}", ask.ns, ask.id))
+        .ok_or_else(|| format!("no row {}::{}", ask.ns, ask.id))?;
+    stores
+        .rel_of(&source)
+        .ok_or_else(|| format!("{} lies outside the registry", source.display()))
 }
 
 /// The subcommand. `args` follow `registry-append`.
@@ -94,8 +97,12 @@ pub(crate) fn run(cfg: &Config, args: &[&str]) -> ExitCode {
 
 fn step(cfg: &Config, args: &[&str]) -> Result<(), String> {
     let ask = parse(args)?;
-    let path = file_of(cfg, &ask)?;
-    if !ask.local {
+    let stores = cfg.registry_stores().map_err(|e| e.to_string())?;
+    let rel = file_of(cfg, &stores, &ask)?;
+    // A delegate edits the tree, and the tree's copy of a directory kept on a ref is hidden, so
+    // what it wrote there would be lost: the write goes through the writer.
+    let kept_on_a_ref = stores.route(&rel).1 != ".";
+    if !ask.local && !kept_on_a_ref {
         if let Some(delegate) = hook::find(&cfg.repo_root) {
             let target = format!("{}::{}", ask.ns, ask.id);
             let taken = hook::run(
@@ -111,10 +118,18 @@ fn step(cfg: &Config, args: &[&str]) -> Result<(), String> {
             }
         }
     }
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = stores
+        .read(&rel)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("{rel}: the file is gone"))
+        .and_then(|b| String::from_utf8(b).map_err(|_| format!("{rel} is not UTF-8")))?;
     match edit::append(&text, ask.ns, ask.id, ask.field, ask.value)? {
         Some(next) => {
-            std::fs::write(&path, next).map_err(|e| format!("{}: {e}", path.display()))
+            let message = format!("registry: add to `{}` of {}::{}", ask.field, ask.ns, ask.id);
+            RegistryWriter::new(cfg, &stores)
+                .write(&[(rel, Some(next.into_bytes()))], &message)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
         },
         None => Ok(()),
     }

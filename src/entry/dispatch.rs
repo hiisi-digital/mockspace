@@ -1110,7 +1110,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         // The registry, flattened once for both arms. A repo lint checking it gets
         // the same rows and the same reverse edges a document's `refsto` resolves
         // against, rather than a second reading of the same files.
-        let lint_registry = registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+        let lint_registry = match registry::load_registry_for(&cfg) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            },
+        };
         let lint_registry_view = registry::build_view(&lint_registry, &cfg.registry_namespaces);
         // The panel ledger lives here rather than in the lint crate, so the answer
         // is computed once and handed over, the same way the registry view is.
@@ -1440,7 +1446,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // Loaded before the passthrough templates because they resolve references
     // against it. A project declaring no namespaces gets an empty registry and
     // every step below is a no-op.
-    let registry = registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+    let registry = match registry::load_registry_for(&cfg) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
 
     // The index is built before ANY reference resolves, including the ones
     // held inside row data. Resolving data against an empty index was the

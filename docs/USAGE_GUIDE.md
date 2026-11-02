@@ -466,6 +466,21 @@ its sources read from outside, the workspace-wide files) is refused, naming the 
 a run cut short, by a container restart or a full disk, leaves that. A merge commit whose
 nulled green is one the driver's rule drops is not refused.
 
+The record can instead be kept on a git ref, which keeps it out of the tree and out of every
+commit. `[test.history]` declares it; the empty table keeps it on `refs/heads/mock/test-history`
+of `origin`, and `remote`, `namespace` and `form` (`"branch"` or `"ref"`) change where. A run
+reads the ref once when it starts and writes its records back as one commit when it ends, and a
+run that finds another writer got there first merges the files with the driver's rule above. A
+ref that cannot be fetched is an error that is said aloud: the run goes on with every member
+running and records nothing, and never takes the failure for an empty history. The write names
+only the members the run covered and those the workspace no longer has, so the record of any
+other member stands untouched. The commit hook does not see a ref, so the writer asks the question `check-test-history` asks of a
+commit: it refuses a write that removes a member's green record while the member's fingerprint is
+still the one the record was made at (a run cut short or a flaky test leaves that), and asks again of
+the winner's state when another run pushed first. The check of `check-test-history` covers a record
+kept in the tree only. Without the table nothing changes:
+the record stays in `<mock>/test-history` as above.
+
 ```toml
 [test]
 heavy_after_secs = 10    # a test this slow or slower is heavy
@@ -479,9 +494,28 @@ work_marker = "MOCK-WORK"  # first word of the stderr line a test prints to repo
 [test.opt_level]         # optional: the opt level a member is built at under `mock test`,
                          # nextest or `--plain`; a name that is no member is ignored
 sim-core = 3             # 0 to 3, "s" or "z"; members not named keep their manifest's
+
+[test.history]          # optional: keep the record on a git ref instead of in the tree
+remote = "origin"       # the git remote it lives on
+namespace = "test-history"  # its name under refs/heads/mock/
+form = "branch"         # "branch" (refs/heads/mock/<namespace>) or "ref" (refs/mock/<namespace>)
 ```
 
 Every nextest run of `mock test` (not `--plain`, which hands the run to `cargo test` and writes no report) writes one row per test (name, binary, seconds, outcome, machine class, profile, test threads, load before and after, and a work count where the test reported one) as a shard under `<mock>/target/mockspace-test-state/timings-spool/samples/<yyyy-mm>/<machine-class>/`. A test reports work by printing `MOCK-WORK <unit> <n>` on stderr, `ticks 1200` for instance; `work_marker` renames the first word. Nextest is told to keep a passing test's stderr for this.
+
+### Registry on a git ref
+
+The registry is the `*.toml` files under `<mock>/registry/`, and by default it is that directory in the tree. A directory of it can instead be kept on a git ref, so its rows move without a commit in the work tree:
+
+```toml
+[[registry.store]]
+dir = "ticket"           # the directory under <mock>/registry/ the ref holds
+namespace = "registry/ticket"  # optional: the ref is refs/heads/mock/<namespace>; this is the default for dir = "ticket"
+remote = "origin"        # optional
+form = "branch"          # optional: "branch" (refs/heads/mock/...) or "ref" (refs/mock/...)
+```
+
+The tree's copy of a mounted directory is ignored, and a row says it was declared where it would sit in the tree. Every `cargo mock` fetches a ref it reads and fails, rather than reading an empty registry, when it cannot. A write to a ref goes through one writer, which refuses a file that is not TOML or a row without an `id`, any new finding of the registry checks, and a row the generated schema refuses (`taplo` runs over a copy of the registry as it would stand, so `taplo` and the generated schemas must be present). When another writer moved the ref first, the registry merge driver settles it row by row, the checks run again on the result, and a row changed two ways on both sides is not merged. `cargo mock registry-append` writes through the same writer, and does not ask a delegate hook about a row kept on a ref, since a hook edits the tree.
 
 ### Lints
 
