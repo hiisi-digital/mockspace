@@ -42,6 +42,18 @@ pub fn parse(json: &str) -> Option<Live> {
     )
 }
 
+/// A digest of a binary's listed tests, to tell whether the same ones are listed
+/// as when it was recorded.
+pub fn digest(tests: &BTreeSet<String>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for t in tests {
+        h.update(t.as_bytes());
+        h.update([0]);
+    }
+    h.finalize().iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
 /// Flags that choose what is built or listed, and take no value.
 const BUILD_BARE: &[&str] = &[
     "--all-features",

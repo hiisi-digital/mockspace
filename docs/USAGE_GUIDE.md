@@ -341,11 +341,14 @@ and selects which to run rather than running them all:
   that passed at inputs that have not moved is left out and listed as `reuse`, so a
   change confined to one `tests/<name>.rs` runs that binary, and a member that failed in
   one binary reruns only that one. A binary that ran whole and failed in some tests is
-  kept with their names, and the next run at the same inputs runs those tests alone,
-  listed as `rerun`; the rest passed in that run and stand. A run that stopped at its
-  first failure, or left a listed test out for any other reason, is not a whole run and
-  narrows nothing. A filter that matches only tests the plan left out ends in failure
-  naming what it left out, since a run that started nothing is no pass. The library's own tests, the binaries and the examples
+  kept with their names and the listing it had, and the next run at the same inputs and
+  the same listing runs those tests alone, listed as `rerun`; the rest passed in that
+  run and stand. Whole is judged against `nextest list`, never against the exit code: a
+  run that stopped at its first failure, or left a listed test out for any other reason,
+  settles no binary and no member it did not cover, and without a listing a run that
+  failed settles nothing. A run with a filter that started no test while the plan left tests
+  out ends in failure and counts what it left out, since a run that started nothing is
+  no pass; without a filter, or when the plan left nothing out, it is as before. The library's own tests, the binaries and the examples
   move with the member's shared files. What cannot be placed widens rather than being
   missed: a file under `tests/` that no binary claims, the manifest, the build script and
   the library move every binary; a binary that reads the environment or `file!()`, declares
@@ -356,8 +359,8 @@ and selects which to run rather than running them all:
 - **A run builds the tests and not the examples.** Without a target flag of its own
   (`--lib`, `--bins`, `--examples`, `--all-targets` and the rest), `mock test` passes
   `--tests` to nextest and to its listing, so an example is neither built nor linked to
-  run none of its tests; an example declared with `test = true` is still a test. Examples
-  are checked once at landing.
+  run none of its tests; an example declared with `test = true` is still a test. Checking that
+  the examples still build is a step of its own.
 - **The partitions of one run share a history flavour.** `--partition count:n/m` does not
   change what is compiled, so it is not part of the flavour; a partition settles no
   member, binary or failure, as any narrowed run does. The generated nextest config

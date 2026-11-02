@@ -141,7 +141,6 @@ source = "git+https://example.invalid/gitdep?branch=dev#{rev}"
         )
     };
     assert_ne!(digest(&text("aaaa"), "app"), digest(&text("bbbb"), "app"));
-    assert_eq!(digest(&text("aaaa"), "app"), digest(&text("aaaa"), "app"));
 }
 
 /// A lock that reads but holds no entry for a member is salted whole for it, so

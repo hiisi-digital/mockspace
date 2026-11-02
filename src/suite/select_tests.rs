@@ -214,10 +214,12 @@ fn a_complete_run_leaves_green_what_passed_and_nothing_deferred() {
         case("render", Outcome::Pass),
         case("web::it", Outcome::Fail),
     ];
-    // `tool` has no tests at all, and passes vacuously.
-    assert_eq!(greens(&p, &cases, true), vec!["mesh", "render", "tool"]);
+    // `tool` has no tests at all, and passes vacuously. The listing is what the
+    // report covers, so every binary here ran whole.
+    let listing = live(&[("mesh", &["t"]), ("render", &["t"]), ("web::it", &["t"])]);
+    assert_eq!(greens(&p, &cases, true, Some(&listing)), vec!["mesh", "render", "tool"]);
     assert!(
-        greens(&p, &cases, false).is_empty(),
+        greens(&p, &cases, false, None).is_empty(),
         "an incomplete run leaves nothing green"
     );
 
@@ -226,7 +228,7 @@ fn a_complete_run_leaves_green_what_passed_and_nothing_deferred() {
         name:   "drawn".to_string(),
         why:    SkipWhy::Deferred,
     });
-    assert_eq!(greens(&p, &cases, true), vec!["mesh", "tool"]);
+    assert_eq!(greens(&p, &cases, true, Some(&listing)), vec!["mesh", "tool"]);
 }
 
 fn live(entries: &[(&str, &[&str])]) -> crate::suite::live::Live {
@@ -455,7 +457,8 @@ fn a_run_leaves_each_binary_that_passed_at_its_fingerprint_and_names_each_that_f
         pass("render::b", Outcome::Fail),
         pass("unknown::x", Outcome::Pass),
     ];
-    let o = binary_outcomes(&p, &cases, &fp, true, None);
+    let listing = live(&[("render", &["t"]), ("render::a", &["t"]), ("render::b", &["t"])]);
+    let o = binary_outcomes(&p, &cases, &fp, true, Some(&listing));
     assert_eq!(o.passed, vec![
         ("render".to_string(), fp.base["render"].clone()),
         ("render::a".to_string(), fp.bins["render::a"].clone()),

@@ -204,7 +204,7 @@ pub fn command(r: &RunSpec) -> Command {
     }
     // The tests only: without a target of its own in the flags, nextest builds and
     // links every example of every member too, to run none of them. Examples are
-    // checked once at landing, not by each test run.
+    // a step of their own, not part of each test run.
     if !selects_targets(r.passed) {
         cmd.arg("--tests");
     }

@@ -217,6 +217,7 @@ mod tests {
             }],
             reuse:   vec!["mesh::it".to_string(), "mesh::gait".to_string()],
             rerun:   Default::default(),
+            rerun_listed: Default::default(),
         };
         let t = plan_text(
             &p,

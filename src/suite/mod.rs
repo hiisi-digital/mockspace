@@ -250,7 +250,7 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
             history.prune(&flavour, &run_members, live);
         }
         let complete = nextest::ran_to_the_end(code) && !inv.narrowed();
-        let greens = select::greens(&plan, &cases, complete);
+        let greens = select::greens(&plan, &cases, complete, live.as_ref());
         let mut binaries = select::binary_outcomes(&plan, &cases, fp, complete, live.as_ref());
         if let Some(live) = &live {
             binaries

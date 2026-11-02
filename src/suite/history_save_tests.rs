@@ -370,6 +370,7 @@ fn red(at: &str, names: &[&str]) -> Red {
     Red {
         at:    at.to_string(),
         names: names.iter().map(|n| n.to_string()).collect(),
+        listed: "d".to_string(),
     }
 }
 
@@ -404,4 +405,23 @@ fn the_red_set_of_a_binary_survives_the_file_and_a_prune() {
     save(&empty, &dir2, &["render"]).unwrap();
     let text = std::fs::read_to_string(dir2.join("test-history/default/render.json")).unwrap();
     assert!(!text.contains("red"), "{text}");
+}
+
+/// A record of the version before this one gives its timings and no pass, and no
+/// narrowing either: its fingerprints were made of other inputs.
+#[test]
+fn an_older_record_gives_no_red_set() {
+    let dir = scratch("red-older");
+    let d = dir.join("test-history/default");
+    std::fs::create_dir_all(&d).unwrap();
+    let file = |version: u32| {
+        format!(
+            r#"{{"version":{version},"flavour":"","member":"render","green":null,"tests":{{}},
+            "bins":{{}},"red":{{"render::b":{{"at":"fp","names":["two"],"listed":"d"}}}}}}"#
+        )
+    };
+    std::fs::write(d.join("render.json"), file(PREVIOUS)).unwrap();
+    assert!(History::load(&dir).flavour("").is_none_or(|f| f.red.is_empty()));
+    std::fs::write(d.join("render.json"), file(VERSION)).unwrap();
+    assert_eq!(History::load(&dir).flavour("").unwrap().red.len(), 1);
 }
