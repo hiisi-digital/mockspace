@@ -17,6 +17,9 @@ use std::path::{Path, PathBuf};
 
 pub mod verdicts;
 
+#[cfg(test)]
+mod scope_tests;
+
 use mockspace_lint_rules::{
     self,
     CrateSourceFile,
@@ -273,9 +276,12 @@ fn walk_rs(dir: &Path, crate_dir: &Path, out: &mut Vec<CrateSourceFile>) {
 ///   - `Build`: middle strictness (default xtask run)
 ///   - `Push`: most strict (pre-push hook)
 ///
-/// When `scope` is `Some`, only crates in the list are linted. This is used
-/// by the pre-commit hook to lint only crates with staged files. When `None`,
-/// all crates are linted (build/push mode).
+/// When `scope` is `Some`, the per-crate lints run on the crates in the list
+/// only. This is used by the hooks to lint only the crates a change touches.
+/// The cross-crate lints still read every crate, since a clash between a
+/// touched crate and an untouched one is the change's to answer for; a scope
+/// naming no crate the repository has reads none. When `None`, all crates are
+/// linted (build/push mode).
 ///
 /// When `doc_only` is true, source-only lints are skipped. This allows
 /// doc-only commits during DOC phase without being blocked by
@@ -357,12 +363,18 @@ pub fn run_lints(
 
     let overrides = if lint_overrides.is_empty() { None } else { Some(lint_overrides) };
 
+    // Whether a crate is one the scope names. The per-crate lints run on these alone.
+    let in_scope = |name: &str| scope.is_none_or(|names| names.iter().any(|n| n == name));
+    // A cross-crate lint judges the whole set of crates, so a scope that names a crate still
+    // hands it every other one: a name defined in a touched crate and in an untouched one is a
+    // clash however few crates the hook named. A scope that names no crate the repository has
+    // (`--scope infra`, the commit touching none) reads none, as it always did.
+    let reads_every_crate = crates.keys().any(|name| in_scope(name));
+
     for (crate_name, info) in crates {
-        // Skip crates not in scope (when scoped)
-        if let Some(names) = scope {
-            if !names.iter().any(|n| n == crate_name) {
-                continue;
-            }
+        let scoped = in_scope(crate_name);
+        if !scoped && !reads_every_crate {
+            continue;
         }
 
         // The crate lives under exactly one source directory; find which.
@@ -379,14 +391,16 @@ pub fn run_lints(
             continue;
         };
 
-        // Per-crate lint pass
-        all_errors.extend(mockspace_lint_rules::check_crate_saving(
-            &krate.context(&env),
-            doc_only,
-            overrides,
-            &pack.crate_lints,
-            saved,
-        ));
+        // Per-crate lint pass, for the crates the scope names
+        if scoped {
+            all_errors.extend(mockspace_lint_rules::check_crate_saving(
+                &krate.context(&env),
+                doc_only,
+                overrides,
+                &pack.crate_lints,
+                saved,
+            ));
+        }
 
         parsed.push(krate);
     }
