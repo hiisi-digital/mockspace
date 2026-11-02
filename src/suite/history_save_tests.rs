@@ -365,3 +365,63 @@ fn a_gone_members_unreadable_file_goes_too() {
     assert!(dir.join("kept.json").exists());
     std::fs::remove_dir_all(&mock).ok();
 }
+
+fn red(at: &str, names: &[&str]) -> Red {
+    Red {
+        at:    at.to_string(),
+        names: names.iter().map(|n| n.to_string()).collect(),
+        listed: "d".to_string(),
+    }
+}
+
+/// The red set is what the next run narrows to, so it must survive the file,
+/// and a pass or a vanished test must take it away.
+#[test]
+fn the_red_set_of_a_binary_survives_the_file_and_a_prune() {
+    let dir = scratch("red");
+    let mut h = History::default();
+    h.flavour_mut("").red.insert("render::b".to_string(), red("fp", &["two"]));
+    save(&h, &dir, &["render"]).unwrap();
+    let loaded = History::load(&dir);
+    assert_eq!(loaded.flavour("").unwrap().red["render::b"], red("fp", &["two"]));
+
+    // Still live and still holding the test: kept. The test gone: the narrowing
+    // has nothing to stand on, so it is dropped.
+    let mut kept = loaded.clone();
+    kept.prune("", &["render".to_string()], &live(&[("render::b", &["one", "two"])]));
+    assert!(kept.flavour("").unwrap().red.contains_key("render::b"));
+    let mut gone = loaded.clone();
+    gone.prune("", &["render".to_string()], &live(&[("render::b", &["one"])]));
+    assert!(gone.flavour("").unwrap().red.is_empty());
+    let mut other = loaded;
+    other.prune("", &["web".to_string()], &live(&[]));
+    assert!(other.flavour("").unwrap().red.contains_key("render::b"));
+
+    // A file holding none writes no key for it, so a record without one reads
+    // as before.
+    let mut empty = History::default();
+    empty.flavour_mut("").bins.insert("render".to_string(), "fp".to_string());
+    let dir2 = scratch("red-none");
+    save(&empty, &dir2, &["render"]).unwrap();
+    let text = std::fs::read_to_string(dir2.join("test-history/default/render.json")).unwrap();
+    assert!(!text.contains("red"), "{text}");
+}
+
+/// A record of the version before this one gives its timings and no pass, and no
+/// narrowing either: its fingerprints were made of other inputs.
+#[test]
+fn an_older_record_gives_no_red_set() {
+    let dir = scratch("red-older");
+    let d = dir.join("test-history/default");
+    std::fs::create_dir_all(&d).unwrap();
+    let file = |version: u32| {
+        format!(
+            r#"{{"version":{version},"flavour":"","member":"render","green":null,"tests":{{}},
+            "bins":{{}},"red":{{"render::b":{{"at":"fp","names":["two"],"listed":"d"}}}}}}"#
+        )
+    };
+    std::fs::write(d.join("render.json"), file(PREVIOUS)).unwrap();
+    assert!(History::load(&dir).flavour("").is_none_or(|f| f.red.is_empty()));
+    std::fs::write(d.join("render.json"), file(VERSION)).unwrap();
+    assert_eq!(History::load(&dir).flavour("").unwrap().red.len(), 1);
+}

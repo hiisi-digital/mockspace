@@ -61,6 +61,28 @@ pub struct Flavour {
     /// Each test binary at the fingerprint it last ran whole and passed at, kept
     /// across a run in which another binary of its member failed.
     pub bins:  BTreeMap<String, String>,
+    /// Each test binary that last ran whole and failed, by the tests that failed.
+    /// Every other test of it passed at that same fingerprint.
+    #[serde(default)]
+    pub red:   BTreeMap<String, Red>,
+}
+
+/// The tests of one binary that failed when it ran whole at `at`.
+///
+/// A binary built from the same inputs holds the same tests, so those the run
+/// did not name passed at `at` and stand. The next run at `at` runs these and
+/// nothing else of the binary.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Red {
+    /// The binary's fingerprint when it failed.
+    pub at:    String,
+    /// The names that failed, sorted.
+    pub names: Vec<String>,
+    /// A digest of the tests the binary listed when it failed ([`super::live::digest`]).
+    /// A narrowing stands only while the listing is the same, and only against a
+    /// listing that was read; absent, it never does.
+    #[serde(default)]
+    pub listed: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -93,6 +115,8 @@ pub(crate) struct MemberFile {
     pub(crate) tests:   BTreeMap<String, BTreeMap<String, TestRecord>>,
     #[serde(default)]
     pub(crate) bins:    BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) red:     BTreeMap<String, Red>,
 }
 
 impl MemberFile {
@@ -174,6 +198,9 @@ impl History {
                     f.tests.entry(bin).or_default().extend(tests);
                 }
                 f.bins.extend(m.bins);
+                if !older {
+                    f.red.extend(m.red);
+                }
             }
         }
         h
@@ -331,6 +358,12 @@ impl History {
         f.bins.retain(|bin, _| {
             !members.iter().any(|m| m == package_of(bin)) || live.contains_key(bin)
         });
+        // A red binary is kept while every test it names still exists, else it
+        // is run whole again.
+        f.red.retain(|bin, r| {
+            !members.iter().any(|m| m == package_of(bin))
+                || live.get(bin).is_some_and(|now| r.names.iter().all(|n| now.contains(n)))
+        });
     }
 }
 
@@ -366,6 +399,14 @@ fn member_files(flavour: &str, f: &Flavour) -> BTreeMap<String, MemberFile> {
             .or_insert_with(|| blank(member))
             .bins
             .insert(bin.clone(), at.clone());
+    }
+    for (bin, red) in &f.red {
+        let member = package_of(bin);
+        members
+            .entry(member.to_string())
+            .or_insert_with(|| blank(member))
+            .red
+            .insert(bin.clone(), red.clone());
     }
     members
 }

@@ -214,10 +214,12 @@ fn a_complete_run_leaves_green_what_passed_and_nothing_deferred() {
         case("render", Outcome::Pass),
         case("web::it", Outcome::Fail),
     ];
-    // `tool` has no tests at all, and passes vacuously.
-    assert_eq!(greens(&p, &cases, true), vec!["mesh", "render", "tool"]);
+    // `tool` has no tests at all, and passes vacuously. The listing is what the
+    // report covers, so every binary here ran whole.
+    let listing = live(&[("mesh", &["t"]), ("render", &["t"]), ("web::it", &["t"])]);
+    assert_eq!(greens(&p, &cases, true, Some(&listing)), vec!["mesh", "render", "tool"]);
     assert!(
-        greens(&p, &cases, false).is_empty(),
+        greens(&p, &cases, false, None).is_empty(),
         "an incomplete run leaves nothing green"
     );
 
@@ -226,7 +228,7 @@ fn a_complete_run_leaves_green_what_passed_and_nothing_deferred() {
         name:   "drawn".to_string(),
         why:    SkipWhy::Deferred,
     });
-    assert_eq!(greens(&p, &cases, true), vec!["mesh", "tool"]);
+    assert_eq!(greens(&p, &cases, true, Some(&listing)), vec!["mesh", "tool"]);
 }
 
 fn live(entries: &[(&str, &[&str])]) -> crate::suite::live::Live {
@@ -260,7 +262,7 @@ fn a_heavy_test_whose_binary_is_gone_is_neither_planned_nor_skipped() {
     );
     let cfg = crate::suite::nextest::tool_config(&Default::default(), &p.heavy, std::path::Path::new("junit.xml"));
     assert!(!cfg.contains("figure_preview"), "{cfg}");
-    let filter = crate::suite::nextest::filterset(None, &p.skip, &[]).unwrap();
+    let filter = crate::suite::nextest::filterset(None, &p.skip, &[], &Default::default()).unwrap();
     assert!(!filter.contains("figure_preview"), "{filter}");
 }
 
@@ -455,7 +457,8 @@ fn a_run_leaves_each_binary_that_passed_at_its_fingerprint_and_names_each_that_f
         pass("render::b", Outcome::Fail),
         pass("unknown::x", Outcome::Pass),
     ];
-    let o = binary_outcomes(&p, &cases, &fp, true);
+    let listing = live(&[("render", &["t"]), ("render::a", &["t"]), ("render::b", &["t"])]);
+    let o = binary_outcomes(&p, &cases, &fp, true, Some(&listing));
     assert_eq!(o.passed, vec![
         ("render".to_string(), fp.base["render"].clone()),
         ("render::a".to_string(), fp.bins["render::a"].clone()),
@@ -473,6 +476,7 @@ fn an_incomplete_run_settles_no_binary() {
         &[pass("render::a", Outcome::Pass), pass("render::b", Outcome::Fail)],
         &fp,
         false,
+        None,
     );
     assert_eq!(o, BinaryOutcomes::default());
 }
@@ -498,6 +502,7 @@ fn a_binary_with_a_deferred_heavy_test_does_not_pass() {
         &[pass("render::a", Outcome::Pass), pass("render::b", Outcome::Pass)],
         &fp,
         true,
+        None,
     );
     assert_eq!(
         o.passed.iter().map(|(b, _)| b.as_str()).collect::<Vec<_>>(),
@@ -538,6 +543,7 @@ fn a_failure_at_the_same_inputs_takes_the_pass_away() {
     let failed = BinaryOutcomes {
         passed: vec![],
         failed: vec!["render::a".to_string()],
+        red:    vec![],
     };
     failed.apply(h.flavour_mut(""));
     assert!(
@@ -548,6 +554,7 @@ fn a_failure_at_the_same_inputs_takes_the_pass_away() {
     let passed = BinaryOutcomes {
         passed: vec![("render::a".to_string(), fp.bins["render::a"].clone())],
         failed: vec![],
+        red:    vec![],
     };
     passed.apply(h.flavour_mut(""));
     assert!(reused(&h).contains(&"render::a".to_string()));
@@ -575,3 +582,6 @@ fn a_binary_holding_no_test_is_settled_with_the_members_that_ran() {
     ]);
     assert!(idle_binaries(&p_without_web, &l, &fp, false).is_empty());
 }
+
+#[path = "select_red_tests.rs"]
+mod red;
