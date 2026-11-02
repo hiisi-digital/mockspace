@@ -4,7 +4,6 @@ members = [
     "crates/mockspace-template",
     "crates/mockspace-config",
     "crates/mockspace-core",
-    "crates/mockspace-store",
     "crates/mockspace-rs",
     "crates/mockspace-rs-attrs",
     "crates/mockspace-cli",

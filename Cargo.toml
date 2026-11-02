@@ -11,6 +11,8 @@ members = [
     "benches",
     "benches/variants/multiply-xor",
     "benches/variants/bitwise-rotate",
+    # v2 code, kept under `mock/` and built here, since the v1 engine takes it by path
+    "mock/crates/mockspace-store",
 ]
 
 [package]
