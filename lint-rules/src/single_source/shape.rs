@@ -11,16 +11,27 @@
 //! - comments, attributes and visibilities, and a comma that only closes a list;
 //! - the names of generic parameters, which are replaced by where they sit in their list;
 //! - where a bound is written: `<T: Copy>` and `where T: Copy` give one set of bounds for `T`, and
-//!   so do two predicates on one parameter;
-//! - the order of a list of bounds, which is a set;
+//!   so do two predicates on one parameter; the supertraits of a trait are the bounds on `Self`;
+//! - the order of a list of bounds, or of the operands of a `dyn A + B` or an `impl A + B`, which are
+//!   a set;
 //! - the order of the fields of a struct or a union, of the items of a trait, and of the variants of
 //!   an enum whose variants are not numbered by their place;
+//! - the name a parameter of a method is bound to, which no caller can see;
 //! - the body of a trait method; a required method ends in a semicolon, which is kept, so it differs
 //!   from a provided one, and two provided ones agree whatever their bodies do.
 //!
 //! What it keeps in order: the fields of a tuple struct, the parameters of a function, the generic
 //! parameters, and the variants of an enum that is fieldless or has a `repr` unless every variant
-//! is numbered by hand. A path is compared as written, so `u8` and `core::primitive::u8` differ.
+//! is numbered by hand. A comma that closes a tuple of one element is kept, since it tells it from a
+//! parenthesised type. Only the first segment of a path can be a generic parameter, so the last is
+//! never renamed.
+//!
+//! What it does not see, which a copy can use to be missed or to be found:
+//!
+//! - a path is compared as written, so `u8` and `core::primitive::u8` differ, and so do a type and
+//!   an alias of it;
+//! - the order of the fields and the variants is dropped, though a derived `PartialOrd` or `Ord`
+//!   reads it, so two types that sort differently can agree.
 
 use tree_sitter::Node;
 
@@ -79,6 +90,9 @@ impl<'s> Shape<'s> {
         if node.kind() == "trait_bounds" {
             return self.bounds(node);
         }
+        if node.kind() == "bounded_type" {
+            return self.bounded(node);
+        }
         self.children(node)
     }
 
@@ -86,19 +100,28 @@ impl<'s> Shape<'s> {
     fn children(&mut self, node: Node<'s>) -> String {
         let mark = self.renames.len();
         let generics = self.open_generics(node);
-        let body = if node.kind() == "function_item" {
-            node.child_by_field_name("body")
-        } else {
-            None
+        // What is no part of the declaration: a default body, and the name a parameter is bound to.
+        let skipped = |child: Node<'s>| {
+            match node.kind() {
+                "function_item" => node.child_by_field_name("body") == Some(child),
+                "parameter" => {
+                    child.kind() == "mutable_specifier"
+                        || node.child_by_field_name("pattern") == Some(child)
+                },
+                _ => false,
+            }
         };
+        let supers = supertraits(node);
         let mut parts: Vec<String> = Vec::new();
         let mut generics_done = generics.is_none();
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if is_noise(child) || is_closing_comma(child) || Some(child) == body {
+            if is_noise(child) || is_closing_comma(child) || skipped(child) {
                 continue;
             }
-            let at_generics = child.kind() == GENERIC_PARAMETERS || child.kind() == "where_clause";
+            let at_generics = child.kind() == GENERIC_PARAMETERS
+                || child.kind() == "where_clause"
+                || Some(child) == supers;
             if at_generics && generics.is_some() {
                 if !generics_done {
                     parts.push(generics.clone().unwrap_or_default());
@@ -138,6 +161,47 @@ impl<'s> Shape<'s> {
         format!(": {}", self.bound_set(node).join(" + "))
     }
 
+    /// A type bounded by several traits (`dyn A + B`), whose operands are a set like any bounds.
+    fn bounded(&mut self, node: Node<'s>) -> String {
+        let mut head = None;
+        let mut operands = Vec::new();
+        self.operands(node, &mut head, &mut operands);
+        operands.sort();
+        let operands = operands.join(" + ");
+        match head {
+            Some(keyword) => format!("{keyword} {operands}"),
+            None => operands,
+        }
+    }
+
+    /// The operands of a `+`, which nests to the left when there are more than two. The `dyn` or
+    /// `impl` is parsed onto the first operand alone, and it belongs to the whole set, so it is
+    /// taken off that operand and returned in `head`.
+    fn operands(&mut self, node: Node<'s>, head: &mut Option<&'static str>, out: &mut Vec<String>) {
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor).filter(|c| !is_noise(*c)) {
+            let keyword = match child.kind() {
+                "bounded_type" => {
+                    self.operands(child, head, out);
+                    continue;
+                },
+                "dynamic_type" => "dyn",
+                "abstract_type" => "impl",
+                _ => {
+                    out.push(self.node(child));
+                    continue;
+                },
+            };
+            match child.child_by_field_name("trait") {
+                Some(first) => {
+                    *head = Some(keyword);
+                    out.push(self.node(first));
+                },
+                None => out.push(self.node(child)),
+            }
+        }
+    }
+
     fn bound_set(&mut self, node: Node<'s>) -> Vec<String> {
         let mut cursor = node.walk();
         let mut set: Vec<String> = node
@@ -157,7 +221,8 @@ impl<'s> Shape<'s> {
         let clause = node
             .children(&mut cursor)
             .find(|child| child.kind() == "where_clause");
-        if params.is_none() && clause.is_none() {
+        let supers = supertraits(node);
+        if params.is_none() && clause.is_none() && supers.is_none() {
             return None;
         }
         self.depth += 1;
@@ -177,6 +242,10 @@ impl<'s> Shape<'s> {
         for param in &declared {
             written.push(self.parameter(*param, &mut bounds));
         }
+        if let Some(supers) = supers {
+            let set = self.bound_set(supers);
+            bounds.entry("Self".to_string()).or_default().extend(set);
+        }
         if let Some(clause) = clause {
             let mut cursor = clause.walk();
             for predicate in clause.named_children(&mut cursor).filter(|p| !is_noise(*p)) {
@@ -186,8 +255,7 @@ impl<'s> Shape<'s> {
                 ) else {
                     continue;
                 };
-                let left = self.node(left);
-                let set = self.bound_set(right);
+                let (left, set) = self.predicate(left, right);
                 bounds.entry(left).or_default().extend(set);
             }
         }
@@ -209,6 +277,26 @@ impl<'s> Shape<'s> {
         } else {
             format!("{params} where {{ {} }}", predicates.join(" ; "))
         })
+    }
+
+    /// One where predicate: the bounded type and its bounds. A `for<'x>` before the type binds over
+    /// both sides, so the binder stays open while the bounds are read.
+    fn predicate(&mut self, left: Node<'s>, right: Node<'s>) -> (String, Vec<String>) {
+        let mark = self.renames.len();
+        let binds = left.kind() == "higher_ranked_trait_bound";
+        let binder = if binds { self.open_generics(left) } else { None };
+        let subject = left
+            .child_by_field_name("type")
+            .filter(|_| binds)
+            .unwrap_or(left);
+        let subject = self.node(subject);
+        let set = self.bound_set(right);
+        self.renames.truncate(mark);
+        self.depth -= usize::from(binder.is_some());
+        match binder {
+            Some(binder) => (format!("for {binder} {subject}"), set),
+            None => (subject, set),
+        }
     }
 
     /// Gives one generic parameter the name it is compared under: its place among its siblings, under
@@ -262,6 +350,16 @@ impl<'s> Shape<'s> {
 
     fn leaf(&self, node: Node<'s>) -> String {
         let text = &self.source[node.byte_range()];
+        // The last segment of a path names an item of that path, whatever a parameter is called.
+        let last_segment = node.parent().is_some_and(|parent| {
+            matches!(
+                parent.kind(),
+                "scoped_type_identifier" | "scoped_identifier"
+            ) && parent.child_by_field_name("name") == Some(node)
+        });
+        if last_segment {
+            return text.to_string();
+        }
         // A type is named by a `type_identifier`, and as the first segment of a path (`T::Item`) by an
         // `identifier`, where it is told from a constant only by the parameters in scope.
         let in_lifetime = node
@@ -303,6 +401,9 @@ fn is_closing_comma(node: Node) -> bool {
     if node.kind() != "," {
         return false;
     }
+    if node.parent().is_some_and(is_tuple_of_one) {
+        return false;
+    }
     let mut next = node.next_sibling();
     while let Some(sibling) = next {
         if !is_noise(sibling) {
@@ -311,6 +412,28 @@ fn is_closing_comma(node: Node) -> bool {
         next = sibling.next_sibling();
     }
     true
+}
+
+/// Whether a node is a tuple with one element, whose comma tells it from a parenthesised type.
+fn is_tuple_of_one(node: Node) -> bool {
+    if !matches!(node.kind(), "tuple_type" | "tuple_expression") {
+        return false;
+    }
+    let mut cursor = node.walk();
+    let elements = node
+        .named_children(&mut cursor)
+        .filter(|child| !is_noise(*child))
+        .count();
+    elements == 1
+}
+
+/// The list of supertraits a trait declares, which bounds `Self` as a where clause does.
+fn supertraits(node: Node) -> Option<Node> {
+    if node.kind() == "trait_item" {
+        node.child_by_field_name("bounds")
+    } else {
+        None
+    }
 }
 
 /// Whether the variants of an enum are numbered by the place they are written in: the enum is
@@ -332,13 +455,22 @@ fn variants_are_numbered_by_place(item: Node, source: &str) -> bool {
     fieldless || has_repr(item, source)
 }
 
+/// Whether an outer attribute is `repr`, by its path and not by the words it holds.
+fn is_repr(attribute_item: Node, source: &str) -> bool {
+    attribute_item
+        .named_child(0)
+        .filter(|attribute| attribute.kind() == "attribute")
+        .and_then(|attribute| attribute.named_child(0))
+        .is_some_and(|path| &source[path.byte_range()] == "repr")
+}
+
 /// Whether an attribute `repr` sits on the item.
 fn has_repr(item: Node, source: &str) -> bool {
     let mut previous = item.prev_sibling();
     while let Some(sibling) = previous {
         match sibling.kind() {
             "attribute_item" => {
-                if source[sibling.byte_range()].contains("repr") {
+                if is_repr(sibling, source) {
                     return true;
                 }
             },

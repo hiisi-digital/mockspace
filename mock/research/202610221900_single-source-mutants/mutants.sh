@@ -51,7 +51,7 @@ variants always sorted|single_source/shape.rs|let sorted = !variants_are_numbere
 a fieldless enum not numbered by place|single_source/shape.rs|fieldless \|\| has_repr\(item, source\)@@has_repr(item, source)
 a repr not numbering the variants|single_source/shape.rs|fieldless \|\| has_repr\(item, source\)@@fieldless
 hand numbered variants keep their order|single_source/shape.rs|variants\.iter\(\)\.all\(numbered\)@@false
-a method body kept in the shape|single_source/shape.rs| \|\| Some\(child\) == body@@
+a method body kept in the shape|single_source/shape.rs|"function_item" => node\.child_by_field_name\("body"\) == Some\(child\),@@"function_item" => false,
 bounds kept in the order written|single_source/shape.rs|set\.sort\(\);\n( +)set\n@@set
 merged bounds kept in the order written|single_source/shape.rs|\.map\(\|\(left, mut set\)\| \{\n( +)set\.sort\(\);@@.map(|(left, mut set)| {
 bounds written inline dropped|single_source/shape.rs|bounds\.entry\(name\)\.or_default\(\)\.extend\(set\);@@let _ = (name, set);
@@ -63,5 +63,18 @@ scope depth left out of the name|single_source/shape.rs|to: format!\("\$\{\}\.\{
 lifetimes named as types|single_source/shape.rs|"lifetime_parameter" => \(Class::Lifetime,@@"lifetime_parameter" => (Class::Type,
 const parameters not renamed|single_source/shape.rs|"const_parameter" => \(Class::Const, param\.child_by_field_name\("name"\)\),@@"const_parameter" => return,
 a path segment not told from a type|single_source/shape.rs|"identifier" => class != Class::Lifetime,@@"identifier" => class == Class::Const,
+bounded operands kept in the order written|single_source/shape.rs|operands\.sort\(\);@@let _ = ();
+a nested bounded type not flattened|single_source/shape.rs|self\.operands\(child, head, out\);@@out.push(self.node(child));
+the dyn or impl left off a bounded type|single_source/shape.rs|\*head = Some\(keyword\);@@let _ = keyword;
+the last segment of a path renamed|single_source/shape.rs|if last_segment \{@@if false {
+a binder closed before the bounds are read|single_source/shape.rs|let binds = left\.kind\(\) == "higher_ranked_trait_bound";@@let binds = false;
+a predicate subject read as the type field|single_source/shape.rs|\.filter\(\|_\| binds\)@@
+a tuple of one loses its comma|single_source/shape.rs|if node\.parent\(\)\.is_some_and\(is_tuple_of_one\) \{@@if false {
+a tuple expression the only tuple of one|single_source/shape.rs|"tuple_type" \| "tuple_expression"@@"tuple_expression"
+a comment counted as an element of a tuple|single_source/shape.rs|\.filter\(\|child\| !is_noise\(\*child\)\)\n( +)\.count\(\)@@.count()
+the name of a parameter kept|single_source/shape.rs|node\.child_by_field_name\("pattern"\) == Some\(child\)@@false
+the mut of a parameter kept|single_source/shape.rs|child\.kind\(\) == "mutable_specifier"@@false
+supertraits read as a list of their own|single_source/shape.rs|if node\.kind\(\) == "trait_item" \{@@if false {
+any attribute holding repr counts|single_source/shape.rs|\.is_some_and\(\|path\| &source\[path\.byte_range\(\)\] == "repr"\)@@.is_some_and(|_| source[attribute_item.byte_range()].contains("repr"))
 TABLE
 echo "killed=$killed survived=$survived other=$broken"
