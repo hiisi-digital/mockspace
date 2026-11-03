@@ -6,7 +6,9 @@ use crate::reader::Reader;
 
 /// The edit was built on a tip that is no longer the remote's. The hook sees the
 /// tip that won, through `tip`, and the edit as its author wrote it, and returns
-/// the edit to write on that tip. The store never merges file contents itself:
+/// the edit to write on that tip. A path of `ours` that the returned edit leaves out is not
+/// written, and a caller that keeps files of its own (an [`crate::Instance`]) keeps them; to
+/// keep the tip's file the edit puts it. The store never merges file contents itself:
 /// that is the namespace's rule, so it is the namespace's hook.
 pub trait MergeHook {
     fn rebase(&self, tip: &dyn Reader, ours: &Edit) -> Result<Edit, MergeRefusal>;
