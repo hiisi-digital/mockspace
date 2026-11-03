@@ -5,6 +5,9 @@
 
 use super::*;
 
+mod link;
+pub use link::*;
+
 /// The field types that are not a namespace name.
 ///
 /// `ref` and `ref[]` hold a citation into a file: `root::path::anchor`. They
@@ -210,33 +213,55 @@ pub fn validate_row_references(
                         },
                         None => String::new(),
                     };
-                    out.push(RegistryFinding {
-                        kind:    "malformed-row-reference",
-                        message: format!(
-                            "{}: field `{name}` holds `{item}`, which is not a slug (snake_case, starting with a letter).{hint}",
-                            row.qualified()
-                        ),
-                        source:  Some(row.source.clone()),
-                    });
+                    out.push(malformed_slug(row, name, item, hint));
                     continue;
                 }
-                let qualified = format!("{target}::{item}");
-                if reg.rows.contains_key(&qualified) {
-                    continue;
-                }
-                let near = nearest(reg, target, item);
-                out.push(RegistryFinding {
-                    kind:    "unknown-row-reference",
-                    message: format!(
-                        "{}: field `{name}` references `{qualified}`, which no row declares.{near}",
-                        row.qualified()
-                    ),
-                    source:  Some(row.source.clone()),
-                });
+                out.extend(dangling(reg, row, name, target, item));
             }
         }
     }
+    // The row links held in `ref` fields are checked beside the typed ones, in
+    // the same call, so neither caller has a second function to remember.
+    out.extend(validate_links(reg, namespaces));
     out
+}
+
+/// A row-reference item that is not a slug, said once for the typed fields and
+/// the links alike.
+fn malformed_slug(row: &RegistryRow, field: &str, item: &str, hint: String) -> RegistryFinding {
+    RegistryFinding {
+        kind:    "malformed-row-reference",
+        message: format!(
+            "{}: field `{field}` holds `{item}`, which is not a slug (snake_case, starting with a letter).{hint}",
+            row.qualified()
+        ),
+        source:  Some(row.source.clone()),
+    }
+}
+
+/// The finding for a reference to `target::slug` when no row declares it, and
+/// nothing when one does. Shared by the typed fields and the links, so a
+/// dangling reference reads the same whichever field held it.
+fn dangling(
+    reg: &Registry,
+    row: &RegistryRow,
+    field: &str,
+    target: &str,
+    slug: &str,
+) -> Option<RegistryFinding> {
+    let qualified = format!("{target}::{slug}");
+    if reg.rows.contains_key(&qualified) {
+        return None;
+    }
+    let near = nearest(reg, target, slug);
+    Some(RegistryFinding {
+        kind:    "unknown-row-reference",
+        message: format!(
+            "{}: field `{field}` references `{qualified}`, which no row declares.{near}",
+            row.qualified()
+        ),
+        source:  Some(row.source.clone()),
+    })
 }
 
 /// The closest existing slug in the target namespace, when one is close enough
@@ -299,7 +324,25 @@ fn for_each_edge(
     namespaces: &[RegistryNamespace],
     mut emit: impl FnMut(String, String),
 ) {
+    for_each_edge_by_field(reg, namespaces, |target, source, _| emit(target, source));
+}
+
+/// The same walk, handing over the field that holds each edge as well.
+///
+/// An edge comes from two kinds of field. A field typed as a namespace holds
+/// bare slugs of that namespace. A field typed `ref` or `ref[]` holds file
+/// citations and row links, and only the items that are links
+/// (`namespace::slug`, see [`link_target`]) are edges. Both go through this one
+/// function, so `refsto`, the lint view and `links_of` cannot disagree about
+/// what a link is.
+fn for_each_edge_by_field(
+    reg: &Registry,
+    namespaces: &[RegistryNamespace],
+    mut emit: impl FnMut(String, String, &str),
+) {
     let bearing = row_reference_fields(namespaces);
+    let citing = reference_fields(namespaces);
+    let keys = link::namespace_keys(namespaces);
     for row in reg.rows.values() {
         let empty = Vec::new();
         for (name, target) in bearing.get(&row.namespace).unwrap_or(&empty) {
@@ -309,7 +352,22 @@ fn for_each_edge(
             for slug in raw.split(", ").map(str::trim).filter(|s| !s.is_empty()) {
                 let q = format!("{target}::{slug}");
                 if reg.rows.contains_key(&q) {
-                    emit(q, row.qualified());
+                    emit(q, row.qualified(), name.as_str());
+                }
+            }
+        }
+        let none = Vec::new();
+        for name in citing.get(&row.namespace).unwrap_or(&none) {
+            let Some(raw) = row.fields.get(name) else {
+                continue;
+            };
+            for item in raw.split(", ").map(str::trim) {
+                let Some((target, slug)) = link_target(item, &keys) else {
+                    continue;
+                };
+                let q = format!("{target}::{slug}");
+                if reg.rows.contains_key(&q) {
+                    emit(q, row.qualified(), name.as_str());
                 }
             }
         }
@@ -335,6 +393,8 @@ pub fn referrers(reg: &Registry, namespaces: &[RegistryNamespace], qualified: &s
     out.into_iter().collect()
 }
 
+#[cfg(test)]
+mod link_tests;
 #[cfg(test)]
 mod render_tests;
 #[cfg(test)]

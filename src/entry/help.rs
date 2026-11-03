@@ -218,6 +218,17 @@ const COMMANDS: &[Cmd] = &[
                   absent one queries nothing.",
     },
     Cmd {
+        name:    "links",
+        summary: "list a registry row's links from both ends",
+        args:    &[],
+        help:    "Takes `<namespace>::<slug>` and prints what the row links to and \
+                  what links to it, each with the field that states the link. A \
+                  link is written once, on one row, in a `ref` or `ref[]` field \
+                  as `namespace::slug` or in a field typed as a namespace; the \
+                  other end is derived here and by `refsto`, so nobody writes \
+                  both sides.",
+    },
+    Cmd {
         name:    "registry-append",
         summary: "add one string to a list field of a registry row",
         args:    &[],
