@@ -33,4 +33,17 @@ killed    scope depth left out of the name
 killed    lifetimes named as types
 killed    const parameters not renamed
 killed    a path segment not told from a type
-killed=35 survived=0 other=0
+killed    bounded operands kept in the order written
+killed    a nested bounded type not flattened
+killed    the dyn or impl left off a bounded type
+killed    the last segment of a path renamed
+killed    a binder closed before the bounds are read
+killed    a predicate subject read as the type field
+killed    a tuple of one loses its comma
+killed    a tuple expression the only tuple of one
+killed    a comment counted as an element of a tuple
+killed    the name of a parameter kept
+killed    the mut of a parameter kept
+killed    supertraits read as a list of their own
+killed    any attribute holding repr counts
+killed=48 survived=0 other=0
