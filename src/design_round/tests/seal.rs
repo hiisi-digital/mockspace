@@ -492,3 +492,22 @@ fn a_doc_stub_beside_a_doc_lock_is_retired_while_a_src_changelist_is_active() {
         ]
     );
 }
+
+#[test]
+fn a_deprecation_tells_the_author_what_the_replacement_owes() {
+    let note = super::super::owed_note("## Overview\nUses `StorageRecord` and `Behavior`.\n## Types\nThe `Marker` type.\n")
+        .expect("a changelist with content owes a comparison");
+    for want in [
+        "## Comparison to deprecated changelist",
+        "### Overview",
+        "### Types",
+        "and the section must mention each of: `Behavior`, `Marker`, `StorageRecord`\n",
+    ] {
+        assert!(note.contains(want), "the note must carry {want:?}, got: {note}");
+    }
+}
+
+#[test]
+fn a_stub_deprecation_says_nothing_about_a_comparison() {
+    assert!(super::super::owed_note("# src changelist\n\n").is_none());
+}
