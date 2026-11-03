@@ -1,0 +1,10 @@
+killed    a stub owes a comparison
+killed    the section header changed
+killed    no subheader for a header
+killed    subheaders copied as written
+killed    a name the section holds not reported
+killed    every name reported as met
+killed    the names line left out of the note
+killed    the met line left out of the note
+killed    a stub says something
+killed=9 survived=0 broken=0

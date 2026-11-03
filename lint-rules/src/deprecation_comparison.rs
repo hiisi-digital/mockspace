@@ -129,7 +129,7 @@ fn shame_entry_with_min_words(shame_blobs: &[&str], key: &str, min_words: usize)
 }
 
 /// Check that the active CL has a proper comparison section for the deprecated CL.
-fn check_comparison(
+pub(crate) fn check_comparison(
     dep_filename: &str,
     dep_content: &str,
     active_filename: &str,
@@ -236,7 +236,7 @@ fn find_comparison_section(content: &str) -> Option<String> {
 }
 
 /// Extract all `## Header` text from markdown (the header titles, not the `##` prefix).
-fn extract_h2_headers(content: &str) -> Vec<String> {
+pub(crate) fn extract_h2_headers(content: &str) -> Vec<String> {
     content
         .lines()
         .filter_map(|line| {
@@ -270,7 +270,7 @@ fn extract_h3_headers_lowercase(content: &str) -> Vec<String> {
 /// A deprecated changelist holding nothing but a bare title was a stub retired beside a changelist
 /// that was already the round's record, so it was replaced by nothing and has no headers or names to
 /// compare. That holds whatever the status of the changelist beside it, which `unlock` can reopen.
-fn owes_a_comparison(deprecated_text: &str, _replacement: ClStatus) -> bool {
+pub(crate) fn owes_a_comparison(deprecated_text: &str, _replacement: ClStatus) -> bool {
     !crate::changelist_seal::is_bare_title(deprecated_text)
 }
 

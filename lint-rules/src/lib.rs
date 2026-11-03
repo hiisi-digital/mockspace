@@ -59,6 +59,8 @@ pub use changelist_seal::{active_round_findings, says_nothing};
 #[doc(hidden)]
 pub mod agent_identity_conformance;
 mod deprecation_comparison;
+mod owed_comparison;
+pub use owed_comparison::{OwedComparison, owed_comparison};
 mod design_doc_source_mismatch;
 mod export_count;
 mod file_size;
