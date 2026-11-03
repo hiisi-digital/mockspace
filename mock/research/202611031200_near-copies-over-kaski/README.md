@@ -29,5 +29,5 @@ Regenerate, from a checkout of kaski at `origin/dev` with the pack carrying the 
 
     cargo mock near-copies --limit 100000 $(for d in mock/crates/* mock/tools/*; do [ -d $d/src ] && basename $d; done | sort -u)
 
-The committed `report.txt` was produced the same way through a driver that calls the tool directly,
-before the pack reached kaski.
+The committed `report.txt` was produced by `driver.rs` beside it, a spike that calls the tool's `run`
+directly over `/home/user/kaski`, since the pack had not reached kaski. It is kept so the report can be regenerated, and it is not a tool.
