@@ -32,6 +32,8 @@ mod rename;
 pub use rename::{cmd_rename_round, cmd_round_id};
 pub(crate) mod round_merge;
 
+mod owed;
+use owed::say_what_the_replacement_owes;
 mod subjects;
 #[cfg(test)]
 mod tests;
@@ -550,34 +552,4 @@ pub fn cmd_migrate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let msg = subjects::migrate(renamed);
     commit_or_suggest(cfg, opts, &touched, &msg);
     ExitCode::SUCCESS
-}
-
-/// What the changelist that replaces a deprecated one owes the `deprecation-comparison` lint, worded
-/// for the author, or `None` for a stub that owes nothing. The lint refuses the replacement at the
-/// push, and everything it asks follows from the deprecated text, so it is said when the deprecation
-/// happens.
-pub(crate) fn owed_note(deprecated_text: &str) -> Option<String> {
-    let owed = lint_rules::owed_comparison(deprecated_text)?;
-    let mut note = String::from(
-        "  the replacement changelist owes the `deprecation-comparison` lint this section, with text under each subheader:\n",
-    );
-    for line in owed.section.lines() {
-        if !line.is_empty() {
-            note.push_str("    ");
-            note.push_str(line);
-        }
-        note.push('\n');
-    }
-    if !owed.names.is_empty() {
-        let names: Vec<String> = owed.names.iter().map(|n| format!("`{n}`")).collect();
-        note.push_str(&format!("  and the section must mention each of: {}\n", names.join(", ")));
-    }
-    Some(note)
-}
-
-/// Say what the replacement of the changelist now at `deprecated` owes.
-fn say_what_the_replacement_owes(deprecated: &std::path::Path) {
-    if let Some(note) = std::fs::read_to_string(deprecated).ok().as_deref().and_then(owed_note) {
-        eprint!("{note}");
-    }
 }

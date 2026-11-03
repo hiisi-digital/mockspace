@@ -129,7 +129,7 @@ fn shame_entry_with_min_words(shame_blobs: &[&str], key: &str, min_words: usize)
 }
 
 /// Check that the active CL has a proper comparison section for the deprecated CL.
-fn check_comparison(
+pub(crate) fn check_comparison(
     dep_filename: &str,
     dep_content: &str,
     active_filename: &str,
@@ -236,7 +236,7 @@ fn find_comparison_section(content: &str) -> Option<String> {
 }
 
 /// Extract all `## Header` text from markdown (the header titles, not the `##` prefix).
-fn extract_h2_headers(content: &str) -> Vec<String> {
+pub(crate) fn extract_h2_headers(content: &str) -> Vec<String> {
     content
         .lines()
         .filter_map(|line| {
@@ -265,43 +265,12 @@ fn extract_h3_headers_lowercase(content: &str) -> Vec<String> {
         .collect()
 }
 
-/// What the replacement of a deprecated changelist owes, worked out from the deprecated text alone.
-///
-/// The lint refuses a replacement at the push, and each of its three demands is a function of the
-/// deprecated text, so the author is told them when the deprecation happens and need not meet them one
-/// refusal at a time. The `section` is only the structure, the header and one `###` subheader for each
-/// `##` header of the deprecated text. The names the section must mention stay out of it, so that
-/// pasting it does not satisfy the lint by itself.
-pub struct OwedComparison {
-    /// The section to paste into the replacement and write under.
-    pub section: String,
-    /// The backtick-wrapped names the section must mention, sorted.
-    pub names:   Vec<String>,
-}
-
-/// The comparison a replacement of `deprecated_text` owes, or `None` for a stub that owes none.
-pub fn owed_comparison(deprecated_text: &str) -> Option<OwedComparison> {
-    if !owes_a_comparison(deprecated_text, ClStatus::Active) {
-        return None;
-    }
-    let mut section = String::from("## Comparison to deprecated changelist\n");
-    for header in extract_h2_headers(deprecated_text) {
-        section.push_str("\n### ");
-        section.push_str(&header);
-        section.push('\n');
-    }
-    Some(OwedComparison {
-        section,
-        names: type_scanner::extract_backtick_names(deprecated_text),
-    })
-}
-
 /// Whether the changelist that replaces a deprecated one owes the comparison section.
 ///
 /// A deprecated changelist holding nothing but a bare title was a stub retired beside a changelist
 /// that was already the round's record, so it was replaced by nothing and has no headers or names to
 /// compare. That holds whatever the status of the changelist beside it, which `unlock` can reopen.
-fn owes_a_comparison(deprecated_text: &str, _replacement: ClStatus) -> bool {
+pub(crate) fn owes_a_comparison(deprecated_text: &str, _replacement: ClStatus) -> bool {
     !crate::changelist_seal::is_bare_title(deprecated_text)
 }
 
@@ -729,49 +698,5 @@ Different design.
         );
         assert!(!errors.is_empty());
         assert_eq!(errors[0].severity, crate::Severity::PUSH_GATE);
-    }
-
-    // -----------------------------------------------------------------------
-    // owed_comparison tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn a_bare_title_owes_nothing_to_write() {
-        assert!(owed_comparison("# src changelist\n\n").is_none());
-    }
-
-    #[test]
-    fn the_scaffold_has_every_subheader_the_lint_asks_for() {
-        let deprecated = "## Overview\nUses `StorageRecord`.\n## Types\nThe `Marker` type.\n";
-        let owed = owed_comparison(deprecated).expect("a changelist with content owes one");
-        let errors = check_comparison("old.deprecated.md", deprecated, "new.doc.md", &owed.section, ClKind::Doc);
-        let msgs: Vec<&String> = errors.iter().map(|e| &e.message).collect();
-        assert!(
-            !msgs.iter().any(|m| m.contains("is missing a `###")) && !msgs.iter().any(|m| m.contains("missing a `## Comparison")),
-            "structure must be satisfied by the scaffold, got: {msgs:?}"
-        );
-    }
-
-    #[test]
-    fn the_scaffold_alone_still_owes_every_name() {
-        let deprecated = "## Overview\nUses `StorageRecord` and `Behavior`.\n";
-        let owed = owed_comparison(deprecated).unwrap();
-        let errors = check_comparison("old.deprecated.md", deprecated, "new.doc.md", &owed.section, ClKind::Doc);
-        for name in ["StorageRecord", "Behavior"] {
-            assert!(
-                errors.iter().any(|e| e.message.contains(&format!("`{name}`"))),
-                "pasting the scaffold must not satisfy the check on `{name}`"
-            );
-        }
-        assert_eq!(owed.names, ["Behavior", "StorageRecord"]);
-    }
-
-    #[test]
-    fn the_scaffold_filled_in_passes_the_lint() {
-        let deprecated = "## Overview\nUses `StorageRecord`.\n## Types\nThe `Marker` type.\n";
-        let owed = owed_comparison(deprecated).unwrap();
-        let filled = format!("{}\nChanged `StorageRecord` and the `Marker` type.\n", owed.section);
-        let errors = check_comparison("old.deprecated.md", deprecated, "new.doc.md", &filled, ClKind::Doc);
-        assert!(errors.is_empty(), "got: {:?}", errors.iter().map(|e| &e.message).collect::<Vec<_>>());
     }
 }
