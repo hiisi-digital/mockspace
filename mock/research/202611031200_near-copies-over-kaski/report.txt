@@ -1,0 +1,1703 @@
+near-copies (45): different names, close declarations
+  100%  struct GrantRow (kaski-engine-culture src/text.rs:79)  ~  struct Language (kaski-interface src/strings.rs:21)
+        shared: id, name
+  100%  enum FigureTier (kaski-figure src/tier.rs:10)  ~  enum Detail (kaski-motion src/alive/villager.rs:31)
+        shared: Full, Coarse, Far
+  100%  struct FigureVertex (kaski-figure src/crowd/mod.rs:88)  ~  struct GpuFigureVertex (kaski-render src/figure_pass.rs:93)
+        shared: position, normal, rest, colour
+  100%  struct Extent (kaski-frame-api src/surface.rs:10)  ~  struct Shape (kaski-texel-pages src/texture.rs:19)
+        shared: width, height
+  100%  struct Worn (kaski-hunting src/things.rs:37)  ~  struct WorkBroke (kaski-work src/things.rs:82)
+        shared: by, tool
+  100%  struct ItemPiece (kaski-items src/pieces.rs:20)  ~  struct DrawnPiece (kaski-view-contracts src/model/mod.rs:69)
+        shared: size, at, colour, strap, part
+  100%  enum Pose (kaski-minds src/task.rs:61)  ~  enum ModelPosture (kaski-view-contracts src/model/mod.rs:166)
+        shared: Standing, Sitting, Lying
+  100%  struct Fetch (kaski-sound src/mixer/mod.rs:32)  ~  struct Wanted (kaski-web src/web_audio.rs:56)
+        shared: recording, file, pcm
+   83%  enum LaneError (kaski-gpu-api src/lanes.rs:24)  ~  enum ResolveError (kaski-gpu-capability src/profile.rs:57)
+        shared: Unknown, NoFallback
+        renamed: Cycle -> WrongKind (( String ))
+   83%  struct Row (kaski-planning src/plan.rs:14)  ~  struct Ticket (kaski-tickets src/model.rs:68)
+        shared: id, fields
+        renamed: ns -> file (String)
+   80%  struct Metal (kaski-gpu-metal src/device/backend.rs:56)  ~  struct Wgpu (kaski-gpu-wgpu src/backend.rs:17)
+        shared: record, queues, tables, encoders
+        only in kaski-gpu-metal: device Retained < ProtocolObject < dyn MTLDevice > >
+   80%  struct Vulkan (kaski-gpu-vulkan src/device/backend.rs:51)  ~  struct Wgpu (kaski-gpu-wgpu src/backend.rs:17)
+        shared: record, queues, tables, encoders
+        only in kaski-gpu-vulkan: context Arc < Context >
+   75%  struct GrantRow (kaski-engine-culture src/text.rs:79)  ~  struct ResourceKind (kaski-gpu-api src/kind.rs:13)
+        shared: name
+        renamed: id -> sized_by (String)
+   75%  struct ResourceKind (kaski-gpu-api src/kind.rs:13)  ~  struct Language (kaski-interface src/strings.rs:21)
+        shared: name
+        renamed: sized_by -> id (String)
+   75%  struct Taken (kaski-gpu-capability src/profile.rs:37)  ~  struct ModelError (kaski-mesh src/furniture/mod.rs:78)
+        shared: key
+        renamed: fallback -> what (String)
+   75%  struct RowError (kaski-items src/rows.rs:35)  ~  struct ModelError (kaski-mesh src/furniture/mod.rs:78)
+        shared: what
+        renamed: row -> key (String)
+   75%  struct RowError (kaski-items src/rows.rs:35)  ~  struct Finding (kaski-tickets src/rules.rs:18)
+        shared: row
+        renamed: what -> message (String)
+   75%  struct DecodeError (kaski-native src/decode.rs:17)  ~  struct FetchError (kaski-storage-web src/error.rs:12)
+        shared: reason
+        renamed: file -> path (String)
+   71%  struct SpriteSlice (kaski-asset-pipeline src/source/aseprite.rs:11)  ~  struct Slice (kaski-bundle src/record.rs:83)
+        shared: name, x, y, width, height
+        only in kaski-asset-pipeline: pivot Option < ( i32 , i32 ) >
+        only in kaski-bundle: pivot Option < [ i32 ; 2 ] >
+   66%  struct SizeSpec (kaski-asset-kinds src/kind.rs:109)  ~  struct Extent (kaski-frame-api src/surface.rs:10)
+        shared: width, height
+        only in kaski-asset-kinds: class String
+   66%  struct SizeSpec (kaski-asset-kinds src/kind.rs:109)  ~  struct Shape (kaski-texel-pages src/texture.rs:19)
+        shared: width, height
+        only in kaski-asset-kinds: class String
+   66%  struct Measure (kaski-beings src/form.rs:17)  ~  struct Range (kaski-starsystem src/generate.rs:77)
+        shared: lo, hi
+        only in kaski-beings: tag AxisId
+   66%  struct ViewPoint (kaski-camera-model src/camera.rs:113)  ~  struct Muzzle (kaski-skeleton src/face.rs:164)
+        shared: depth
+        renamed: right -> scale (f32)
+        renamed: up -> width (f32)
+   66%  struct Evidence (kaski-engine-agency src/belief/mod.rs:64)  ~  struct ProvenanceDef (kaski-engine-nature src/kinds.rs:235)
+        shared: weight, provenance
+        only in kaski-engine-agency: value Quantity
+   66%  struct CategoryRow (kaski-engine-culture src/text.rs:109)  ~  struct Language (kaski-interface src/strings.rs:21)
+        shared: id, name
+        only in kaski-engine-culture: acts Vec < String >
+   66%  struct CategoryRow (kaski-engine-culture src/text.rs:109)  ~  struct Move (kaski-test-support src/golden/mod.rs:26)
+        shared: id
+        renamed: name -> because (String)
+        renamed: acts -> from (Vec < String >)
+   66%  struct Passing (kaski-engine-culture src/chronicle.rs:36)  ~  struct Passed (kaski-realm src/things.rs:82)
+        shared: being, name
+        only in kaski-engine-culture: frame u64
+   66%  struct Passing (kaski-engine-culture src/chronicle.rs:36)  ~  struct Rename (kaski-realm src/things.rs:24)
+        shared: being, name
+        only in kaski-engine-culture: frame u64
+   66%  struct PresetRow (kaski-engine-culture src/text.rs:87)  ~  struct Language (kaski-interface src/strings.rs:21)
+        shared: id, name
+        only in kaski-engine-culture: offices Vec < String >
+   66%  struct PresetRow (kaski-engine-culture src/text.rs:87)  ~  struct Move (kaski-test-support src/golden/mod.rs:26)
+        shared: id
+        renamed: name -> because (String)
+        renamed: offices -> from (Vec < String >)
+   66%  struct Berth (kaski-figure src/crowd/reading.rs:16)  ~  struct Lie (kaski-mesh src/furniture/prop.rs:107)
+        shared: top, line
+        only in kaski-figure: head [ f32 ; 2 ]
+   66%  struct Extent (kaski-frame-api src/surface.rs:10)  ~  struct Picture (kaski-panels src/ui/canvas/draw.rs:26)
+        shared: width, height
+        only in kaski-panels: pixels Vec < [ u8 ; 4 ] >
+   66%  struct Metal (kaski-gpu-metal src/device/backend.rs:56)  ~  struct Vulkan (kaski-gpu-vulkan src/device/backend.rs:51)
+        shared: record, queues, tables, encoders
+        only in kaski-gpu-metal: device Retained < ProtocolObject < dyn MTLDevice > >
+        only in kaski-gpu-vulkan: context Arc < Context >
+   66%  enum Hand (kaski-input src/access.rs:17)  ~  enum BodySide (kaski-skeleton src/rig.rs:18)
+        shared: Left, Right
+        only in kaski-input: Any 
+   66%  enum Spread (kaski-interface src/rows/looks.rs:142)  ~  enum BandFill (kaski-view-contracts src/display_list.rs:58)
+        shared: Tile, Stretch
+        only in kaski-interface: Clear 
+   66%  struct Load (kaski-items src/measure.rs:302)  ~  struct BedShare (kaski-weather src/give/bed.rs:88)
+        shared: mass
+        renamed: volume -> depth (Quantity)
+        renamed: packed_volume -> dose_mass (Quantity)
+   66%  struct Picture (kaski-panels src/ui/canvas/draw.rs:26)  ~  struct Shape (kaski-texel-pages src/texture.rs:19)
+        shared: width, height
+        only in kaski-panels: pixels Vec < [ u8 ; 4 ] >
+   66%  struct Texel (kaski-render-model src/planet/rings.rs:74)  ~  struct RangeStates (kaski-settings src/range.rs:11)
+        shared: from, to
+        only in kaski-settings: step f32
+   63%  struct RunReading (kaski-clock src/reading.rs:17)  ~  struct SimClock (kaski-engine src/budget.rs:46)
+        shared: world_now, budget, allowed, lived_now, display_rate, tick_rate, reached, behind
+        renamed: frame_cost -> cost (Duration)
+        renamed: other_work -> other (Duration)
+        renamed: display_frame -> frame (Duration)
+        only in kaski-engine: carry Duration, lived VecDeque < ( f64 , u32 ) >, choice Option < TimeChoice >, stepping Stepping
+   62%  struct EraRow (kaski-engine-advancement src/text.rs:121)  ~  struct CategoryRow (kaski-engine-culture src/text.rs:109)
+        shared: id, name
+        renamed: follows -> acts (Vec < String >)
+        only in kaski-engine-advancement: dawns Option < FoldRow >
+   62%  struct EraRow (kaski-engine-advancement src/text.rs:121)  ~  struct PresetRow (kaski-engine-culture src/text.rs:87)
+        shared: id, name
+        renamed: follows -> offices (Vec < String >)
+        only in kaski-engine-advancement: dawns Option < FoldRow >
+   62%  struct FigureVertex (kaski-figure src/crowd/mod.rs:88)  ~  struct GpuVertex (kaski-render src/world/vertex.rs:27)
+        shared: position, normal
+        renamed: colour -> packed ([ u8 ; 4 ])
+        only in kaski-figure: rest [ f32 ; 3 ]
+   62%  struct Groups (kaski-gpu-api src/dispatch.rs:12)  ~  struct Rect (kaski-panels src/ui/canvas/layout.rs:85)
+        shared: x, y
+        renamed: z -> w (u32)
+        only in kaski-panels: h u32
+   61%  struct Move (kaski-tickets src/model.rs:98)  ~  struct Red (known-red src/store.rs:21)
+        shared: id, by, at, why
+        renamed: ticket -> krate (String)
+        renamed: to -> test (String)
+        renamed: holder -> sha (String)
+        only in kaski-tickets: answer String, picks Vec < String >
+   60%  struct TargetRow (kaski-engine-agency src/text.rs:125)  ~  struct InteractionTarget (kaski-minds src/minds.rs:317)
+        shared: role, nearest, onto
+        only in kaski-engine-agency: r#where Vec < Vec < Bound > >
+        only in kaski-minds: clauses Vec < Vec < ( Fact , Bound ) > >
+
+same name, different shape (585): what single-source leaves alone
+   66%  enum Value (kaski-bundle src/record.rs:100)  ~  enum Value (kaski-planning src/write.rs:18)
+        shared: Text, Flag
+        only in kaski-bundle: Number ( i64 )
+   50%  struct Finding (kaski-assets src/rule.rs:40)  ~  struct Finding (kaski-tickets src/rules.rs:18)
+        shared: message
+        renamed: asset -> row (String)
+        only in kaski-assets: rule & ' static str
+   50%  struct Stamped (kaski-engine-frame src/stamped.rs:22)  ~  struct Stamped (kaski-engine-link src/frame.rs:46)
+        renamed: key -> frame (u64)
+        renamed: form -> event ($1.0)
+   40%  struct Counts (canon src/dropped.rs:40)  ~  struct Counts (kaski-planning src/derive.rs:67)
+        renamed: design -> open (usize)
+        renamed: code -> active (usize)
+        renamed: content -> stopped (usize)
+        renamed: design_files -> done (usize)
+        only in kaski-planning: dropped usize
+   40%  enum Value (kaski-interface src/value.rs:11)  ~  enum Value (kaski-planning src/write.rs:18)
+        shared: Text, Flag
+        only in kaski-interface: Number ( f64 ), Key ( String ), List ( Vec < Record > )
+   37%  struct TraitRow (kaski-engine-culture src/text.rs:21)  ~  struct TraitRow (kaski-engine-nature src/text.rs:35)
+        shared: id, name, drift
+        only in kaski-engine-culture: origin Origin, customs Vec < ( String , Quantity ) >
+        only in kaski-engine-nature: disclosure Disclosure, inherited Option < ( String , Quantity ) >, half_life u64
+   33%  enum Value (kaski-bundle src/record.rs:100)  ~  enum Value (kaski-interface src/value.rs:11)
+        shared: Text, Flag
+        only in kaski-bundle: Number ( i64 )
+        only in kaski-interface: Number ( f64 ), Key ( String ), List ( Vec < Record > )
+   33%  struct Shader (kaski-frame-tail src/shaders.rs:12)  ~  struct Shader (kaski-render src/shaders.rs:11)
+        renamed: pass -> name (& ' static str)
+        renamed: source -> wgsl (& ' static str)
+        only in kaski-frame-tail: entry & ' static str
+   22%  struct Move (kaski-test-support src/golden/mod.rs:26)  ~  struct Move (kaski-tickets src/model.rs:98)
+        shared: id
+        renamed: from -> picks (Vec < String >)
+        renamed: because -> ticket (String)
+        only in kaski-tickets: to String, by String, at String, holder String, why String, answer String
+   21%  struct Counts (canon src/dropped.rs:40)  ~  struct Counts (canon-links src/measure.rs:21)
+        renamed: design -> keywords (usize)
+        renamed: code -> outgoing (usize)
+        renamed: content -> incoming (usize)
+        only in canon: design_files usize
+        only in canon-links: id & ' $1.0 str, subject & ' $1.0 str, binds bool
+        generics differ: `` against `< ' $1.0 >`
+   21%  struct Row (kaski-planning src/plan.rs:14)  ~  struct Row (tickets src/view.rs:30)
+        shared: id
+        renamed: ns -> state (String)
+        only in kaski-planning: fields Fields
+        only in tickets: holder String, title String, epoch String, unblocks usize
+   20%  struct Entry (kaski-bundle src/bundle.rs:25)  ~  struct Entry (kaski-gpu-capability src/record.rs:18)
+        shared: key
+        only in kaski-bundle: kind String, record Record
+        only in kaski-gpu-capability: value Value, origin Option < Origin >
+   20%  enum Value (kaski-gpu-capability src/value.rs:24)  ~  enum Value (kaski-planning src/write.rs:18)
+        shared: Flag
+        only in kaski-gpu-capability: Count ( u64 ), Counts ( Vec < u64 > ), Ratio ( u32 , u32 )
+        only in kaski-planning: Text ( String )
+   20%  trait Family (kaski-solver src/family.rs:34)  ~  trait Family (kaski-verb src/action.rs:33)
+        shared: NAME
+        only in kaski-solver: correction fn correction ( reading : & Reading ) -> V3 ;
+        only in kaski-verb: split fn split ( self ) -> ( u8 , Operand ) ;, join fn join ( verb : u8 , operand : Operand ) -> Option < Self > ;, touch fn touch ( self ) -> TouchPath ;
+   18%  struct Counts (canon-links src/measure.rs:21)  ~  struct Counts (kaski-planning src/derive.rs:67)
+        renamed: keywords -> open (usize)
+        renamed: outgoing -> active (usize)
+        renamed: incoming -> stopped (usize)
+        only in canon-links: id & ' $1.0 str, subject & ' $1.0 str, binds bool
+        only in kaski-planning: done usize, dropped usize
+        generics differ: `< ' $1.0 >` against ``
+   16%  enum Value (kaski-bundle src/record.rs:100)  ~  enum Value (kaski-gpu-capability src/value.rs:24)
+        shared: Flag
+        only in kaski-bundle: Number ( i64 ), Text ( String )
+        only in kaski-gpu-capability: Count ( u64 ), Counts ( Vec < u64 > ), Ratio ( u32 , u32 )
+   16%  struct Span (kaski-cluster-dag src/cluster.rs:87)  ~  struct Span (kaski-engine-ledger src/column.rs:25)
+        renamed: start -> held (u32)
+        only in kaski-cluster-dag: end u32
+        only in kaski-engine-ledger: values Box < [ $1.0 ] >
+        generics differ: `` against `< $1.0 >`
+   16%  struct Founding (kaski-engine-advancement src/text.rs:132)  ~  struct Founding (kaski-engine-culture src/text.rs:143)
+        renamed: record -> naming (Option < String >)
+        only in kaski-engine-advancement: levels Vec < ( String , TrackLevel ) >
+        only in kaski-engine-culture: chosen Option < Vec < String > >
+   16%  struct Site (kaski-engine-lattice src/lattice.rs:102)  ~  struct Site (kaski-loot src/marks.rs:37)
+        renamed: key -> 0 (Block)
+        only in kaski-engine-lattice: tile Cube, i usize
+   16%  struct Slot (kaski-gpu-api src/binding.rs:18)  ~  struct Slot (kaski-render src/world/models.rs:24)
+        renamed: 0 -> first (u32)
+        only in kaski-render: model FurnitureModel, count u32
+   16%  enum Who (kaski-minds src/compose.rs:43)  ~  enum Who (kaski-noise src/hearers.rs:16)
+        renamed: Leg -> Creature (( u8 ))
+        only in kaski-minds: Actor 
+        only in kaski-noise: Villager 
+   12%  enum Value (kaski-gpu-capability src/value.rs:24)  ~  enum Value (kaski-interface src/value.rs:11)
+        shared: Flag
+        only in kaski-gpu-capability: Count ( u64 ), Counts ( Vec < u64 > ), Ratio ( u32 , u32 )
+        only in kaski-interface: Text ( String ), Number ( f64 ), Key ( String ), List ( Vec < Record > )
+   12%  struct Row (kaski-items src/row.rs:16)  ~  struct Row (kaski-planning src/plan.rs:14)
+        renamed: name -> ns (String)
+        only in kaski-items: t & ' $1.0 Table
+        only in kaski-planning: id String, fields Fields
+        generics differ: `< ' $1.0 >` against ``
+   10%  struct Stance (kaski-motion src/alive/grab.rs:76)  ~  struct Stance (kaski-skeleton src/stance.rs:28)
+        renamed: kneel -> upright (bool)
+        only in kaski-motion: drop f32, lean f32, rise f32
+        only in kaski-skeleton: pairs Vec < LegPair >
+    8%  struct Line (canon src/tree.rs:19)  ~  struct Line (kaski-sim src/skip/feed.rs:19)
+        renamed: line -> category (usize)
+        only in canon: tier Tier, path PathBuf
+        only in kaski-sim: reading usize, about About, frame u64
+    8%  struct Row (kaski-items src/row.rs:16)  ~  struct Row (kaski-render-model src/overlay/mod.rs:45)
+        renamed: name -> legend (String)
+        only in kaski-items: t & ' $1.0 Table
+        only in kaski-render-model: from MapEdge, to MapEdge, lenses Vec < usize >, over bool
+        generics differ: `< ' $1.0 >` against ``
+    8%  struct Row (kaski-items src/row.rs:16)  ~  struct Row (speed-probe src/lib.rs:41)
+        renamed: name -> speed (String)
+        only in kaski-items: t & ' $1.0 Table
+        only in speed-probe: game_minutes f64, display_rate Option < f64 >, tick_rate Option < f64 >, tick_ms f64
+        generics differ: `< ' $1.0 >` against ``
+    7%  struct Rows (kaski-engine-advancement src/text.rs:161)  ~  struct Rows (kaski-engine-culture src/text.rs:150)
+        shared: founding
+        only in kaski-engine-advancement: tracks Vec < TrackRow >, nodes Vec < NodeRow >, eras Vec < EraRow >
+        only in kaski-engine-culture: traits Vec < TraitRow >, traditions Vec < TraditionRow >, offices Vec < OfficeRow >, grants Vec < GrantRow >, presets Vec < PresetRow >, holders Vec < HolderRow >, categories Vec < CategoryRow >, namings Vec < NamingRow >, bynames Vec < BynameRow >
+    7%  struct Written (kaski-engine-frame src/record.rs:62)  ~  struct Written (research-unbundle src/lib.rs:81)
+        renamed: count -> files (usize)
+        only in kaski-engine-frame: frame u64, everything bool, epoch u64, lanes Vec < ( StateKind , Lane ) >, hint usize
+        only in research-unbundle: report String
+    7%  struct Row (kaski-items src/row.rs:16)  ~  struct Row (tickets src/view.rs:30)
+        renamed: name -> id (String)
+        only in kaski-items: t & ' $1.0 Table
+        only in tickets: state String, holder String, title String, epoch String, unblocks usize
+        generics differ: `< ' $1.0 >` against ``
+    7%  struct Row (kaski-planning src/plan.rs:14)  ~  struct Row (kaski-render-model src/overlay/mod.rs:45)
+        renamed: ns -> legend (String)
+        only in kaski-planning: id String, fields Fields
+        only in kaski-render-model: from MapEdge, to MapEdge, lenses Vec < usize >, over bool
+    7%  struct Row (kaski-planning src/plan.rs:14)  ~  struct Row (speed-probe src/lib.rs:41)
+        renamed: ns -> speed (String)
+        only in kaski-planning: id String, fields Fields
+        only in speed-probe: game_minutes f64, display_rate Option < f64 >, tick_rate Option < f64 >, tick_ms f64
+    6%  struct Corpus (canon src/dropped.rs:56)  ~  struct Corpus (corpus src/corpus.rs:78)
+        renamed: design_files -> unreadable (usize)
+        only in canon: words HashMap < String , Counts >
+        only in corpus: docs Vec < Doc >, missing Vec < String >, skipped BTreeMap < String , usize >, op_read bool, elsewhere usize, about Option < String >
+    6%  struct Rows (kaski-engine-culture src/text.rs:150)  ~  struct Rows (kaski-engine-nature src/text.rs:103)
+        shared: traits
+        only in kaski-engine-culture: traditions Vec < TraditionRow >, offices Vec < OfficeRow >, grants Vec < GrantRow >, presets Vec < PresetRow >, holders Vec < HolderRow >, categories Vec < CategoryRow >, namings Vec < NamingRow >, bynames Vec < BynameRow >, founding Option < Founding >
+        only in kaski-engine-nature: senses Vec < SenseRow >, provenances Vec < ProvenanceRow >, attributes Vec < AttributeRow >, skills Vec < SkillRow >, needs Vec < NeedRow >
+    5%  struct Standing (kaski-client src/probe.rs:88)  ~  struct Standing (kaski-engine-culture src/fame.rs:48)
+        renamed: actions -> at (u64)
+        only in kaski-client: logical Vec2, physical UVec2, scale f32, open Vec < u16 >, last String, controls Option < Vec < ( String , Rect ) > >
+        only in kaski-engine-culture: height Quantity, left Quantity
+    5%  struct Kept (kaski-creatures src/kept.rs:16)  ~  struct Kept (kaski-paths src/kept.rs:25)
+        renamed: lays_every -> asked (u64)
+        only in kaski-creatures: eats ItemStack, lays ItemStack, sheds ItemStack, sheds_every u64
+        only in kaski-paths: span ColumnSpan, dist Patches < u16 >, frontier VecDeque < Column >, read BTreeMap < Patch , [ u64 ; 4 ] >
+    5%  struct NodeRow (kaski-engine-advancement src/text.rs:51)  ~  struct NodeRow (kaski-interface src/rows/nodes.rs:124)
+        shared: id
+        renamed: track -> kind (String)
+        renamed: leaning -> parent (Option < String >)
+        only in kaski-engine-advancement: stage u8, name String, understand Quantity, master Quantity, requires Vec < CondRow >, provides Vec < String >, area Vec < String >, observe Option < Observe >
+        only in kaski-interface: order Option < f64 >, shape NodeShape, source Option < String >, each Option < String >, filter Option < Cond >, say Option < String >, label Option < String >, face Option < String >, when Option < Cond >, lit Option < Cond >, able Option < Cond >, act Option < String >, args Vec < ( String , NodeArg ) >, fill Option < Pick >, ink Option < Pick >, edge Option < Pick >, value Option < String >, range Option < String >, picture Option < String >, glyph Option < Pick >, scrolls bool, contain bool, inset bool, frame Option < String >, state Option < String >, symbol Option < Pick >, cue bool
+    5%  struct Shares (kaski-engine-advancement src/shares.rs:51)  ~  struct Shares (kaski-sim src/held.rs:42)
+        renamed: drought -> frame (u64)
+        only in kaski-engine-advancement: culture Quantity, region Quantity, world Quantity, reach u32, rumour Quantity, culture_damp Quantity, region_damp Quantity
+        only in kaski-sim: kinds & ' $1.0 crate :: SimKinds, tracks & ' $1.0 Tracks
+        generics differ: `` against `< ' $1.0 >`
+    5%  struct Frame (kaski-engine-link src/frame.rs:99)  ~  struct Frame (kaski-minds src/compose.rs:84)
+        renamed: first -> 0 (u64)
+        only in kaski-engine-link: id FrameId, state $1.0 :: State, record $1.0 :: Record, events Vec < Stamped < $1.0 :: Event > >, status Status < $1.0 :: Pace >, wanted Wanted, lapse Option < Lapse >, restored bool
+        generics differ: `< $1.0 > where { $1.0 : Shape }` against ``
+    5%  struct Row (kaski-render-model src/overlay/mod.rs:45)  ~  struct Row (speed-probe src/lib.rs:41)
+        renamed: legend -> speed (String)
+        only in kaski-render-model: from MapEdge, to MapEdge, lenses Vec < usize >, over bool
+        only in speed-probe: game_minutes f64, display_rate Option < f64 >, tick_rate Option < f64 >, tick_ms f64
+    5%  struct Row (kaski-render-model src/overlay/mod.rs:45)  ~  struct Row (tickets src/view.rs:30)
+        renamed: legend -> id (String)
+        only in kaski-render-model: from MapEdge, to MapEdge, lenses Vec < usize >, over bool
+        only in tickets: state String, holder String, title String, epoch String, unblocks usize
+    5%  struct Row (speed-probe src/lib.rs:41)  ~  struct Row (tickets src/view.rs:30)
+        renamed: speed -> id (String)
+        only in speed-probe: game_minutes f64, display_rate Option < f64 >, tick_rate Option < f64 >, tick_ms f64
+        only in tickets: state String, holder String, title String, epoch String, unblocks usize
+    4%  struct Probe (kaski-engine-frame src/store.rs:51)  ~  struct Probe (kaski-gpu-vulkan src/device/probe.rs:23)
+        renamed: folded -> mesh (bool)
+        only in kaski-engine-frame: name & ' static str, present fn ( & World ) -> bool, folds_now fn ( & World ) -> bool, remove fn ( & mut World )
+        only in kaski-gpu-vulkan: physical vk :: PhysicalDevice, api u32, properties vk :: PhysicalDeviceProperties, features vk :: PhysicalDeviceFeatures, v12 vk :: PhysicalDeviceVulkan12Features < ' static >, update_after_bind u64, families Vec < vk :: QueueFamilyProperties >
+    4%  struct Bound (kaski-figure src/strand/mod.rs:95)  ~  struct Bound (kaski-interface src/bind/mod.rs:68)
+        renamed: vertex -> node (u32)
+        only in kaski-figure: guide u32, segment u32, t f32, rest V3, skin V3, allow f32, dressed V3, far V3
+        only in kaski-interface: tree Tree, path Vec < ( u32 , u32 ) >
+    3%  struct Draft (kaski-cluster-dag src/bake.rs:91)  ~  struct Draft (kaski-panels src/founding/mod.rs:73)
+        renamed: id -> seed (u32)
+        only in kaski-cluster-dag: member_of Option < GroupId >, made_from Option < GroupId >, error WorldError, parent_error WorldError, span ( u32 , u32 ), level u32
+        only in kaski-panels: intents Intents, clan usize, preset usize, reroll Option < u64 >, history f64, camp Option < Camp >, page Page
+    3%  struct Kept (kaski-figure src/crowd/beasts.rs:25)  ~  struct Kept (kaski-host src/recording.rs:15)
+        renamed: stood -> less_motion (bool)
+        only in kaski-figure: beast Beast, at [ f32 ; 3 ], heading f32, speed f32, cycle f32, seen Seen, drawn Vec < FigureVertex >, indices Vec < u32 >
+        only in kaski-host: words Vec < String >, safe_area Option < SafeArea >, narrated Vec < String >, outlined Option < Outline >, dataset BTreeMap < String , String >, relaunched Vec < Vec < String > >
+    2%  struct Arrival (kaski-realm src/things.rs:55)  ~  struct Arrival (kaski-sim src/beings/arrive.rs:26)
+        renamed: seed -> frame (u64)
+        only in kaski-realm: at Block, preset u8, player Option < PlayerId >
+        only in kaski-sim: kinds & ' $1.0 SimKinds, ground & ' $1.0 Ground, stock StockView < ' $1.0 >, tracks & ' $1.0 Tracks, plans & ' $1.0 PlansAround < ' $1.0 >, situations kaski_work :: WorkStanding < ' $1.0 >, knowledge & ' $1.0 kaski_engine_advancement :: Knowledge, items & ' $1.0 kaski_items :: Items, askings & ' $1.0 kaski_building :: Askings, id BeingId, task Task, commitment Commitment, genome & ' $1.0 Genome, age Quantity
+        generics differ: `` against `< ' $1.0 >`
+    1%  struct Reading (kaski-engine-contracts src/tags.rs:142)  ~  struct Reading (kaski-view-local src/inspected.rs:92)
+        renamed: 0 -> renames (u16)
+        only in kaski-view-local: id BeingId, dev bool, at ( i32 , i32 ), doing Option < TaskRead >, leg u8, fatigue f64, belief f64, wood f64, water f64, takes_to Vec < ( String , f64 ) >, character Vec < ( String , f64 ) >, hero Option < HeroMark >, weight f64, hero_weight f64, household Option < u8 >, leads bool, ties Vec < ( BeingId , f64 ) >, weighing Option < ( u64 , Vec < OptionRead > ) >, wears Vec < String >, burden [ f64 ; 3 ], why Option < String >, counsel Option < String >, asked Option < String >, name Option < String >, bynames Vec < String >
+    1%  struct Reading (kaski-view-local src/inspected.rs:92)  ~  struct Reading (tickets src/trunk.rs:48)
+        renamed: dev -> degraded (bool)
+        only in kaski-view-local: id BeingId, at ( i32 , i32 ), doing Option < TaskRead >, leg u8, fatigue f64, belief f64, wood f64, water f64, takes_to Vec < ( String , f64 ) >, character Vec < ( String , f64 ) >, hero Option < HeroMark >, weight f64, hero_weight f64, household Option < u8 >, leads bool, ties Vec < ( BeingId , f64 ) >, weighing Option < ( u64 , Vec < OptionRead > ) >, wears Vec < String >, burden [ f64 ; 3 ], why Option < String >, counsel Option < String >, asked Option < String >, name Option < String >, bynames Vec < String >, renames u16
+        only in tickets: store Store, plan Plan, notice String
+    0%  struct Built (build-weigh src/lib.rs:99)  ~  struct Built (kaski-interface src/vocab.rs:26)
+        only in build-weigh: wall Duration, added u64, peak_mem_kib Option < u64 >, mem_before_kib Option < u64 >
+        only in kaski-interface: node Entity, inner Entity
+    0%  struct Built (build-weigh src/lib.rs:99)  ~  struct Built (kaski-test-support src/shared.rs:15)
+        only in build-weigh: wall Duration, added u64, peak_mem_kib Option < u64 >, mem_before_kib Option < u64 >
+        only in kaski-test-support: cell OnceLock < $1.0 >
+        generics differ: `` against `< $1.0 >`
+    0%  enum Profile (build-weigh src/lib.rs:34)  ~  struct Profile (kaski-gpu-capability src/profile.rs:28)
+    0%  struct Request (build-weigh src/lib.rs:90)  ~  struct Request (kaski-page-pool src/stream.rs:31)
+        only in build-weigh: crate_name String, profile Profile, build bool, limit Option < u64 >
+        only in kaski-page-pool: page PageRef, priority Priority
+    0%  struct Request (build-weigh src/lib.rs:90)  ~  enum Request (kaski-storage src/io.rs:31)
+    0%  struct Counts (canon src/dropped.rs:40)  ~  struct Counts (kaski-sim src/skip/mod.rs:42)
+        only in canon: design usize, code usize, content usize, design_files usize
+        only in kaski-sim: signal String, attrs Vec < ( String , String ) >
+    0%  struct Counts (canon-links src/measure.rs:21)  ~  struct Counts (kaski-sim src/skip/mod.rs:42)
+        only in canon-links: id & ' $1.0 str, subject & ' $1.0 str, binds bool, keywords usize, outgoing usize, incoming usize
+        only in kaski-sim: signal String, attrs Vec < ( String , String ) >
+        generics differ: `< ' $1.0 >` against ``
+    0%  struct Outcome (canon-links src/probes.rs:34)  ~  enum Outcome (kaski-beings src/wounds.rs:314)
+    0%  struct Outcome (canon-links src/probes.rs:34)  ~  enum Outcome (kaski-engine-lattice src/lattice/tile.rs:45)
+    0%  struct Outcome (canon-links src/probes.rs:34)  ~  enum Outcome (quote-check src/bevy.rs:133)
+    0%  struct Probe (canon-links src/probes.rs:25)  ~  struct Probe (kaski-engine-frame src/store.rs:51)
+        only in canon-links: ask String, via Via, expect Vec < String >
+        only in kaski-engine-frame: name & ' static str, folded bool, present fn ( & World ) -> bool, folds_now fn ( & World ) -> bool, remove fn ( & mut World )
+    0%  struct Probe (canon-links src/probes.rs:25)  ~  struct Probe (kaski-gpu-vulkan src/device/probe.rs:23)
+        only in canon-links: ask String, via Via, expect Vec < String >
+        only in kaski-gpu-vulkan: physical vk :: PhysicalDevice, api u32, properties vk :: PhysicalDeviceProperties, features vk :: PhysicalDeviceFeatures, v12 vk :: PhysicalDeviceVulkan12Features < ' static >, update_after_bind u64, families Vec < vk :: QueueFamilyProperties >, mesh bool
+    0%  struct Hit (corpus src/score.rs:13)  ~  enum Hit (kaski-panels src/ui/canvas/layout.rs:74)
+    0%  enum Kind (corpus src/doc.rs:22)  ~  trait Kind (kaski-engine-registry src/lib.rs:68)
+    0%  enum Kind (corpus src/doc.rs:22)  ~  enum Kind (kaski-engine-registry-derive src/attrs.rs:25)
+        only in corpus: Op , Notes , Round , Sketch 
+        only in kaski-engine-registry-derive: Key , ByType , Count , Decimal ( Expr ), Weights ( Expr ), Word , Table , Rows , With ( Path ), Flatten 
+    0%  enum Kind (corpus src/doc.rs:22)  ~  enum Kind (kaski-frame-plan src/builder.rs:91)
+        only in corpus: Op , Notes , Round , Sketch 
+        only in kaski-frame-plan: Input , Written 
+    0%  enum Kind (corpus src/doc.rs:22)  ~  enum Kind (kaski-lowering src/tree.rs:26)
+        only in corpus: Op , Notes , Round , Sketch 
+        only in kaski-lowering: Block ( Flow < Whole > ), Leaf , Text { face : FaceId ; run : String ; size : Whole }
+    0%  enum Kind (corpus src/doc.rs:22)  ~  struct Kind (kaski-render-model src/layers/things.rs:61)
+    0%  enum Kind (corpus src/doc.rs:22)  ~  struct Kind (kaski-tickets src/model.rs:48)
+    0%  enum Source (corpus src/terms.rs:14)  ~  struct Source (kaski-action-lang src/source.rs:15)
+    0%  enum Source (corpus src/terms.rs:14)  ~  struct Source (kaski-engine-space src/residency/mod.rs:30)
+    0%  enum Source (corpus src/terms.rs:14)  ~  struct Source (kaski-interface src/vocab.rs:84)
+    0%  enum Source (corpus src/terms.rs:14)  ~  enum Source (kaski-texel-pages src/feedback.rs:34)
+        only in corpus: Phrase , Word , Keyword 
+        only in kaski-texel-pages: Ahead , Asked 
+    0%  enum Source (corpus src/terms.rs:14)  ~  trait Source (quote-check src/source.rs:17)
+    0%  struct Term (corpus src/terms.rs:43)  ~  enum Term (kaski-engine-nature src/kinds.rs:57)
+    0%  struct Call (kaski-action-lang src/composition.rs:53)  ~  struct Call (kaski-frame-api src/call.rs:36)
+        only in kaski-action-lang: name Ref, args Vec < Arg >, span Span
+        only in kaski-frame-api: view & ' $1.0 $1.1 :: View, camera & ' $1.0 $1.1 :: Camera, list & ' $1.0 $1.1 :: List, ask & ' $1.0 $1.1 :: Ask, record & ' $1.0 Record, surface & ' $1.0 $1.1 :: FrameSurface, time DrawTime
+        generics differ: `` against `< ' $1.0 , $1.1 > where { $1.1 : ? Sized + FrameDriver }`
+    0%  struct Composition (kaski-action-lang src/composition.rs:66)  ~  struct Composition (kaski-figure src/crowd/cluster.rs:31)
+        only in kaski-action-lang: roles Vec < Role >, guards Vec < Guard >, calls Vec < Call >, legs Vec < usize >, guard_legs Vec < usize >
+        only in kaski-figure: 0 u64
+    0%  struct Composition (kaski-action-lang src/composition.rs:66)  ~  struct Composition (kaski-skeleton src/compose.rs:33)
+        only in kaski-action-lang: roles Vec < Role >, guards Vec < Guard >, calls Vec < Call >, legs Vec < usize >, guard_legs Vec < usize >
+        only in kaski-skeleton: skeleton Skeleton, girth Vec < f32 >, stance Stance
+    0%  struct Family (kaski-action-lang src/vocab.rs:38)  ~  trait Family (kaski-solver src/family.rs:34)
+    0%  struct Family (kaski-action-lang src/vocab.rs:38)  ~  trait Family (kaski-verb src/action.rs:33)
+    0%  enum Part (kaski-action-lang src/refusal.rs:12)  ~  enum Part (kaski-building src/around.rs:24)
+        only in kaski-action-lang: Role , Guard , Step 
+        only in kaski-building: Standing , Built , Down , Falling 
+    0%  enum Part (kaski-action-lang src/refusal.rs:12)  ~  enum Part (kaski-input src/devices.rs:38)
+        only in kaski-action-lang: Role , Guard , Step 
+        only in kaski-input: Key ( KeyCode ), Mouse ( MouseButton ), Pad ( GamepadButton ), Stick ( GamepadControlDirection )
+    0%  struct Refusal (kaski-action-lang src/refusal.rs:79)  ~  enum Refusal (kaski-settings src/when.rs:79)
+    0%  struct Role (kaski-action-lang src/composition.rs:16)  ~  enum Role (kaski-engine-genome src/coat.rs:15)
+    0%  struct Role (kaski-action-lang src/composition.rs:16)  ~  enum Role (kaski-material src/aspect.rs:42)
+    0%  struct Source (kaski-action-lang src/source.rs:15)  ~  struct Source (kaski-engine-space src/residency/mod.rs:30)
+        only in kaski-action-lang: roles & ' $1.0 [ & ' $1.0 str ], guards & ' $1.0 [ & ' $1.0 str ], steps & ' $1.0 [ & ' $1.0 str ], legs & ' $1.0 [ usize ], guard_legs & ' $1.0 [ usize ]
+        only in kaski-engine-space: at Point, reach u32
+        generics differ: `< ' $1.0 >` against ``
+    0%  struct Source (kaski-action-lang src/source.rs:15)  ~  struct Source (kaski-interface src/vocab.rs:84)
+        only in kaski-action-lang: roles & ' $1.0 [ & ' $1.0 str ], guards & ' $1.0 [ & ' $1.0 str ], steps & ' $1.0 [ & ' $1.0 str ], legs & ' $1.0 [ usize ], guard_legs & ' $1.0 [ usize ]
+        only in kaski-interface: read SourceFn, key Option < KeyFn >
+        generics differ: `< ' $1.0 >` against ``
+    0%  struct Source (kaski-action-lang src/source.rs:15)  ~  enum Source (kaski-texel-pages src/feedback.rs:34)
+    0%  struct Source (kaski-action-lang src/source.rs:15)  ~  trait Source (quote-check src/source.rs:17)
+    0%  struct Span (kaski-action-lang src/refusal.rs:23)  ~  enum Span (kaski-client src/clock/split.rs:36)
+    0%  struct Span (kaski-action-lang src/refusal.rs:23)  ~  struct Span (kaski-cluster-dag src/cluster.rs:87)
+        only in kaski-action-lang: part Part, index usize, start usize, end usize
+        only in kaski-cluster-dag: start u32, end u32
+    0%  struct Span (kaski-action-lang src/refusal.rs:23)  ~  struct Span (kaski-engine-ledger src/column.rs:25)
+        only in kaski-action-lang: part Part, index usize, start usize, end usize
+        only in kaski-engine-ledger: values Box < [ $1.0 ] >, held u32
+        generics differ: `` against `< $1.0 >`
+    0%  enum Why (kaski-action-lang src/refusal.rs:36)  ~  enum Why (kaski-engine-journal src/tape/fill.rs:43)
+        only in kaski-action-lang: Syntax { rule : String }, NotAName , UnknownOperation , Arity { has : usize ; wants : usize }, WrongKind { wants : & ' static str }, UnboundRole , UndeclaredShape , UnknownName { family : String ; name : String }, UnknownFamily , UnknownConstant , RoleTwice 
+        only in kaski-engine-journal: Gone , Unanswered 
+    0%  struct Host (kaski-asset-pipeline src/pack.rs:22)  ~  trait Host (kaski-host src/lib.rs:48)
+    0%  struct Fill (kaski-assets src/paint.rs:20)  ~  struct Fill (kaski-ui src/theme.rs:172)
+        only in kaski-assets: colour [ u8 ; 3 ], share f32
+        only in kaski-ui: 0 Token
+    0%  struct Rule (kaski-assets src/rule.rs:19)  ~  struct Rule (kaski-noise src/kinds.rs:18)
+        only in kaski-assets: key & ' static str, requires & ' static str, because & ' static str, applies fn ( & KindDef ) -> bool, check fn ( & Asset ) -> Vec < String >, example_kind & ' static str, defect & ' static str, break_example fn ( & mut Example )
+        only in kaski-noise: sound Id < SoundKind >, chance u16, salt u64
+    0%  enum Site (kaski-assets src/figure.rs:42)  ~  struct Site (kaski-engine-lattice src/lattice.rs:102)
+    0%  enum Site (kaski-assets src/figure.rs:42)  ~  struct Site (kaski-loot src/marks.rs:37)
+    0%  struct Texture (kaski-assets src/kinds/mod.rs:195)  ~  struct Texture (kaski-texel-pages src/texture.rs:41)
+        only in kaski-texel-pages: id TextureId, shape Shape, levels u8, top Level, root_from Level
+    0%  struct BeingKinds (kaski-beings src/kinds.rs:20)  ~  struct BeingKinds (kaski-sim src/kinds/beings.rs:35)
+        only in kaski-beings: genetics Genetics, tags TagIds, form FormIds, people Species, size_read Expression, parts Parts, nature Nature, brawn kaski_engine_nature :: AttributeKind, boldness kaski_engine_nature :: TraitKind, needs NeedIds, held crate :: intangibles :: Intangibles
+        only in kaski-sim: beings Frozen < BeingKind >, people BeingKindId, creature Vec < BeingKindId >
+    0%  struct Body (kaski-beings src/wounds.rs:305)  ~  enum Body (kaski-engine-contracts src/laws.rs:150)
+    0%  struct Hold (kaski-beings src/held.rs:41)  ~  struct Hold (kaski-tools src/grip.rs:265)
+        only in kaski-beings: 0 HeldRecord
+        only in kaski-tools: grip Grip, start Block, z f32, before Laid
+    0%  struct Measure (kaski-beings src/form.rs:17)  ~  trait Measure (kaski-engine-ladder src/measure.rs:18)
+    0%  struct Measure (kaski-beings src/form.rs:17)  ~  trait Measure (kaski-test-support src/alloc.rs:20)
+    0%  enum Outcome (kaski-beings src/wounds.rs:314)  ~  enum Outcome (kaski-engine-lattice src/lattice/tile.rs:45)
+        only in kaski-beings: Heals , Maims , BleedsOut ( u64 ), Kills 
+        only in kaski-engine-lattice: Rest , Cold , Warm ( Page < Tile < FRAC > > )
+        generics differ: `` against `< const $1.0 : u32 >`
+    0%  enum Outcome (kaski-beings src/wounds.rs:314)  ~  enum Outcome (quote-check src/bevy.rs:133)
+        only in kaski-beings: Heals , Maims , BleedsOut ( u64 ), Kills 
+        only in quote-check: Held , Scattered , Absent ( String ), NoFile ( String ), PastEnd { first : usize ; lines : usize ; path : String }, NoSource ( String ), NeedsClone , NotLocal 
+    0%  struct Parts (kaski-beings src/wounds.rs:100)  ~  struct Parts (kaski-paths src/regions.rs:30)
+        only in kaski-beings: table Frozen < PartFamily >, leg PartKind
+        only in kaski-paths: mask [ u64 ; 4 ], label Box < [ u8 ; PATCH_COLUMNS ] >, anchor Vec < Column >, joins Vec < Vec < Region > >
+    0%  struct Shape (kaski-beings src/shapes.rs:31)  ~  trait Shape (kaski-engine-link src/shape.rs:37)
+    0%  struct Shape (kaski-beings src/shapes.rs:31)  ~  struct Shape (kaski-sound src/mixer/voice.rs:19)
+        only in kaski-beings: tag AxisId, weight Quantity
+        only in kaski-sound: source Arc < Pcm >, rate f32, gain f32, pan Option < f32 >, filter Option < Lowpass >, looped bool, bus usize, start u64, handle Option < Handle >
+    0%  struct Shape (kaski-beings src/shapes.rs:31)  ~  struct Shape (kaski-texel-pages src/texture.rs:19)
+        only in kaski-beings: tag AxisId, weight Quantity
+        only in kaski-texel-pages: width u32, height u32
+    0%  struct Shape (kaski-beings src/shapes.rs:31)  ~  enum Shape (kaski-tools src/laid.rs:24)
+    0%  enum Spread (kaski-beings src/face.rs:61)  ~  enum Spread (kaski-interface src/rows/looks.rs:142)
+        only in kaski-beings: Whole , About ( u16 )
+        only in kaski-interface: Tile , Stretch , Clear 
+    0%  struct Ask (kaski-building src/things.rs:48)  ~  struct Ask (kaski-engine-journal src/tape/fill.rs:71)
+        only in kaski-building: to BeingId, like Block
+        only in kaski-engine-journal: chunks Vec < usize >, due u64, waited u32, failed u32, why Option < Why >
+    0%  struct Ask (kaski-building src/things.rs:48)  ~  enum Ask (kaski-engine-link src/ask.rs:70)
+    0%  struct Ask (kaski-building src/things.rs:48)  ~  enum Ask (kaski-panels src/founding/mod.rs:34)
+    0%  enum Axis (kaski-building src/roof.rs:28)  ~  trait Axis (kaski-engine-genome src/axis.rs:90)
+    0%  struct Close (kaski-building src/things.rs:60)  ~  struct Close (owed src/plan.rs:91)
+        only in kaski-building: 0 Block
+        only in owed: id String, to & ' static str, why String
+    0%  struct Held (kaski-building src/ask.rs:152)  ~  struct Held (kaski-engine-advancement src/knowledge/records.rs:46)
+        only in kaski-building: i0 i32, i1 i32, j0 i32, j1 i32
+        only in kaski-engine-advancement: level TrackLevel, progress Quantity, mastery Option < Mastery >, circle Vec < u64 >
+    0%  struct Held (kaski-building src/ask.rs:152)  ~  struct Held (kaski-engine-ledger src/column.rs:126)
+        only in kaski-building: i0 i32, i1 i32, j0 i32, j1 i32
+        only in kaski-engine-ledger: cells Dense < $1.0 >, beings Dense < $1.0 >, props Dense < $1.0 >, contents Dense < $1.0 >, items Dense < $1.0 >, declared Vec < ( HolderKind , Dense < $1.0 > ) >
+        generics differ: `` against `< $1.0 >`
+    0%  struct Held (kaski-building src/ask.rs:152)  ~  struct Held (kaski-page-pool src/pool.rs:14)
+        only in kaski-building: i0 i32, i1 i32, j0 i32, j1 i32
+        only in kaski-page-pool: pinned bool, needed u64
+    0%  struct Held (kaski-building src/ask.rs:152)  ~  struct Held (kaski-render-model src/held.rs:19)
+        only in kaski-building: i0 i32, i1 i32, j0 i32, j1 i32
+        only in kaski-render-model: grid u32, low [ i32 ; 3 ], high [ i32 ; 3 ]
+    0%  struct Held (kaski-building src/ask.rs:152)  ~  struct Held (kaski-tools src/held.rs:51)
+        only in kaski-building: i0 i32, i1 i32, j0 i32, j1 i32
+        only in kaski-tools: tool Option < Tool >, wall Lay, storeys u8
+    0%  struct Held (kaski-building src/ask.rs:152)  ~  struct Held (kaski-web src/web_audio.rs:48)
+        only in kaski-building: i0 i32, i1 i32, j0 i32, j1 i32
+        only in kaski-web: source AudioBufferSourceNode, gain GainNode, pan StereoPannerNode, filter BiquadFilterNode
+    0%  struct Member (kaski-building src/truss.rs:29)  ~  trait Member (kaski-fire src/member.rs:16)
+    0%  struct One (kaski-building src/around.rs:45)  ~  enum One (kaski-input src/gesture.rs:94)
+    0%  struct OpenChest (kaski-building src/chest.rs:29)  ~  struct OpenChest (kaski-view-local src/chest.rs:22)
+        only in kaski-building: chest Block, opener BeingId, keepers Vec < BeingId >, household Option < u8 >, goods Vec < ( ItemStack , Quantity ) >, room Option < ( Quantity , Quantity ) >
+        only in kaski-view-local: 0 Option < kaski_building :: chest :: OpenChest >
+    0%  enum Part (kaski-building src/around.rs:24)  ~  enum Part (kaski-input src/devices.rs:38)
+        only in kaski-building: Standing , Built , Down , Falling 
+        only in kaski-input: Key ( KeyCode ), Mouse ( MouseButton ), Pad ( GamepadButton ), Stick ( GamepadControlDirection )
+    0%  struct Plan (kaski-building src/things.rs:17)  ~  struct Plan (kaski-planning src/plan.rs:49)
+        only in kaski-building: 0 Laid
+        only in kaski-planning: rows Vec < Row >
+    0%  struct Plan (kaski-building src/lib.rs:91)  ~  struct Plan (kaski-planning src/plan.rs:49)
+        only in kaski-building: cell Block, material Site, storeys u8, from u8
+        only in kaski-planning: rows Vec < Row >
+    0%  struct Plan (kaski-building src/things.rs:17)  ~  struct Plan (owed src/plan.rs:99)
+        only in kaski-building: 0 Laid
+        only in owed: new Vec < NewTicket >, cites Vec < Cite >, closes Vec < Close >, cited usize
+    0%  struct Plan (kaski-building src/lib.rs:91)  ~  struct Plan (owed src/plan.rs:99)
+        only in kaski-building: cell Block, material Site, storeys u8, from u8
+        only in owed: new Vec < NewTicket >, cites Vec < Cite >, closes Vec < Close >, cited usize
+    0%  struct Planning (kaski-building src/plot.rs:179)  ~  struct Planning (kaski-tools src/planning.rs:21)
+        only in kaski-building: held $1.1, wrote & ' $1.0 mut PlotsWritten, buildings & ' $1.0 mut Buildings
+        only in kaski-tools: on bool
+        generics differ: `< ' $1.0 , $1.1 > where { $1.1 : PlanBook }` against ``
+    0%  struct Plot (kaski-building src/plot.rs:25)  ~  struct Plot (kaski-founding src/steps.rs:21)
+        only in kaski-founding: cx i32, cy i32, pond ( i32 , i32 ), field ( i32 , i32 , i32 , i32 ), placed Option < Placed >
+    0%  struct Entry (kaski-bundle src/bundle.rs:25)  ~  struct Entry (kaski-engine-contracts src/attributes.rs:49)
+        only in kaski-bundle: kind String, key String, record Record
+        only in kaski-engine-contracts: base Fixed < F >, tags Tags, overlays Vec < Overlay < F > >
+        generics differ: `` against `< const $1.0 : u32 >`
+    0%  struct Entry (kaski-bundle src/bundle.rs:25)  ~  struct Entry (kaski-engine-journal src/save/derive.rs:81)
+        only in kaski-bundle: kind String, key String, record Record
+        only in kaski-engine-journal: name & ' static str, stamp fn ( & World ) -> u64, keep fn ( & World ) -> Option < Value >, put fn ( & mut World , & Value ), make fn ( & mut World ), encode Option < fn ( & Value ) -> Option < Vec < u8 > > >, decode Option < fn ( & [ u8 ] ) -> Option < Value > >
+    0%  struct Entry (kaski-bundle src/bundle.rs:25)  ~  struct Entry (kaski-sim src/apply/landers/mod.rs:49)
+        only in kaski-bundle: kind String, key String, record Record
+        only in kaski-sim: place Lander, remove Lander, raise Lander, interact Interaction, after Lander, place_at Says, remove_at Says, raise_at Says, interact_at SaysInteraction, after_at Says
+    0%  struct Entry (kaski-bundle src/bundle.rs:25)  ~  struct Entry (kaski-sim src/skip/shared.rs:130)
+        only in kaski-bundle: kind String, key String, record Record
+        only in kaski-sim: skip Skip, feed Feed
+    0%  enum Form (kaski-bundle src/body.rs:91)  ~  trait Form (kaski-engine-contracts src/combine.rs:155)
+    0%  enum Form (kaski-bundle src/body.rs:91)  ~  struct Form (kaski-interface src/layout.rs:19)
+    0%  enum Form (kaski-bundle src/body.rs:91)  ~  enum Form (kaski-render-model src/layers/things.rs:69)
+        only in kaski-bundle: Fitted ( Fitted ), Cut ( GarmentCut )
+        only in kaski-render-model: Whole ( MarkerPlaced ), Parts { cards : Vec < PartCard > ; comp : PlantComposition ; height : u16 ; trunk : [ f32 ; 2 ] }
+    0%  struct Level (kaski-bundle src/record.rs:59)  ~  struct Level (kaski-frame-cull src/pyramid.rs:35)
+        only in kaski-bundle: error u32, indices Vec < u32 >
+        only in kaski-frame-cull: width usize, height usize, cells Vec < Reach >
+    0%  struct Level (kaski-bundle src/record.rs:59)  ~  struct Level (kaski-texel-pages src/page.rs:56)
+        only in kaski-bundle: error u32, indices Vec < u32 >
+        only in kaski-texel-pages: 0 u8
+    0%  struct Page (kaski-bundle src/record.rs:17)  ~  struct Page (kaski-engine-paged src/page.rs:15)
+        only in kaski-bundle: width u16, height u16, material Vec < u8 >, normal Vec < u8 >
+        only in kaski-engine-paged: 0 Arc < $1.0 >
+        generics differ: `` against `< $1.0 >`
+    0%  struct Page (kaski-bundle src/record.rs:17)  ~  enum Page (kaski-panels src/founding/mod.rs:63)
+    0%  enum Record (kaski-bundle src/record.rs:164)  ~  trait Record (kaski-engine-link src/shape.rs:13)
+    0%  enum Record (kaski-bundle src/record.rs:164)  ~  struct Record (kaski-gpu-capability src/record.rs:49)
+    0%  enum Record (kaski-bundle src/record.rs:164)  ~  struct Record (kaski-interface src/value.rs:118)
+    0%  enum Record (kaski-bundle src/record.rs:164)  ~  struct Record (kaski-render src/passes.rs:210)
+    0%  enum Record (kaski-bundle src/record.rs:164)  ~  struct Record (kaski-test-support src/golden/mod.rs:113)
+    0%  struct Refused (kaski-bundle src/loader.rs:36)  ~  enum Refused (kaski-engine-journal src/save/mod.rs:35)
+    0%  struct Refused (kaski-bundle src/loader.rs:36)  ~  enum Refused (kaski-engine-link src/publisher.rs:13)
+    0%  struct Refused (kaski-bundle src/loader.rs:36)  ~  enum Refused (kaski-interface src/display/scene.rs:64)
+    0%  struct Refused (kaski-bundle src/loader.rs:36)  ~  enum Refused (kaski-page-pool src/pool.rs:41)
+    0%  struct Refused (kaski-bundle src/loader.rs:36)  ~  struct Refused (kaski-panels src/founding/mod.rs:30)
+        only in kaski-bundle: 0 String
+        only in kaski-panels: 0 u32
+    0%  struct Region (kaski-bundle src/record.rs:31)  ~  struct Region (kaski-paths src/regions.rs:21)
+        only in kaski-bundle: page u16, x u16, y u16, width u16, height u16
+        only in kaski-paths: patch Patch, label u8
+    0%  struct Target (kaski-bundle src/body.rs:22)  ~  struct Target (kaski-engine-frame src/record.rs:25)
+        only in kaski-bundle: name String, index Vec < u32 >, offset Vec < V3 >
+        only in kaski-engine-frame: 0 u64
+    0%  struct Target (kaski-bundle src/body.rs:22)  ~  enum Target (kaski-material src/pipeline.rs:19)
+    0%  struct Target (kaski-bundle src/body.rs:22)  ~  struct Target (kaski-render src/gpu.rs:171)
+        only in kaski-bundle: name String, index Vec < u32 >, offset Vec < V3 >
+        only in kaski-render: format TextureFormat, blend Option < BlendState >, writes ColorWrites
+    0%  struct Target (kaski-bundle src/body.rs:22)  ~  struct Target (kaski-solver src/resident.rs:43)
+        only in kaski-bundle: name String, index Vec < u32 >, offset Vec < V3 >
+        only in kaski-solver: row usize, numbers [ f32 ; 4 ]
+    0%  struct Writer (kaski-bundle src/wire.rs:14)  ~  struct Writer (kaski-mesh src/furniture/shape.rs:18)
+        only in kaski-bundle: 0 Vec < u8 >
+        only in kaski-mesh: mesh & ' $1.0 mut TileMesh, shape & ' $1.0 PropShape
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Frame (kaski-camera-model src/camera.rs:158)  ~  struct Frame (kaski-engine-link src/frame.rs:99)
+        only in kaski-camera-model: width u32, height u32, pixels_per_unit f32, centre ( f32 , f32 ), depth ( f32 , f32 )
+        only in kaski-engine-link: id FrameId, state $1.0 :: State, record $1.0 :: Record, events Vec < Stamped < $1.0 :: Event > >, status Status < $1.0 :: Pace >, wanted Wanted, first u64, lapse Option < Lapse >, restored bool
+        generics differ: `` against `< $1.0 > where { $1.0 : Shape }`
+    0%  struct Frame (kaski-camera-model src/camera.rs:158)  ~  struct Frame (kaski-minds src/compose.rs:84)
+        only in kaski-camera-model: width u32, height u32, pixels_per_unit f32, centre ( f32 , f32 ), depth ( f32 , f32 )
+        only in kaski-minds: 0 u64
+    0%  struct Frame (kaski-camera-model src/camera.rs:158)  ~  struct Frame (kaski-render src/passes.rs:161)
+        only in kaski-camera-model: width u32, height u32, pixels_per_unit f32, centre ( f32 , f32 ), depth ( f32 , f32 )
+        only in kaski-render: device & ' $1.0 RenderDevice, queue & ' $1.0 RenderQueue, extracted & ' $1.0 Extracted, world & ' $1.0 WorldPass, target & ' $1.0 PixelTarget, detail TextureView, worked Option < & ' $1.0 Worked >
+        generics differ: `` against `< ' $1.0 >`
+    0%  enum Span (kaski-client src/clock/split.rs:36)  ~  struct Span (kaski-cluster-dag src/cluster.rs:87)
+    0%  enum Span (kaski-client src/clock/split.rs:36)  ~  struct Span (kaski-engine-ledger src/column.rs:25)
+    0%  struct Standing (kaski-client src/probe.rs:88)  ~  struct Standing (kaski-interface src/bind/node.rs:28)
+        only in kaski-client: logical Vec2, physical UVec2, scale f32, open Vec < u16 >, last String, actions u64, controls Option < Vec < ( String , Rect ) > >
+        only in kaski-interface: e Entity, row & ' $1.0 NodeRow, scope & ' $1.0 [ & ' $1.0 Record ]
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Standing (kaski-client src/probe.rs:88)  ~  enum Standing (kaski-panels src/ui/culture/picture.rs:61)
+    0%  struct Counted (kaski-clock src/keeper.rs:71)  ~  struct Counted (kaski-test-support src/view.rs:57)
+        only in kaski-clock: count AtomicU64, page Duration
+        only in kaski-test-support: world $1.0, reads Reads
+        generics differ: `` against `< $1.0 >`
+    0%  enum BakeError (kaski-cluster-dag src/bake.rs:20)  ~  enum BakeError (kaski-engine-contracts src/laws.rs:193)
+        only in kaski-cluster-dag: NoLeaves , FanInTooSmall , BadError ( Span ), Invalid ( DagError )
+        only in kaski-engine-contracts: Refused { broke : Break ; key : Box < str > }, Duplicate ( Box < str > ), Builtin ( Box < str > ), Unknown { after : Box < str > ; key : Box < str > }, Cycle ( Vec < Box < str > > )
+    0%  struct Draft (kaski-cluster-dag src/bake.rs:91)  ~  struct Draft (kaski-tools src/draft.rs:19)
+        only in kaski-cluster-dag: id u32, member_of Option < GroupId >, made_from Option < GroupId >, error WorldError, parent_error WorldError, span ( u32 , u32 ), level u32
+        only in kaski-tools: cells Vec < Block >, doors Vec < Block >, nodes Vec < Block >, last Option < Block >
+    0%  struct Group (kaski-cluster-dag src/dag.rs:50)  ~  enum Group (kaski-realm src/society.rs:30)
+    0%  struct Group (kaski-cluster-dag src/dag.rs:50)  ~  struct Group (owed src/group.rs:189)
+        only in kaski-cluster-dag: id GroupId, members Vec < ClusterId >, parents Vec < ClusterId >
+        only in owed: class Class, how How, items Vec < usize >
+    0%  struct Residency (kaski-cluster-dag src/cut.rs:67)  ~  struct Residency (kaski-engine-space src/residency/mod.rs:55)
+        only in kaski-cluster-dag: groups BTreeSet < GroupId >
+        only in kaski-engine-space: held BTreeSet < TileKey >, wanted BTreeMap < TileKey , ( u32 , i128 ) >, waiting BTreeSet < ( i128 , TileKey ) >, zeroed Vec < TileKey >, sources Vec < Source >, kept BTreeMap < Key , Runs >, worked usize
+    0%  struct View (kaski-cluster-dag src/cut.rs:26)  ~  struct View (kaski-render-model src/impostor/registry.rs:27)
+        only in kaski-cluster-dag: scale f32, tolerance f32
+        only in kaski-render-model: rect [ u32 ; 4 ], origin ( i32 , i32 ), azimuth u8
+    0%  struct Kept (kaski-creatures src/keep.rs:193)  ~  struct Kept (kaski-figure src/crowd/beasts.rs:25)
+        only in kaski-creatures: 0 Vec < One >
+        only in kaski-figure: beast Beast, at [ f32 ; 3 ], heading f32, speed f32, cycle f32, seen Seen, stood bool, drawn Vec < FigureVertex >, indices Vec < u32 >
+    0%  struct Kept (kaski-creatures src/kept.rs:16)  ~  struct Kept (kaski-figure src/crowd/beasts.rs:25)
+        only in kaski-creatures: eats ItemStack, lays ItemStack, lays_every u64, sheds ItemStack, sheds_every u64
+        only in kaski-figure: beast Beast, at [ f32 ; 3 ], heading f32, speed f32, cycle f32, seen Seen, stood bool, drawn Vec < FigureVertex >, indices Vec < u32 >
+    0%  struct Kept (kaski-creatures src/keep.rs:193)  ~  struct Kept (kaski-host src/recording.rs:15)
+        only in kaski-creatures: 0 Vec < One >
+        only in kaski-host: words Vec < String >, safe_area Option < SafeArea >, less_motion bool, narrated Vec < String >, outlined Option < Outline >, dataset BTreeMap < String , String >, relaunched Vec < Vec < String > >
+    0%  struct Kept (kaski-creatures src/kept.rs:16)  ~  struct Kept (kaski-host src/recording.rs:15)
+        only in kaski-creatures: eats ItemStack, lays ItemStack, lays_every u64, sheds ItemStack, sheds_every u64
+        only in kaski-host: words Vec < String >, safe_area Option < SafeArea >, less_motion bool, narrated Vec < String >, outlined Option < Outline >, dataset BTreeMap < String , String >, relaunched Vec < Vec < String > >
+    0%  struct Kept (kaski-creatures src/keep.rs:193)  ~  struct Kept (kaski-input src/press.rs:124)
+        only in kaski-creatures: 0 Vec < One >
+        only in kaski-input: cursor Vec2, touches HashMap < u64 , TouchInput >, held Vec < PointerInput >
+    0%  struct Kept (kaski-creatures src/kept.rs:16)  ~  struct Kept (kaski-input src/press.rs:124)
+        only in kaski-creatures: eats ItemStack, lays ItemStack, lays_every u64, sheds ItemStack, sheds_every u64
+        only in kaski-input: cursor Vec2, touches HashMap < u64 , TouchInput >, held Vec < PointerInput >
+    0%  struct Kept (kaski-creatures src/keep.rs:193)  ~  trait Kept (kaski-motion src/alive/work.rs:55)
+    0%  struct Kept (kaski-creatures src/kept.rs:16)  ~  trait Kept (kaski-motion src/alive/work.rs:55)
+    0%  struct Kept (kaski-creatures src/keep.rs:193)  ~  struct Kept (kaski-paths src/kept.rs:25)
+        only in kaski-creatures: 0 Vec < One >
+        only in kaski-paths: span ColumnSpan, dist Patches < u16 >, frontier VecDeque < Column >, read BTreeMap < Patch , [ u64 ; 4 ] >, asked u64
+    0%  struct Placing (kaski-editor src/ledger.rs:173)  ~  struct Placing (kaski-tools src/place.rs:30)
+        only in kaski-editor: holders Query < ' $1.0 , ' $1.1 , & ' static ChildOf , With < BarPart > >, up Query < ' $1.0 , ' $1.1 , & ' static ChildOf >, bound Query < ' $1.0 , ' $1.1 , & ' static Bound >
+        only in kaski-tools: laid ResMut < ' $1.0 , Laid >, ground Option < Res < ' $1.0 , Ground > >, plans Option < PlansHeld < ' $1.0 , ' $1.1 > >, timeline ResMut < ' $1.0 , Timeline < SettlementState > >
+    0%  struct Marks (kaski-engine src/plugin.rs:65)  ~  enum Marks (kaski-view-contracts src/overlay.rs:53)
+    0%  enum Event (kaski-engine-advancement src/knowledge/records.rs:117)  ~  enum Event (kaski-plants src/forest/genesis.rs:107)
+        only in kaski-engine-advancement: Opened { realm : Realm ; track : TrackKind }, Surfaced { node : NodeKind ; realm : Realm }, Understood { node : NodeKind ; realm : Realm }, Mastered { branch : Mastery ; first : bool ; node : NodeKind ; realm : Realm }, Closed { realm : Realm ; stage : u8 ; track : TrackKind }
+        only in kaski-plants: Mature , Seed , Die 
+    0%  struct Focus (kaski-engine-advancement src/knowledge/records.rs:69)  ~  struct Focus (kaski-interface src/navigate.rs:42)
+        only in kaski-engine-advancement: node NodeKind, keep bool
+        only in kaski-interface: entered Vec < Entity >, at Option < Entity >
+    0%  struct Fold (kaski-engine-advancement src/kinds.rs:203)  ~  enum Fold (kaski-engine-genome src/axis.rs:12)
+    0%  struct Fold (kaski-engine-advancement src/kinds.rs:203)  ~  struct Fold (kaski-engine-ledger src/moves.rs:81)
+        only in kaski-engine-advancement: signs Vec < Sign >, threshold Quantity
+        only in kaski-engine-ledger: net Vec < ( $1.0 , i128 ) >
+        generics differ: `` against `< $1.0 >`
+    0%  struct Founding (kaski-engine-advancement src/text.rs:132)  ~  struct Founding (kaski-founding src/founding.rs:122)
+        only in kaski-engine-advancement: record Option < String >, levels Vec < ( String , TrackLevel ) >
+        only in kaski-founding: preset usize, pool Points, reroll u64, founders Vec < Founder >, point u16, inherited Vec < AxisId >
+    0%  struct Held (kaski-engine-advancement src/knowledge/records.rs:46)  ~  struct Held (kaski-engine-ledger src/column.rs:126)
+        only in kaski-engine-advancement: level TrackLevel, progress Quantity, mastery Option < Mastery >, circle Vec < u64 >
+        only in kaski-engine-ledger: cells Dense < $1.0 >, beings Dense < $1.0 >, props Dense < $1.0 >, contents Dense < $1.0 >, items Dense < $1.0 >, declared Vec < ( HolderKind , Dense < $1.0 > ) >
+        generics differ: `` against `< $1.0 >`
+    0%  struct Held (kaski-engine-advancement src/knowledge/records.rs:46)  ~  struct Held (kaski-page-pool src/pool.rs:14)
+        only in kaski-engine-advancement: level TrackLevel, progress Quantity, mastery Option < Mastery >, circle Vec < u64 >
+        only in kaski-page-pool: pinned bool, needed u64
+    0%  struct Held (kaski-engine-advancement src/knowledge/records.rs:46)  ~  struct Held (kaski-render-model src/held.rs:19)
+        only in kaski-engine-advancement: level TrackLevel, progress Quantity, mastery Option < Mastery >, circle Vec < u64 >
+        only in kaski-render-model: grid u32, low [ i32 ; 3 ], high [ i32 ; 3 ]
+    0%  struct Held (kaski-engine-advancement src/knowledge/records.rs:46)  ~  struct Held (kaski-tools src/held.rs:51)
+        only in kaski-engine-advancement: level TrackLevel, progress Quantity, mastery Option < Mastery >, circle Vec < u64 >
+        only in kaski-tools: tool Option < Tool >, wall Lay, storeys u8
+    0%  struct Held (kaski-engine-advancement src/knowledge/records.rs:46)  ~  struct Held (kaski-web src/web_audio.rs:48)
+        only in kaski-engine-advancement: level TrackLevel, progress Quantity, mastery Option < Mastery >, circle Vec < u64 >
+        only in kaski-web: source AudioBufferSourceNode, gain GainNode, pan StereoPannerNode, filter BiquadFilterNode
+    0%  struct Lane (kaski-engine-advancement src/knowledge/records.rs:87)  ~  struct Lane (kaski-engine-frame src/lane.rs:49)
+        only in kaski-engine-advancement: points Quantity, accrued Quantity, searching Quantity, stage u8, closed Vec < Summary >, focus Option < Focus >
+        only in kaski-engine-frame: slots HashMap < u64 , u32 , BuildHasherDefault < Mix > >, stamp Vec < u64 >, list Vec < Target >
+    0%  struct Lane (kaski-engine-advancement src/knowledge/records.rs:87)  ~  struct Lane (kaski-planning src/roadmap.rs:40)
+        only in kaski-engine-advancement: points Quantity, accrued Quantity, searching Quantity, stage u8, closed Vec < Summary >, focus Option < Focus >
+        only in kaski-planning: owner String, epochs Vec < Interval >
+    0%  struct Rows (kaski-engine-advancement src/text.rs:161)  ~  struct Rows (kaski-engine-nature src/text.rs:103)
+        only in kaski-engine-advancement: tracks Vec < TrackRow >, nodes Vec < NodeRow >, eras Vec < EraRow >, founding Option < Founding >
+        only in kaski-engine-nature: senses Vec < SenseRow >, provenances Vec < ProvenanceRow >, attributes Vec < AttributeRow >, traits Vec < TraitRow >, skills Vec < SkillRow >, needs Vec < NeedRow >
+    0%  struct Rows (kaski-engine-advancement src/text.rs:161)  ~  struct Rows (kaski-ground src/ground/bitplanes.rs:19)
+        only in kaski-engine-advancement: tracks Vec < TrackRow >, nodes Vec < NodeRow >, eras Vec < EraRow >, founding Option < Founding >
+        only in kaski-ground: walk [ u16 ; SIDE ], east [ u16 ; SIDE ], south [ u16 ; SIDE ]
+    0%  struct Rows (kaski-engine-advancement src/text.rs:161)  ~  struct Rows (kaski-items src/rows.rs:52)
+        only in kaski-engine-advancement: tracks Vec < TrackRow >, nodes Vec < NodeRow >, eras Vec < EraRow >, founding Option < Founding >
+        only in kaski-items: 0 Table
+    0%  struct Bound (kaski-engine-agency src/text.rs:89)  ~  struct Bound (kaski-figure src/strand/mod.rs:95)
+        only in kaski-engine-agency: reads String, at Number, cmp Cmp
+        only in kaski-figure: vertex u32, guide u32, segment u32, t f32, rest V3, skin V3, allow f32, dressed V3, far V3
+    0%  struct Bound (kaski-engine-agency src/text.rs:89)  ~  enum Bound (kaski-gpu-metal src/device/backend.rs:29)
+    0%  struct Bound (kaski-engine-agency src/text.rs:89)  ~  enum Bound (kaski-gpu-vulkan src/device/backend.rs:22)
+    0%  struct Bound (kaski-engine-agency src/text.rs:89)  ~  enum Bound (kaski-gpu-wgpu src/slots.rs:12)
+    0%  struct Bound (kaski-engine-agency src/text.rs:89)  ~  struct Bound (kaski-interface src/bind/mod.rs:68)
+        only in kaski-engine-agency: reads String, at Number, cmp Cmp
+        only in kaski-interface: node u32, tree Tree, path Vec < ( u32 , u32 ) >
+    0%  struct Claims (kaski-engine-agency src/claims.rs:18)  ~  struct Claims (kaski-engine-contracts src/conformance/mod.rs:55)
+        only in kaski-engine-agency: slots BTreeMap < Slot , Vec < BeingId > >
+        only in kaski-engine-contracts: associativity Associativity
+    0%  struct Facet (kaski-engine-agency src/belief/facet.rs:16)  ~  struct Facet (kaski-view-local src/sensed.rs:28)
+        only in kaski-engine-agency: held Vec < Evidence >
+        only in kaski-view-local: name String, value f64, confidence f64
+    0%  struct Weight (kaski-engine-carrier src/weight.rs:21)  ~  struct Weight (kaski-texel-pages src/feedback.rs:14)
+        only in kaski-engine-carrier: 0 Fixed < FRAC >
+        only in kaski-texel-pages: 0 u32
+    0%  struct Block (kaski-engine-contracts src/block.rs:38)  ~  struct Block (kaski-figure src/crowd/pieces.rs:17)
+        only in kaski-engine-contracts: grid u32, i i32, j i32, k i32
+        only in kaski-figure: corners [ V3 ; 8 ], colour [ u8 ; 3 ]
+    0%  struct Block (kaski-engine-contracts src/block.rs:38)  ~  struct Block (kaski-render-model src/impostor/grid.rs:21)
+        only in kaski-engine-contracts: grid u32, i i32, j i32, k i32
+        only in kaski-render-model: x u8, y u8, w u8, h u8
+    0%  trait Context (kaski-engine-contracts src/tags.rs:168)  ~  struct Context (kaski-gpu-vulkan src/device/context.rs:23)
+    0%  trait Dense (kaski-engine-contracts src/attributes.rs:31)  ~  struct Dense (kaski-engine-ledger src/column.rs:32)
+    0%  struct Entry (kaski-engine-contracts src/attributes.rs:49)  ~  struct Entry (kaski-engine-journal src/save/derive.rs:81)
+        only in kaski-engine-contracts: base Fixed < F >, tags Tags, overlays Vec < Overlay < F > >
+        only in kaski-engine-journal: name & ' static str, stamp fn ( & World ) -> u64, keep fn ( & World ) -> Option < Value >, put fn ( & mut World , & Value ), make fn ( & mut World ), encode Option < fn ( & Value ) -> Option < Vec < u8 > > >, decode Option < fn ( & [ u8 ] ) -> Option < Value > >
+        generics differ: `< const $1.0 : u32 >` against ``
+    0%  struct Entry (kaski-engine-contracts src/attributes.rs:49)  ~  struct Entry (kaski-gpu-capability src/record.rs:18)
+        only in kaski-engine-contracts: base Fixed < F >, tags Tags, overlays Vec < Overlay < F > >
+        only in kaski-gpu-capability: key String, value Value, origin Option < Origin >
+        generics differ: `< const $1.0 : u32 >` against ``
+    0%  struct Entry (kaski-engine-contracts src/attributes.rs:49)  ~  struct Entry (kaski-sim src/apply/landers/mod.rs:49)
+        only in kaski-engine-contracts: base Fixed < F >, tags Tags, overlays Vec < Overlay < F > >
+        only in kaski-sim: place Lander, remove Lander, raise Lander, interact Interaction, after Lander, place_at Says, remove_at Says, raise_at Says, interact_at SaysInteraction, after_at Says
+        generics differ: `< const $1.0 : u32 >` against ``
+    0%  struct Entry (kaski-engine-contracts src/attributes.rs:49)  ~  struct Entry (kaski-sim src/skip/shared.rs:130)
+        only in kaski-engine-contracts: base Fixed < F >, tags Tags, overlays Vec < Overlay < F > >
+        only in kaski-sim: skip Skip, feed Feed
+        generics differ: `< const $1.0 : u32 >` against ``
+    0%  trait Form (kaski-engine-contracts src/combine.rs:155)  ~  struct Form (kaski-interface src/layout.rs:19)
+    0%  trait Form (kaski-engine-contracts src/combine.rs:155)  ~  enum Form (kaski-render-model src/layers/things.rs:69)
+    0%  struct MaterialId (kaski-engine-contracts src/material.rs:11)  ~  struct MaterialId (kaski-material src/material.rs:12)
+        only in kaski-engine-contracts: 0 u16
+        only in kaski-material: 0 u32
+    0%  struct Overlay (kaski-engine-contracts src/overlay.rs:67)  ~  struct Overlay (kaski-texel-pages src/overlay.rs:27)
+        only in kaski-engine-contracts: modifier Modifier < FRAC >, weight Weight, source OverlaySource, provenance Provenance, condition OverlayCondition < FRAC >
+        only in kaski-texel-pages: substance TextureId, prototype TextureId, residual Option < TextureId >
+        generics differ: `< const $1.0 : u32 >` against ``
+    0%  struct Patch (kaski-engine-contracts src/block.rs:86)  ~  struct Patch (kaski-render-model src/print_pages/mod.rs:131)
+        only in kaski-engine-contracts: grid u32, i i32, j i32
+        only in kaski-render-model: at ( u32 , u32 ), size ( u32 , u32 ), texels Vec < [ u8 ; 4 ] >
+    0%  struct Reading (kaski-engine-contracts src/tags.rs:142)  ~  struct Reading (kaski-engine-genome src/expression.rs:48)
+        only in kaski-engine-contracts: 0 u16
+        only in kaski-engine-genome: expression Expression
+    0%  struct Reading (kaski-engine-contracts src/tags.rs:142)  ~  struct Reading (kaski-engine-lattice src/lattice/reach.rs:34)
+        only in kaski-engine-contracts: 0 u16
+        only in kaski-engine-lattice: drift Vec < Windage < FRAC > >, pass Vec < bool >, bed Vec < Fixed < FRAC > >
+        generics differ: `` against `< const $1.0 : u32 >`
+    0%  struct Reading (kaski-engine-contracts src/tags.rs:142)  ~  struct Reading (kaski-noise src/react.rs:39)
+        only in kaski-engine-contracts: 0 u16
+        only in kaski-noise: content & ' $1.0 HearingContent, hearers & ' $1.0 Hearers, ground & ' $1.0 Ground, tracks & ' $1.0 Tracks, frame u64
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Reading (kaski-engine-contracts src/tags.rs:142)  ~  struct Reading (kaski-solver src/family.rs:16)
+        only in kaski-engine-contracts: 0 u16
+        only in kaski-solver: mine V3, other V3, w_mine f32, w_other f32, numbers [ f32 ; 4 ], alpha f32
+    0%  struct Reading (kaski-engine-contracts src/tags.rs:142)  ~  struct Reading (tickets src/trunk.rs:48)
+        only in kaski-engine-contracts: 0 u16
+        only in tickets: store Store, plan Plan, notice String, degraded bool
+    0%  struct Reads (kaski-engine-contracts src/attributes.rs:100)  ~  enum Reads (kaski-minds src/minds.rs:198)
+    0%  struct Reads (kaski-engine-contracts src/attributes.rs:100)  ~  struct Reads (kaski-test-support src/view.rs:25)
+        only in kaski-engine-contracts: tags Tags, read & ' $1.0 $1.2
+        only in kaski-test-support: 0 Arc < Asked >
+        generics differ: `< ' $1.0 , const $1.1 : u32 , $1.2 >` against ``
+    0%  struct Slot (kaski-engine-contracts src/slot.rs:41)  ~  enum Slot (kaski-engine-journal src/tape/mod.rs:31)
+    0%  struct Slot (kaski-engine-contracts src/slot.rs:41)  ~  struct Slot (kaski-engine-link src/transport.rs:40)
+        only in kaski-engine-contracts: kind SlotKind, key u128
+        only in kaski-engine-link: untaken Option < Frame < $1.0 > >, outbox Vec < Ask < $1.0 > >
+        generics differ: `` against `< $1.0 > where { $1.0 : Shape }`
+    0%  struct Slot (kaski-engine-contracts src/slot.rs:41)  ~  struct Slot (kaski-engine-volume src/volume.rs:21)
+        only in kaski-engine-contracts: kind SlotKind, key u128
+        only in kaski-engine-volume: tile Page < Tile >, edited bool, counted Option < u64 >, revision u64, summary Option < Arc < ReliefSummary > >
+    0%  struct Slot (kaski-engine-contracts src/slot.rs:41)  ~  struct Slot (kaski-gpu-api src/binding.rs:18)
+        only in kaski-engine-contracts: kind SlotKind, key u128
+        only in kaski-gpu-api: 0 u32
+    0%  struct Slot (kaski-engine-contracts src/slot.rs:41)  ~  struct Slot (kaski-render src/world/models.rs:24)
+        only in kaski-engine-contracts: kind SlotKind, key u128
+        only in kaski-render: model FurnitureModel, first u32, count u32
+    0%  struct Slot (kaski-engine-contracts src/slot.rs:41)  ~  struct Slot (kaski-settings src/store.rs:37)
+        only in kaski-engine-contracts: kind SlotKind, key u128
+        only in kaski-settings: id String, shape KnobShape, when When, live String, stored String
+    0%  struct Founding (kaski-engine-culture src/text.rs:143)  ~  struct Founding (kaski-founding src/founding.rs:122)
+        only in kaski-engine-culture: chosen Option < Vec < String > >, naming Option < String >
+        only in kaski-founding: preset usize, pool Points, reroll u64, founders Vec < Founder >, point u16, inherited Vec < AxisId >
+    0%  enum Origin (kaski-engine-culture src/kinds.rs:48)  ~  enum Origin (kaski-gpu-capability src/origin.rs:11)
+        only in kaski-engine-culture: Chosen , Lived 
+        only in kaski-gpu-capability: Measured , Reported , Defaulted 
+    0%  struct Rows (kaski-engine-culture src/text.rs:150)  ~  struct Rows (kaski-ground src/ground/bitplanes.rs:19)
+        only in kaski-engine-culture: traits Vec < TraitRow >, traditions Vec < TraditionRow >, offices Vec < OfficeRow >, grants Vec < GrantRow >, presets Vec < PresetRow >, holders Vec < HolderRow >, categories Vec < CategoryRow >, namings Vec < NamingRow >, bynames Vec < BynameRow >, founding Option < Founding >
+        only in kaski-ground: walk [ u16 ; SIDE ], east [ u16 ; SIDE ], south [ u16 ; SIDE ]
+    0%  struct Rows (kaski-engine-culture src/text.rs:150)  ~  struct Rows (kaski-items src/rows.rs:52)
+        only in kaski-engine-culture: traits Vec < TraitRow >, traditions Vec < TraditionRow >, offices Vec < OfficeRow >, grants Vec < GrantRow >, presets Vec < PresetRow >, holders Vec < HolderRow >, categories Vec < CategoryRow >, namings Vec < NamingRow >, bynames Vec < BynameRow >, founding Option < Founding >
+        only in kaski-items: 0 Table
+    0%  enum Said (kaski-engine-culture src/fame.rs:21)  ~  struct Said (kaski-interface src/bind/mod.rs:252)
+    0%  struct Seat (kaski-engine-culture src/text.rs:73)  ~  struct Seat (kaski-realm src/office.rs:103)
+        only in kaski-engine-culture: grants Vec < String >
+        only in kaski-realm: office Office, place u8, of & ' $1.0 Established
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Seat (kaski-engine-culture src/text.rs:73)  ~  struct Seat (kaski-realm src/session/mod.rs:62)
+        only in kaski-engine-culture: grants Vec < String >
+        only in kaski-realm: being BeingId, left Option < u64 >
+    0%  struct Seat (kaski-engine-culture src/text.rs:73)  ~  struct Seat (kaski-realm src/things.rs:36)
+        only in kaski-engine-culture: grants Vec < String >
+        only in kaski-realm: player PlayerId, being BeingId
+    0%  struct Seat (kaski-engine-culture src/text.rs:73)  ~  struct Seat (kaski-view-local src/readout.rs:53)
+        only in kaski-engine-culture: grants Vec < String >
+        only in kaski-view-local: head Option < BeingId >, me Option < BeingId >, leads bool, cohesion f64, heroes usize
+    0%  struct Standing (kaski-engine-culture src/fame.rs:48)  ~  struct Standing (kaski-interface src/bind/node.rs:28)
+        only in kaski-engine-culture: height Quantity, left Quantity, at u64
+        only in kaski-interface: e Entity, row & ' $1.0 NodeRow, scope & ' $1.0 [ & ' $1.0 Record ]
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Standing (kaski-engine-culture src/fame.rs:48)  ~  enum Standing (kaski-panels src/ui/culture/picture.rs:61)
+    0%  enum Class (kaski-engine-frame src/close.rs:30)  ~  enum Class (kaski-planning src/derive.rs:19)
+        only in kaski-engine-frame: Form , Destruction 
+        only in kaski-planning: Open , Active , Stopped , Done , Dropped 
+    0%  enum Class (kaski-engine-frame src/close.rs:30)  ~  struct Class (kaski-sim src/beings/exchange/mod.rs:44)
+    0%  enum Class (kaski-engine-frame src/close.rs:30)  ~  enum Class (owed src/group.rs:31)
+        only in kaski-engine-frame: Form , Destruction 
+        only in owed: CanonSilent , Op , StandIn , Unmarked , Seam ( String )
+    0%  trait Landing (kaski-engine-frame src/landing.rs:32)  ~  enum Landing (tickets src/landing.rs:19)
+    0%  struct Lane (kaski-engine-frame src/lane.rs:49)  ~  struct Lane (kaski-planning src/roadmap.rs:40)
+        only in kaski-engine-frame: slots HashMap < u64 , u32 , BuildHasherDefault < Mix > >, stamp Vec < u64 >, list Vec < Target >
+        only in kaski-planning: owner String, epochs Vec < Interval >
+    0%  enum Pin (kaski-engine-frame src/close.rs:58)  ~  struct Pin (kaski-solver src/family.rs:74)
+    0%  trait Store (kaski-engine-frame src/store.rs:16)  ~  struct Store (kaski-figure src/crowd/cluster.rs:161)
+    0%  trait Store (kaski-engine-frame src/store.rs:16)  ~  struct Store (kaski-tickets src/model.rs:126)
+    0%  struct Target (kaski-engine-frame src/record.rs:25)  ~  enum Target (kaski-material src/pipeline.rs:19)
+    0%  struct Target (kaski-engine-frame src/record.rs:25)  ~  struct Target (kaski-render src/gpu.rs:171)
+        only in kaski-engine-frame: 0 u64
+        only in kaski-render: format TextureFormat, blend Option < BlendState >, writes ColorWrites
+    0%  struct Target (kaski-engine-frame src/record.rs:25)  ~  struct Target (kaski-solver src/resident.rs:43)
+        only in kaski-engine-frame: 0 u64
+        only in kaski-solver: row usize, numbers [ f32 ; 4 ]
+    0%  struct Touch (kaski-engine-frame src/record.rs:29)  ~  enum Touch (kaski-ui src/pick.rs:17)
+    0%  enum Fold (kaski-engine-genome src/axis.rs:12)  ~  struct Fold (kaski-engine-ledger src/moves.rs:81)
+    0%  struct Reach (kaski-engine-genome src/gene.rs:13)  ~  enum Reach (kaski-frame-cull src/pyramid.rs:13)
+    0%  struct Reach (kaski-engine-genome src/gene.rs:13)  ~  struct Reach (kaski-interface src/a11y.rs:49)
+        only in kaski-engine-genome: tag String, weight i32
+        only in kaski-interface: focus Option < ResMut < ' $1.0 , InputFocus > >, visible Option < Res < ' $1.0 , InputFocusVisible > >, frames Query < ' $1.0 , ' $1.1 , ( Entity , & ' static PanelFrame ) >, children Query < ' $1.0 , ' $1.1 , & ' static Children >, controls Query < ' $1.0 , ' $1.1 , ( ) , With < TabIndex > >
+        generics differ: `` against `< ' $1.0 , ' $1.1 >`
+    0%  struct Reach (kaski-engine-genome src/gene.rs:13)  ~  struct Reach (kaski-view-contracts src/model/mod.rs:107)
+        only in kaski-engine-genome: tag String, weight i32
+        only in kaski-view-contracts: at ReachAt, progress u8
+    0%  struct Reading (kaski-engine-genome src/expression.rs:48)  ~  struct Reading (kaski-engine-lattice src/lattice/reach.rs:34)
+        only in kaski-engine-genome: expression Expression
+        only in kaski-engine-lattice: drift Vec < Windage < FRAC > >, pass Vec < bool >, bed Vec < Fixed < FRAC > >
+        generics differ: `` against `< const $1.0 : u32 >`
+    0%  struct Reading (kaski-engine-genome src/expression.rs:48)  ~  struct Reading (kaski-noise src/react.rs:39)
+        only in kaski-engine-genome: expression Expression
+        only in kaski-noise: content & ' $1.0 HearingContent, hearers & ' $1.0 Hearers, ground & ' $1.0 Ground, tracks & ' $1.0 Tracks, frame u64
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Reading (kaski-engine-genome src/expression.rs:48)  ~  struct Reading (kaski-solver src/family.rs:16)
+        only in kaski-engine-genome: expression Expression
+        only in kaski-solver: mine V3, other V3, w_mine f32, w_other f32, numbers [ f32 ; 4 ], alpha f32
+    0%  struct Reading (kaski-engine-genome src/expression.rs:48)  ~  struct Reading (kaski-view-local src/inspected.rs:92)
+        only in kaski-engine-genome: expression Expression
+        only in kaski-view-local: id BeingId, dev bool, at ( i32 , i32 ), doing Option < TaskRead >, leg u8, fatigue f64, belief f64, wood f64, water f64, takes_to Vec < ( String , f64 ) >, character Vec < ( String , f64 ) >, hero Option < HeroMark >, weight f64, hero_weight f64, household Option < u8 >, leads bool, ties Vec < ( BeingId , f64 ) >, weighing Option < ( u64 , Vec < OptionRead > ) >, wears Vec < String >, burden [ f64 ; 3 ], why Option < String >, counsel Option < String >, asked Option < String >, name Option < String >, bynames Vec < String >, renames u16
+    0%  struct Reading (kaski-engine-genome src/expression.rs:48)  ~  struct Reading (tickets src/trunk.rs:48)
+        only in kaski-engine-genome: expression Expression
+        only in tickets: store Store, plan Plan, notice String, degraded bool
+    0%  enum Role (kaski-engine-genome src/coat.rs:15)  ~  enum Role (kaski-material src/aspect.rs:42)
+        only in kaski-engine-genome: Body  = 0, Dark , Leg , UpperLeg , Belly , Head , Neck , Ear , Horn , Eye , Nose , Accent , Mane , Tail , Spot , Sock 
+        only in kaski-material: Slab , Modifier , Surface 
+    0%  struct Ask (kaski-engine-journal src/tape/fill.rs:71)  ~  enum Ask (kaski-engine-link src/ask.rs:70)
+    0%  struct Ask (kaski-engine-journal src/tape/fill.rs:71)  ~  enum Ask (kaski-panels src/founding/mod.rs:34)
+    0%  enum Asked (kaski-engine-journal src/tape/fill.rs:34)  ~  struct Asked (kaski-test-support src/alloc.rs:120)
+    0%  enum Asked (kaski-engine-journal src/tape/fill.rs:34)  ~  struct Asked (kaski-test-support src/view.rs:17)
+    0%  struct Carried (kaski-engine-journal src/save/mod.rs:27)  ~  struct Carried (kaski-engine-ledger src/carried.rs:26)
+        only in kaski-engine-journal: name & ' static str, stamp u64, value Value
+        only in kaski-engine-ledger: id BeingId, held Vec < ( $1.1 , Fixed < FRAC > ) >
+        generics differ: `` against `< const $1.0 : u32 , $1.1 > where { $1.1 : ' static + Copy + Ord + Send + Sync }`
+    0%  struct Carried (kaski-engine-journal src/save/mod.rs:27)  ~  struct Carried (kaski-view-contracts src/model/mod.rs:181)
+        only in kaski-engine-journal: name & ' static str, stamp u64, value Value
+        only in kaski-view-contracts: pose CarryPose, level u8, pieces Vec < DrawnPiece >, model Option < CarriedModel >
+    0%  struct Entry (kaski-engine-journal src/save/derive.rs:81)  ~  struct Entry (kaski-gpu-capability src/record.rs:18)
+        only in kaski-engine-journal: name & ' static str, stamp fn ( & World ) -> u64, keep fn ( & World ) -> Option < Value >, put fn ( & mut World , & Value ), make fn ( & mut World ), encode Option < fn ( & Value ) -> Option < Vec < u8 > > >, decode Option < fn ( & [ u8 ] ) -> Option < Value > >
+        only in kaski-gpu-capability: key String, value Value, origin Option < Origin >
+    0%  struct Entry (kaski-engine-journal src/save/derive.rs:81)  ~  struct Entry (kaski-sim src/apply/landers/mod.rs:49)
+        only in kaski-engine-journal: name & ' static str, stamp fn ( & World ) -> u64, keep fn ( & World ) -> Option < Value >, put fn ( & mut World , & Value ), make fn ( & mut World ), encode Option < fn ( & Value ) -> Option < Vec < u8 > > >, decode Option < fn ( & [ u8 ] ) -> Option < Value > >
+        only in kaski-sim: place Lander, remove Lander, raise Lander, interact Interaction, after Lander, place_at Says, remove_at Says, raise_at Says, interact_at SaysInteraction, after_at Says
+    0%  struct Entry (kaski-engine-journal src/save/derive.rs:81)  ~  struct Entry (kaski-sim src/skip/shared.rs:130)
+        only in kaski-engine-journal: name & ' static str, stamp fn ( & World ) -> u64, keep fn ( & World ) -> Option < Value >, put fn ( & mut World , & Value ), make fn ( & mut World ), encode Option < fn ( & Value ) -> Option < Vec < u8 > > >, decode Option < fn ( & [ u8 ] ) -> Option < Value > >
+        only in kaski-sim: skip Skip, feed Feed
+    0%  struct Moving (kaski-engine-journal src/tape/fill.rs:96)  ~  struct Moving (kaski-input src/lib.rs:56)
+        only in kaski-engine-journal: to Box < dyn Io < usize > >, gets BTreeMap < Ticket , usize >, puts BTreeSet < Ticket >
+        only in kaski-input: at Vec2, down Vec2, dragged bool
+    0%  struct Moving (kaski-engine-journal src/tape/fill.rs:96)  ~  struct Moving (kaski-knowledge src/stint.rs:39)
+        only in kaski-engine-journal: to Box < dyn Io < usize > >, gets BTreeMap < Ticket , usize >, puts BTreeSet < Ticket >
+        only in kaski-knowledge: knowledge & ' $1.0 Knowledge, tracks & ' $1.0 Tracks, kinds & ' $1.0 KnowledgeKinds, ground & ' $1.0 Ground, records super :: NodeRecords < ' $1.0 >, offers & ' $1.0 Offers, cultures & ' $1.0 Cultures, claims & ' $1.0 Claims, standing & ' $1.0 kaski_engine_contracts :: Roster < ( Villager , Block , kaski_engine_genome :: Genome ) >, frame u64
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Range (kaski-engine-journal src/tape/mod.rs:357)  ~  struct Range (kaski-starsystem src/generate.rs:77)
+        only in kaski-engine-journal: tape & ' $1.0 Tape < $1.1 >, front usize, back usize, ahead Option < Decoded < $1.1 > >, behind Option < Decoded < $1.1 > >
+        only in kaski-starsystem: lo f64, hi f64
+        generics differ: `< ' $1.0 , $1.1 >` against ``
+    0%  enum Refused (kaski-engine-journal src/save/mod.rs:35)  ~  enum Refused (kaski-engine-link src/publisher.rs:13)
+        only in kaski-engine-journal: Floor { frame : u64 }, Format 
+        only in kaski-engine-link: NotForward 
+    0%  enum Refused (kaski-engine-journal src/save/mod.rs:35)  ~  enum Refused (kaski-interface src/display/scene.rs:64)
+        only in kaski-engine-journal: Floor { frame : u64 }, Format 
+        only in kaski-interface: Unexpressible { index : usize ; kind : Option < DrawKind > ; reason : Reason }, Cannot ( CannotDraw )
+    0%  enum Refused (kaski-engine-journal src/save/mod.rs:35)  ~  enum Refused (kaski-page-pool src/pool.rs:41)
+        only in kaski-engine-journal: Floor { frame : u64 }, Format 
+        only in kaski-page-pool: UnknownClass , Full 
+    0%  enum Refused (kaski-engine-journal src/save/mod.rs:35)  ~  struct Refused (kaski-panels src/founding/mod.rs:30)
+    0%  enum Slot (kaski-engine-journal src/tape/mod.rs:31)  ~  struct Slot (kaski-engine-link src/transport.rs:40)
+    0%  enum Slot (kaski-engine-journal src/tape/mod.rs:31)  ~  struct Slot (kaski-engine-volume src/volume.rs:21)
+    0%  enum Slot (kaski-engine-journal src/tape/mod.rs:31)  ~  struct Slot (kaski-gpu-api src/binding.rs:18)
+    0%  enum Slot (kaski-engine-journal src/tape/mod.rs:31)  ~  struct Slot (kaski-render src/world/models.rs:24)
+    0%  enum Slot (kaski-engine-journal src/tape/mod.rs:31)  ~  struct Slot (kaski-settings src/store.rs:37)
+    0%  trait Sources (kaski-engine-journal src/save/derive.rs:31)  ~  struct Sources (kaski-interface src/vocab.rs:103)
+    0%  struct Edge (kaski-engine-ladder src/ladder.rs:19)  ~  struct Edge (kaski-ui src/theme.rs:177)
+        only in kaski-engine-ladder: enter $1.0, leave $1.0
+        only in kaski-ui: 0 Token
+        generics differ: `< $1.0 >` against ``
+    0%  trait Measure (kaski-engine-ladder src/measure.rs:18)  ~  trait Measure (kaski-test-support src/alloc.rs:20)
+        only in kaski-engine-ladder: between fn between ( from : Self , to : Self , num : u32 , den : u32 ) -> Self ;, scaled fn scaled ( self , num : u32 , den : u32 ) -> Self ;
+        only in kaski-test-support: allocated fn allocated ( size : usize ) ;, freed fn freed ( size : usize ) ;, resized fn resized ( old : usize , new : usize )
+    0%  struct Rest (kaski-engine-ladder src/rest.rs:15)  ~  struct Rest (kaski-ground src/ground/rest.rs:38)
+        only in kaski-engine-ladder: quiet u32
+        only in kaski-ground: patches Arc < Mutex < BTreeMap < Patch , Arc < [ i32 ; PATCH_COLUMNS ] > > > >
+        generics differ: `< const $1.0 : u32 >` against ``
+    0%  enum Outcome (kaski-engine-lattice src/lattice/tile.rs:45)  ~  enum Outcome (quote-check src/bevy.rs:133)
+        only in kaski-engine-lattice: Rest , Cold , Warm ( Page < Tile < FRAC > > )
+        only in quote-check: Held , Scattered , Absent ( String ), NoFile ( String ), PastEnd { first : usize ; lines : usize ; path : String }, NoSource ( String ), NeedsClone , NotLocal 
+        generics differ: `< const $1.0 : u32 >` against ``
+    0%  struct Reading (kaski-engine-lattice src/lattice/reach.rs:34)  ~  struct Reading (kaski-noise src/react.rs:39)
+        only in kaski-engine-lattice: drift Vec < Windage < FRAC > >, pass Vec < bool >, bed Vec < Fixed < FRAC > >
+        only in kaski-noise: content & ' $1.0 HearingContent, hearers & ' $1.0 Hearers, ground & ' $1.0 Ground, tracks & ' $1.0 Tracks, frame u64
+        generics differ: `< const $1.0 : u32 >` against `< ' $1.0 >`
+    0%  struct Reading (kaski-engine-lattice src/lattice/reach.rs:34)  ~  struct Reading (kaski-solver src/family.rs:16)
+        only in kaski-engine-lattice: drift Vec < Windage < FRAC > >, pass Vec < bool >, bed Vec < Fixed < FRAC > >
+        only in kaski-solver: mine V3, other V3, w_mine f32, w_other f32, numbers [ f32 ; 4 ], alpha f32
+        generics differ: `< const $1.0 : u32 >` against ``
+    0%  struct Reading (kaski-engine-lattice src/lattice/reach.rs:34)  ~  struct Reading (kaski-view-local src/inspected.rs:92)
+        only in kaski-engine-lattice: drift Vec < Windage < FRAC > >, pass Vec < bool >, bed Vec < Fixed < FRAC > >
+        only in kaski-view-local: id BeingId, dev bool, at ( i32 , i32 ), doing Option < TaskRead >, leg u8, fatigue f64, belief f64, wood f64, water f64, takes_to Vec < ( String , f64 ) >, character Vec < ( String , f64 ) >, hero Option < HeroMark >, weight f64, hero_weight f64, household Option < u8 >, leads bool, ties Vec < ( BeingId , f64 ) >, weighing Option < ( u64 , Vec < OptionRead > ) >, wears Vec < String >, burden [ f64 ; 3 ], why Option < String >, counsel Option < String >, asked Option < String >, name Option < String >, bynames Vec < String >, renames u16
+        generics differ: `< const $1.0 : u32 >` against ``
+    0%  struct Reading (kaski-engine-lattice src/lattice/reach.rs:34)  ~  struct Reading (tickets src/trunk.rs:48)
+        only in kaski-engine-lattice: drift Vec < Windage < FRAC > >, pass Vec < bool >, bed Vec < Fixed < FRAC > >
+        only in tickets: store Store, plan Plan, notice String, degraded bool
+        generics differ: `< const $1.0 : u32 >` against ``
+    0%  struct Scratch (kaski-engine-lattice src/lattice/scratch.rs:21)  ~  struct Scratch (kaski-render src/card/snapshot.rs:94)
+        only in kaski-engine-lattice: base Vec < Fixed < FRAC > >, reach Vec < Fixed < FRAC > >, resolved Vec < Fixed < FRAC > >, over Vec < u32 >, keys Vec < Block >, changed Vec < usize >, woken Vec < Cube >
+        only in kaski-render: material ( Texture , TextureView ), normals ( Texture , TextureView ), pipeline RenderPipeline, instances Buffer, bind BindGroup, pending Vec < SnapshotJob >, views Vec < ViewDraw >
+        generics differ: `< const $1.0 : u32 >` against ``
+    0%  struct Scratch (kaski-engine-lattice src/lattice/scratch.rs:21)  ~  struct Scratch (tickets src/testkit.rs:31)
+        only in kaski-engine-lattice: base Vec < Fixed < FRAC > >, reach Vec < Fixed < FRAC > >, resolved Vec < Fixed < FRAC > >, over Vec < u32 >, keys Vec < Block >, changed Vec < usize >, woken Vec < Cube >
+        only in tickets: mock PathBuf, root PathBuf
+        generics differ: `< const $1.0 : u32 >` against ``
+    0%  struct Tile (kaski-engine-lattice src/lattice/tile.rs:15)  ~  struct Tile (kaski-engine-volume src/tile.rs:18)
+        only in kaski-engine-lattice: base Box < [ Fixed < FRAC > ] >, reach Box < [ Fixed < FRAC > ] >, resolved Box < [ Fixed < FRAC > ] >
+        only in kaski-engine-volume: grain Grain, palette Vec < MaterialFill >, counts Vec < u32 >, bits u32, words Box < [ u64 ] >
+        generics differ: `< const $1.0 : u32 >` against ``
+    0%  struct Tile (kaski-engine-lattice src/lattice/tile.rs:15)  ~  struct Tile (kaski-render-model src/layers/things.rs:162)
+        only in kaski-engine-lattice: base Box < [ Fixed < FRAC > ] >, reach Box < [ Fixed < FRAC > ] >, resolved Box < [ Fixed < FRAC > ] >
+        only in kaski-render-model: made u64, drawn Vec < ModelThing >, plants Vec < Plant >, parts Vec < f32 >
+        generics differ: `< const $1.0 : u32 >` against ``
+    0%  struct Carried (kaski-engine-ledger src/carried.rs:26)  ~  struct Carried (kaski-view-contracts src/model/mod.rs:181)
+        only in kaski-engine-ledger: id BeingId, held Vec < ( $1.1 , Fixed < FRAC > ) >
+        only in kaski-view-contracts: pose CarryPose, level u8, pieces Vec < DrawnPiece >, model Option < CarriedModel >
+        generics differ: `< const $1.0 : u32 , $1.1 > where { $1.1 : ' static + Copy + Ord + Send + Sync }` against ``
+    0%  struct Held (kaski-engine-ledger src/column.rs:126)  ~  struct Held (kaski-page-pool src/pool.rs:14)
+        only in kaski-engine-ledger: cells Dense < $1.0 >, beings Dense < $1.0 >, props Dense < $1.0 >, contents Dense < $1.0 >, items Dense < $1.0 >, declared Vec < ( HolderKind , Dense < $1.0 > ) >
+        only in kaski-page-pool: pinned bool, needed u64
+        generics differ: `< $1.0 >` against ``
+    0%  struct Held (kaski-engine-ledger src/column.rs:126)  ~  struct Held (kaski-render-model src/held.rs:19)
+        only in kaski-engine-ledger: cells Dense < $1.0 >, beings Dense < $1.0 >, props Dense < $1.0 >, contents Dense < $1.0 >, items Dense < $1.0 >, declared Vec < ( HolderKind , Dense < $1.0 > ) >
+        only in kaski-render-model: grid u32, low [ i32 ; 3 ], high [ i32 ; 3 ]
+        generics differ: `< $1.0 >` against ``
+    0%  struct Held (kaski-engine-ledger src/column.rs:126)  ~  struct Held (kaski-tools src/held.rs:51)
+        only in kaski-engine-ledger: cells Dense < $1.0 >, beings Dense < $1.0 >, props Dense < $1.0 >, contents Dense < $1.0 >, items Dense < $1.0 >, declared Vec < ( HolderKind , Dense < $1.0 > ) >
+        only in kaski-tools: tool Option < Tool >, wall Lay, storeys u8
+        generics differ: `< $1.0 >` against ``
+    0%  struct Held (kaski-engine-ledger src/column.rs:126)  ~  struct Held (kaski-web src/web_audio.rs:48)
+        only in kaski-engine-ledger: cells Dense < $1.0 >, beings Dense < $1.0 >, props Dense < $1.0 >, contents Dense < $1.0 >, items Dense < $1.0 >, declared Vec < ( HolderKind , Dense < $1.0 > ) >
+        only in kaski-web: source AudioBufferSourceNode, gain GainNode, pan StereoPannerNode, filter BiquadFilterNode
+        generics differ: `< $1.0 >` against ``
+    0%  enum Ask (kaski-engine-link src/ask.rs:70)  ~  enum Ask (kaski-panels src/founding/mod.rs:34)
+        only in kaski-engine-link: Input ( $1.0 :: Input ), Run ( Run < $1.0 :: Pace > ), Wanted ( Wanted )
+        only in kaski-panels: Spin ( i8 ), Orbit ( i8 ), Moons ( i8 ), Seasons ( i8 ), Suns ( i8 ), Clan ( i8 ), Preset ( i8 ), Reroll , History ( i8 ), Browse , Back , Start 
+        generics differ: `< $1.0 > where { $1.0 : Shape }` against ``
+    0%  struct Frame (kaski-engine-link src/frame.rs:99)  ~  struct Frame (kaski-render src/passes.rs:161)
+        only in kaski-engine-link: id FrameId, state $1.0 :: State, record $1.0 :: Record, events Vec < Stamped < $1.0 :: Event > >, status Status < $1.0 :: Pace >, wanted Wanted, first u64, lapse Option < Lapse >, restored bool
+        only in kaski-render: device & ' $1.0 RenderDevice, queue & ' $1.0 RenderQueue, extracted & ' $1.0 Extracted, world & ' $1.0 WorldPass, target & ' $1.0 PixelTarget, detail TextureView, worked Option < & ' $1.0 Worked >
+        generics differ: `< $1.0 > where { $1.0 : Shape }` against `< ' $1.0 >`
+    0%  struct Made (kaski-engine-link src/frame.rs:112)  ~  struct Made (kaski-noise src/make.rs:26)
+        only in kaski-engine-link: state $1.0 :: State, record $1.0 :: Record, events Vec < Stamped < $1.0 :: Event > >, status Status < $1.0 :: Pace >, wanted Wanted, restored bool
+        only in kaski-noise: event SoundEvent, cell Block
+        generics differ: `< $1.0 > where { $1.0 : Shape }` against ``
+    0%  struct Made (kaski-engine-link src/frame.rs:112)  ~  struct Made (kaski-sound src/present.rs:155)
+        only in kaski-engine-link: state $1.0 :: State, record $1.0 :: Record, events Vec < Stamped < $1.0 :: Event > >, status Status < $1.0 :: Pace >, wanted Wanted, restored bool
+        only in kaski-sound: event & ' $1.0 SoundEvent, heard & ' $1.0 [ Heard ]
+        generics differ: `< $1.0 > where { $1.0 : Shape }` against `< ' $1.0 >`
+    0%  struct Outbox (kaski-engine-link src/app.rs:49)  ~  struct Outbox (kaski-storage src/io.rs:137)
+        only in kaski-engine-link: asks Vec < Ask < $1.0 > >
+        only in kaski-storage: ready Vec < Completion >
+        generics differ: `< $1.0 > where { $1.0 : Shape }` against ``
+    0%  trait Record (kaski-engine-link src/shape.rs:13)  ~  struct Record (kaski-gpu-capability src/record.rs:49)
+    0%  trait Record (kaski-engine-link src/shape.rs:13)  ~  struct Record (kaski-interface src/value.rs:118)
+    0%  trait Record (kaski-engine-link src/shape.rs:13)  ~  struct Record (kaski-render src/passes.rs:210)
+    0%  trait Record (kaski-engine-link src/shape.rs:13)  ~  struct Record (kaski-test-support src/golden/mod.rs:113)
+    0%  enum Refused (kaski-engine-link src/publisher.rs:13)  ~  enum Refused (kaski-interface src/display/scene.rs:64)
+        only in kaski-engine-link: NotForward 
+        only in kaski-interface: Unexpressible { index : usize ; kind : Option < DrawKind > ; reason : Reason }, Cannot ( CannotDraw )
+    0%  enum Refused (kaski-engine-link src/publisher.rs:13)  ~  enum Refused (kaski-page-pool src/pool.rs:41)
+        only in kaski-engine-link: NotForward 
+        only in kaski-page-pool: UnknownClass , Full 
+    0%  enum Refused (kaski-engine-link src/publisher.rs:13)  ~  struct Refused (kaski-panels src/founding/mod.rs:30)
+    0%  enum Run (kaski-engine-link src/ask.rs:34)  ~  struct Run (kaski-figure src/crowd/changes.rs:15)
+    0%  enum Run (kaski-engine-link src/ask.rs:34)  ~  struct Run (kaski-work src/sequence.rs:28)
+    0%  trait Shape (kaski-engine-link src/shape.rs:37)  ~  struct Shape (kaski-sound src/mixer/voice.rs:19)
+    0%  trait Shape (kaski-engine-link src/shape.rs:37)  ~  struct Shape (kaski-texel-pages src/texture.rs:19)
+    0%  trait Shape (kaski-engine-link src/shape.rs:37)  ~  enum Shape (kaski-tools src/laid.rs:24)
+    0%  struct Slot (kaski-engine-link src/transport.rs:40)  ~  struct Slot (kaski-engine-volume src/volume.rs:21)
+        only in kaski-engine-link: untaken Option < Frame < $1.0 > >, outbox Vec < Ask < $1.0 > >
+        only in kaski-engine-volume: tile Page < Tile >, edited bool, counted Option < u64 >, revision u64, summary Option < Arc < ReliefSummary > >
+        generics differ: `< $1.0 > where { $1.0 : Shape }` against ``
+    0%  struct Slot (kaski-engine-link src/transport.rs:40)  ~  struct Slot (kaski-gpu-api src/binding.rs:18)
+        only in kaski-engine-link: untaken Option < Frame < $1.0 > >, outbox Vec < Ask < $1.0 > >
+        only in kaski-gpu-api: 0 u32
+        generics differ: `< $1.0 > where { $1.0 : Shape }` against ``
+    0%  struct Slot (kaski-engine-link src/transport.rs:40)  ~  struct Slot (kaski-render src/world/models.rs:24)
+        only in kaski-engine-link: untaken Option < Frame < $1.0 > >, outbox Vec < Ask < $1.0 > >
+        only in kaski-render: model FurnitureModel, first u32, count u32
+        generics differ: `< $1.0 > where { $1.0 : Shape }` against ``
+    0%  struct Slot (kaski-engine-link src/transport.rs:40)  ~  struct Slot (kaski-settings src/store.rs:37)
+        only in kaski-engine-link: untaken Option < Frame < $1.0 > >, outbox Vec < Ask < $1.0 > >
+        only in kaski-settings: id String, shape KnobShape, when When, live String, stored String
+        generics differ: `< $1.0 > where { $1.0 : Shape }` against ``
+    0%  enum Wanted (kaski-engine-link src/ask.rs:12)  ~  struct Wanted (kaski-web src/web_audio.rs:56)
+    0%  struct Rows (kaski-engine-nature src/text.rs:103)  ~  struct Rows (kaski-ground src/ground/bitplanes.rs:19)
+        only in kaski-engine-nature: senses Vec < SenseRow >, provenances Vec < ProvenanceRow >, attributes Vec < AttributeRow >, traits Vec < TraitRow >, skills Vec < SkillRow >, needs Vec < NeedRow >
+        only in kaski-ground: walk [ u16 ; SIDE ], east [ u16 ; SIDE ], south [ u16 ; SIDE ]
+    0%  struct Rows (kaski-engine-nature src/text.rs:103)  ~  struct Rows (kaski-items src/rows.rs:52)
+        only in kaski-engine-nature: senses Vec < SenseRow >, provenances Vec < ProvenanceRow >, attributes Vec < AttributeRow >, traits Vec < TraitRow >, skills Vec < SkillRow >, needs Vec < NeedRow >
+        only in kaski-items: 0 Table
+    0%  struct Page (kaski-engine-paged src/page.rs:15)  ~  enum Page (kaski-panels src/founding/mod.rs:63)
+    0%  trait Declared (kaski-engine-registry src/lib.rs:76)  ~  struct Declared (kaski-figure src/crowd/poses.rs:21)
+    0%  trait Declared (kaski-engine-registry src/lib.rs:76)  ~  struct Declared (kaski-interface src/bind/build.rs:13)
+    0%  trait Kind (kaski-engine-registry src/lib.rs:68)  ~  enum Kind (kaski-engine-registry-derive src/attrs.rs:25)
+    0%  trait Kind (kaski-engine-registry src/lib.rs:68)  ~  enum Kind (kaski-frame-plan src/builder.rs:91)
+    0%  trait Kind (kaski-engine-registry src/lib.rs:68)  ~  enum Kind (kaski-lowering src/tree.rs:26)
+    0%  trait Kind (kaski-engine-registry src/lib.rs:68)  ~  struct Kind (kaski-render-model src/layers/things.rs:61)
+    0%  trait Kind (kaski-engine-registry src/lib.rs:68)  ~  struct Kind (kaski-tickets src/model.rs:48)
+    0%  struct Layered (kaski-engine-registry src/layered.rs:13)  ~  struct Layered (kaski-interface src/rows/mod.rs:34)
+        only in kaski-engine-registry: what & ' static str, rows Vec < ( String , $1.0 ) >, seen BTreeSet < String >
+        only in kaski-interface: tables Vec < ( & ' static str , Vec < ( String , toml :: Table ) > ) >
+        generics differ: `< $1.0 >` against ``
+    0%  trait Row (kaski-engine-registry src/content.rs:339)  ~  struct Row (kaski-items src/row.rs:16)
+    0%  trait Row (kaski-engine-registry src/content.rs:339)  ~  struct Row (kaski-planning src/plan.rs:14)
+    0%  trait Row (kaski-engine-registry src/content.rs:339)  ~  struct Row (kaski-render-model src/overlay/mod.rs:45)
+    0%  trait Row (kaski-engine-registry src/content.rs:339)  ~  struct Row (kaski-solver src/graph.rs:16)
+    0%  trait Row (kaski-engine-registry src/content.rs:339)  ~  struct Row (ratio-probe src/lib.rs:65)
+    0%  trait Row (kaski-engine-registry src/content.rs:339)  ~  struct Row (speed-probe src/lib.rs:41)
+    0%  trait Row (kaski-engine-registry src/content.rs:339)  ~  struct Row (tickets src/view.rs:30)
+    0%  struct Item (kaski-engine-registry-derive src/attrs.rs:59)  ~  struct Item (kaski-interface src/display/scene.rs:46)
+        only in kaski-engine-registry-derive: ident Ident, ty Type, attr FieldAttr
+        only in kaski-interface: clip Option < Rect >, what What
+    0%  struct Item (kaski-engine-registry-derive src/attrs.rs:59)  ~  struct Item (kaski-items src/item.rs:37)
+        only in kaski-engine-registry-derive: ident Ident, ty Type, attr FieldAttr
+        only in kaski-items: kind ItemKind, parts Vec < PartState >, values PropertyValues, fit Option < GarmentFit >, liquid Option < Liquid >
+    0%  struct Item (kaski-engine-registry-derive src/attrs.rs:59)  ~  struct Item (owed src/group.rs:165)
+        only in kaski-engine-registry-derive: ident Ident, ty Type, attr FieldAttr
+        only in owed: rel String, class Class, reason String, area String, line usize
+    0%  enum Kind (kaski-engine-registry-derive src/attrs.rs:25)  ~  enum Kind (kaski-frame-plan src/builder.rs:91)
+        only in kaski-engine-registry-derive: Key , ByType , Count , Decimal ( Expr ), Weights ( Expr ), Word , Table , Rows , With ( Path ), Flatten 
+        only in kaski-frame-plan: Input , Written 
+    0%  enum Kind (kaski-engine-registry-derive src/attrs.rs:25)  ~  enum Kind (kaski-lowering src/tree.rs:26)
+        only in kaski-engine-registry-derive: Key , ByType , Count , Decimal ( Expr ), Weights ( Expr ), Word , Table , Rows , With ( Path ), Flatten 
+        only in kaski-lowering: Block ( Flow < Whole > ), Leaf , Text { face : FaceId ; run : String ; size : Whole }
+    0%  enum Kind (kaski-engine-registry-derive src/attrs.rs:25)  ~  struct Kind (kaski-render-model src/layers/things.rs:61)
+    0%  enum Kind (kaski-engine-registry-derive src/attrs.rs:25)  ~  struct Kind (kaski-tickets src/model.rs:48)
+    0%  struct Cell (kaski-engine-space src/cell.rs:76)  ~  struct Cell (kaski-vis-buffer src/cell.rs:56)
+        only in kaski-engine-space: grain Grain, coords [ i32 ; 3 ]
+        only in kaski-vis-buffer: high u32, low u32
+    0%  enum Grain (kaski-engine-space src/cell.rs:12)  ~  enum Grain (kaski-material src/bins.rs:14)
+        only in kaski-engine-space: Fine , Voxel 
+        only in kaski-material: Tile ( u32 ), Screen 
+    0%  struct Node (kaski-engine-space src/key.rs:87)  ~  struct Node (kaski-lowering src/tree.rs:42)
+        only in kaski-engine-space: level u8, key u64
+        only in kaski-lowering: kind Kind, horizontal Sizing < Whole >, vertical Sizing < Whole >
+    0%  struct Point (kaski-engine-space src/point.rs:29)  ~  struct Point (kaski-motion src/spring.rs:22)
+        only in kaski-engine-space: 0 [ i64 ; 3 ]
+        only in kaski-motion: x f32, y f32, px f32, py f32
+    0%  struct Source (kaski-engine-space src/residency/mod.rs:30)  ~  struct Source (kaski-interface src/vocab.rs:84)
+        only in kaski-engine-space: at Point, reach u32
+        only in kaski-interface: read SourceFn, key Option < KeyFn >
+    0%  struct Source (kaski-engine-space src/residency/mod.rs:30)  ~  enum Source (kaski-texel-pages src/feedback.rs:34)
+    0%  struct Source (kaski-engine-space src/residency/mod.rs:30)  ~  trait Source (quote-check src/source.rs:17)
+    0%  struct Bodies (kaski-engine-volume src/bodies.rs:20)  ~  struct Bodies (kaski-render-model src/bodies.rs:17)
+        only in kaski-engine-volume: placed BTreeMap < BeingId , ( Block , u8 ) >, persons BTreeMap < Patch , BTreeSet < BeingId > >
+        only in kaski-render-model: 0 Arc < Mutex < Option < Crowd > > >
+    0%  struct Slot (kaski-engine-volume src/volume.rs:21)  ~  struct Slot (kaski-gpu-api src/binding.rs:18)
+        only in kaski-engine-volume: tile Page < Tile >, edited bool, counted Option < u64 >, revision u64, summary Option < Arc < ReliefSummary > >
+        only in kaski-gpu-api: 0 u32
+    0%  struct Slot (kaski-engine-volume src/volume.rs:21)  ~  struct Slot (kaski-render src/world/models.rs:24)
+        only in kaski-engine-volume: tile Page < Tile >, edited bool, counted Option < u64 >, revision u64, summary Option < Arc < ReliefSummary > >
+        only in kaski-render: model FurnitureModel, first u32, count u32
+    0%  struct Slot (kaski-engine-volume src/volume.rs:21)  ~  struct Slot (kaski-settings src/store.rs:37)
+        only in kaski-engine-volume: tile Page < Tile >, edited bool, counted Option < u64 >, revision u64, summary Option < Arc < ReliefSummary > >
+        only in kaski-settings: id String, shape KnobShape, when When, live String, stored String
+    0%  struct Tile (kaski-engine-volume src/tile.rs:18)  ~  struct Tile (kaski-render-model src/layers/things.rs:162)
+        only in kaski-engine-volume: grain Grain, palette Vec < MaterialFill >, counts Vec < u32 >, bits u32, words Box < [ u64 ] >
+        only in kaski-render-model: made u64, drawn Vec < ModelThing >, plants Vec < Plant >, parts Vec < f32 >
+    0%  struct Placed (kaski-equip src/wearing.rs:16)  ~  struct Placed (kaski-figure src/portrait.rs:144)
+        only in kaski-equip: item ItemId, slot Slot, layer Layer
+        only in kaski-figure: x f32, y f32, z f32, normal [ f32 ; 3 ]
+    0%  struct Placed (kaski-equip src/wearing.rs:16)  ~  struct Placed (kaski-founding src/navetta.rs:59)
+        only in kaski-equip: item ItemId, slot Slot, layer Layer
+        only in kaski-founding: rect ColumnRect, front Front
+    0%  struct Block (kaski-figure src/crowd/pieces.rs:17)  ~  struct Block (kaski-render-model src/impostor/grid.rs:21)
+        only in kaski-figure: corners [ V3 ; 8 ], colour [ u8 ; 3 ]
+        only in kaski-render-model: x u8, y u8, w u8, h u8
+    0%  struct Bound (kaski-figure src/strand/mod.rs:95)  ~  enum Bound (kaski-gpu-metal src/device/backend.rs:29)
+    0%  struct Bound (kaski-figure src/strand/mod.rs:95)  ~  enum Bound (kaski-gpu-vulkan src/device/backend.rs:22)
+    0%  struct Bound (kaski-figure src/strand/mod.rs:95)  ~  enum Bound (kaski-gpu-wgpu src/slots.rs:12)
+    0%  struct Cloth (kaski-figure src/cloth.rs:77)  ~  struct Cloth (kaski-solver src/fixtures.rs:26)
+        only in kaski-figure: loose Vec < u32 >, at Vec < V3 >, was Vec < V3 >, links Vec < ( End , End , f32 ) >, started bool
+        only in kaski-solver: particles Particles, graph Graph
+    0%  struct Composition (kaski-figure src/crowd/cluster.rs:31)  ~  struct Composition (kaski-skeleton src/compose.rs:33)
+        only in kaski-figure: 0 u64
+        only in kaski-skeleton: skeleton Skeleton, girth Vec < f32 >, stance Stance
+    0%  struct Declared (kaski-figure src/crowd/poses.rs:21)  ~  struct Declared (kaski-interface src/bind/build.rs:13)
+        only in kaski-figure: clip String, needs Needs, hold Option < f32 >
+        only in kaski-interface: interface & ' $1.0 Interface, kinds & ' $1.0 NodeKinds, pictures & ' $1.0 Pictures
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Kept (kaski-figure src/crowd/beasts.rs:25)  ~  struct Kept (kaski-input src/press.rs:124)
+        only in kaski-figure: beast Beast, at [ f32 ; 3 ], heading f32, speed f32, cycle f32, seen Seen, stood bool, drawn Vec < FigureVertex >, indices Vec < u32 >
+        only in kaski-input: cursor Vec2, touches HashMap < u64 , TouchInput >, held Vec < PointerInput >
+    0%  struct Kept (kaski-figure src/crowd/beasts.rs:25)  ~  trait Kept (kaski-motion src/alive/work.rs:55)
+    0%  struct Kept (kaski-figure src/crowd/beasts.rs:25)  ~  struct Kept (kaski-paths src/kept.rs:25)
+        only in kaski-figure: beast Beast, at [ f32 ; 3 ], heading f32, speed f32, cycle f32, seen Seen, stood bool, drawn Vec < FigureVertex >, indices Vec < u32 >
+        only in kaski-paths: span ColumnSpan, dist Patches < u16 >, frontier VecDeque < Column >, read BTreeMap < Patch , [ u64 ; 4 ] >, asked u64
+    0%  struct Placed (kaski-figure src/portrait.rs:144)  ~  struct Placed (kaski-founding src/navetta.rs:59)
+        only in kaski-figure: x f32, y f32, z f32, normal [ f32 ; 3 ]
+        only in kaski-founding: rect ColumnRect, front Front
+    0%  struct Run (kaski-figure src/crowd/changes.rs:15)  ~  struct Run (kaski-work src/sequence.rs:28)
+        only in kaski-figure: being u32, vertices Range < u32 >, indices Range < u32 >
+        only in kaski-work: kind SequenceKind, subject Block
+    0%  struct Seen (kaski-figure src/crowd/seen.rs:27)  ~  struct Seen (kaski-flora src/plant/snapshot.rs:74)
+        only in kaski-figure: scale f32
+        only in kaski-flora: card PartCard, across ( f64 , f64 ), up ( f64 , f64 ), cos f64, sin f64, centre f64
+    0%  struct Seen (kaski-figure src/crowd/seen.rs:27)  ~  struct Seen (kaski-render-model src/markers/mod.rs:229)
+        only in kaski-figure: scale f32
+        only in kaski-render-model: figures & ' $1.0 [ Figure ], signs & ' $1.0 [ Signs ], things & ' $1.0 [ ModelThing ], props & ' $1.0 [ ModelThing ], trees & ' $1.0 [ TreeMark ]
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Sight (kaski-figure src/portrait.rs:26)  ~  struct Sight (kaski-tools src/handle.rs:22)
+        only in kaski-figure: centre V3, left V3, fwd V3, half f32
+        only in kaski-tools: eye & ' $1.0 Eye, window & ' $1.0 Window
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Store (kaski-figure src/crowd/cluster.rs:161)  ~  struct Store (kaski-tickets src/model.rs:126)
+        only in kaski-figure: 0 BTreeMap < Composition , Arc < Clustered > >
+        only in kaski-tickets: states BTreeMap < String , State >, kinds BTreeMap < String , Kind >, tickets BTreeMap < String , Ticket >, moves Vec < Move >
+    0%  struct Builder (kaski-flora src/plant/grow.rs:62)  ~  struct Builder (kaski-founding src/builder.rs:27)
+        only in kaski-flora: kinds & ' $1.0 PartKinds, parts Vec < PlantGraphPart >, dice Dice
+        only in kaski-founding: kinds FoundingKinds, grid u32, base i32, heat Lattice < FRAC >, smoke kaski_fire :: smoke :: SmokeField, ground Ground, stock Stock, tracks Tracks, wakes kaski_vocabulary :: SimWakes
+        generics differ: `< ' $1.0 >` against ``
+    0%  struct Builder (kaski-flora src/plant/grow.rs:62)  ~  struct Builder (kaski-skeleton src/compose.rs:43)
+        only in kaski-flora: kinds & ' $1.0 PartKinds, parts Vec < PlantGraphPart >, dice Dice
+        only in kaski-skeleton: bones Vec < Bone >, girth Vec < f32 >, mounts Vec < ( String , Mount ) >, legs Vec < LegPair >, rise Option < V3 >
+        generics differ: `< ' $1.0 >` against ``
+    0%  struct Canvas (kaski-flora src/painter.rs:47)  ~  struct Canvas (kaski-panels src/ui/canvas/layout.rs:179)
+        only in kaski-flora: w i32, h i32, ox i32, oy i32, reg Vec < u8 >, fold Vec < u8 >, sway Vec < u8 >, lean Vec < i8 >
+        only in kaski-panels: width u32, height u32, era Option < String >, dawn Option < String >, bands Vec < Band >, tabs Vec < Tab >, squares Vec < Square >, edges Vec < CanvasEdge >
+    0%  struct Limb (kaski-flora src/plant/grow.rs:43)  ~  struct Limb (kaski-motion src/alive/layers.rs:166)
+        only in kaski-flora: from [ f64 ; 3 ], heading f64, elevation f64, length f64, bend f64, thick f64
+        only in kaski-motion: upper usize, lower usize, end usize
+    0%  struct Seen (kaski-flora src/plant/snapshot.rs:74)  ~  struct Seen (kaski-render-model src/markers/mod.rs:229)
+        only in kaski-flora: card PartCard, across ( f64 , f64 ), up ( f64 , f64 ), cos f64, sin f64, centre f64
+        only in kaski-render-model: figures & ' $1.0 [ Figure ], signs & ' $1.0 [ Signs ], things & ' $1.0 [ ModelThing ], props & ' $1.0 [ ModelThing ], trees & ' $1.0 [ TreeMark ]
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Segment (kaski-flora src/plant/grow.rs:70)  ~  trait Segment (kaski-skeleton src/compose.rs:139)
+    0%  enum Sway (kaski-flora src/painter.rs:17)  ~  struct Sway (kaski-motion src/alive/walker.rs:149)
+    0%  struct Trunk (kaski-flora src/plant/paint.rs:178)  ~  struct Trunk (kaski-motion src/alive/layers.rs:24)
+        only in kaski-flora: x0 f64, x1 f64, top i32, bottom i32, w i32, tone BarkTone, rough u8
+        only in kaski-motion: lean f32, yaw ( f32 , f32 ), breath f32
+    0%  struct Trunk (kaski-flora src/plant/paint.rs:178)  ~  trait Trunk (tickets src/landing.rs:31)
+    0%  struct Builder (kaski-founding src/builder.rs:27)  ~  struct Builder (kaski-skeleton src/compose.rs:43)
+        only in kaski-founding: kinds FoundingKinds, grid u32, base i32, heat Lattice < FRAC >, smoke kaski_fire :: smoke :: SmokeField, ground Ground, stock Stock, tracks Tracks, wakes kaski_vocabulary :: SimWakes
+        only in kaski-skeleton: bones Vec < Bone >, girth Vec < f32 >, mounts Vec < ( String , Mount ) >, legs Vec < LegPair >, rise Option < V3 >
+    0%  struct Setting (kaski-founding src/setting.rs:32)  ~  struct Setting (kaski-weather src/give/mod.rs:227)
+        only in kaski-founding: kinds & ' $1.0 FoundingKinds, planet & ' $1.0 PlanetSetup, grid Grid, seed u32, year kaski_starsystem :: Year, founding Founding, scenario Scenario
+        only in kaski-weather: air & ' $1.0 Air < FRAC >, ground & ' $1.0 Ground, tracks & ' $1.0 Tracks, forcing & ' $1.0 Forcing < FRAC >, runoff Option < & ' $1.0 Runoff < FRAC > >
+    0%  struct Spent (kaski-founding src/founding.rs:77)  ~  struct Spent (kaski-test-support src/alloc.rs:124)
+        only in kaski-founding: 0 Vec < u8 >
+        only in kaski-test-support: calls usize, bytes usize
+    0%  struct Level (kaski-frame-cull src/pyramid.rs:35)  ~  struct Level (kaski-texel-pages src/page.rs:56)
+        only in kaski-frame-cull: width usize, height usize, cells Vec < Reach >
+        only in kaski-texel-pages: 0 u8
+    0%  enum Reach (kaski-frame-cull src/pyramid.rs:13)  ~  struct Reach (kaski-interface src/a11y.rs:49)
+    0%  enum Reach (kaski-frame-cull src/pyramid.rs:13)  ~  struct Reach (kaski-view-contracts src/model/mod.rs:107)
+    0%  struct Barrier (kaski-frame-plan src/plan.rs:50)  ~  enum Barrier (kaski-gpu-api src/hazards.rs:10)
+    0%  enum ClassError (kaski-frame-plan src/class.rs:52)  ~  enum ClassError (kaski-page-pool src/class.rs:56)
+        only in kaski-frame-plan: TileNeedsHardwareRaster , FakedTilingIsCompute , NotAdmitted 
+        only in kaski-page-pool: Empty , Duplicate ( ClassId ), ZeroUnits ( ClassId ), CapBelowPage ( ClassId )
+    0%  enum Kind (kaski-frame-plan src/builder.rs:91)  ~  enum Kind (kaski-lowering src/tree.rs:26)
+        only in kaski-frame-plan: Input , Written 
+        only in kaski-lowering: Block ( Flow < Whole > ), Leaf , Text { face : FaceId ; run : String ; size : Whole }
+    0%  enum Kind (kaski-frame-plan src/builder.rs:91)  ~  struct Kind (kaski-render-model src/layers/things.rs:61)
+    0%  enum Kind (kaski-frame-plan src/builder.rs:91)  ~  struct Kind (kaski-tickets src/model.rs:48)
+    0%  struct Pass (kaski-frame-plan src/builder.rs:29)  ~  struct Pass (kaski-interface src/bind/node.rs:15)
+        only in kaski-frame-plan: name String, lane FrameLane, reads Vec < Resource >, writes Vec < Resource >
+        only in kaski-interface: world & ' $1.0 World, from Declared < ' $1.0 >, strings & ' $1.0 Strings, actions & ' $1.0 Actions, fonts & ' $1.0 Fonts, wide bool, keyed Vec < ( Action , String ) >
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Tail (kaski-frame-tail src/tail.rs:12)  ~  struct Tail (kaski-skeleton src/compose.rs:312)
+        only in kaski-frame-tail: volume PassId, streaks PassId, plans PassId, markers PassId, reconstruct PassId, light Resource, history Resource, scene_light Resource
+        only in kaski-skeleton: length f32, droop f32, bones u8, girth f32
+    0%  trait Binding (kaski-gpu-api src/binding.rs:94)  ~  struct Binding (kaski-interface src/settings.rs:31)
+    0%  trait Recording (kaski-gpu-api src/backend.rs:16)  ~  struct Recording (kaski-host src/recording.rs:29)
+    0%  struct Slot (kaski-gpu-api src/binding.rs:18)  ~  struct Slot (kaski-settings src/store.rs:37)
+        only in kaski-gpu-api: 0 u32
+        only in kaski-settings: id String, shape KnobShape, when When, live String, stored String
+    0%  struct Tables (kaski-gpu-api src/shared.rs:105)  ~  struct Tables (kaski-interface src/display/tables.rs:16)
+        only in kaski-gpu-api: 0 PhantomData < fn ( ) -> $1.0 >
+        only in kaski-interface: images Vec < ImageId >, faces Vec < FaceId >
+        generics differ: `< $1.0 >` against ``
+    0%  struct Tables (kaski-gpu-api src/shared.rs:105)  ~  struct Tables (kaski-items src/root.rs:195)
+        only in kaski-gpu-api: 0 PhantomData < fn ( ) -> $1.0 >
+        only in kaski-items: properties Frozen < PropertyFamily >, materials Frozen < MaterialFamily >, dyes Frozen < DyeFamily >, regions Frozen < RegionFamily >, modifications Frozen < ModificationFamily >, limbs Frozen < LimbFamily >, slots Frozen < SlotFamily >, forms Frozen < FormFamily >, carriers Frozen < CarrierFamily >, attachments Frozen < AttachmentFamily >, carrier_of Vec < Option < Carrier > >, kinds Frozen < ItemKindFamily >, density Option < Property >, splitting Vec < Property >, plain OnceLock < Box < [ Option < ItemStack > ] > >, measures RwLock < BTreeMap < ItemStack , Arc < ItemMeasure > > >
+        generics differ: `< $1.0 >` against ``
+    0%  struct Tables (kaski-gpu-api src/shared.rs:105)  ~  struct Tables (kaski-plants src/kinds/mod.rs:20)
+        only in kaski-gpu-api: 0 PhantomData < fn ( ) -> $1.0 >
+        only in kaski-plants: trees Vec < Species >, favour Vec < read :: Favour >, tree_genes TreeGenes, crop Species, year YearReads, genes Genetics
+        generics differ: `< $1.0 >` against ``
+    0%  struct Tables (kaski-gpu-api src/shared.rs:105)  ~  struct Tables (kaski-sim src/kinds/mod.rs:54)
+        only in kaski-gpu-api: 0 PhantomData < fn ( ) -> $1.0 >
+        only in kaski-sim: content kaski_pack :: Identity, noise NoiseTables, kinds Kinds, ground Arc < GroundKinds >, realm kaski_realm :: RealmKinds, goods tables :: GoodsKinds, mind kaski_minds :: kinds :: MindKinds, knowledge kaski_knowledge :: kinds :: KnowledgeKinds, work kaski_work :: kinds :: WorkKinds, life kaski_life :: kinds :: LifeKinds, creature kaski_creatures :: kinds :: CreatureKinds, hunt kaski_hunting :: kinds :: HuntKinds, equip kaski_equip :: EquipKinds, loot kaski_loot :: LootKinds, build kaski_building :: kinds :: BuildKinds, founded kaski_founding :: kinds :: FoundingKinds, minds tables :: MindTables, beings Arc < BeingKinds >, wild tables :: WildKinds, seen tables :: SeenKinds, gives kaski_weather :: give :: Gives
+        generics differ: `< $1.0 >` against ``
+    0%  struct Entry (kaski-gpu-capability src/record.rs:18)  ~  struct Entry (kaski-sim src/apply/landers/mod.rs:49)
+        only in kaski-gpu-capability: key String, value Value, origin Option < Origin >
+        only in kaski-sim: place Lander, remove Lander, raise Lander, interact Interaction, after Lander, place_at Says, remove_at Says, raise_at Says, interact_at SaysInteraction, after_at Says
+    0%  struct Entry (kaski-gpu-capability src/record.rs:18)  ~  struct Entry (kaski-sim src/skip/shared.rs:130)
+        only in kaski-gpu-capability: key String, value Value, origin Option < Origin >
+        only in kaski-sim: skip Skip, feed Feed
+    0%  struct Record (kaski-gpu-capability src/record.rs:49)  ~  struct Record (kaski-interface src/value.rs:118)
+        only in kaski-gpu-capability: fields BTreeMap < String , Sourced < Value > >
+        only in kaski-interface: 0 Vec < ( & ' static str , Value ) >
+    0%  struct Record (kaski-gpu-capability src/record.rs:49)  ~  struct Record (kaski-render src/passes.rs:210)
+        only in kaski-gpu-capability: fields BTreeMap < String , Sourced < Value > >
+        only in kaski-render: world & ' $1.0 BindGroup, terrain & ' $1.0 TerrainPass, shadow bool
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Record (kaski-gpu-capability src/record.rs:49)  ~  struct Record (kaski-test-support src/golden/mod.rs:113)
+        only in kaski-gpu-capability: fields BTreeMap < String , Sourced < Value > >
+        only in kaski-test-support: moves Vec < Move >
+    0%  enum ResolveError (kaski-gpu-capability src/profile.rs:57)  ~  enum ResolveError (kaski-texel-pages src/texels.rs:39)
+        only in kaski-gpu-capability: Unknown ( String ), NoFallback ( String ), WrongKind ( String )
+        only in kaski-texel-pages: NotRegistered ( TexelPage )
+    0%  struct Resolved (kaski-gpu-capability src/profile.rs:46)  ~  struct Resolved (kaski-render-model src/kinds.rs:19)
+        only in kaski-gpu-capability: profile String, offered Vec < String >, fallbacks Vec < Taken >
+        only in kaski-render-model: kinds Kinds, furniture Furniture, expressions Expressions, lenses Vec < u8 >
+    0%  struct Resolved (kaski-gpu-capability src/profile.rs:46)  ~  struct Resolved (kaski-texel-pages src/texels.rs:19)
+        only in kaski-gpu-capability: profile String, offered Vec < String >, fallbacks Vec < Taken >
+        only in kaski-texel-pages: page TexelPage, fell u8
+    0%  struct Taken (kaski-gpu-capability src/profile.rs:37)  ~  enum Taken (kaski-pointer src/lib.rs:43)
+    0%  enum Bound (kaski-gpu-metal src/device/backend.rs:29)  ~  enum Bound (kaski-gpu-vulkan src/device/backend.rs:22)
+        only in kaski-gpu-metal: Buffer ( Retained < ProtocolObject < dyn MTLBuffer > > ), Texture ( Retained < ProtocolObject < dyn MTLTexture > > ), Sampler ( Retained < ProtocolObject < dyn MTLSamplerState > > )
+        only in kaski-gpu-vulkan: Buffer ( vk :: Buffer ), View ( vk :: ImageView ), Sampler ( vk :: Sampler )
+    0%  enum Bound (kaski-gpu-metal src/device/backend.rs:29)  ~  enum Bound (kaski-gpu-wgpu src/slots.rs:12)
+        only in kaski-gpu-metal: Buffer ( Retained < ProtocolObject < dyn MTLBuffer > > ), Texture ( Retained < ProtocolObject < dyn MTLTexture > > ), Sampler ( Retained < ProtocolObject < dyn MTLSamplerState > > )
+        only in kaski-gpu-wgpu: Buffer ( wgpu :: Buffer ), View ( wgpu :: TextureView ), Sampler ( wgpu :: Sampler )
+    0%  enum Bound (kaski-gpu-metal src/device/backend.rs:29)  ~  struct Bound (kaski-interface src/bind/mod.rs:68)
+    0%  struct Encoder (kaski-gpu-metal src/device/encoders.rs:25)  ~  struct Encoder (kaski-gpu-vulkan src/device/encoders.rs:94)
+        only in kaski-gpu-metal: buffer Retained < ProtocolObject < dyn MTLCommandBuffer > >, hazards Hazards < usize >
+        only in kaski-gpu-vulkan: buffer Buffer, hazards Hazards < Bound >
+    0%  struct Encoders (kaski-gpu-metal src/device/encoders.rs:61)  ~  struct Encoders (kaski-gpu-vulkan src/device/encoders.rs:119)
+        only in kaski-gpu-metal: queues Queues
+        only in kaski-gpu-vulkan: context Arc < Context >, families Vec < ( String , u32 ) >
+    0%  struct Encoders (kaski-gpu-metal src/device/encoders.rs:61)  ~  struct Encoders (kaski-gpu-wgpu src/slots.rs:32)
+        only in kaski-gpu-metal: queues Queues
+        only in kaski-gpu-wgpu: device wgpu :: Device
+    0%  struct Facts (kaski-gpu-metal src/facts.rs:29)  ~  struct Facts (kaski-planning src/derive.rs:123)
+        only in kaski-gpu-metal: unified_memory bool, max_buffer u64, argument_tier2 bool, tile_shading bool, stage_counters bool, large_textures bool
+        only in kaski-planning: today i64, stall_days i64, tickets BTreeMap < String , TicketFacts >
+    0%  struct Pipeline (kaski-gpu-metal src/device/backend.rs:41)  ~  struct Pipeline (kaski-gpu-vulkan src/device/backend.rs:34)
+        only in kaski-gpu-metal: state Retained < ProtocolObject < dyn MTLComputePipelineState > >, workgroup MTLSize
+        only in kaski-gpu-vulkan: pipeline vk :: Pipeline, layout vk :: PipelineLayout, set_layout vk :: DescriptorSetLayout
+    0%  struct Queue (kaski-gpu-metal src/device/queues.rs:21)  ~  struct Queue (kaski-gpu-vulkan src/device/queues.rs:19)
+        only in kaski-gpu-metal: 0 Retained < ProtocolObject < dyn MTLCommandQueue > >
+        only in kaski-gpu-vulkan: context Arc < Context >, family u32, queue Mutex < vk :: Queue >
+    0%  struct Recorded (kaski-gpu-metal src/device/encoders.rs:43)  ~  struct Recorded (kaski-gpu-vulkan src/device/encoders.rs:108)
+        only in kaski-gpu-metal: 0 Retained < ProtocolObject < dyn MTLCommandBuffer > >
+        only in kaski-gpu-vulkan: 0 Buffer
+    0%  enum Bound (kaski-gpu-vulkan src/device/backend.rs:22)  ~  enum Bound (kaski-gpu-wgpu src/slots.rs:12)
+        only in kaski-gpu-vulkan: Buffer ( vk :: Buffer ), View ( vk :: ImageView ), Sampler ( vk :: Sampler )
+        only in kaski-gpu-wgpu: Buffer ( wgpu :: Buffer ), View ( wgpu :: TextureView ), Sampler ( wgpu :: Sampler )
+    0%  enum Bound (kaski-gpu-vulkan src/device/backend.rs:22)  ~  struct Bound (kaski-interface src/bind/mod.rs:68)
+    0%  struct Encoders (kaski-gpu-vulkan src/device/encoders.rs:119)  ~  struct Encoders (kaski-gpu-wgpu src/slots.rs:32)
+        only in kaski-gpu-vulkan: context Arc < Context >, families Vec < ( String , u32 ) >
+        only in kaski-gpu-wgpu: device wgpu :: Device
+    0%  enum Bound (kaski-gpu-wgpu src/slots.rs:12)  ~  struct Bound (kaski-interface src/bind/mod.rs:68)
+    0%  enum Plane (kaski-ground src/ground/bitplanes.rs:33)  ~  struct Plane (kaski-solver src/family.rs:88)
+    0%  struct Rows (kaski-ground src/ground/bitplanes.rs:19)  ~  struct Rows (kaski-items src/rows.rs:52)
+        only in kaski-ground: walk [ u16 ; SIDE ], east [ u16 ; SIDE ], south [ u16 ; SIDE ]
+        only in kaski-items: 0 Table
+    0%  struct Heard (kaski-hearing src/hearing.rs:129)  ~  enum Heard (kaski-input src/access.rs:77)
+    0%  struct Way (kaski-hearing src/hearing.rs:327)  ~  enum Way (kaski-interface src/focusing.rs:12)
+    0%  struct Kept (kaski-host src/recording.rs:15)  ~  struct Kept (kaski-input src/press.rs:124)
+        only in kaski-host: words Vec < String >, safe_area Option < SafeArea >, less_motion bool, narrated Vec < String >, outlined Option < Outline >, dataset BTreeMap < String , String >, relaunched Vec < Vec < String > >
+        only in kaski-input: cursor Vec2, touches HashMap < u64 , TouchInput >, held Vec < PointerInput >
+    0%  struct Kept (kaski-host src/recording.rs:15)  ~  trait Kept (kaski-motion src/alive/work.rs:55)
+    0%  struct Kept (kaski-host src/recording.rs:15)  ~  struct Kept (kaski-paths src/kept.rs:25)
+        only in kaski-host: words Vec < String >, safe_area Option < SafeArea >, less_motion bool, narrated Vec < String >, outlined Option < Outline >, dataset BTreeMap < String , String >, relaunched Vec < Vec < String > >
+        only in kaski-paths: span ColumnSpan, dist Patches < u16 >, frontier VecDeque < Column >, read BTreeMap < Patch , [ u64 ; 4 ] >, asked u64
+    0%  struct Outline (kaski-host src/outline.rs:25)  ~  enum Outline (kaski-view-contracts src/toggle.rs:27)
+    0%  enum Motion (kaski-hunting src/shooting.rs:45)  ~  struct Motion (kaski-ui src/narration.rs:12)
+    0%  enum Step (kaski-hunting src/afield.rs:31)  ~  enum Step (kaski-panels src/ui/bills/picture.rs:58)
+        only in kaski-hunting: Stay , Next , Done 
+        only in kaski-panels: Less , More 
+    0%  enum Hand (kaski-input src/access.rs:17)  ~  struct Hand (kaski-work src/crew.rs:20)
+    0%  enum Hand (kaski-input src/access.rs:17)  ~  struct Hand (kaski-work src/things.rs:58)
+    0%  enum How (kaski-input src/devices.rs:146)  ~  enum How (kaski-interface src/settings.rs:159)
+        only in kaski-input: Press , Held , Repeat 
+        only in kaski-interface: Step ( i8 ), Slide ( u16 ), Restore 
+    0%  enum How (kaski-input src/devices.rs:146)  ~  enum How (owed src/group.rs:176)
+        only in kaski-input: Press , Held , Repeat 
+        only in owed: Seam , Similar , Stock , Rest 
+    0%  struct Kept (kaski-input src/press.rs:124)  ~  trait Kept (kaski-motion src/alive/work.rs:55)
+    0%  struct Kept (kaski-input src/press.rs:124)  ~  struct Kept (kaski-paths src/kept.rs:25)
+        only in kaski-input: cursor Vec2, touches HashMap < u64 , TouchInput >, held Vec < PointerInput >
+        only in kaski-paths: span ColumnSpan, dist Patches < u16 >, frontier VecDeque < Column >, read BTreeMap < Patch , [ u64 ; 4 ] >, asked u64
+    0%  struct Moving (kaski-input src/lib.rs:56)  ~  struct Moving (kaski-knowledge src/stint.rs:39)
+        only in kaski-input: at Vec2, down Vec2, dragged bool
+        only in kaski-knowledge: knowledge & ' $1.0 Knowledge, tracks & ' $1.0 Tracks, kinds & ' $1.0 KnowledgeKinds, ground & ' $1.0 Ground, records super :: NodeRecords < ' $1.0 >, offers & ' $1.0 Offers, cultures & ' $1.0 Cultures, claims & ' $1.0 Claims, standing & ' $1.0 kaski_engine_contracts :: Roster < ( Villager , Block , kaski_engine_genome :: Genome ) >, frame u64
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Built (kaski-interface src/vocab.rs:26)  ~  struct Built (kaski-test-support src/shared.rs:15)
+        only in kaski-interface: node Entity, inner Entity
+        only in kaski-test-support: cell OnceLock < $1.0 >
+        generics differ: `` against `< $1.0 >`
+    0%  struct Drawn (kaski-interface src/display/read.rs:32)  ~  struct Drawn (kaski-render-model src/sun_maps.rs:52)
+        only in kaski-interface: node & ' static ComputedNode, at & ' static UiGlobalTransform, shown Option < & ' static InheritedVisibility >, clip Option < & ' static CalculatedClip >, fill Option < & ' static BackgroundColor >, gradient Option < & ' static BackgroundGradient >, border Option < & ' static BorderColor >, ring Option < & ' static Outline >, image Option < & ' static ImageNode >, block Option < & ' static ComputedTextBlock >, ink Option < & ' static TextColor >, shadow Option < & ' static BoxShadow >
+        only in kaski-render-model: matrix SunMatrix, centre [ f32 ; 3 ], radius f32, reach f32
+    0%  struct Drawn (kaski-interface src/display/read.rs:32)  ~  struct Drawn (kaski-render-model src/fixtures/overlays.rs:312)
+        only in kaski-interface: node & ' static ComputedNode, at & ' static UiGlobalTransform, shown Option < & ' static InheritedVisibility >, clip Option < & ' static CalculatedClip >, fill Option < & ' static BackgroundColor >, gradient Option < & ' static BackgroundGradient >, border Option < & ' static BorderColor >, ring Option < & ' static Outline >, image Option < & ' static ImageNode >, block Option < & ' static ComputedTextBlock >, ink Option < & ' static TextColor >, shadow Option < & ' static BoxShadow >
+        only in kaski-render-model: pixels Vec < [ u8 ; 4 ] >
+    0%  struct Form (kaski-interface src/layout.rs:19)  ~  enum Form (kaski-render-model src/layers/things.rs:69)
+    0%  struct Grip (kaski-interface src/panels.rs:117)  ~  enum Grip (kaski-tools src/grip.rs:44)
+    0%  enum How (kaski-interface src/settings.rs:159)  ~  enum How (owed src/group.rs:176)
+        only in kaski-interface: Step ( i8 ), Slide ( u16 ), Restore 
+        only in owed: Seam , Similar , Stock , Rest 
+    0%  struct Inputs (kaski-interface src/bindings.rs:20)  ~  struct Inputs (owed src/plan.rs:57)
+        only in kaski-interface: rows Vec < InputRow >, asked Vec < Option < Action > >, keys Vec < Option < String > >, resolved Option < Revision >, captions u64
+        only in owed: files & ' $1.0 [ File ], candidates & ' $1.0 [ Candidate ], all_candidates & ' $1.0 BTreeSet < String >, store & ' $1.0 Store, subjects & ' $1.0 BTreeSet < String >, full bool
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Item (kaski-interface src/display/scene.rs:46)  ~  struct Item (kaski-items src/item.rs:37)
+        only in kaski-interface: clip Option < Rect >, what What
+        only in kaski-items: kind ItemKind, parts Vec < PartState >, values PropertyValues, fit Option < GarmentFit >, liquid Option < Liquid >
+    0%  struct Item (kaski-interface src/display/scene.rs:46)  ~  struct Item (owed src/group.rs:165)
+        only in kaski-interface: clip Option < Rect >, what What
+        only in owed: rel String, class Class, reason String, area String, line usize
+    0%  struct Place (kaski-interface src/rows/layout.rs:65)  ~  enum Place (kaski-motion src/alive/grab.rs:44)
+    0%  struct Place (kaski-interface src/rows/layout.rs:65)  ~  enum Place (quote-check src/bevy.rs:25)
+    0%  struct Reach (kaski-interface src/a11y.rs:49)  ~  struct Reach (kaski-view-contracts src/model/mod.rs:107)
+        only in kaski-interface: focus Option < ResMut < ' $1.0 , InputFocus > >, visible Option < Res < ' $1.0 , InputFocusVisible > >, frames Query < ' $1.0 , ' $1.1 , ( Entity , & ' static PanelFrame ) >, children Query < ' $1.0 , ' $1.1 , & ' static Children >, controls Query < ' $1.0 , ' $1.1 , ( ) , With < TabIndex > >
+        only in kaski-view-contracts: at ReachAt, progress u8
+        generics differ: `< ' $1.0 , ' $1.1 >` against ``
+    0%  struct Record (kaski-interface src/value.rs:118)  ~  struct Record (kaski-render src/passes.rs:210)
+        only in kaski-interface: 0 Vec < ( & ' static str , Value ) >
+        only in kaski-render: world & ' $1.0 BindGroup, terrain & ' $1.0 TerrainPass, shadow bool
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Record (kaski-interface src/value.rs:118)  ~  struct Record (kaski-test-support src/golden/mod.rs:113)
+        only in kaski-interface: 0 Vec < ( & ' static str , Value ) >
+        only in kaski-test-support: moves Vec < Move >
+    0%  struct Records (kaski-interface src/records.rs:24)  ~  struct Records (kaski-render src/card/records.rs:97)
+        only in kaski-interface: kept BTreeMap < & ' static str , ( Revision , Record ) >, reads BTreeMap < & ' static str , u64 >, walks u64, frame u64, bound BTreeMap < Tree , Revision >, built BTreeSet < Tree >, declared Option < ( u32 , BTreeMap < Tree , Vec < & ' static str > > ) >
+        only in kaski-render: texture ( Texture , TextureView ), drawn u32, bind Option < BindGroup >, shadow_bind Option < BindGroup >, coarse_bind Option < BindGroup >, texels usize, across usize, most usize
+    0%  struct Records (kaski-interface src/records.rs:24)  ~  trait Records (kaski-render src/passes.rs:217)
+    0%  enum Refused (kaski-interface src/display/scene.rs:64)  ~  enum Refused (kaski-page-pool src/pool.rs:41)
+        only in kaski-interface: Unexpressible { index : usize ; kind : Option < DrawKind > ; reason : Reason }, Cannot ( CannotDraw )
+        only in kaski-page-pool: UnknownClass , Full 
+    0%  enum Refused (kaski-interface src/display/scene.rs:64)  ~  struct Refused (kaski-panels src/founding/mod.rs:30)
+    0%  enum Side (kaski-interface src/rows/layout.rs:254)  ~  enum Side (kaski-sound src/captions.rs:25)
+        only in kaski-interface: Player , Editor 
+        only in kaski-sound: West , East , Near 
+    0%  enum Size (kaski-interface src/rows/nodes.rs:12)  ~  struct Size (kaski-loot src/garb.rs:95)
+    0%  struct Source (kaski-interface src/vocab.rs:84)  ~  enum Source (kaski-texel-pages src/feedback.rs:34)
+    0%  struct Source (kaski-interface src/vocab.rs:84)  ~  trait Source (quote-check src/source.rs:17)
+    0%  struct Standing (kaski-interface src/bind/node.rs:28)  ~  enum Standing (kaski-panels src/ui/culture/picture.rs:61)
+    0%  struct Tables (kaski-interface src/display/tables.rs:16)  ~  struct Tables (kaski-items src/root.rs:195)
+        only in kaski-interface: images Vec < ImageId >, faces Vec < FaceId >
+        only in kaski-items: properties Frozen < PropertyFamily >, materials Frozen < MaterialFamily >, dyes Frozen < DyeFamily >, regions Frozen < RegionFamily >, modifications Frozen < ModificationFamily >, limbs Frozen < LimbFamily >, slots Frozen < SlotFamily >, forms Frozen < FormFamily >, carriers Frozen < CarrierFamily >, attachments Frozen < AttachmentFamily >, carrier_of Vec < Option < Carrier > >, kinds Frozen < ItemKindFamily >, density Option < Property >, splitting Vec < Property >, plain OnceLock < Box < [ Option < ItemStack > ] > >, measures RwLock < BTreeMap < ItemStack , Arc < ItemMeasure > > >
+    0%  struct Tables (kaski-interface src/display/tables.rs:16)  ~  struct Tables (kaski-plants src/kinds/mod.rs:20)
+        only in kaski-interface: images Vec < ImageId >, faces Vec < FaceId >
+        only in kaski-plants: trees Vec < Species >, favour Vec < read :: Favour >, tree_genes TreeGenes, crop Species, year YearReads, genes Genetics
+    0%  struct Tables (kaski-interface src/display/tables.rs:16)  ~  struct Tables (kaski-sim src/kinds/mod.rs:54)
+        only in kaski-interface: images Vec < ImageId >, faces Vec < FaceId >
+        only in kaski-sim: content kaski_pack :: Identity, noise NoiseTables, kinds Kinds, ground Arc < GroundKinds >, realm kaski_realm :: RealmKinds, goods tables :: GoodsKinds, mind kaski_minds :: kinds :: MindKinds, knowledge kaski_knowledge :: kinds :: KnowledgeKinds, work kaski_work :: kinds :: WorkKinds, life kaski_life :: kinds :: LifeKinds, creature kaski_creatures :: kinds :: CreatureKinds, hunt kaski_hunting :: kinds :: HuntKinds, equip kaski_equip :: EquipKinds, loot kaski_loot :: LootKinds, build kaski_building :: kinds :: BuildKinds, founded kaski_founding :: kinds :: FoundingKinds, minds tables :: MindTables, beings Arc < BeingKinds >, wild tables :: WildKinds, seen tables :: SeenKinds, gives kaski_weather :: give :: Gives
+    0%  enum Tree (kaski-interface src/bind/mod.rs:58)  ~  struct Tree (kaski-lowering src/tree.rs:63)
+    0%  struct Under (kaski-interface src/panels.rs:121)  ~  enum Under (kaski-view-contracts src/pick.rs:24)
+    0%  struct Holding (kaski-items src/held.rs:28)  ~  struct Holding (kaski-tools src/lay.rs:62)
+        only in kaski-items: by Holder
+        only in kaski-tools: held ResMut < ' $1.0 , Held >, draft ResMut < ' $1.0 , Draft >, selected ResMut < ' $1.0 , Selected >, panels ResMut < ' $1.0 , Panels >, grab ResMut < ' $1.0 , Grab >, eager ResMut < ' $1.0 , Eager >, planning Res < ' $1.0 , Planning >, dragging Local < ' $1.1 , Option < usize > >
+        generics differ: `` against `< ' $1.0 , ' $1.1 >`
+    0%  struct Item (kaski-items src/item.rs:37)  ~  struct Item (owed src/group.rs:165)
+        only in kaski-items: kind ItemKind, parts Vec < PartState >, values PropertyValues, fit Option < GarmentFit >, liquid Option < Liquid >
+        only in owed: rel String, class Class, reason String, area String, line usize
+    0%  struct Row (kaski-items src/row.rs:16)  ~  struct Row (kaski-solver src/graph.rs:16)
+        only in kaski-items: name String, t & ' $1.0 Table
+        only in kaski-solver: a u32, b u32, numbers [ f32 ; 4 ], compliance f32, family & ' static str, correction fn ( & Reading ) -> V3
+        generics differ: `< ' $1.0 >` against ``
+    0%  struct Row (kaski-items src/row.rs:16)  ~  struct Row (ratio-probe src/lib.rs:65)
+        only in kaski-items: name String, t & ' $1.0 Table
+        only in ratio-probe: fields BTreeMap < String , String >
+        generics differ: `< ' $1.0 >` against ``
+    0%  struct Tables (kaski-items src/root.rs:195)  ~  struct Tables (kaski-plants src/kinds/mod.rs:20)
+        only in kaski-items: properties Frozen < PropertyFamily >, materials Frozen < MaterialFamily >, dyes Frozen < DyeFamily >, regions Frozen < RegionFamily >, modifications Frozen < ModificationFamily >, limbs Frozen < LimbFamily >, slots Frozen < SlotFamily >, forms Frozen < FormFamily >, carriers Frozen < CarrierFamily >, attachments Frozen < AttachmentFamily >, carrier_of Vec < Option < Carrier > >, kinds Frozen < ItemKindFamily >, density Option < Property >, splitting Vec < Property >, plain OnceLock < Box < [ Option < ItemStack > ] > >, measures RwLock < BTreeMap < ItemStack , Arc < ItemMeasure > > >
+        only in kaski-plants: trees Vec < Species >, favour Vec < read :: Favour >, tree_genes TreeGenes, crop Species, year YearReads, genes Genetics
+    0%  struct Tables (kaski-items src/root.rs:195)  ~  struct Tables (kaski-sim src/kinds/mod.rs:54)
+        only in kaski-items: properties Frozen < PropertyFamily >, materials Frozen < MaterialFamily >, dyes Frozen < DyeFamily >, regions Frozen < RegionFamily >, modifications Frozen < ModificationFamily >, limbs Frozen < LimbFamily >, slots Frozen < SlotFamily >, forms Frozen < FormFamily >, carriers Frozen < CarrierFamily >, attachments Frozen < AttachmentFamily >, carrier_of Vec < Option < Carrier > >, kinds Frozen < ItemKindFamily >, density Option < Property >, splitting Vec < Property >, plain OnceLock < Box < [ Option < ItemStack > ] > >, measures RwLock < BTreeMap < ItemStack , Arc < ItemMeasure > > >
+        only in kaski-sim: content kaski_pack :: Identity, noise NoiseTables, kinds Kinds, ground Arc < GroundKinds >, realm kaski_realm :: RealmKinds, goods tables :: GoodsKinds, mind kaski_minds :: kinds :: MindKinds, knowledge kaski_knowledge :: kinds :: KnowledgeKinds, work kaski_work :: kinds :: WorkKinds, life kaski_life :: kinds :: LifeKinds, creature kaski_creatures :: kinds :: CreatureKinds, hunt kaski_hunting :: kinds :: HuntKinds, equip kaski_equip :: EquipKinds, loot kaski_loot :: LootKinds, build kaski_building :: kinds :: BuildKinds, founded kaski_founding :: kinds :: FoundingKinds, minds tables :: MindTables, beings Arc < BeingKinds >, wild tables :: WildKinds, seen tables :: SeenKinds, gives kaski_weather :: give :: Gives
+    0%  struct Asking (kaski-life src/consent.rs:50)  ~  struct Asking (kaski-sim src/skip/shared.rs:58)
+        only in kaski-life: kinds & ' $1.0 LifeKinds, knowledge & ' $1.0 Knowledge, relations & ' $1.0 Relations, claims & ' $1.0 Claims, governance & ' $1.0 Governance, tracks & ' $1.0 Tracks, now Now, living & ' $1.0 Roster < ( Villager , Block , Genome ) >
+        only in kaski-sim: 0 BTreeSet < PlayerId >
+        generics differ: `< ' $1.0 >` against ``
+    0%  trait Bearing (kaski-life src/gestation.rs:78)  ~  struct Bearing (kaski-motion src/alive/individual.rs:21)
+    0%  struct Owed (kaski-loot src/marks.rs:20)  ~  struct Owed (owed src/lib.rs:34)
+        only in kaski-loot: 0 Vec < String >
+    0%  struct When (kaski-loot src/garb.rs:137)  ~  enum When (kaski-settings src/when.rs:14)
+    0%  struct Who (kaski-loot src/garb.rs:160)  ~  enum Who (kaski-minds src/compose.rs:43)
+    0%  struct Who (kaski-loot src/garb.rs:160)  ~  enum Who (kaski-noise src/hearers.rs:16)
+    0%  struct Who (kaski-loot src/garb.rs:160)  ~  enum Who (kaski-panels src/skip/mod.rs:150)
+    0%  struct FaceId (kaski-lowering src/faces.rs:12)  ~  struct FaceId (kaski-view-contracts src/display_list.rs:54)
+        only in kaski-lowering: 0 u32
+        only in kaski-view-contracts: 0 u16
+    0%  enum Kind (kaski-lowering src/tree.rs:26)  ~  struct Kind (kaski-render-model src/layers/things.rs:61)
+    0%  enum Kind (kaski-lowering src/tree.rs:26)  ~  struct Kind (kaski-tickets src/model.rs:48)
+    0%  struct Walk (kaski-lowering src/lower.rs:59)  ~  struct Walk (kaski-paths src/walk.rs:42)
+        only in kaski-lowering: tree & ' $1.0 Tree, faces & ' $1.0 Faces < ' $1.1 >
+        only in kaski-paths: ground & ' $1.0 Ground, frame u64, ways RefCell < WayCache >, taken RefCell < BTreeSet < Block > >, left RefCell < BTreeSet < BeingId > >
+        generics differ: `< ' $1.0 , ' $1.1 >` against `< ' $1.0 >`
+    0%  enum Target (kaski-material src/pipeline.rs:19)  ~  struct Target (kaski-render src/gpu.rs:171)
+    0%  enum Target (kaski-material src/pipeline.rs:19)  ~  struct Target (kaski-solver src/resident.rs:43)
+    0%  struct Candidate (kaski-minds src/actions.rs:39)  ~  struct Candidate (owed src/plan.rs:51)
+        only in kaski-minds: task Task, steps u16, slot Option < ( Slot , Quota ) >, at_stake Quantity, weapon_skill Quantity, own_home Quantity, marked Quantity, begun Quantity, kept_hunger Quantity, arming Option < ( Name , Consideration < FRAC > ) >
+        only in owed: rel String, text String
+    0%  struct Done (kaski-minds src/considerations.rs:90)  ~  struct Done (owed src/apply.rs:23)
+        only in kaski-minds: sources & ' $1.0 FactSources < ' $1.0 >, frame u64
+        only in owed: tasks usize, covered usize, cited usize, closed usize
+        generics differ: `< ' $1.0 >` against ``
+    0%  struct Frame (kaski-minds src/compose.rs:84)  ~  struct Frame (kaski-render src/passes.rs:161)
+        only in kaski-minds: 0 u64
+        only in kaski-render: device & ' $1.0 RenderDevice, queue & ' $1.0 RenderQueue, extracted & ' $1.0 Extracted, world & ' $1.0 WorldPass, target & ' $1.0 PixelTarget, detail TextureView, worked Option < & ' $1.0 Worked >
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Offered (kaski-minds src/offers.rs:55)  ~  struct Offered (kaski-work src/orders.rs:204)
+        only in kaski-minds: facts Vec < ( Fact , Quantity ) >, keys Vec < OfferKey >
+        only in kaski-work: rack bool, wanting_wood bool, wanting_a_hand bool, ordered bool, made_wood Quantity
+    0%  enum Reads (kaski-minds src/minds.rs:198)  ~  struct Reads (kaski-test-support src/view.rs:25)
+    0%  enum Who (kaski-minds src/compose.rs:43)  ~  enum Who (kaski-panels src/skip/mod.rs:150)
+        only in kaski-minds: Actor , Leg ( u8 )
+        only in kaski-panels: Villager ( u32 ), Creature ( String ), Place ( i32 , i32 ), Being ( u32 )
+    0%  struct Face (kaski-motion src/alive/face.rs:63)  ~  struct Face (kaski-ui src/widgets.rs:38)
+        only in kaski-motion: blink_at f32, blink_until f32, away bool, look ( f32 , f32 ), next_look f32, last_phrase f32, rng Rng
+        only in kaski-ui: 0 u16
+    0%  struct Grab (kaski-motion src/alive/grab.rs:54)  ~  struct Grab (kaski-tools src/grip.rs:279)
+        only in kaski-motion: side BodySide, at Place, progress f32
+        only in kaski-tools: held Option < Hold >, pressed Option < Grip >, this_frame bool
+    0%  trait Kept (kaski-motion src/alive/work.rs:55)  ~  struct Kept (kaski-paths src/kept.rs:25)
+    0%  struct Layers (kaski-motion src/locomotion.rs:21)  ~  struct Layers (kaski-texel-pages src/overlay.rs:35)
+        only in kaski-motion: styles Vec < ( & ' $1.0 Clip , & ' $1.0 Clip , f32 ) >, load Option < ( & ' $1.0 Clip , f32 ) >, tired f32, turn f32
+        only in kaski-texel-pages: substance TexelPage, prototype TexelPage, residual Option < TexelPage >
+        generics differ: `< ' $1.0 >` against ``
+    0%  struct Legs (kaski-motion src/alive/grab.rs:87)  ~  struct Legs (kaski-skeleton src/compose.rs:221)
+        only in kaski-motion: chains [ Limb ; 2 ]
+        only in kaski-skeleton: socket String, pair u8, joints u8, half_width f32, girth f32
+    0%  enum Place (kaski-motion src/alive/grab.rs:44)  ~  enum Place (quote-check src/bevy.rs:25)
+        only in kaski-motion: Point ( V3 ), Bone ( usize , V3 )
+        only in quote-check: Crate { cited : Cited ; dir : String }, Blob { cited : Cited ; tag : String }
+    0%  struct Trunk (kaski-motion src/alive/layers.rs:24)  ~  trait Trunk (tickets src/landing.rs:31)
+    0%  struct Made (kaski-noise src/make.rs:26)  ~  struct Made (kaski-sound src/present.rs:155)
+        only in kaski-noise: event SoundEvent, cell Block
+        only in kaski-sound: event & ' $1.0 SoundEvent, heard & ' $1.0 [ Heard ]
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Making (kaski-noise src/make.rs:34)  ~  struct Making (kaski-panels src/ui/founding.rs:37)
+        only in kaski-noise: kinds & ' $1.0 NoiseKinds, content & ' $1.0 HearingContent, ground & ' $1.0 Ground, tracks & ' $1.0 Tracks, frame u64
+        only in kaski-panels: opens Res < ' $1.0 , Opens >, relaunch Option < Res < ' $1.0 , Relaunch > >, draft Option < ResMut < ' $1.0 , Draft > >, kinds Option < Res < ' $1.0 , SimKinds > >, words Option < Res < ' $1.0 , LaunchWords > >
+    0%  struct Reading (kaski-noise src/react.rs:39)  ~  struct Reading (kaski-solver src/family.rs:16)
+        only in kaski-noise: content & ' $1.0 HearingContent, hearers & ' $1.0 Hearers, ground & ' $1.0 Ground, tracks & ' $1.0 Tracks, frame u64
+        only in kaski-solver: mine V3, other V3, w_mine f32, w_other f32, numbers [ f32 ; 4 ], alpha f32
+        generics differ: `< ' $1.0 >` against ``
+    0%  struct Reading (kaski-noise src/react.rs:39)  ~  struct Reading (kaski-view-local src/inspected.rs:92)
+        only in kaski-noise: content & ' $1.0 HearingContent, hearers & ' $1.0 Hearers, ground & ' $1.0 Ground, tracks & ' $1.0 Tracks, frame u64
+        only in kaski-view-local: id BeingId, dev bool, at ( i32 , i32 ), doing Option < TaskRead >, leg u8, fatigue f64, belief f64, wood f64, water f64, takes_to Vec < ( String , f64 ) >, character Vec < ( String , f64 ) >, hero Option < HeroMark >, weight f64, hero_weight f64, household Option < u8 >, leads bool, ties Vec < ( BeingId , f64 ) >, weighing Option < ( u64 , Vec < OptionRead > ) >, wears Vec < String >, burden [ f64 ; 3 ], why Option < String >, counsel Option < String >, asked Option < String >, name Option < String >, bynames Vec < String >, renames u16
+        generics differ: `< ' $1.0 >` against ``
+    0%  struct Reading (kaski-noise src/react.rs:39)  ~  struct Reading (tickets src/trunk.rs:48)
+        only in kaski-noise: content & ' $1.0 HearingContent, hearers & ' $1.0 Hearers, ground & ' $1.0 Ground, tracks & ' $1.0 Tracks, frame u64
+        only in tickets: store Store, plan Plan, notice String, degraded bool
+        generics differ: `< ' $1.0 >` against ``
+    0%  enum Who (kaski-noise src/hearers.rs:16)  ~  enum Who (kaski-panels src/skip/mod.rs:150)
+        only in kaski-noise: Villager , Creature ( u8 )
+        only in kaski-panels: Villager ( u32 ), Creature ( String ), Place ( i32 , i32 ), Being ( u32 )
+    0%  struct Fnv (kaski-pack src/hash.rs:32)  ~  struct Fnv (kaski-view-contracts src/model/portrait.rs:20)
+        only in kaski-pack: 0 u128
+        only in kaski-view-contracts: 0 u64
+    0%  struct Stamp (kaski-pack src/stamp.rs:19)  ~  struct Stamp (kaski-planning src/write.rs:43)
+        only in kaski-pack: 0 Vec < u64 >
+        only in kaski-planning: at & ' $1.0 str, by & ' $1.0 str, tag & ' $1.0 str
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct ClassId (kaski-page-pool src/class.rs:29)  ~  struct ClassId (kaski-sim src/beings/exchange/mod.rs:121)
+        only in kaski-page-pool: 0 u32
+        only in kaski-sim: 0 usize
+    0%  struct Classes (kaski-page-pool src/class.rs:69)  ~  struct Classes (kaski-vocabulary src/class.rs:47)
+        only in kaski-page-pool: rows Vec < ClassRow >
+        only in kaski-vocabulary: keys Vec < Box < str > >, goods Vec < Vec < ItemStack > >, ids ClassIds
+    0%  struct Held (kaski-page-pool src/pool.rs:14)  ~  struct Held (kaski-render-model src/held.rs:19)
+        only in kaski-page-pool: pinned bool, needed u64
+        only in kaski-render-model: grid u32, low [ i32 ; 3 ], high [ i32 ; 3 ]
+    0%  struct Held (kaski-page-pool src/pool.rs:14)  ~  struct Held (kaski-tools src/held.rs:51)
+        only in kaski-page-pool: pinned bool, needed u64
+        only in kaski-tools: tool Option < Tool >, wall Lay, storeys u8
+    0%  struct Held (kaski-page-pool src/pool.rs:14)  ~  struct Held (kaski-web src/web_audio.rs:48)
+        only in kaski-page-pool: pinned bool, needed u64
+        only in kaski-web: source AudioBufferSourceNode, gain GainNode, pan StereoPannerNode, filter BiquadFilterNode
+    0%  enum Refused (kaski-page-pool src/pool.rs:41)  ~  struct Refused (kaski-panels src/founding/mod.rs:30)
+    0%  struct Request (kaski-page-pool src/stream.rs:31)  ~  enum Request (kaski-storage src/io.rs:31)
+    0%  struct Draft (kaski-panels src/founding/mod.rs:73)  ~  struct Draft (kaski-tools src/draft.rs:19)
+        only in kaski-panels: intents Intents, clan usize, preset usize, reroll Option < u64 >, history f64, seed u32, camp Option < Camp >, page Page
+        only in kaski-tools: cells Vec < Block >, doors Vec < Block >, nodes Vec < Block >, last Option < Block >
+    0%  struct Picture (kaski-panels src/ui/canvas/draw.rs:26)  ~  struct Picture (kaski-test-support src/picture.rs:13)
+        only in kaski-panels: width u32, height u32, pixels Vec < [ u8 ; 4 ] >
+        only in kaski-test-support: size ( u32 , u32 ), rgba Vec < u8 >
+    0%  struct Rect (kaski-panels src/ui/canvas/layout.rs:85)  ~  struct Rect (kaski-view-contracts src/display_list.rs:15)
+        only in kaski-panels: x u32, y u32, w u32, h u32
+        only in kaski-view-contracts: x i32, y i32, w i32, h i32
+    0%  struct Bar (kaski-planning src/roadmap.rs:47)  ~  struct Bar (kaski-sound src/music/conduct.rs:44)
+        only in kaski-planning: ticket String, span String, class Class, planned Days, actual Days, slip Option < i64 >
+        only in kaski-sound: start_s f64, end_s f64, notes Vec < NotePlaced >, lead f32, voice f32
+    0%  enum Class (kaski-planning src/derive.rs:19)  ~  struct Class (kaski-sim src/beings/exchange/mod.rs:44)
+    0%  enum Class (kaski-planning src/derive.rs:19)  ~  enum Class (owed src/group.rs:31)
+        only in kaski-planning: Open , Active , Stopped , Done , Dropped 
+        only in owed: CanonSilent , Op , StandIn , Unmarked , Seam ( String )
+    0%  struct Counts (kaski-planning src/derive.rs:67)  ~  struct Counts (kaski-sim src/skip/mod.rs:42)
+        only in kaski-planning: open usize, active usize, stopped usize, done usize, dropped usize
+        only in kaski-sim: signal String, attrs Vec < ( String , String ) >
+    0%  struct Mark (kaski-planning src/roadmap.rs:20)  ~  enum Mark (kaski-view-contracts src/overlay.rs:156)
+    0%  struct Plan (kaski-planning src/plan.rs:49)  ~  struct Plan (owed src/plan.rs:99)
+        only in kaski-planning: rows Vec < Row >
+        only in owed: new Vec < NewTicket >, cites Vec < Cite >, closes Vec < Close >, cited usize
+    0%  struct Row (kaski-planning src/plan.rs:14)  ~  struct Row (kaski-solver src/graph.rs:16)
+        only in kaski-planning: ns String, id String, fields Fields
+        only in kaski-solver: a u32, b u32, numbers [ f32 ; 4 ], compliance f32, family & ' static str, correction fn ( & Reading ) -> V3
+    0%  struct Row (kaski-planning src/plan.rs:14)  ~  struct Row (ratio-probe src/lib.rs:65)
+        only in kaski-planning: ns String, id String, fields Fields
+        only in ratio-probe: fields BTreeMap < String , String >
+    0%  struct Bone (kaski-plant-rig src/plant_rig.rs:32)  ~  struct Bone (kaski-skeleton src/skeleton.rs:17)
+        only in kaski-plant-rig: parent Option < u16 >, length f32, free f32, catch f32, hold f32, tip [ f32 ; 2 ], phase f32, load f32, shed_at f32, push [ f32 ; 2 ], pushed Option < f32 >
+        only in kaski-skeleton: name String, parent Option < usize >, head V3, tail V3
+    0%  struct Tables (kaski-plants src/kinds/mod.rs:20)  ~  struct Tables (kaski-sim src/kinds/mod.rs:54)
+        only in kaski-plants: trees Vec < Species >, favour Vec < read :: Favour >, tree_genes TreeGenes, crop Species, year YearReads, genes Genetics
+        only in kaski-sim: content kaski_pack :: Identity, noise NoiseTables, kinds Kinds, ground Arc < GroundKinds >, realm kaski_realm :: RealmKinds, goods tables :: GoodsKinds, mind kaski_minds :: kinds :: MindKinds, knowledge kaski_knowledge :: kinds :: KnowledgeKinds, work kaski_work :: kinds :: WorkKinds, life kaski_life :: kinds :: LifeKinds, creature kaski_creatures :: kinds :: CreatureKinds, hunt kaski_hunting :: kinds :: HuntKinds, equip kaski_equip :: EquipKinds, loot kaski_loot :: LootKinds, build kaski_building :: kinds :: BuildKinds, founded kaski_founding :: kinds :: FoundingKinds, minds tables :: MindTables, beings Arc < BeingKinds >, wild tables :: WildKinds, seen tables :: SeenKinds, gives kaski_weather :: give :: Gives
+    0%  struct Drift (kaski-realm src/things.rs:102)  ~  enum Drift (kaski-sim src/apply/drift.rs:19)
+    0%  enum Group (kaski-realm src/society.rs:30)  ~  struct Group (owed src/group.rs:189)
+    0%  struct Seat (kaski-realm src/office.rs:103)  ~  struct Seat (kaski-view-local src/readout.rs:53)
+        only in kaski-realm: office Office, place u8, of & ' $1.0 Established
+        only in kaski-view-local: head Option < BeingId >, me Option < BeingId >, leads bool, cohesion f64, heroes usize
+        generics differ: `< ' $1.0 >` against ``
+    0%  struct Seat (kaski-realm src/session/mod.rs:62)  ~  struct Seat (kaski-view-local src/readout.rs:53)
+        only in kaski-realm: being BeingId, left Option < u64 >
+        only in kaski-view-local: head Option < BeingId >, me Option < BeingId >, leads bool, cohesion f64, heroes usize
+    0%  struct Seat (kaski-realm src/things.rs:36)  ~  struct Seat (kaski-view-local src/readout.rs:53)
+        only in kaski-realm: player PlayerId, being BeingId
+        only in kaski-view-local: head Option < BeingId >, me Option < BeingId >, leads bool, cohesion f64, heroes usize
+    0%  struct Build (kaski-render src/passes.rs:46)  ~  struct Build (kaski-ui src/widgets.rs:56)
+        only in kaski-render: device & ' $1.0 RenderDevice, queue & ' $1.0 RenderQueue, lit Option < ( & ' $1.0 FireShadowPass , & ' $1.0 DetailTexture ) >, world Option < & ' $1.0 WorldPass >, terrain Option < & ' $1.0 TerrainPass >
+        only in kaski-ui: commands & ' $1.0 mut Commands < ' $1.1 , ' $1.2 >, fonts & ' $1.0 Fonts
+        generics differ: `< ' $1.0 >` against `< ' $1.0 , ' $1.1 , ' $1.2 >`
+    0%  struct Cx (kaski-render src/passes.rs:335)  ~  struct Cx (kaski-sim src/apply/mod.rs:139)
+        only in kaski-render: device & ' $1.0 RenderDevice, queue & ' $1.0 RenderQueue, extracted & ' $1.0 Extracted
+        only in kaski-sim: frame u64, night Quantity, weather kaski_weather :: axis :: WeatherAxis, kinds crate :: SimKinds, ids kaski_vocabulary :: Ids, stood Roster < ( Villager , kaski_engine_contracts :: Block , Commitment ) >, left std :: collections :: BTreeSet < BeingId >, standing std :: cell :: OnceCell < Roster < ( Villager , kaski_engine_contracts :: Block , kaski_engine_genome :: Genome ) > >, contested BTreeMap < kaski_engine_contracts :: Slot , ( kaski_engine_contracts :: Quota , Vec < ( Quantity , BeingId ) > ) >, emptied std :: collections :: BTreeSet < kaski_engine_contracts :: Account >, after Vec < Thing >, arrived Vec < BeingId >, worked std :: cell :: RefCell < BTreeMap < kaski_engine_contracts :: Block , Option < u64 > > >, wrote Wrote, trails kaski_tread :: trail :: TrailsWritten, plots kaski_building :: PlotsWritten, day u64, bearing std :: cell :: RefCell < BTreeMap < BeingId , bool > >, drifted bool, committed Vec < kaski_engine_frame :: Touch >
+        generics differ: `< ' $1.0 >` against ``
+    0%  struct Draw (kaski-render src/passes.rs:202)  ~  struct Draw (kaski-starsystem src/generate.rs:182)
+        only in kaski-render: ctx & ' $1.0 mut RenderContext < ' $1.1 , ' $1.2 >, passes & ' $1.0 Passes, out & ' $1.0 ViewTarget
+        only in kaski-starsystem: 0 Stream
+        generics differ: `< ' $1.0 , ' $1.1 , ' $1.2 >` against ``
+    0%  struct Record (kaski-render src/passes.rs:210)  ~  struct Record (kaski-test-support src/golden/mod.rs:113)
+        only in kaski-render: world & ' $1.0 BindGroup, terrain & ' $1.0 TerrainPass, shadow bool
+        only in kaski-test-support: moves Vec < Move >
+        generics differ: `< ' $1.0 >` against ``
+    0%  struct Scratch (kaski-render src/card/snapshot.rs:94)  ~  struct Scratch (tickets src/testkit.rs:31)
+        only in kaski-render: material ( Texture , TextureView ), normals ( Texture , TextureView ), pipeline RenderPipeline, instances Buffer, bind BindGroup, pending Vec < SnapshotJob >, views Vec < ViewDraw >
+        only in tickets: mock PathBuf, root PathBuf
+    0%  struct Slot (kaski-render src/world/models.rs:24)  ~  struct Slot (kaski-settings src/store.rs:37)
+        only in kaski-render: model FurnitureModel, first u32, count u32
+        only in kaski-settings: id String, shape KnobShape, when When, live String, stored String
+    0%  struct Target (kaski-render src/gpu.rs:171)  ~  struct Target (kaski-solver src/resident.rs:43)
+        only in kaski-render: format TextureFormat, blend Option < BlendState >, writes ColorWrites
+        only in kaski-solver: row usize, numbers [ f32 ; 4 ]
+    0%  struct Worked (kaski-render src/passes.rs:133)  ~  struct Worked (kaski-work src/crew.rs:99)
+        only in kaski-render: block SceneBlock, axes [ f32 ; 4 ], target ( u32 , u32 ), fit Upscaled, step f32, format Option < TextureFormat >, carry Option < kaski_render_model :: planet :: carry :: GridCarry >, camera camera :: Frame, view ViewState, centre [ f32 ; 3 ], law SwardLaw, markers Vec < Marker >, card_view CardView, toward [ f32 ; 3 ]
+        only in kaski-work: situation & ' $1.0 Situation, crew & ' $1.0 Crew
+        generics differ: `` against `< ' $1.0 >`
+    0%  enum Depth (kaski-render-model src/print_pages/mod.rs:71)  ~  struct Depth (kaski-vis-buffer src/key.rs:31)
+    0%  struct Held (kaski-render-model src/held.rs:19)  ~  struct Held (kaski-tools src/held.rs:51)
+        only in kaski-render-model: grid u32, low [ i32 ; 3 ], high [ i32 ; 3 ]
+        only in kaski-tools: tool Option < Tool >, wall Lay, storeys u8
+    0%  struct Held (kaski-render-model src/held.rs:19)  ~  struct Held (kaski-web src/web_audio.rs:48)
+        only in kaski-render-model: grid u32, low [ i32 ; 3 ], high [ i32 ; 3 ]
+        only in kaski-web: source AudioBufferSourceNode, gain GainNode, pan StereoPannerNode, filter BiquadFilterNode
+    0%  struct Key (kaski-render-model src/impostor/registry.rs:17)  ~  struct Key (kaski-vis-buffer src/key.rs:105)
+        only in kaski-render-model: composition PlantComposition, tier u8
+        only in kaski-vis-buffer: depth Depth, cluster ClusterRef, triangle TriangleIndex
+    0%  struct Kind (kaski-render-model src/layers/things.rs:61)  ~  struct Kind (kaski-tickets src/model.rs:48)
+        only in kaski-render-model: 0 PlantTraits, 1 u8, 2 u8
+        only in kaski-tickets: id String, states Vec < String >, initial String, requires Vec < String >, satisfied_by Vec < String >, fields Fields
+    0%  struct Laid (kaski-render-model src/impostor/mod.rs:77)  ~  struct Laid (kaski-tools src/laid.rs:68)
+        only in kaski-render-model: tier u8, views Vec < Snapshot >, cell u32, tiles ( usize , usize )
+        only in kaski-tools: plans Vec < LaidPlan >, chosen Option < Chosen >, laying Option < usize >
+    0%  struct Laid (kaski-render-model src/layers/mod.rs:151)  ~  struct Laid (kaski-tools src/laid.rs:68)
+        only in kaski-render-model: near Option < ( [ f32 ; 2 ] , f32 ) >, drawn usize, drawn_parts usize, near_count usize, near_parts usize, drawn_impostors usize, near_impostors usize, tiles_laid usize, palette Vec < u8 >
+        only in kaski-tools: plans Vec < LaidPlan >, chosen Option < Chosen >, laying Option < usize >
+    0%  struct Read (kaski-render-model src/thing_tiles.rs:21)  ~  struct Read (kaski-tread src/surface.rs:75)
+        only in kaski-render-model: at u64, things Vec < ModelThing >, cover ( Area , Vec < f32 > )
+        only in kaski-tread: ground & ' $1.0 Ground, trodden kaski_vocabulary :: Track, mud_cover kaski_surface :: CoverId, stock StockView < ' $1.0 >, tracks & ' $1.0 Tracks, prints & ' $1.0 dyn crate :: trail :: PrintBook, deposits & ' $1.0 kaski_weather :: give :: Deposits
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Resolved (kaski-render-model src/kinds.rs:19)  ~  struct Resolved (kaski-texel-pages src/texels.rs:19)
+        only in kaski-render-model: kinds Kinds, furniture Furniture, expressions Expressions, lenses Vec < u8 >
+        only in kaski-texel-pages: page TexelPage, fell u8
+    0%  struct Row (kaski-render-model src/overlay/mod.rs:45)  ~  struct Row (kaski-solver src/graph.rs:16)
+        only in kaski-render-model: from MapEdge, to MapEdge, lenses Vec < usize >, over bool, legend String
+        only in kaski-solver: a u32, b u32, numbers [ f32 ; 4 ], compliance f32, family & ' static str, correction fn ( & Reading ) -> V3
+    0%  struct Row (kaski-render-model src/overlay/mod.rs:45)  ~  struct Row (ratio-probe src/lib.rs:65)
+        only in kaski-render-model: from MapEdge, to MapEdge, lenses Vec < usize >, over bool, legend String
+        only in ratio-probe: fields BTreeMap < String , String >
+    0%  enum Lands (kaski-settings src/when.rs:68)  ~  trait Lands (kaski-sim src/apply/landers/mod.rs:63)
+    0%  struct Class (kaski-sim src/beings/exchange/mod.rs:44)  ~  enum Class (owed src/group.rs:31)
+    0%  enum Verdict (kaski-sim src/apply/gate.rs:24)  ~  enum Verdict (kaski-test-support src/golden/mod.rs:45)
+        only in kaski-sim: Pass , Drop , NoStanding , PastEarshot 
+        only in kaski-test-support: Empty , Pinned , Unexplained { got : String ; head : Move }, Unjoined { got : String ; heads : Vec < Move > }
+    0%  enum Verdict (kaski-sim src/apply/gate.rs:24)  ~  enum Verdict (quote-check src/compare.rs:19)
+        only in kaski-sim: Pass , Drop , NoStanding , PastEarshot 
+        only in quote-check: Exact , Trailing , EdgeBlank , Joined , Spacing , Differs { at : usize ; cited : String ; quoted : String }, NoFile ( String ), PastEnd { last : usize ; lines : usize ; path : String }, Locator ( Unreadable )
+    0%  struct Village (kaski-sim src/beings/composed.rs:272)  ~  struct Village (kaski-tools src/lay.rs:49)
+        only in kaski-sim: bills & ' $1.0 Frozen < BillFamily >
+        only in kaski-tools: kinds Option < Res < ' $1.0 , SimKinds > >, villagers Query < ' $1.0 , ' $1.1 , ( & ' static Villager , & ' static Position ) >, creatures Query < ' $1.0 , ' $1.1 , ( & ' static Creature , & ' static Position ) , Without < Villager > >, hunted Query < ' $1.0 , ' $1.1 , & ' static Creature , With < Hunted > >, pawn Option < Res < ' $1.0 , Pawn > >, claims Option < Res < ' $1.0 , kaski_engine_agency :: Claims > >, governance Option < Res < ' $1.0 , kaski_realm :: office :: Governance > >
+        generics differ: `< ' $1.0 >` against `< ' $1.0 , ' $1.1 >`
+    0%  struct Village (kaski-sim src/domain/systems.rs:44)  ~  struct Village (kaski-tools src/lay.rs:49)
+        only in kaski-sim: kinds & ' $1.0 SimKinds, plans & ' $1.0 PlansAround < ' $1.0 >, situations WorkStanding < ' $1.0 >, knowledge & ' $1.0 Knowledge, herd & ' $1.0 SpotHerd, askings & ' $1.0 kaski_building :: Askings
+        only in kaski-tools: kinds Option < Res < ' $1.0 , SimKinds > >, villagers Query < ' $1.0 , ' $1.1 , ( & ' static Villager , & ' static Position ) >, creatures Query < ' $1.0 , ' $1.1 , ( & ' static Creature , & ' static Position ) , Without < Villager > >, hunted Query < ' $1.0 , ' $1.1 , & ' static Creature , With < Hunted > >, pawn Option < Res < ' $1.0 , Pawn > >, claims Option < Res < ' $1.0 , kaski_engine_agency :: Claims > >, governance Option < Res < ' $1.0 , kaski_realm :: office :: Governance > >
+        generics differ: `< ' $1.0 >` against `< ' $1.0 , ' $1.1 >`
+    0%  struct Reading (kaski-solver src/family.rs:16)  ~  struct Reading (kaski-view-local src/inspected.rs:92)
+        only in kaski-solver: mine V3, other V3, w_mine f32, w_other f32, numbers [ f32 ; 4 ], alpha f32
+        only in kaski-view-local: id BeingId, dev bool, at ( i32 , i32 ), doing Option < TaskRead >, leg u8, fatigue f64, belief f64, wood f64, water f64, takes_to Vec < ( String , f64 ) >, character Vec < ( String , f64 ) >, hero Option < HeroMark >, weight f64, hero_weight f64, household Option < u8 >, leads bool, ties Vec < ( BeingId , f64 ) >, weighing Option < ( u64 , Vec < OptionRead > ) >, wears Vec < String >, burden [ f64 ; 3 ], why Option < String >, counsel Option < String >, asked Option < String >, name Option < String >, bynames Vec < String >, renames u16
+    0%  struct Reading (kaski-solver src/family.rs:16)  ~  struct Reading (tickets src/trunk.rs:48)
+        only in kaski-solver: mine V3, other V3, w_mine f32, w_other f32, numbers [ f32 ; 4 ], alpha f32
+        only in tickets: store Store, plan Plan, notice String, degraded bool
+    0%  struct Row (kaski-solver src/graph.rs:16)  ~  struct Row (ratio-probe src/lib.rs:65)
+        only in kaski-solver: a u32, b u32, numbers [ f32 ; 4 ], compliance f32, family & ' static str, correction fn ( & Reading ) -> V3
+        only in ratio-probe: fields BTreeMap < String , String >
+    0%  struct Row (kaski-solver src/graph.rs:16)  ~  struct Row (speed-probe src/lib.rs:41)
+        only in kaski-solver: a u32, b u32, numbers [ f32 ; 4 ], compliance f32, family & ' static str, correction fn ( & Reading ) -> V3
+        only in speed-probe: speed String, game_minutes f64, display_rate Option < f64 >, tick_rate Option < f64 >, tick_ms f64
+    0%  struct Row (kaski-solver src/graph.rs:16)  ~  struct Row (tickets src/view.rs:30)
+        only in kaski-solver: a u32, b u32, numbers [ f32 ; 4 ], compliance f32, family & ' static str, correction fn ( & Reading ) -> V3
+        only in tickets: id String, state String, holder String, title String, epoch String, unblocks usize
+    0%  enum Phase (kaski-sound src/music/conduct.rs:58)  ~  struct Phase (kaski-starsystem src/calendar.rs:32)
+    0%  struct Shape (kaski-sound src/mixer/voice.rs:19)  ~  struct Shape (kaski-texel-pages src/texture.rs:19)
+        only in kaski-sound: source Arc < Pcm >, rate f32, gain f32, pan Option < f32 >, filter Option < Lowpass >, looped bool, bus usize, start u64, handle Option < Handle >
+        only in kaski-texel-pages: width u32, height u32
+    0%  struct Shape (kaski-sound src/mixer/voice.rs:19)  ~  enum Shape (kaski-tools src/laid.rs:24)
+    0%  struct Ticket (kaski-storage src/io.rs:19)  ~  struct Ticket (kaski-tickets src/model.rs:68)
+        only in kaski-storage: 0 u64
+        only in kaski-tickets: id String, fields Fields, file String
+    0%  enum Verdict (kaski-test-support src/golden/mod.rs:45)  ~  enum Verdict (quote-check src/compare.rs:19)
+        only in kaski-test-support: Empty , Pinned , Unexplained { got : String ; head : Move }, Unjoined { got : String ; heads : Vec < Move > }
+        only in quote-check: Exact , Trailing , EdgeBlank , Joined , Spacing , Differs { at : usize ; cited : String ; quoted : String }, NoFile ( String ), PastEnd { last : usize ; lines : usize ; path : String }, Locator ( Unreadable )
+    0%  struct Shape (kaski-texel-pages src/texture.rs:19)  ~  enum Shape (kaski-tools src/laid.rs:24)
+    0%  enum Source (kaski-texel-pages src/feedback.rs:34)  ~  trait Source (quote-check src/source.rs:17)
+    0%  struct Held (kaski-tools src/held.rs:51)  ~  struct Held (kaski-web src/web_audio.rs:48)
+        only in kaski-tools: tool Option < Tool >, wall Lay, storeys u8
+        only in kaski-web: source AudioBufferSourceNode, gain GainNode, pan StereoPannerNode, filter BiquadFilterNode
+    0%  struct Git (quote-check src/source.rs:38)  ~  struct Git (tickets src/landing.rs:37)
+        only in quote-check: root PathBuf, files HashMap < ( String , String ) , Option < Vec < String > > >
+        only in tickets: root & ' $1.0 Path
+        generics differ: `` against `< ' $1.0 >`
+    0%  struct Row (ratio-probe src/lib.rs:65)  ~  struct Row (speed-probe src/lib.rs:41)
+        only in ratio-probe: fields BTreeMap < String , String >
+        only in speed-probe: speed String, game_minutes f64, display_rate Option < f64 >, tick_rate Option < f64 >, tick_ms f64
+    0%  struct Row (ratio-probe src/lib.rs:65)  ~  struct Row (tickets src/view.rs:30)
+        only in ratio-probe: fields BTreeMap < String , String >
+        only in tickets: id String, state String, holder String, title String, epoch String, unblocks usize
+
+
+outcome: "clean examined=2614"
