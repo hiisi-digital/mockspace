@@ -417,3 +417,4 @@ fn the_message_names_the_visibility_it_found() {
 mod constants;
 mod limits;
 mod placements;
+mod shapes;

@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-//! Canonical forms of a constant's type and value, so two spellings of one
-//! thing compare equal and two different things never do.
+//! Canonical forms of a constant's type and value and of what a type
+//! declares, so two spellings of one thing compare equal and two different
+//! things never do.
 //!
 //! A value is compared only when it is *closed*: built from literals and the
 //! operators between them. Anything that names something (a path, a call, a
@@ -48,6 +49,67 @@ pub(super) fn canonical_type(node: Node, source: &str) -> String {
     let mut tokens = Vec::new();
     leaf_tokens(node, source, &mut tokens);
     tokens.join(" ")
+}
+
+/// Lists whose members are a set: the fields of a struct or a union, the variants of an enum and
+/// the items of a trait. Their members are compared in one order, whatever order they are written
+/// in. The fields of a tuple struct are not here, because there the order is the field's name.
+const UNORDERED_LISTS: &[&str] =
+    &["field_declaration_list", "enum_variant_list", "declaration_list"];
+
+/// Whether a node is no part of what a declaration declares: a comment, an attribute or a
+/// visibility, none of which makes it another concept.
+fn is_noise(node: Node) -> bool {
+    node.kind().contains("comment")
+        || matches!(
+            node.kind(),
+            "attribute_item" | "inner_attribute_item" | "visibility_modifier"
+        )
+}
+
+/// A comma that only closes a list, which `(u8, u16,)` and `(u8, u16)` differ by and nothing else.
+fn is_trailing_comma(node: Node) -> bool {
+    node.kind() == ","
+        && node
+            .next_sibling()
+            .is_none_or(|next| matches!(next.kind(), ")" | "]" | "}" | ">"))
+}
+
+/// The canonical form of what a struct, enum, trait or union declares: its keyword, its name, its
+/// generics and bounds, and its members, with the comments, attributes and visibilities taken out,
+/// the members of a set in one order, and a trait method's default body left out, since the
+/// signature is what the trait declares. Two declarations with the same form are the same
+/// concept, and two with different forms are not, whatever their names.
+pub(super) fn canonical_declaration(node: Node, source: &str) -> String {
+    let mut cursor = node.walk();
+    if UNORDERED_LISTS.contains(&node.kind()) {
+        let mut members: Vec<String> = node
+            .named_children(&mut cursor)
+            .filter(|member| !is_noise(*member))
+            .map(|member| canonical_declaration(member, source))
+            .filter(|member| !member.is_empty())
+            .collect();
+        members.sort();
+        return format!("{{ {} }}", members.join(" ; "));
+    }
+    let body = if node.kind() == "function_item" {
+        node.child_by_field_name("body")
+    } else {
+        None
+    };
+    let mut parts: Vec<String> = Vec::new();
+    for child in node.children(&mut cursor) {
+        if is_noise(child) || Some(child) == body || child.kind() == ";" || is_trailing_comma(child)
+        {
+            continue;
+        }
+        if child.child_count() == 0 {
+            parts.push(source[child.byte_range()].to_string());
+        } else {
+            parts.push(canonical_declaration(child, source));
+        }
+    }
+    parts.join(" ")
 }
 
 fn leaf_tokens<'s>(node: Node, source: &'s str, out: &mut Vec<&'s str>) {

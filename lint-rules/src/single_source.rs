@@ -7,7 +7,9 @@
 //!
 //! Two findings, both about one concept defined in more than one crate:
 //!
-//! - the same type name (struct, enum, trait, union) defined in two crates;
+//! - the same type (struct, enum, trait, union), same name and same shape,
+//!   defined in two crates. A different shape under one name is two types, and
+//!   the same shape under two names is a coincidence; neither is this finding;
 //! - the same constant or static, same name, same type and same value, defined
 //!   in two crates. A different value under one name is two constants, and the
 //!   same value under two names is a coincidence; neither is this finding.
@@ -38,6 +40,22 @@
 //! Only the item's own qualifier is read: a plain `pub` item inside a private
 //! module is compared as `pub`.
 //!
+//! # How types are compared
+//!
+//! A type is compared by the name it is defined under and by what it declares:
+//! the keyword, the generics and bounds, and the members, in a canonical form
+//! (`value::canonical_declaration`). Comments, attributes and visibilities are
+//! left out, since none of them makes another concept; the fields of a struct or
+//! a union, the variants of an enum and the items of a trait are a set, so the
+//! order they are written in does not matter, while the fields of a tuple struct
+//! are positions and their order does; and a trait method's default body is left
+//! out, because the signature is what the trait declares. The same name over two
+//! different declarations is two concepts that share a word, and a crate-qualified
+//! path already tells them apart, so it is not reported. A copy that has drifted by
+//! one field is a different declaration and is not reported either: whether it is
+//! still one concept is not settled by anything this reads, and a threshold on how
+//! much may differ would be a number nobody justified.
+//!
 //! # How values are compared
 //!
 //! A value is compared as its canonical token form. An integer is its decimal
@@ -63,8 +81,9 @@
 //! - Items inside a function body, and associated constants in an `impl` or a
 //!   `trait`, which belong to their type rather than to the crate.
 //! - A `static` in an `extern` block, which has no value of its own.
-//! - Names are compared as written. A type re-exported under another name, or two
-//!   unrelated types that share a name by accident, are told apart by nobody.
+//! - Names are compared as written. A type re-exported under another name is
+//!   told apart by nobody, and a copy of a type that drifted by one field, a bound
+//!   or a signature is another declaration (see above).
 //! - Values are not evaluated: `16` and `1 << 4` are different values here. Two
 //!   spellings of one string (`"\u{41}"` and `"A"`, or a raw string) differ too,
 //!   and so do `1000` and `1000u32` inside an expression.
@@ -147,11 +166,16 @@ fn check(crates: &[(&str, &LintContext)], only_pub: bool) -> Vec<LintError> {
         .collect();
 
     // Grouped in a sorted map so the findings come out in one order.
-    let mut types: BTreeMap<&str, Vec<&Def>> = BTreeMap::new();
+    let mut types: BTreeMap<(&str, &str), Vec<&Def>> = BTreeMap::new();
     let mut values: BTreeMap<(&str, &str, &str, &str), Vec<&Def>> = BTreeMap::new();
     for def in &all_defs {
         match &def.item {
-            Item::Type(_) => types.entry(def.name.as_str()).or_default().push(def),
+            Item::Type(ty) => {
+                types
+                    .entry((def.name.as_str(), ty.shape.as_str()))
+                    .or_default()
+                    .push(def)
+            },
             Item::Value(v) => {
                 values
                     .entry((v.kind, def.name.as_str(), v.ty.as_str(), v.value.as_str()))
@@ -162,12 +186,13 @@ fn check(crates: &[(&str, &LintContext)], only_pub: bool) -> Vec<LintError> {
     }
 
     let mut errors = Vec::new();
-    for (name, defs) in &types {
+    for ((name, _), defs) in &types {
         report(defs, &exempt_full, "type", &mut errors, |dup, first| {
-            let Item::Type(kind) = &dup.item else { unreachable!("grouped as a type") };
+            let Item::Type(ty) = &dup.item else { unreachable!("grouped as a type") };
             format!(
-                "{}{kind} `{name}` also defined in {}: one definition per concept",
+                "{}{} `{name}` also defined with the same shape in {}: one definition per concept",
                 qualifier(dup),
+                ty.kind,
                 first.crate_name
             )
         });
