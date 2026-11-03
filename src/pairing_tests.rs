@@ -418,3 +418,33 @@ fn no_candidates_and_candidates_nobody_can_read_are_missing() {
         Resolution::Missing
     );
 }
+
+#[test]
+fn a_digest_made_a_file_at_a_time_is_the_digest_made_all_at_once() {
+    let all = files(&[("a/x", b"1"), ("b", b"2"), ("a/y", b"3")]).unwrap();
+    let mut one_by_one = TreeHasher::new();
+    for (path, content) in [("a/x", &b"1"[..]), ("a/y", b"3"), ("b", b"2")] {
+        one_by_one.file(path, content).unwrap();
+    }
+    assert_eq!(one_by_one.finish(), all);
+    // the control: the same files in another order are the same set but not an ascending one
+    let mut shuffled = TreeHasher::new();
+    shuffled.file("b", b"2").unwrap();
+    assert!(
+        shuffled
+            .file("a/x", b"1")
+            .unwrap_err()
+            .contains("ascending")
+    );
+}
+
+#[test]
+fn a_file_at_a_time_refuses_a_path_given_twice_and_a_path_that_is_not_relative() {
+    let mut hasher = TreeHasher::new();
+    hasher.file("a", b"1").unwrap();
+    assert!(hasher.file("a", b"1").unwrap_err().contains("twice"));
+    assert!(hasher.file("../b", b"").unwrap_err().contains("relative"));
+    // the refused ones were not taken in: the next ascending file still goes
+    hasher.file("b", b"2").unwrap();
+    assert_eq!(hasher.finish(), files(&[("a", b"1"), ("b", b"2")]).unwrap());
+}

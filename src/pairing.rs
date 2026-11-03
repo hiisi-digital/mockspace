@@ -113,7 +113,7 @@ impl Trailer {
         let (name, pairing) = rest
             .split_once(' ')
             .ok_or_else(|| format!("`{line}` names no pairing after the ref name"))?;
-        if !is_name(name) {
+        if !is_ref_name(name) {
             return Err(format!(
                 "the ref name `{name}` is not lowercase letters, digits, `_` and `-`, led by a \
                  letter or a digit"
@@ -165,21 +165,59 @@ where
     I: IntoIterator<Item = (&'a str, &'a [u8])>,
 {
     let mut entries: Vec<(&str, &[u8])> = files.into_iter().collect();
-    for (path, _) in &entries {
-        check_path(path)?;
-    }
     entries.sort_by(|a, b| a.0.cmp(b.0));
-    if let Some(pair) = entries.windows(2).find(|w| w[0].0 == w[1].0) {
-        return Err(format!("the path `{}` is given twice", pair[0].0));
-    }
-    let mut hasher = Sha256::new();
+    let mut hasher = TreeHasher::new();
     for (path, content) in entries {
-        hasher.update((path.len() as u64).to_le_bytes());
-        hasher.update(path.as_bytes());
-        hasher.update((content.len() as u64).to_le_bytes());
-        hasher.update(content);
+        hasher.file(path, content)?;
     }
-    Ok(hex(&hasher.finalize()))
+    Ok(hasher.finish())
+}
+
+/// [`tree_digest`] a file at a time, for a tree too large to hold: the files are given in
+/// ascending path order, one after another, and only the one in hand is in memory.
+#[derive(Debug, Default)]
+pub struct TreeHasher {
+    hasher: Sha256,
+    last:   Option<String>,
+}
+
+impl TreeHasher {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The next file. Its path has to be above the one before it, which also refuses a path
+    /// given twice.
+    ///
+    /// # Errors
+    ///
+    /// When the path is not a relative path of `/` separated names without `.` or `..`, is
+    /// given twice, or is not above the path before it.
+    pub fn file(&mut self, path: &str, content: &[u8]) -> Result<(), String> {
+        check_path(path)?;
+        if let Some(last) = &self.last {
+            if path == last {
+                return Err(format!("the path `{path}` is given twice"));
+            }
+            if path < last.as_str() {
+                return Err(format!(
+                    "the path `{path}` comes after `{last}`, and the files are given in ascending \
+                     order"
+                ));
+            }
+        }
+        self.hasher.update((path.len() as u64).to_le_bytes());
+        self.hasher.update(path.as_bytes());
+        self.hasher.update((content.len() as u64).to_le_bytes());
+        self.hasher.update(content);
+        self.last = Some(path.to_owned());
+        Ok(())
+    }
+
+    /// The digest of the files given, 64 lowercase hex digits.
+    pub fn finish(self) -> String {
+        hex(&self.hasher.finalize())
+    }
 }
 
 fn check_path(path: &str) -> Result<(), String> {
@@ -297,7 +335,9 @@ const fn is_hex(s: &str, lengths: &[usize]) -> bool {
     ok_len
 }
 
-fn is_name(s: &str) -> bool {
+/// Whether `s` is a data ref name, which is also what a trailer calls the ref: lowercase letters,
+/// digits, `_` and `-`, led by a letter or a digit.
+pub fn is_ref_name(s: &str) -> bool {
     let mut chars = s.chars();
     chars
         .next()
