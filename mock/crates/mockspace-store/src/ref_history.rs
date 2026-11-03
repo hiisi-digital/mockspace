@@ -70,16 +70,40 @@ impl RefStore {
         Ok(out.text() == "true")
     }
 
-    /// The blob id of each file of `commit`, by path.
+    /// The blob id of each file of `commit`, by path. A tree entry that is not a regular file
+    /// (a symbolic link, a submodule) or whose name is not text is refused, because each would
+    /// be read as a file it is not, or as another file of the same lossy name.
     pub(crate) fn tree_ids(&self, commit: &str) -> Result<BTreeMap<String, String>, StoreError> {
         let out = self.git.must(&["ls-tree", "-r", "-z", commit], &[], None)?;
         let mut ids = BTreeMap::new();
-        for entry in String::from_utf8_lossy(&out.stdout).split('\0') {
+        for entry in out.stdout.split(|b| *b == 0).filter(|e| !e.is_empty()) {
             // `<mode> SP <type> SP <object> TAB <path>`
-            let Some((meta, path)) = entry.split_once('\t') else { continue };
-            let mut parts = meta.split(' ');
-            if let (Some(_), Some("blob"), Some(id)) = (parts.next(), parts.next(), parts.next()) {
-                ids.insert(path.to_owned(), id.to_owned());
+            let Some(tab) = entry.iter().position(|b| *b == b'\t') else {
+                return Err(StoreError::Git {
+                    command: "ls-tree -r -z".to_owned(),
+                    detail:  format!(
+                        "an entry without a path: {:?}",
+                        String::from_utf8_lossy(entry)
+                    ),
+                });
+            };
+            let (meta, raw) = (String::from_utf8_lossy(&entry[.. tab]), &entry[tab + 1 ..]);
+            let path = std::str::from_utf8(raw).map_err(|_| {
+                StoreError::InvalidPath {
+                    path: String::from_utf8_lossy(raw).into_owned(),
+                    why:  "is not text",
+                }
+            })?;
+            match meta.split(' ').collect::<Vec<_>>()[..] {
+                ["100644" | "100755", "blob", id] => {
+                    ids.insert(path.to_owned(), id.to_owned());
+                },
+                _ => {
+                    return Err(StoreError::InvalidPath {
+                        path: path.to_owned(),
+                        why:  "is not a regular file (a symbolic link or a submodule)",
+                    });
+                },
             }
         }
         Ok(ids)

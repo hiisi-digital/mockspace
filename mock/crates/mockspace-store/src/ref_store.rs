@@ -169,12 +169,29 @@ impl Store for RefStore {
         message: &str,
         hook: &dyn MergeHook,
     ) -> Result<Applied, StoreError> {
+        self.apply_from(self.seen_tip().as_deref(), edit, message, hook)
+    }
+}
+
+impl RefStore {
+    /// [`Store::apply`] for an edit built on `built_on`, the commit its author read the files
+    /// from, or `None` for one built on a ref with no commits. Any other tip on the remote,
+    /// whatever this store has read since, sends the edit through the hook, so a writer whose
+    /// files are older than the tip cannot write over a file the tip changed. `apply` is this
+    /// with the tip the store last saw.
+    pub fn apply_from(
+        &self,
+        built_on: Option<&str>,
+        edit: &Edit,
+        message: &str,
+        hook: &dyn MergeHook,
+    ) -> Result<Applied, StoreError> {
         edit.validate()?;
         let attempts = self.retry.attempts.max(1);
         let mut current = edit.clone();
-        // The tip this store's reads saw. Any other tip, after the refresh or after a lost
-        // race, sends the edit through the hook.
-        let mut built_on: Option<String> = self.seen_tip();
+        // Any tip other than this one, after the refresh or after a lost race, sends the edit
+        // through the hook.
+        let mut built_on: Option<String> = built_on.map(str::to_owned);
         let mut refreshed = false;
         // commits pushed whose outcome the remote could not be asked about
         let mut unconfirmed: Vec<String> = Vec::new();

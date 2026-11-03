@@ -5,13 +5,19 @@
 //! What the instance remembers is its base, the commit its files were last brought to, and that
 //! is kept in the repository's own directory, apart from the files. A change is the difference
 //! between the directory and the base, taken as an [`Edit`] (a put for each file added or
-//! changed, a remove for each file gone), and it is applied through the store like any other,
-//! so a writer whose instance is behind adds its files to the tip that won and removes only
-//! what it removed.
+//! changed, a remove for each file gone), and it is applied through the store as an edit built
+//! on the base. A file no other writer touched since the base is simply written. A file the
+//! tip changed too goes through the merge hook, which sees the tip and the edit, and reads the
+//! base through [`RefStore::reader_of`] and [`Instance::base`] when it merges three ways; what
+//! the hook returns is what the tip holds, and the directory takes it.
 //!
 //! The directory is excluded from the status of the branch checked out beside it, through the
 //! repository's shared exclude file. Changes in an instance exist nowhere else until
 //! [`Instance::apply`] runs, and `git clean -fdx` removes an excluded directory with them.
+//! Nothing here guards a file saved by another process in the instant between the comparison
+//! and the write of [`Instance::update`]; an instance is not edited while that runs.
+
+mod records;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -23,19 +29,25 @@ use crate::ref_history::BATCH;
 use crate::ref_store::RefStore;
 use crate::store::{Applied, Freshness, Store};
 
-/// The file in the repository's common directory that records the base of every instance.
-/// One line each: the base commit, the local ref, the directory, separated by tabs.
-const RECORDS: &str = "mock-instances";
-
 /// A directory kept in step with the local ref of a [`RefStore`].
 pub struct Instance<'a> {
     store: &'a RefStore,
     dir:   PathBuf,
 }
 
+/// What the directory held against the base: the edit, the base it is against, and the blob id
+/// of every file the edit puts (`None` for one it removes), which says afterwards whether a
+/// file still is what was sent.
+struct Delta {
+    base: String,
+    edit: Edit,
+    sent: BTreeMap<String, Option<String>>,
+}
+
 impl<'a> Instance<'a> {
-    /// An instance in `dir`, which is made absolute and has any `.` and `..` folded away.
-    /// Nothing is read or written yet.
+    /// An instance in `dir`, which is made absolute with the part that exists resolved through
+    /// symlinks and `..`, so that two spellings of one directory are one instance. Nothing is
+    /// read or written yet.
     pub fn new(store: &'a RefStore, dir: impl Into<PathBuf>) -> Result<Self, StoreError> {
         let given = dir.into();
         let absolute = std::path::absolute(&given).map_err(|source| {
@@ -44,19 +56,9 @@ impl<'a> Instance<'a> {
                 source,
             }
         })?;
-        let mut folded = PathBuf::new();
-        for part in absolute.components() {
-            match part {
-                Component::ParentDir => {
-                    folded.pop();
-                },
-                Component::CurDir => {},
-                other => folded.push(other),
-            }
-        }
         let this = Self {
             store,
-            dir: folded,
+            dir: resolved(&absolute),
         };
         match this.dir.to_str() {
             Some(text) if !text.chars().any(char::is_control) => Ok(this),
@@ -72,17 +74,12 @@ impl<'a> Instance<'a> {
     /// The commit the files of the directory were last brought to, or `None` where no instance
     /// was made here.
     pub fn base(&self) -> Result<Option<String>, StoreError> {
-        let (local, dir) = (self.store.pair().local(), self.dir_text());
-        Ok(self
-            .records()?
-            .into_iter()
-            .find(|(_, r, d)| r == local && *d == dir)
-            .map(|(base, ..)| base))
+        self.read_record()
     }
 
     /// Writes the files of the local tip into the directory, which must be absent or empty, and
-    /// records the tip as the base. Gives the tip. A directory that this call made is removed
-    /// again when it fails.
+    /// records the tip as the base. Gives the tip. When it fails after writing, the files it
+    /// wrote and the record are removed again, and a directory it made with them.
     pub fn materialize(&self) -> Result<String, StoreError> {
         let Some(tip) = self.store.local_tip()? else {
             return Err(StoreError::NotFetched {
@@ -96,13 +93,26 @@ impl<'a> Instance<'a> {
                 return Err(self.fail("is not an empty directory", Vec::new()));
             }
         }
-        let made = self.fill(&tip);
-        if made.is_err() && !existed {
-            let _ = std::fs::remove_dir_all(&self.dir);
+        let made = self
+            .fill(&tip)
+            .and_then(|()| self.exclude())
+            .and_then(|()| self.record(&tip));
+        if made.is_err() {
+            self.forget();
+            if existed {
+                for entry in std::fs::read_dir(&self.dir).into_iter().flatten().flatten() {
+                    let path = entry.path();
+                    let _ = if path.is_dir() {
+                        std::fs::remove_dir_all(path)
+                    } else {
+                        std::fs::remove_file(path)
+                    };
+                }
+            } else {
+                let _ = std::fs::remove_dir_all(&self.dir);
+            }
         }
         made?;
-        self.exclude()?;
-        self.record(&tip)?;
         Ok(tip)
     }
 
@@ -124,24 +134,7 @@ impl<'a> Instance<'a> {
     /// differs. Refuses a symlink or anything else that is not a regular file, and a name that
     /// is not text.
     pub fn edit(&self) -> Result<Edit, StoreError> {
-        let base = self.require_base()?;
-        let held = self.store.tree_ids(&base)?;
-        let here = self.walk()?;
-        let ids = self.local_ids(&here)?;
-        let mut edit = Edit::new();
-        for path in &here {
-            if ids.get(path) != held.get(path) {
-                let bytes =
-                    std::fs::read(self.dir.join(path)).map_err(|e| self.io("reading", e))?;
-                edit = edit.put(path.clone(), bytes);
-            }
-        }
-        for path in held.keys() {
-            if !ids.contains_key(path) {
-                edit = edit.remove(path.clone());
-            }
-        }
-        Ok(edit)
+        Ok(self.delta()?.edit)
     }
 
     /// Whether the directory differs from the base.
@@ -149,14 +142,43 @@ impl<'a> Instance<'a> {
         Ok(!self.edit()?.is_empty())
     }
 
-    /// Applies what [`Instance::edit`] finds through the store, then brings the directory to the
-    /// tip, which holds the files of any writer that won meanwhile. Nothing differing is a
-    /// no-op that touches neither the store nor the remote. When the edit landed and the
-    /// directory could not be moved after it (a file was changed during the call), the error is
-    /// the move's and the edit stays landed; [`Instance::update`] reports the same files.
+    fn delta(&self) -> Result<Delta, StoreError> {
+        let base = self.require_base()?;
+        let held = self.store.tree_ids(&base)?;
+        let here = self.walk()?;
+        let ids = self.local_ids(&here)?;
+        let (mut edit, mut sent) = (Edit::new(), BTreeMap::new());
+        for path in &here {
+            if ids.get(path) != held.get(path) {
+                let bytes =
+                    std::fs::read(self.dir.join(path)).map_err(|e| self.io("reading", e))?;
+                edit = edit.put(path.clone(), bytes);
+                sent.insert(path.clone(), ids.get(path).cloned());
+            }
+        }
+        for path in held.keys() {
+            if !ids.contains_key(path) {
+                edit = edit.remove(path.clone());
+                sent.insert(path.clone(), None);
+            }
+        }
+        Ok(Delta {
+            base,
+            edit,
+            sent,
+        })
+    }
+
+    /// Applies what [`Instance::edit`] finds through the store as an edit built on the base,
+    /// then brings the directory to the tip, which holds what the hook made of any file a
+    /// writer who won meanwhile changed too. Nothing differing is a no-op that touches neither
+    /// the store nor the remote. A hook that refuses leaves the directory and the base as they
+    /// were, and the way on is another apply with a hook that merges. When the edit landed and
+    /// the directory could not be moved after it (a file was changed during the call), the
+    /// error is the move's and the edit stays landed.
     pub fn apply(&self, message: &str, hook: &dyn MergeHook) -> Result<Applied, StoreError> {
-        let edit = self.edit()?;
-        if edit.is_empty() {
+        let delta = self.delta()?;
+        if delta.edit.is_empty() {
             return Ok(Applied {
                 commit:    None,
                 changed:   false,
@@ -164,21 +186,27 @@ impl<'a> Instance<'a> {
                 confirmed: false,
             });
         }
-        let applied = self.store.apply(&edit, message, hook)?;
-        self.follow()?;
+        let applied = self
+            .store
+            .apply_from(Some(&delta.base), &delta.edit, message, hook)?;
+        self.follow(&delta.sent)?;
         Ok(applied)
     }
 
     /// Fetches the ref and brings the directory to its tip. A file changed here and on the tip
-    /// both is a conflict: the call writes nothing and names the files, and the directory keeps
-    /// what it had. A file changed here only stays as it is and is still part of the next edit.
+    /// both is a conflict, and so is a file here where the tip has a directory or the other way
+    /// round: the call writes nothing and names the files, and the directory keeps what it had.
+    /// A file changed here only stays as it is and is still part of the next edit.
     pub fn update(&self) -> Result<Freshness, StoreError> {
         let fresh = self.store.refresh()?;
-        self.follow()?;
+        self.follow(&BTreeMap::new())?;
         Ok(fresh)
     }
 
-    fn follow(&self) -> Result<(), StoreError> {
+    /// Brings the directory from its base to the local tip. `sent` is what an apply just put or
+    /// removed: a file that still is what was sent is the tip's to settle, because the hook has
+    /// said what the tip holds there, so it is taken whatever the tip holds.
+    fn follow(&self, sent: &BTreeMap<String, Option<String>>) -> Result<(), StoreError> {
         let Some(tip) = self.store.local_tip()? else { return Ok(()) };
         let base = self.require_base()?;
         if base == tip {
@@ -188,9 +216,10 @@ impl<'a> Instance<'a> {
         let moved: Vec<String> = from
             .keys()
             .chain(to.keys())
+            .chain(sent.keys())
             .collect::<BTreeSet<_>>()
             .into_iter()
-            .filter(|p| from.get(*p) != to.get(*p))
+            .filter(|p| from.get(*p) != to.get(*p) || sent.contains_key(*p))
             .cloned()
             .collect();
         let here = self.local_ids(&moved)?;
@@ -201,8 +230,9 @@ impl<'a> Instance<'a> {
             if local == to.get(path) {
                 continue;
             }
-            if local == from.get(path) {
-                plan.push(path.clone());
+            let as_sent = sent.get(path).is_some_and(|s| s.as_ref() == local);
+            if local == from.get(path) || as_sent {
+                plan.push(path);
             } else {
                 conflicts.push(path.clone());
             }
@@ -210,17 +240,78 @@ impl<'a> Instance<'a> {
         if !conflicts.is_empty() {
             return Err(self.fail("holds files changed here and on the tip", conflicts));
         }
-        let writes: Vec<&String> = plan.iter().filter(|p| to.contains_key(*p)).collect();
+        let removals: Vec<&String> = plan
+            .iter()
+            .copied()
+            .filter(|p| !to.contains_key(*p))
+            .collect();
+        let writes: Vec<&String> = plan
+            .iter()
+            .copied()
+            .filter(|p| to.contains_key(*p))
+            .collect();
+        let in_the_way = self.in_the_way(&removals, &writes)?;
+        if !in_the_way.is_empty() {
+            return Err(self.fail("holds files in the way of the tip", in_the_way));
+        }
+        for path in removals {
+            match std::fs::remove_file(self.dir.join(path)) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(self.io("removing", e));
+                },
+                _ => self.prune(path),
+            }
+        }
         for chunk in writes.chunks(BATCH) {
             let wanted: Vec<&str> = chunk.iter().map(|p| to[*p].as_str()).collect();
             for (path, bytes) in chunk.iter().zip(self.store.blobs(&wanted)?) {
                 self.write(path, &bytes)?;
             }
         }
-        for path in plan.iter().filter(|p| !to.contains_key(*p)) {
-            std::fs::remove_file(self.dir.join(path)).map_err(|e| self.io("removing", e))?;
-        }
         self.record(&tip)
+    }
+
+    /// Of `writes`, the paths that cannot be written once `removals` are gone: one under a file
+    /// that stays, or one that is a directory still holding files.
+    fn in_the_way(
+        &self,
+        removals: &[&String],
+        writes: &[&String],
+    ) -> Result<Vec<String>, StoreError> {
+        if writes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let gone: BTreeSet<&String> = removals.iter().copied().collect();
+        let staying: BTreeSet<String> = self
+            .walk()?
+            .into_iter()
+            .filter(|p| !gone.contains(p))
+            .collect();
+        let mut blocked = Vec::new();
+        for path in writes {
+            let below = format!("{path}/");
+            let under_a_file = path
+                .match_indices('/')
+                .any(|(i, _)| staying.contains(&path[.. i]));
+            let holds_files = staying
+                .range(below.clone() ..)
+                .next()
+                .is_some_and(|p| p.starts_with(&below));
+            if under_a_file || holds_files {
+                blocked.push((*path).clone());
+            }
+        }
+        Ok(blocked)
+    }
+
+    /// Removes the directories above `rel` that its removal left empty, never the instance's own.
+    fn prune(&self, rel: &str) {
+        let mut at = self.dir.join(rel);
+        while at.pop() && at != self.dir {
+            if std::fs::remove_dir(&at).is_err() {
+                break;
+            }
+        }
     }
 
     fn require_base(&self) -> Result<String, StoreError> {
@@ -277,8 +368,15 @@ impl<'a> Instance<'a> {
 
     /// The blob id each of `paths` would have if committed as it is, by path. A path that is
     /// not a file here has no entry.
-    fn local_ids(&self, paths: &[String]) -> Result<BTreeMap<String, String>, StoreError> {
-        let present: Vec<&String> = paths.iter().filter(|p| self.is_file(p)).collect();
+    fn local_ids<S: AsRef<str>>(
+        &self,
+        paths: &[S],
+    ) -> Result<BTreeMap<String, String>, StoreError> {
+        let present: Vec<&str> = paths
+            .iter()
+            .map(AsRef::as_ref)
+            .filter(|p| self.is_file(p))
+            .collect();
         let mut ids = BTreeMap::new();
         for chunk in present.chunks(BATCH) {
             let mut input = String::new();
@@ -300,98 +398,10 @@ impl<'a> Instance<'a> {
                 });
             }
             for (path, id) in chunk.iter().zip(found) {
-                ids.insert((*path).clone(), id.to_owned());
+                ids.insert((*path).to_owned(), id.to_owned());
             }
         }
         Ok(ids)
-    }
-
-    fn records(&self) -> Result<Vec<(String, String, String)>, StoreError> {
-        let file = self.records_file()?;
-        let text = match std::fs::read_to_string(&file) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(self.io("reading the records of", e)),
-        };
-        Ok(text
-            .lines()
-            .filter_map(|l| {
-                let mut f = l.splitn(3, '\t');
-                Some((
-                    f.next()?.to_owned(),
-                    f.next()?.to_owned(),
-                    f.next()?.to_owned(),
-                ))
-            })
-            .collect())
-    }
-
-    fn record(&self, base: &str) -> Result<(), StoreError> {
-        let (local, dir) = (self.store.pair().local().to_owned(), self.dir_text());
-        let mut rows = self.records()?;
-        rows.retain(|(_, r, d)| !(*r == local && *d == dir));
-        rows.push((base.to_owned(), local, dir));
-        let mut text = String::new();
-        for (b, r, d) in rows {
-            text.push_str(&format!("{b}\t{r}\t{d}\n"));
-        }
-        let file = self.records_file()?;
-        let staged = file.with_extension("new");
-        std::fs::write(&staged, text).map_err(|e| self.io("writing the records of", e))?;
-        std::fs::rename(&staged, &file).map_err(|e| self.io("writing the records of", e))
-    }
-
-    fn records_file(&self) -> Result<PathBuf, StoreError> {
-        let out = self.store.git.must(
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-            &[],
-            None,
-        )?;
-        Ok(PathBuf::from(out.text()).join(RECORDS))
-    }
-
-    /// Adds the directory to the exclude file the repository shares between its work trees, when
-    /// it lies inside the work tree this store was opened on.
-    fn exclude(&self) -> Result<(), StoreError> {
-        let top = self
-            .store
-            .git
-            .run(&["rev-parse", "--show-toplevel"], &[], None)?;
-        if !top.ok() {
-            return Ok(());
-        }
-        let (Ok(top), Ok(dir)) = (
-            std::fs::canonicalize(top.text()),
-            std::fs::canonicalize(&self.dir),
-        ) else {
-            return Ok(());
-        };
-        let Ok(rel) = dir.strip_prefix(&top) else { return Ok(()) };
-        let Some(rel) = rel.to_str().filter(|r| !r.is_empty()) else { return Ok(()) };
-        let mut line = String::from("/");
-        for c in rel.chars() {
-            if "\\*?[]!# ".contains(c) {
-                line.push('\\');
-            }
-            line.push(c);
-        }
-        line.push('/');
-        let out = self.store.git.must(
-            &["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
-            &[],
-            None,
-        )?;
-        let file = PathBuf::from(out.text());
-        let held = std::fs::read_to_string(&file).unwrap_or_default();
-        if held.lines().any(|l| l == line) {
-            return Ok(());
-        }
-        if let Some(parent) = file.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| self.io("creating the directory of", e))?;
-        }
-        let sep = if held.is_empty() || held.ends_with('\n') { "" } else { "\n" };
-        std::fs::write(&file, format!("{held}{sep}{line}\n"))
-            .map_err(|e| self.io("writing the exclude file for", e))
     }
 
     fn dir_text(&self) -> String {
@@ -411,5 +421,31 @@ impl<'a> Instance<'a> {
             context: format!("{what} the instance `{}`", self.dir.display()),
             source,
         }
+    }
+}
+
+/// `path` with the part that exists resolved through symlinks and `..`. The rest cannot hold a
+/// symlink, so it is folded lexically.
+fn resolved(path: &Path) -> PathBuf {
+    let mut rest: Vec<Component<'_>> = Vec::new();
+    let mut head = path;
+    loop {
+        if let Ok(mut real) = std::fs::canonicalize(head) {
+            for part in rest.iter().rev() {
+                match part {
+                    Component::ParentDir => {
+                        real.pop();
+                    },
+                    Component::CurDir => {},
+                    other => real.push(other),
+                }
+            }
+            return real;
+        }
+        let (Some(parent), Some(last)) = (head.parent(), head.components().next_back()) else {
+            return path.to_path_buf();
+        };
+        rest.push(last);
+        head = parent;
     }
 }
