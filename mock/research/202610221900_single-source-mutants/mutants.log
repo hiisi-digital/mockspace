@@ -36,7 +36,10 @@ killed    a path segment not told from a type
 killed    bounded operands kept in the order written
 killed    a nested bounded type not flattened
 killed    the dyn or impl left off a bounded type
-killed    the last segment of a path renamed
+killed    a name that declares an item renamed
+killed    any node with a name field kept as written
+killed    a type parameter's own name kept as written
+killed    a const parameter's own name kept as written
 killed    a binder closed before the bounds are read
 killed    a predicate subject read as the type field
 killed    a tuple of one loses its comma
@@ -46,4 +49,10 @@ killed    the name of a parameter kept
 killed    the mut of a parameter kept
 killed    supertraits read as a list of their own
 killed    any attribute holding repr counts
-killed=48 survived=0 other=0
+killed    supertraits read again in the frame
+killed    members of a type left in the order written
+killed    the kind of the body left out of the frame
+killed    the order of numbered variants left out of the frame
+killed    a tuple field not told by its place
+killed    the type's own name kept in a member
+killed=57 survived=0 other=0
