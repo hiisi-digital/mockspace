@@ -337,7 +337,9 @@ pub struct Candidate<'a> {
 pub enum Resolution {
     /// The hash is there and its files give the recorded digest.
     ByHash(String),
-    /// The hash is gone, and one commit near the recorded time has the recorded digest.
+    /// The hash is gone, and one commit near the recorded time among the candidates has the
+    /// recorded digest. Among the candidates only: where the history was cut short, a commit
+    /// that was not fetched may hold the same files, and what this names is still those files.
     ByTimeAndDigest(String),
     /// The hash is gone, and several commits near the recorded time have the recorded digest,
     /// nearest in time first. They hold the same files, so any of them is the data; the caller

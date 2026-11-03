@@ -178,3 +178,43 @@ fn a_commit_missing_from_a_cut_history_is_truncated_and_not_missing() {
         Resolution::ByHash(old.hash().to_owned())
     );
 }
+
+/// The tip's tree with `ticket/link` added as a symbolic link, in a commit of its own that no ref
+/// holds. Its target text is the text of `ticket/t1.toml`, which is the file it would be taken for.
+fn tip_with_a_link(dir: &Path) -> String {
+    let idx = dir.join(".git/link.idx");
+    let _ = std::fs::remove_file(&idx);
+    let run = |args: &[&str]| -> String {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .env_remove("GIT_DIR")
+            .env("GIT_INDEX_FILE", &idx)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    run(&["read-tree", "refs/mock/registry"]);
+    let blob = git(dir, &["rev-parse", "refs/mock/registry:ticket/t1.toml"]);
+    run(&["update-index", "--add", "--cacheinfo", &format!("120000,{blob},ticket/link")]);
+    let tree = run(&["write-tree"]);
+    run(&["commit-tree", "-m", "a link", &tree])
+}
+
+#[test]
+fn a_digest_is_refused_for_a_tree_with_a_symbolic_link_and_not_taken_for_a_file() {
+    let remote = Remote::new();
+    let (store, dir) = seeded(&remote, "a");
+    let linked = tip_with_a_link(&dir);
+    let err = digest_of(&store, &linked).unwrap_err();
+    assert!(err.contains("ticket/link"), "{err}");
+    // the control: the tip itself, without the link, has its digest
+    let tip = store.local_tip().unwrap().unwrap();
+    assert_eq!(digest_of(&store, &tip).unwrap(), expected_digest());
+}

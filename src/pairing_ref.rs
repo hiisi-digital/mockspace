@@ -59,7 +59,10 @@ pub fn pairing_of(store: &RefStore, commit: Option<&str>) -> Result<Pairing, Str
 /// Which commit of the local ref `recorded` names, by [`pairing::resolve`] over its history.
 ///
 /// A [`Resolution::Missing`] from a store whose history is cut short (a shallow fetch) is given
-/// as [`Resolution::Truncated`], because the commit may only be one that was not fetched.
+/// as [`Resolution::Truncated`], because the commit may only be one that was not fetched. A
+/// [`Resolution::ByTimeAndDigest`] from such a store is the only match among the commits held;
+/// commits that were not fetched may hold the same files, and a caller that needs to know the
+/// match is the only one fetches more history first.
 ///
 /// # Errors
 ///
