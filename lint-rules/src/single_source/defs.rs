@@ -19,6 +19,7 @@ use std::path::{Component, Path, PathBuf};
 
 use tree_sitter::Node;
 
+use super::shape::canonical_declaration;
 use super::value::{canonical_type, canonical_value};
 use crate::{CrateSourceFile, LintContext, attribute_is_cfg_test, is_cfg_test_mod, make_parser};
 
@@ -44,11 +45,19 @@ impl Def {
 }
 
 pub(super) enum Item {
-    /// A struct, enum, trait or union, by the keyword that introduced it.
-    Type(&'static str),
+    /// A struct, enum, trait or union.
+    Type(TypeDef),
     /// A constant or static whose type and value could both be put in a
     /// canonical form.
     Value(ValueDef),
+}
+
+pub(super) struct TypeDef {
+    /// The keyword that introduced it: `struct`, `enum`, `trait` or `union`.
+    pub kind:  &'static str,
+    /// What it declares in canonical form (`canonical_declaration`): two types of
+    /// one name are one concept when this agrees.
+    pub shape: String,
 }
 
 pub(super) struct ValueDef {
@@ -241,7 +250,17 @@ impl<'a> Walker<'a> {
             .find(|(kind, _)| *kind == node.kind())
             .map(|(_, label)| *label)
             .unwrap_or("type");
-        self.push(node, source, name, file, Item::Type(label));
+        let shape = canonical_declaration(node, source);
+        self.push(
+            node,
+            source,
+            name,
+            file,
+            Item::Type(TypeDef {
+                kind: label,
+                shape,
+            }),
+        );
     }
 
     fn push_value(&mut self, node: Node, source: &str, file: usize) {
