@@ -287,3 +287,100 @@ fn a_link_is_listed_from_both_ends_with_its_field() {
     assert_eq!(to.incoming, [Link::new("related", "answer::niri")]);
     assert!(to.outgoing.is_empty(), "{to:?}");
 }
+
+/// A root that shares a namespace's name makes a two-segment item a link, as the
+/// namespace claims it, and the setup is reported as `namespace-root-collision`.
+/// Both are held at once so the collision is a loud finding and not a silent
+/// precedence: the item reads as a link to a row that does not exist, and the
+/// declaration that made it ambiguous is reported beside it.
+#[test]
+fn a_namespace_named_like_a_root_is_a_link_and_the_setup_is_reported() {
+    let nss = [ns("research", &[]), ns("answer", &[("related", "ref[]")])];
+    assert_eq!(
+        link_target("research::dir", &keys(&["research"])),
+        Some(("research", "dir"))
+    );
+    let r = reg(&[("answer", "niri", &[("related", "research::dir")])]);
+    let found = validate_links(&r, &nss);
+    assert_eq!(kinds(&found), ["unknown-row-reference"], "{found:?}");
+    let roots = BTreeMap::from([("research".to_string(), "research".to_string())]);
+    let setup = namespace_root_collisions(&nss, &roots);
+    assert_eq!(kinds(&setup), ["namespace-root-collision"], "{setup:?}");
+}
+
+/// The control: the same root with no namespace of that name is no collision, and
+/// the item is a citation prefix and not a link.
+#[test]
+fn a_root_no_namespace_shares_is_no_collision_and_its_short_item_is_no_link() {
+    let nss = [ns("answer", &[("related", "ref[]")])];
+    let roots = BTreeMap::from([("research".to_string(), "research".to_string())]);
+    assert!(namespace_root_collisions(&nss, &roots).is_empty());
+    assert_eq!(link_target("research::dir", &keys(&["answer"])), None);
+}
+
+/// A row linking itself is an edge from the row to itself, so it is listed once
+/// outgoing and once incoming and `refsto` finds the row among its own referrers.
+#[test]
+fn a_row_linking_itself_is_listed_at_both_ends() {
+    let nss = [ns("answer", &[("related", "ref[]")])];
+    let r = reg(&[("answer", "niri", &[("related", "answer::niri")])]);
+    assert!(validate_links(&r, &nss).is_empty());
+    let both = links_of(&r, &nss, "answer::niri");
+    assert_eq!(both.outgoing, [Link::new("related", "answer::niri")]);
+    assert_eq!(both.incoming, [Link::new("related", "answer::niri")]);
+    assert_eq!(referrers(&r, &nss, "answer::niri"), ["answer::niri"]);
+}
+
+/// A cell holding a link, a citation and a citation into an internal root renders
+/// the link as the row's slug, keeps the citation as text, and drops the internal
+/// one, in the order the cell was written.
+#[test]
+fn a_cell_with_a_link_and_two_citations_keeps_the_link_and_the_public_citation() {
+    let nss = vec![ns("slot", &[]), ns("answer", &[("related", "ref[]")])];
+    let r = reg(&[
+        ("slot", "display", &[]),
+        ("answer", "niri", &[(
+            "related",
+            "seed::notes::niri::#tiling, slot::display, mock::DESIGN::12",
+        )]),
+    ]);
+    let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+    cfg.registry_namespaces = nss.clone();
+    cfg.internal_roots = ["seed".to_string()].into_iter().collect();
+    let table = render_table(&nss[1], &r, &cfg);
+    let rendered = resolve_all(
+        &table,
+        &nss,
+        &r,
+        &BTreeMap::new(),
+        Path::new("/repo"),
+        Path::new("/repo/docs"),
+        &cfg,
+    );
+    assert!(
+        rendered.contains("| display, mock::DESIGN::12 |"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("seed::"), "{rendered}");
+    assert!(!rendered.contains("{{"), "{rendered}");
+}
+
+/// A link is never an internal-root citation, even when the namespace carries the
+/// name of an internal root: the cell drops the citation and keeps the link.
+#[test]
+fn an_internal_root_filter_does_not_eat_a_link() {
+    let nss = vec![ns("slot", &[]), ns("answer", &[("related", "ref[]")])];
+    let r = reg(&[
+        ("slot", "display", &[]),
+        ("answer", "niri", &[(
+            "related",
+            "slot::display, slot::notes::x::#h",
+        )]),
+    ]);
+    let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+    cfg.registry_namespaces = nss.clone();
+    cfg.internal_roots = ["slot".to_string()].into_iter().collect();
+    let table = render_table(&nss[1], &r, &cfg);
+    assert!(table.contains("{{ slot::display }}"), "{table}");
+    assert!(!table.contains("slot::notes"), "{table}");
+}

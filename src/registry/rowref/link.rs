@@ -65,8 +65,13 @@ pub fn render_links(raw: &str, namespaces: &BTreeSet<&str>) -> String {
 ///
 /// A link naming no row is reported as `unknown-row-reference` and one whose
 /// slug is not a slug as `malformed-row-reference`, the two kinds a typed
-/// row-reference field reports, so a project's severity settings for them hold
-/// for links without a second pair.
+/// row-reference field reports.
+///
+/// Not meant to be called alone. [`validate_row_references`] ends with it, and
+/// that is what its two callers (the gate in `entry/dispatch.rs` and the
+/// writer's check in `registry/writer.rs`) run, so a link is checked wherever a
+/// typed row reference is and neither caller has to remember it. Calling this
+/// instead of that checks links and skips the typed fields.
 pub fn validate_links(reg: &Registry, namespaces: &[RegistryNamespace]) -> Vec<RegistryFinding> {
     let keys = namespace_keys(namespaces);
     let citing = reference_fields(namespaces);

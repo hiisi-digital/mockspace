@@ -101,10 +101,11 @@ description = "The question the spike answers, in one line."
 ```
 
 A field's `type` is `string`, `integer`, `boolean`, `string[]`, `date`, `time`,
-`datetime`, `span`, **`ref` and `ref[]` for a field that holds citations**, or
-**the name of a namespace, for a field that holds rows of it**. A citation and a
-row reference are both strings on the wire, so both validate as strings; what the
-type adds is meaning, and it is what makes the field get checked at all.
+`datetime`, `span`, **`ref` and `ref[]` for a field that holds citations and links
+to rows of any namespace**, or **the name of a namespace, for a field that holds
+rows of it**. A citation and a row reference are both strings on the wire, so both
+validate as strings; what the type adds is meaning, and it is what makes the field
+get checked at all.
 
 Four builtins hold a moment or a length of time, each a string held to one form,
 which the generated schema carries and the gate enforces on every row: `date` as
@@ -198,11 +199,46 @@ the column early.
 **A reference to a row gives its slug as plain text**, in a table cell and in a
 `{{ ns::slug }}` in prose alike, because the registry writes no page for it to link to.
 
+### One field for a relation
+
+A relation between rows goes in one field typed `ref[]`, whichever namespace the
+other row is in. An item of it is one of two shapes that cannot be mistaken for each
+other: a citation has a root, a path and an anchor, so three segments or more
+(`research::dir::file::#heading`), and a link to a row has two, a declared namespace
+and a slug.
+
+```toml
+[[registry.namespace.field]]
+name = "related"
+type = "ref[]"
+description = "Every row this one relates to, written as namespace::slug."
+```
+
+```toml
+[[answer]]
+id = "niri"
+related = ["slot::display", "ruling::wayland_first", "research::notes::niri::#tiling"]
+```
+
+The first segment of a link is checked against the declared namespaces, and a slug
+naming no row is reported as `unknown-row-reference`, a slug that is not a slug as
+`malformed-row-reference`. A root cannot carry the name of a namespace
+(`namespace-root-collision`), so a two-segment item is a link exactly when it names
+one. In a table cell a link gives the row's slug as plain text, as any reference to
+a row does.
+
+**A field per target namespace is the wrong shape.** A schema with a field for each
+namespace a row can relate to is a list of places a relation could be written, and a
+relation written in two of them says the same thing twice. The link is written once,
+on one row; the other end is derived, by `refsto` and by `cargo mock links
+<namespace>::<slug>`, which lists both ends of a row's links with the field each one
+is written in.
+
 ### Asking what points at a row
 
-`{{ refsto(x) }}` is the inverse, derived from the typed fields rather than stored,
-so there is no second list to keep in step. A row states what it points at; what
-points at it is computed.
+`{{ refsto(x) }}` is the inverse, derived from the typed fields and from the links
+held in `ref` fields rather than stored, so there is no second list to keep in step.
+A row states what it points at; what points at it is computed.
 
 This is the direction most questions are asked in. Where a namespace enumerates
 what a project must answer, `refsto` over one of its rows is how a reader finds out
