@@ -94,7 +94,13 @@ pub(super) fn collect_crate(crate_name: &str, ctx: &LintContext) -> Vec<Def> {
     } else {
         ctx.all_sources
     };
+    collect_sources(crate_name, sources)
+}
 
+/// Every definition a crate makes outside test code, read from its source files directly. A tool
+/// has no `LintContext` and reads a crate's files itself, so it comes in here; a lint comes in
+/// through `collect_crate`, and both read a crate the same way.
+pub(super) fn collect_sources(crate_name: &str, sources: &[CrateSourceFile]) -> Vec<Def> {
     let mut parser = make_parser();
     let files: Vec<File> = sources
         .iter()
