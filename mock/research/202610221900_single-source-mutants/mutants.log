@@ -7,4 +7,30 @@ killed    inline mod dir ignores the stem
 killed    bin file root removed
 killed    non-mod-rs file does not nest under its stem
 killed    orphans not walked
-killed=9 survived=0 other=0
+killed    a type is grouped by its name alone
+killed    the keyword left out of the shape
+killed    a semicolon left out of the shape
+killed    comments kept in the shape
+killed    attributes kept in the shape
+killed    visibilities kept in the shape
+killed    a closing comma kept in the shape
+killed    a comment ends the look for the closer
+killed    tuple fields sorted
+killed    members left in the order written
+killed    variants always sorted
+killed    a fieldless enum not numbered by place
+killed    a repr not numbering the variants
+killed    hand numbered variants keep their order
+killed    a method body kept in the shape
+killed    bounds kept in the order written
+killed    merged bounds kept in the order written
+killed    bounds written inline dropped
+killed    bounds in a where clause dropped
+killed    a repeated bound kept
+killed    generics left as written
+killed    generic parameters compared by name
+killed    scope depth left out of the name
+killed    lifetimes named as types
+killed    const parameters not renamed
+killed    a path segment not told from a type
+killed=35 survived=0 other=0

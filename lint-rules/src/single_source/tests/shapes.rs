@@ -137,12 +137,119 @@ fn generics_and_bounds_are_part_of_the_shape() {
         "pub struct Slot<T> { v: T }",
         "pub struct Slot<T: Copy> { v: T }",
     );
-    differ("pub struct Slot<T> { v: T }", "pub struct Slot<U> { v: U }");
     differ(
         "pub struct Slot<T> where T: Copy { v: T }",
         "pub struct Slot<T> { v: T }",
     );
     differ("pub trait Source<T> {}", "pub trait Source {}");
+    differ(
+        "pub struct Slot<T, U> { a: T, b: U }",
+        "pub struct Slot<T, U> { a: U, b: T }",
+    );
+}
+
+#[test]
+fn a_bound_has_one_form_wherever_it_is_written() {
+    // Mutation: the where clause kept apart from the inline bounds, or its predicates not merged.
+    agree(
+        "pub struct Slot<T: Copy> { v: T }",
+        "pub struct Slot<T> where T: Copy { v: T }",
+    );
+    agree(
+        "pub struct S<T: Copy>(T);",
+        "pub struct S<T>(T) where T: Copy;",
+    );
+    agree(
+        "pub struct Slot<T> where T: Copy + Send { v: T }",
+        "pub struct Slot<T> where T: Copy, T: Send { v: T }",
+    );
+    agree(
+        "pub struct Slot<T: Copy, U: Send> { a: T, b: U }",
+        "pub struct Slot<T, U> where U: Send, T: Copy { a: T, b: U }",
+    );
+    agree(
+        "pub struct Slot<T: Send> where T: Copy { v: T }",
+        "pub struct Slot<T: Copy> where T: Send { v: T }",
+    );
+    agree(
+        "pub struct Slot<T> where T: Send, T: Copy { v: T }",
+        "pub struct Slot<T> where T: Copy, T: Send { v: T }",
+    );
+    agree(
+        "pub struct Slot<T: Copy> where T: Copy { v: T }",
+        "pub struct Slot<T: Copy> { v: T }",
+    );
+    differ(
+        "pub struct Slot<T: Copy, U> { a: T, b: U }",
+        "pub struct Slot<T, U: Copy> { a: T, b: U }",
+    );
+}
+
+#[test]
+fn a_list_of_bounds_is_a_set() {
+    // Mutation: the bounds kept in source order.
+    agree(
+        "pub struct S<T: Copy + Send>(T);",
+        "pub struct S<T: Send + Copy>(T);",
+    );
+    agree(
+        "pub struct S<T> where T: Copy + Send + 'static { v: T }",
+        "pub struct S<T> where T: 'static + Send + Copy { v: T }",
+    );
+    agree("pub trait T: Copy + Send {}", "pub trait T: Send + Copy {}");
+    agree(
+        "pub trait T { type O: Copy + Send; }",
+        "pub trait T { type O: Send + Copy; }",
+    );
+    agree(
+        "pub trait T { fn f<A: Copy + Send>(a: A); }",
+        "pub trait T { fn f<A: Send + Copy>(a: A); }",
+    );
+    differ("pub trait T: Copy {}", "pub trait T: Send {}");
+    differ(
+        "pub trait T { type O: Copy; }",
+        "pub trait T { type O: Copy + Send; }",
+    );
+}
+
+#[test]
+fn a_generic_parameter_is_named_by_its_position() {
+    // Mutation: the parameters compared by the names they were written under.
+    agree("pub struct S<T> { v: T }", "pub struct S<U> { v: U }");
+    agree(
+        "pub struct S<T: Copy> { v: Vec<T> }",
+        "pub struct S<U: Copy> { v: Vec<U> }",
+    );
+    agree("pub struct R<'a>(&'a u8);", "pub struct R<'b>(&'b u8);");
+    agree(
+        "pub struct R<'a, T: 'a>(&'a T);",
+        "pub struct R<'b, U: 'b>(&'b U);",
+    );
+    agree(
+        "pub struct A<const N: usize> { v: [u8; N] }",
+        "pub struct A<const M: usize> { v: [u8; M] }",
+    );
+    agree(
+        "pub trait Q<T> { fn f<U>(a: T, b: U); fn g<U>(a: U); }",
+        "pub trait Q<V> { fn g<W>(a: W); fn f<W>(a: V, b: W); }",
+    );
+    agree(
+        "pub struct S<T: Iterator> { v: T::Item }",
+        "pub struct S<U: Iterator> { v: U::Item }",
+    );
+    differ(
+        "pub trait Q<T> { fn f<U>(a: T, b: U); }",
+        "pub trait Q<T> { fn f<U>(a: U, b: T); }",
+    );
+    differ(
+        "pub struct S<T, U> { a: T, b: U }",
+        "pub struct S<T, U> { a: U, b: T }",
+    );
+    differ(
+        "pub struct R<'a, 'b>(&'a u8, &'b u8);",
+        "pub struct R<'a, 'b>(&'b u8, &'a u8);",
+    );
+    differ("pub struct S<T> { v: T }", "pub struct S<T> { v: u8 }");
 }
 
 #[test]
@@ -178,6 +285,32 @@ fn what_does_not_change_the_concept_does_not_change_the_shape() {
         "pub struct Held<T>(T) where T: Copy;",
         "pub struct Held<T>(T) where T: Copy,;",
     );
+    agree(
+        "pub trait T { fn f(&self, a: u8); }",
+        "pub trait T { fn f(&self, a: u8,); }",
+    );
+}
+
+#[test]
+fn a_comment_after_the_last_comma_does_not_make_it_another_comma() {
+    // The comma still only closes the list when a comment sits between it and the closer.
+    // Mutation: the next sibling read as it is, comment or not.
+    agree(
+        "pub struct P(u8, u16);",
+        "pub struct P(u8, u16, // last\n);",
+    );
+    agree(
+        "pub enum E { A(u8, u16) }",
+        "pub enum E { A(u8, u16, /* x */) }",
+    );
+    agree(
+        "pub struct W<T>(T) where T: Copy;",
+        "pub struct W<T>(T) where T: Copy, /* c */;",
+    );
+    differ(
+        "pub struct P(u8, u16);",
+        "pub struct P(u8, /* x */ u16, u8);",
+    );
 }
 
 #[test]
@@ -188,7 +321,14 @@ fn members_that_have_no_order_agree_in_any_order_and_members_that_have_one_do_no
         "pub struct Frame { a: u8, b: u16 }",
         "pub struct Frame { b: u16, a: u8 }",
     );
-    agree("pub enum Run { A, B, C }", "pub enum Run { C, A, B }");
+    agree(
+        "pub enum Shape { Dot, Line(u8), Box { w: u8 } }",
+        "pub enum Shape { Box { w: u8 }, Dot, Line(u8) }",
+    );
+    agree(
+        "pub enum Code { A = 1, B = 2 }",
+        "pub enum Code { B = 2, A = 1 }",
+    );
     agree(
         "pub trait Surface { fn size(&self) -> u32; fn show(&self); }",
         "pub trait Surface { fn show(&self); fn size(&self) -> u32; }",
@@ -208,9 +348,50 @@ fn a_default_body_in_a_trait_is_not_part_of_what_the_trait_declares() {
         "pub trait Source { fn read(&self) -> u8 { 0 } }",
         "pub trait Source { fn read(&self) -> u8 { 1 } }",
     );
-    agree(
+}
+
+#[test]
+fn a_required_method_and_a_provided_one_are_two_declarations() {
+    // What an implementor must write and what it may leave out are not the same trait.
+    // Mutation: the body and the missing body both left as nothing.
+    differ(
         "pub trait Source { fn read(&self) -> u8 { 0 } }",
         "pub trait Source { fn read(&self) -> u8; }",
+    );
+    differ(
+        "pub trait T { fn f(&self); fn g(&self) {} }",
+        "pub trait T { fn f(&self) {} fn g(&self); }",
+    );
+}
+
+#[test]
+fn an_enum_whose_discriminants_follow_its_order_keeps_the_order() {
+    // The variants of a fieldless enum, or of one with a `repr`, are numbered by their place unless
+    // every one is numbered by hand, so reordering them makes another enum.
+    // Mutation: the variants sorted whatever the enum is.
+    differ(
+        "#[repr(u8)] pub enum E { A, B }",
+        "#[repr(u8)] pub enum E { B, A }",
+    );
+    differ("pub enum Run { A, B, C }", "pub enum Run { C, A, B }");
+    differ("pub enum E { A = 1, B, C }", "pub enum E { B, C, A = 1 }");
+    differ(
+        "#[repr(u8)] pub enum E { A(u8), B }",
+        "#[repr(u8)] pub enum E { B, A(u8) }",
+    );
+    agree(
+        "#[repr(u8)] pub enum E { A = 1, B = 2 }",
+        "#[repr(u8)] pub enum E { B = 2, A = 1 }",
+    );
+}
+
+#[test]
+fn paths_are_compared_as_written() {
+    // Pinned, not endorsed: one type spelled through two paths is two declarations here, so a copy
+    // that spells `u8` as `core::primitive::u8` is not found.
+    differ(
+        "pub struct S { v: u8 }",
+        "pub struct S { v: core::primitive::u8 }",
     );
 }
 

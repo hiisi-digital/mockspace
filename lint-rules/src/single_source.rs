@@ -42,19 +42,24 @@
 //!
 //! # How types are compared
 //!
-//! A type is compared by the name it is defined under and by what it declares:
-//! the keyword, the generics and bounds, and the members, in a canonical form
-//! (`value::canonical_declaration`). Comments, attributes and visibilities are
-//! left out, since none of them makes another concept; the fields of a struct or
-//! a union, the variants of an enum and the items of a trait are a set, so the
-//! order they are written in does not matter, while the fields of a tuple struct
-//! are positions and their order does; and a trait method's default body is left
-//! out, because the signature is what the trait declares. The same name over two
-//! different declarations is two concepts that share a word, and a crate-qualified
-//! path already tells them apart, so it is not reported. A copy that has drifted by
-//! one field is a different declaration and is not reported either: whether it is
-//! still one concept is not settled by anything this reads, and a threshold on how
-//! much may differ would be a number nobody justified.
+//! A type is compared by the name it is defined under and by what it declares,
+//! in a canonical form (`shape::canonical_declaration`): the keyword, the
+//! generics with their bounds, and the members. Two definitions are one finding
+//! when the name and the form are equal, and the rest are not reported.
+//!
+//! - Left out of the form: comments, attributes and visibilities; a comma that
+//!   only closes a list; the names of generic parameters, which are compared by
+//!   their place in the list; where a bound is written, so `<T: Copy>` and
+//!   `where T: Copy` agree; the order of a list of bounds; the body of a trait
+//!   method, so a required method and a provided one still differ.
+//! - A set, so its order does not matter: the fields of a struct or a union, the
+//!   items of a trait, and the variants of an enum unless they are numbered by
+//!   their place.
+//! - In order: the fields of a tuple struct, the parameters of a function, the
+//!   generic parameters, and the variants of an enum that is fieldless or has a
+//!   `repr` while at least one of them has no number of its own.
+//! - A copy that has drifted by a field, a bound or a signature is another
+//!   declaration and is not reported.
 //!
 //! # How values are compared
 //!
@@ -82,13 +87,13 @@
 //!   `trait`, which belong to their type rather than to the crate.
 //! - A `static` in an `extern` block, which has no value of its own.
 //! - Names are compared as written. A type re-exported under another name is
-//!   told apart by nobody, and a copy of a type that drifted by one field, a bound
-//!   or a signature is another declaration (see above).
+//!   told apart by nobody, and a copy that drifted is another declaration (see above).
 //! - Values are not evaluated: `16` and `1 << 4` are different values here. Two
 //!   spellings of one string (`"\u{41}"` and `"A"`, or a raw string) differ too,
 //!   and so do `1000` and `1000u32` inside an expression.
 //! - An open value (see above), and a type spelled through a different path
-//!   (`u32` against `core::primitive::u32`), never match.
+//!   (`u32` against `core::primitive::u32`), whether in a constant or in a
+//!   declaration, are not matched.
 //! - A `cfg` other than a test-only one does not exempt anything: the same
 //!   constant under `cfg(unix)` in one crate and `cfg(windows)` in another is two
 //!   definitions. `cfg_attr` is not read, so a `#[cfg_attr(test, path = "..")]`
@@ -100,6 +105,7 @@
 //! - A file no `mod` declaration reaches is counted as ordinary source.
 
 mod defs;
+mod shape;
 mod value;
 
 use std::collections::BTreeMap;
@@ -110,9 +116,9 @@ use crate::{Lint, LintContext, LintError, Severity, WorkspaceLint};
 /// Whether only fully `pub` items are compared across crates. See the module doc.
 const COMPARE_ONLY_PUB: bool = true;
 
-/// Pairs of crate suffixes where duplicate type names are expected.
-/// Macro-util crates and their parent crates often define matching types
-/// at different abstraction levels (parsing vs. runtime).
+/// Pairs of crate suffixes where a definition in both is expected, whatever its shape.
+/// A macro-util crate is a proc-macro crate, and the crate that uses its macros depends on it,
+/// so it cannot depend on that crate in turn and holds its own copy of what the two share.
 /// Full crate names are built as `<prefix>-<suffix>` at check time.
 const EXEMPT_PAIRS: &[(&str, &str)] =
     &[("macro-util", "behavior"), ("macro-util", "resource"), ("macro-util", "signal")];
