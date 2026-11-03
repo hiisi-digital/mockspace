@@ -6,9 +6,41 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use mockspace_store::{Edit, MergeHook, MergeRefusal, Reader};
+use mockspace_store::{Edit, MergeHook, MergeRefusal, Reader, Reapply, RefStore, Store};
 
 pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+pub const T1: &str = "id = \"t1\"\n";
+pub const T2: &str = "id = \"t2\"\n";
+
+/// A clone named `a` whose store holds a ref of two files, pushed.
+pub fn seeded(w: &World) -> RefStore {
+    let a = store(w, "a");
+    a.apply(
+        &Edit::new()
+            .put("ticket/t1.toml", T1)
+            .put("ticket/t2.toml", T2),
+        "seed",
+        &Reapply,
+    )
+    .unwrap();
+    a
+}
+
+/// Where an instance of a clone goes: `.mock/<leaf>` in it.
+pub fn inst_dir(w: &World, clone: &str, leaf: &str) -> PathBuf {
+    w.dir.path().join(clone).join(".mock").join(leaf)
+}
+
+pub fn read(dir: &Path, rel: &str) -> String {
+    std::fs::read_to_string(dir.join(rel)).unwrap()
+}
+
+pub fn write(dir: &Path, rel: &str, text: &str) {
+    let path = dir.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
+}
 
 pub fn git(dir: &Path, args: &[&str]) -> String {
     try_git(dir, args).unwrap_or_else(|e| panic!("git {args:?} in {}: {e}", dir.display()))

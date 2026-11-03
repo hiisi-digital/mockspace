@@ -4,25 +4,8 @@ mod common;
 
 use std::path::PathBuf;
 
-use common::{MOCK_REF, NS, World, git, store};
+use common::{MOCK_REF, NS, T1, T2, World, git, inst_dir, read, seeded, store};
 use mockspace_store::{Edit, Instance, Reader, Reapply, RefPair, RefStore, Store, StoreError};
-
-const T1: &str = "id = \"t1\"\n";
-const T2: &str = "id = \"t2\"\n";
-
-/// A clone whose store holds a ref of two files, pushed.
-fn seeded(w: &World) -> RefStore {
-    let a = store(w, "a");
-    a.apply(
-        &Edit::new()
-            .put("ticket/t1.toml", T1)
-            .put("ticket/t2.toml", T2),
-        "seed",
-        &Reapply,
-    )
-    .unwrap();
-    a
-}
 
 /// A second clone that has fetched the ref.
 fn second(w: &World, name: &str) -> RefStore {
@@ -33,14 +16,6 @@ fn second(w: &World, name: &str) -> RefStore {
 
 fn clone_path(w: &World, name: &str) -> PathBuf {
     w.dir.path().join(name)
-}
-
-fn inst_dir(w: &World, clone: &str, leaf: &str) -> PathBuf {
-    clone_path(w, clone).join(".mock").join(leaf)
-}
-
-fn read(dir: &std::path::Path, rel: &str) -> String {
-    std::fs::read_to_string(dir.join(rel)).unwrap()
 }
 
 fn on_remote(w: &World) -> String {
