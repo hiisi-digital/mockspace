@@ -31,7 +31,7 @@ while IFS='|' read -r name crate file expr; do
   cp "$f.orig" "$f"; rm "$f.orig"; touch "$f"
 done <<'TABLE'
 a stub owes a comparison|lint-rules|owed_comparison.rs|if !owes_a_comparison\(deprecated_text, ClStatus::Active\) \{@@if false {
-the section header changed|lint-rules|owed_comparison.rs|"## Comparison to deprecated changelist\\n"@@"## Comparison\\n"
+the section header changed|lint-rules|owed_comparison.rs|(..) Comparison to deprecated changelist\\n"@@$1 Comparison\\n"
 no subheader for a header|lint-rules|owed_comparison.rs|for header in extract_h2_headers\(deprecated_text\) \{@@for header in Vec::<String>::new() {
 subheaders copied as written|lint-rules|owed_comparison.rs|section\.push_str\(&header\.to_lowercase\(\)\);@@section.push_str(&header);
 a name the section holds not reported|lint-rules|owed_comparison.rs|\.filter\(\|n\| section\.contains\(n\.as_str\(\)\)\)@@.filter(|_| false)
