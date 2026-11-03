@@ -83,5 +83,11 @@ the name of a parameter kept|single_source/shape.rs|node\.child_by_field_name\("
 the mut of a parameter kept|single_source/shape.rs|child\.kind\(\) == "mutable_specifier"@@false
 supertraits read as a list of their own|single_source/shape.rs|if node\.kind\(\) == "trait_item" \{@@if false {
 any attribute holding repr counts|single_source/shape.rs|\.is_some_and\(\|path\| &source\[path\.byte_range\(\)\] == "repr"\)@@.is_some_and(|_| source[attribute_item.byte_range()].contains("repr"))
+supertraits read again in the frame|single_source/shape/parts.rs|\|\| Some\(child\) == supertraits\(node\);@@;
+members of a type left in the order written|single_source/shape/parts.rs|members\.sort_by_key\(Member::whole\);@@let _ = ();
+the kind of the body left out of the frame|single_source/shape/parts.rs|parts\.push\(child\.kind\(\)\.to_string\(\)\);@@let _ = ();
+the order of numbered variants left out of the frame|single_source/shape/parts.rs|parts\.push\(format!\("in order \{\}", order\.join\(","\)\)\);@@let _ = order;
+a tuple field not told by its place|single_source/shape/parts.rs|let name = place\.to_string\(\);@@let name = String::new();
+the type's own name kept in a member|single_source/shape/parts.rs|name:  &source\[name\.byte_range\(\)\],@@name:  "",
 TABLE
 echo "killed=$killed survived=$survived other=$broken"
