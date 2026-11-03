@@ -32,6 +32,8 @@ mod rename;
 pub use rename::{cmd_rename_round, cmd_round_id};
 pub(crate) mod round_merge;
 
+mod owed;
+use owed::say_what_the_replacement_owes;
 mod subjects;
 #[cfg(test)]
 mod tests;
@@ -238,6 +240,7 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                     );
                     eprintln!("  phase transition: DOC → TOPIC");
                     eprintln!("  next: create new topic files, then a new changelist");
+                    say_what_the_replacement_owes(&r.new_path);
                     let msg = subjects::deprecate_doc(&cl.filename);
                     commit_or_suggest(cfg, opts, &[r.old_path, r.new_path], &msg);
                     ExitCode::SUCCESS
@@ -272,6 +275,7 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                         "deprecated src changelist: {} → {}",
                         cl.filename, r.new_name
                     );
+                    say_what_the_replacement_owes(&r.new_path);
                     touched.push(r.old_path);
                     touched.push(r.new_path);
                 },
@@ -355,6 +359,7 @@ pub fn cmd_unlock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
         match rename_cl(&dr, &src_cl, ClStatus::Deprecated) {
             Ok(r) => {
                 eprintln!("  deprecated src CL: {} → {}", src_cl.filename, r.new_name);
+                say_what_the_replacement_owes(&r.new_path);
                 touched.push(r.old_path);
                 touched.push(r.new_path);
             },
@@ -368,6 +373,7 @@ pub fn cmd_unlock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
         match rename_cl(&dr, &src_cl, ClStatus::Deprecated) {
             Ok(r) => {
                 eprintln!("  deprecated src CL: {} → {}", src_cl.filename, r.new_name);
+                say_what_the_replacement_owes(&r.new_path);
                 touched.push(r.old_path);
                 touched.push(r.new_path);
             },
