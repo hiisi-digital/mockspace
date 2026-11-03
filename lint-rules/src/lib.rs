@@ -87,6 +87,7 @@ pub mod round_id;
 mod registrable_completeness;
 mod repr_c_abi_safety;
 mod single_source;
+pub use single_source::declared::{DeclaredMember, DeclaredParts, DeclaredType, declared_types};
 pub mod src_layout;
 pub mod timing;
 mod dispatch;
