@@ -155,3 +155,13 @@ fn a_member_naming_its_own_type_reads_the_same_under_another_name() {
     let c = only("pub struct Link { pub next: Option<Box<Other>>, pub value: u8 }");
     assert_ne!(a.parts, c.parts, "naming another type is not naming itself");
 }
+
+#[test]
+fn the_last_segment_of_a_path_is_not_the_type_naming_itself() {
+    // Mutation: the early return in `leaf` removed, so `backend::Handle` reads as `backend::$self`.
+    let a = only("pub struct Handle { pub inner: backend::Handle, pub gen: u32 }");
+    let b = only("pub struct Buffer { pub inner: backend::Buffer, pub gen: u32 }");
+    assert_ne!(a.parts, b.parts, "the inner fields have different types");
+    let c = only("pub struct Handle { pub inner: backend::Handle, pub gen: u32 }");
+    assert_eq!(a.parts, c.parts);
+}

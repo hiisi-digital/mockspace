@@ -262,6 +262,15 @@ impl<'s> Shape<'s> {
 
     fn leaf(&self, node: Node<'s>) -> String {
         let text = &self.source[node.byte_range()];
+        // The last segment of a path (`backend::Handle`) names something of another crate and is never
+        // a parameter or the type being declared, whatever it is called.
+        if node.kind() == "type_identifier"
+            && node.parent().is_some_and(|p| {
+                p.kind() == "scoped_type_identifier" && p.child_by_field_name("name") == Some(node)
+            })
+        {
+            return text.to_string();
+        }
         // A type is named by a `type_identifier`, and as the first segment of a path (`T::Item`) by an
         // `identifier`, where it is told from a constant only by the parameters in scope.
         let in_lifetime = node
