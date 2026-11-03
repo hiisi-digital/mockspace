@@ -158,10 +158,18 @@ fn a_member_naming_its_own_type_reads_the_same_under_another_name() {
 
 #[test]
 fn the_last_segment_of_a_path_is_not_the_type_naming_itself() {
-    // Mutation: the early return in `leaf` removed, so `backend::Handle` reads as `backend::$self`.
+    // Mutation: `names_an_item` removed from `leaf`, so `backend::Handle` reads as `backend::$self`.
     let a = only("pub struct Handle { pub inner: backend::Handle, pub gen: u32 }");
     let b = only("pub struct Buffer { pub inner: backend::Buffer, pub gen: u32 }");
     assert_ne!(a.parts, b.parts, "the inner fields have different types");
-    let c = only("pub struct Handle { pub inner: backend::Handle, pub gen: u32 }");
-    assert_eq!(a.parts, c.parts);
+}
+
+#[test]
+fn a_supertrait_and_a_where_on_self_give_one_set_of_bounds_in_the_parts() {
+    // Mutation: the supertrait list read by the frame as it is written, besides the merged bounds.
+    let a = only("pub trait Tr: Copy + Send { fn f(&self); }");
+    let b = only("pub trait Tr where Self: Send + Copy { fn f(&self); }");
+    assert_eq!(a.parts, b.parts);
+    let c = only("pub trait Tr: Copy { fn f(&self); }");
+    assert_ne!(a.parts, c.parts, "a bound fewer is another trait");
 }
