@@ -21,7 +21,7 @@ pub use super::shape::{Member as DeclaredMember, Parts as DeclaredParts};
 #[derive(Clone, Debug)]
 pub struct DeclaredType {
     pub crate_name: String,
-    /// The file within the crate, `None` for the crate root.
+    /// The file within the crate, `None` for `src/lib.rs`.
     pub path:       Option<String>,
     pub line:       usize,
     pub name:       String,
