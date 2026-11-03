@@ -23,6 +23,7 @@ pub struct DeclaredType {
     pub crate_name: String,
     /// The file within the crate, `None` for `src/lib.rs`.
     pub path:       Option<String>,
+    /// The line of the declaration, counted from 1.
     pub line:       usize,
     pub name:       String,
     /// `struct`, `enum`, `trait` or `union`.
