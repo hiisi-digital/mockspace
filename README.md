@@ -12,48 +12,15 @@
 
 </div>
 
-## What it is
-
 `mockspace` lives in a `mock/` directory next to your code. It walks design work through a state machine, from exploring a topic, to a locked plan for the docs, to applying that plan to source, to archiving the whole thing. Templates under `mock/` become a generated documentation tree and a crate dependency graph, and a lint pipeline runs at three gates, commit, build and push, with a severity per gate.
 
 Underneath it there are a few claims about how design work should behave, and they are worth stating plainly because they are what you are agreeing to. Source is never the authority. The design template is the artifact that counts, source follows from it, and the lints keep the two honest with each other. Transitions happen through subcommands that rename files and check invariants, never by editing a filename suffix yourself, because a state machine whose invariants are advisory stops being one fairly quickly.
 
 None of that says anything about what you build. Crate naming, numeric discipline, which frameworks you pull in, the lints particular to your domain: all yours. `mockspace` only cares that whatever you decided got written down, reviewed, locked and is reproducible afterwards.
 
-**What it costs is worth being upfront about.** The ceremony is real, and on a small project it will feel like more than it gives you. You write the plan before the code, and you cannot skip that when you are in a hurry, which is the point and is also occasionally infuriating.
+What it costs is worth being upfront about. The ceremony is real, and on a small project it will feel like more than it gives you. You write the plan before the code, and you cannot skip that when you are in a hurry, which is the point and is also occasionally infuriating.
 
-## Status
-
-Pre-1.0, and it moves. The tool is in daily use across a stack of consumer crates and grows whatever those crates turn out to need, so the api hasn't settled and breaking changes should be expected. Releases are tagged from here on, and once there are two of them the log between a pair is what actually moved.
-
-I'd caution against adopting this just yet for anything you cannot afford to have shift under you. Two reworks are in flight and either will move things: the plugin ABI v1 redesign, and a successor model for the design-round workflow (see [the research notes](https://github.com/hiisi-digital/mockspace/blob/dev/docs/research/)).
-
-## When mockspace is a good fit
-
-- Multi-crate Rust workspaces where the design decisions are consequential enough that you want a paper trail of them.
-- Projects that would rather have invariants enforced mechanically than socially, because the social version keeps not working.
-- Workspaces where keeping generated documentation in step with source by hand has stopped being sustainable.
-
-Where it isn't:
-
-- Single-file scripts, one-crate demos and quick prototypes. The ceremony costs more than it returns and you'll resent it.
-- Projects where the design genuinely does live in the code, and writing it down twice would be writing it down twice.
-
-If what you actually want is a source linter, this is probably not it either. `mockspace` will lint your source, but there are more established, more proven and better-documented tools for that in whatever language you're in, and you should use one of those. What this is for is the part above the source: the design, the plan, and whether the two still agree with each other a month later.
-
-## Contents
-
-| Component | Purpose |
-|---|---|
-| `mockspace` (binary + library) | The runtime: bootstrap, build integration, generation pipeline, lint runner, transition subcommands. |
-| `mockspace-lint-rules` | The `Lint` and `Tool` traits, plus the built-in rules: general quality checks, and the design-round lints that enforce the phase transitions. The lints in a repo's own `mock/lints/` compose against it. |
-| `mockspace-bench-core` | The bench framework: `Routine` trait, hardware-counter timing, and an FFI bridge so variants compiled separately can be compared in one run. The harness adds workload and cache control, validation, Pareto analysis, history, perf and disassembly sensors, and findings reporting. |
-| `mock bench` | The command surface over that framework. `init` scaffolds a `mock/benches/` tree that is configuration and nothing else, `run` generates the driver binary from `bench.toml` and runs the configured benches, `test` runs `cargo test` across every crate the tree owns, and `report` regenerates the findings. A hand-written driver crate stays available as the escape hatch. |
-| `cargo-mock` / `mock` launcher | The sole entrypoint, installed as two binaries from one source. Resolves the engine version a repo pins in its `mockspace.toml`, builds that engine once into a shared per-version cache, and execs it; `mock locate` answers where a repo keeps its mockspace. |
-| `mockspace-manifest` | The `mockspace.toml` keys the launcher reads, and the durable git-hook gate. Shared between the launcher and the engine so the two cannot disagree about what a key means, which is the only reason it is a crate of its own rather than a module in either. |
-| `mockspace-bench-matrix` | A semantic-matrix layer over the bench harness: declare cells, sweep them across axes, and get isolated per-cell timing with the measurement discipline already applied. Opinionated on purpose, and the harness underneath stays usable directly if the opinions do not fit. |
-
-## Installation
+## Usage
 
 Install the launcher once per machine:
 
@@ -103,7 +70,7 @@ Activate the hooks once per clone:
 cargo mock activate
 ```
 
-## Usage
+## Example
 
 ```bash
 cargo mock                       # default: check + parse + lint + generate
@@ -119,7 +86,40 @@ mock locate                      # where this repo keeps its mockspace, shell-as
 
 For the full subcommand surface, configuration reference, lint authoring, and template structure, see the [usage guide](https://github.com/hiisi-digital/mockspace/blob/dev/docs/USAGE_GUIDE.md).
 
-## Design rounds
+## Motivation
+
+- Multi-crate Rust workspaces where the design decisions are consequential enough that you want a paper trail of them.
+- Projects that would rather have invariants enforced mechanically than socially, because the social version keeps not working.
+- Workspaces where keeping generated documentation in step with source by hand has stopped being sustainable.
+
+Where it isn't:
+
+- Single-file scripts, one-crate demos and quick prototypes. The ceremony costs more than it returns and you'll resent it.
+- Projects where the design genuinely does live in the code, and writing it down twice would be writing it down twice.
+
+If what you actually want is a source linter, this is probably not it either. `mockspace` will lint your source, but there are more established, more proven and better-documented tools for that in whatever language you're in, and you should use one of those. What this is for is the part above the source: the design, the plan, and whether the two still agree with each other a month later.
+
+## Extras
+
+### Status
+
+Pre-1.0, and it moves. The tool is in daily use across a stack of consumer crates and grows whatever those crates turn out to need, so the api hasn't settled and breaking changes should be expected. Releases are tagged, and the log between two of them is what moved.
+
+I'd caution against adopting this just yet for anything you cannot afford to have shift under you. Two reworks are in flight and either will move things: the plugin ABI v1 redesign, and a successor model for the design-round workflow (see [the research notes](https://github.com/hiisi-digital/mockspace/blob/dev/docs/research/)).
+
+### The other crates
+
+| Component | Purpose |
+|---|---|
+| `mockspace` (binary + library) | The runtime: bootstrap, build integration, generation pipeline, lint runner, transition subcommands. |
+| `mockspace-lint-rules` | The `Lint` and `Tool` traits, plus the built-in rules: general quality checks, and the design-round lints that enforce the phase transitions. The lints in a repo's own `mock/lints/` compose against it. |
+| `mockspace-bench-core` | The bench framework: `Routine` trait, hardware-counter timing, and an FFI bridge so variants compiled separately can be compared in one run. The harness adds workload and cache control, validation, Pareto analysis, history, perf and disassembly sensors, and findings reporting. |
+| `mock bench` | The command surface over that framework. `init` scaffolds a `mock/benches/` tree that is configuration and nothing else, `run` generates the driver binary from `bench.toml` and runs the configured benches, `test` runs `cargo test` across every crate the tree owns, and `report` regenerates the findings. A hand-written driver crate stays available as the escape hatch. |
+| `cargo-mock` / `mock` launcher | The sole entrypoint, installed as two binaries from one source. Resolves the engine version a repo pins in its `mockspace.toml`, builds that engine once into a shared per-version cache, and execs it; `mock locate` answers where a repo keeps its mockspace. |
+| `mockspace-manifest` | The `mockspace.toml` keys the launcher reads, and the durable git-hook gate. Shared between the launcher and the engine so the two cannot disagree about what a key means, which is the only reason it is a crate of its own rather than a module in either. |
+| `mockspace-bench-matrix` | A semantic-matrix layer over the bench harness: declare cells, sweep them across axes, and get isolated per-cell timing with the measurement discipline already applied. Opinionated on purpose, and the harness underneath stays usable directly if the opinions do not fit. |
+
+### Design rounds
 
 The unit of design work in mockspace is a *round*. A round walks five phases:
 
@@ -135,7 +135,7 @@ Phases are detected from filename suffixes inside `mock/design_rounds/`. Transit
 
 A successor model for this workflow is in development. It makes tasks, phases, manifests and epochs concepts in their own right, and demotes the branch to ambient context. See [the successor design](https://github.com/hiisi-digital/mockspace/blob/dev/docs/research/TASKS_BRANCHES_PHASES_EPOCHS_DESIGN.md).
 
-## Lint pipeline
+### Lint pipeline
 
 Three sources contribute rules:
 
@@ -149,7 +149,7 @@ A check that cannot run at a gate is a tool instead, and so is anything that wri
 
 Each lint declares a severity per gate. The same lint can be `info` at commit, `warn` at build, and `error` at push. The five design-round lints (`changelist-required`, `changelist-doc-gate`, `changelist-lock`, `changelist-immutability`, `changelist-seal`) are on at `error` by default, and a project turns one down only by saying so in its own config.
 
-## Tools
+### Tools
 
 A tool is what a project runs by name, as `mock <name>`, and it is one of two kinds. A check that cannot be a lint is the first: a lint runs at a gate and answers a question nobody asked, and some checks cannot do that, because they need a question from the person running them or they answer with a ranking rather than a verdict. A maker is the second, a generator, a scaffolder or an exporter whose product is the files it writes rather than a verdict about the tree, so the question a gate would ask of it does not come up at all.
 
@@ -214,11 +214,11 @@ A tool returns one of three outcomes rather than a list of findings. `Clean` car
 
 `mock tools` lists every tool with its kind, and `mock tools --long` or `mock help <name>` adds what each one is held to.
 
-## Generated documentation
+### Generated documentation
 
 A `cargo mock` run with no subcommand regenerates the `docs/` tree from templates under `mock/`. That includes a top-level `DESIGN.md`, a `STRUCTURE.md` plus Graphviz `.dot` and rendered `.png` / `.svg` files from the per-crate item index, deep dives, and per-crate overviews. The generator owns the top level of `docs/`, and a file sitting there that the run did not produce is swept. Hand-written documents belong in a subdirectory, which the sweep does not descend into, or outside `docs/` entirely.
 
-## Git hooks
+### Git hooks
 
 `mockspace` never touches `.git/hooks/`. Durable hooks live in the user config home and delegate to a per-repo validator under the mock directory's `target/hooks/`, which runs mockspace's own validation and then whatever the repository keeps at `.git/hooks/<name>`, with the same arguments and the same stdin, so a hook another tool installed there still runs and its refusal still counts. Where the working tree has no generated hooks yet, as in a fresh worktree, the durable hooks that follow a merge commit or a rebase build them by running `cargo mock --generate-only`, but only when cargo lists `mock` among its commands, and `pre-commit`, `commit-msg` and `pre-push` do the same while a merge has left a kept side owed; only `pre-commit` stages what that regenerates. Nothing runs past a refusal of mockspace's own. The launcher wires them on first contact and the engine keeps them current; deactivation (`cargo mock deactivate`) is explicit and reversible, and git then falls back to whatever the user already had. Where a repository's `core.hooksPath` is git-shook's, mockspace does not take the key: it registers the durable hooks with git-shook as one entry among the others, in a `00-mockspace.toml` manifest in the clone's `.git/shook/manifests/`, registered with `git shook install --yes --only 00-mockspace` so that it consents to nothing but its own manifest. The leading `00-` makes the gate sort before the other entries, which git-shook runs in sorted order up to the first refusal. The gate still ends in the repository's own `.git/hooks/<name>`, as everywhere else, except for an event where git-shook kept a copy of that hook as its `00-existing` entry, which already runs it, so the gate does not chain to it a second time. A hook git-shook kept as `00-existing` runs first, as the entry that sorts ahead of the gate, so it runs before mockspace's own validation and not after a pass as it does without git-shook; a repository hook with side effects that should wait for the gate belongs in a manifest named to sort after `00-mockspace`. A hook git-shook left in place because a manifest registers what it does is recorded by it as declined, and the gate skips the file while it still equals that record. A copy of the gate that git-shook kept as `00-existing` when it took the key is removed, so the gate does not run twice. Deactivation removes the gate's entry and leaves `core.hooksPath`, and anything saved for it, alone.
 
@@ -226,11 +226,13 @@ The merge drivers that keep generated files, registry rows, closed rounds, test 
 
 The message lints a project imports from its packs are run at the commit and at the push. The `commit-msg` hook hands them the message and who the commit is by, the author and committer that `git var` reports for it, and the `pre-push` hook does the same for every commit the push publishes for the first time, reading each one's pair from the commit itself. A message alone does not say whether an agent made the commit, since an agent committing under its own name leaves no trailer, so a lint that judges bylines can judge the identity as well. When git cannot name the author or the committer the `commit-msg` hook blocks with the reason, instead of passing the message alone, and the engine refuses a pushed record whose header does not parse. A pull request body never passes through git and is handed no identity.
 
-## Optional: AI assistant integration
+### Optional: AI assistant integration
 
 If `mock/agent/` is populated with templates, mockspace renders coordinated configuration from those templates for common AI coding assistants (Claude Code, GitHub Copilot CLI, others as templates require). One source produces semantically equivalent output for each platform. A small set of builtin skills renders alongside: sketching and benchmarking discipline on by default, an interactive design-talk flow opt-in, each declinable per repository in `mock/agent/config.toml`. This is a configuration surface, not a feature; the tool's identity is what it does for human developers.
 
 ## Support
+
+Feel free to contribute! If unsure about wasting work, the best practice is to throw in an issue describing what you'd do, and only then commit to writing a big PR, because chances are, it might not be something that belongs here. However, forks are always a valid choice and we'd encourage everyone to experiment and have their own takes on this. When doing this, do mind the license(s) though!
 
 Whether you use this project, have learned something from it, or just like it, please consider supporting it by buying me a coffee, so I can dedicate more time on open-source projects like this :)
 
@@ -242,4 +244,4 @@ Whether you use this project, have learned something from it, or just like it, p
 
 `SPDX-License-Identifier: MPL-2.0`
 
-> You can check out the full license [here](https://github.com/hiisi-digital/mockspace/blob/main/LICENSE)
+> You can check out the full license [here](https://github.com/hiisi-digital/mockspace/blob/dev/LICENSE)
