@@ -1,106 +1,35 @@
-# mockspace-bench-matrix
+# `mockspace-bench-matrix`
 
-An opinionated layer on top of the mockspace bench harness for authoring a
-*semantic benchmark matrix*: one bench built from many isolated cells, each timed
-individually, swept across parameter axes, with the measurement discipline
-provided rather than re-derived. It exists because that discipline is subtle: a
-hand-rolled version of exactly this matrix shipped four distinct measurement
-distortions that took a four-expert review to find, and the fix is to get the
-scaffolding right once, upstream, and hand it to every consumer.
+<div align="center" style="text-align: center;">
 
-## What a "semantic matrix" is
+[![GitHub Stars](https://img.shields.io/github/stars/hiisi-digital/mockspace.svg)](https://github.com/hiisi-digital/mockspace/stargazers)
+[![GitHub Issues](https://img.shields.io/github/issues/hiisi-digital/mockspace.svg)](https://github.com/hiisi-digital/mockspace/issues)
+![License](https://img.shields.io/github/license/hiisi-digital/mockspace?color=%23009689)
 
-A composited benchmark. You declare a *family* (say, "dispatch shape"), a set of
-*cells* to compare within it (switch, fntable, threaded, ...), a *sweep* axis that
-produces one bench per value (six program profiles), and a *size* sweep. Each
-`(sweep value, cell, size)` becomes its own release cdylib, built under fat LTO
-with one codegen unit and run in its own subprocess, so measuring one cell cannot
-contaminate another. The harness already does that transport; this crate adds the
-part that makes each individual measurement honest and each cell ergonomic to
-author.
+> A benchmark matrix of isolated cells swept across parameter axes, with the measurement discipline built in. Unpublished, on top of the mockspace bench harness.
 
-## The three layers
+</div>
 
-- **`mockspace-bench-harness`** is the transport: cdylib-per-variant isolation, the
-  subprocess driver, the multi-axis spec to variant-crate codegen
-  (`MatrixSpec`/`expand`/`render`/`generate`). It knows nothing about honest
-  measurement.
-- **`mockspace-bench-matrix`** (this crate) is the opinionated discipline on top:
-  the `scaffold` wrappers, the `decl` data model, `generate_all`, and the single
-  canonical template. This is where the disciplines a review panel validated are
-  encoded once, compiled once, tested once.
-- **The consumer** owns its domain: the program generator, the value semantics, and
-  the cell functions themselves.
+A benchmark built from many cells, each timed on its own, swept across parameter axes, is easy to get subtly wrong, since the scaffolding around a cell decides what the number means as much as the cell does. This crate is that scaffolding, written once so every consumer gets the same measurement discipline and only authors its domain: the program generator, the value semantics and the cell functions themselves.
 
-## The mechanism: cells are real typed functions, not strings
+A family is declared (say, dispatch shape), with a set of cells to compare within it (switch, fntable, threaded and so on), a sweep axis that produces one bench per value (six program profiles, for instance) and a size sweep. Each `(sweep value, cell, size)` becomes its own release cdylib, built under fat LTO with one codegen unit and run in its own subprocess, so measuring one cell cannot contaminate another. The harness supplies that transport, and this crate supplies the part that makes each individual measurement honest and each cell ergonomic to write.
 
-The pre-extraction approach spliced each cell as a Rust *string* (`prep` + `body`)
-into a generated crate. That is stringly-typed code: no type checking until a
-generated crate builds, no IDE support, no borrow-check feedback while authoring.
-It looked mandatory because each cell compiles as its own cdylib, so the body
-could not be an inline closure in the consumer crate.
+A cell is a real, type-checked `pub fn` in the consumer crate, and each generated variant is a one-line call to it by path. The sibling crate that gets generated never contains a cell body, only the path, which means the generator is a plain function over data with no proc-macro and no closure-token capture. Per-variant LTO inlines the cell into the isolated cdylib the same way it would be inlined in place, so the measured machine code is the same as with a body spliced in as a string, while the authoring gets type checking, IDE support and borrow-check feedback.
 
-The unlock: the string `body` was *already* a call back into the consumer crate
-(`c::interpret(...)` is `consumer_crate::interpret`), and fat LTO already inlined
-it across that exact boundary into the timed region. So a cell can be a real,
-type-checked `pub fn` in the consumer crate, and each generated variant a one-line
-call to it *by path*. Per-variant LTO inlines it into the isolated cdylib
-identically. The measured machine code is the same; the authoring becomes real
-Rust.
+## Usage
 
-Two consequences worth stating plainly:
+The crate is not on crates.io, so a consumer takes it from git, beside `mockspace-bench-core` and `mockspace-bench-harness`:
 
-1. **The sibling crate never contains a cell body. It contains a call to the cell
-   by path.** The generator needs the cell's path (a short string), not its body.
-   Capturing a path is trivial; capturing a body is the trap (it either does
-   filesystem IO from a macro or re-emits bodies as text and throws away the
-   type-checking win). So the generator is a plain function over data: no
-   proc-macro, no closure-token capture.
-2. **The scaffold takes the cell as a generic `FnMut` parameter, never a `fn`
-   pointer.** A generic parameter is monomorphized and inlined with no indirection.
-   A `fn` pointer would reintroduce an indirect call the optimizer may decline to
-   devirtualize, so the measured region would include a call the real deployment
-   would not. That single signature choice is the whole isolation argument, and it
-   is enforced by `scaffold::warm` / `scaffold::cold_cycle`.
+```toml
+[dependencies]
+mockspace-bench-matrix = { git = "https://github.com/hiisi-digital/mockspace", branch = "dev" }
+```
 
-## The disciplines the scaffold owns
+The `bench_matrix!` macro emits the cell functions and the `matrix_decls()` data from one declarative block. It goes in a `pub mod bench` of the consumer library crate, since the cells have to be `pub` for the sibling variant crates to name them by path, and a four-line generator binary calls the result.
 
-Each of these was a distortion in the hand-rolled version. The scaffold makes them
-impossible to get wrong:
+The hand-written equivalent is plain code, and the macro is plain `macro_rules!` that expands to exactly that: `pub fn setup(..)`, `pub fn cell_<tag>(..)` and `pub fn matrix_decls() -> Vec<MatrixDecl>`. The hand form is for a family that needs shaping the macro grammar does not cover.
 
-- **Anti-hoist chain.** `scaffold` seeds `acc` from `output[0]`, folds one
-  keep-alive per iteration, writes it back inside the timed loop, so the calibrated
-  reps form a loop-carried dependency the optimizer cannot collapse. Consumers
-  never touch it.
-- **Shared seed table.** A fixed 16-entry `SEEDS` table, identical across sizes and
-  cells, so a cross-size or cross-cell comparison varies only the thing under test.
-  (The hand-rolled version drew seeds from `input[k % N]`, which the harness fills
-  differently per size.)
-- **Fold one keep-alive per iteration.** The cell returns a single `u64`; the
-  scaffold folds it once per outer iteration, never once per node. (The hand-rolled
-  version folded an O(N) checksum inside the inner loop, diluting every ratio.)
-- **S-vs-I split, always measured.** `setup` is a required argument the scaffold
-  brackets with counter reads, so the one-time build cost (S) can never hide in
-  untimed prep. Every cell reports both its per-iteration cost (I) and its setup
-  cost (S), so the tier breakeven `k* = (S_b - S_a) / (I_a - I_b)` is computable
-  from data the matrix always carries.
-- **Reps-invariant fidelity digest.** Under calibration the reps count is
-  timing-dependent, so the final `output` bytes are reps-variant and cannot serve
-  as a cross-cell fidelity witness. The scaffold computes a separate digest on a
-  fixed-seed, fixed-init single pass (reps-invariant), on its own channel, so
-  cross-validation is meaningful. The authoritative fidelity anchor remains the
-  consumer's byte-exact cross-validation `#[test]`s; the digest is a smoke check.
-- **Cold / aliased-predictor regime.** `scaffold::cold_cycle` cycles M distinct
-  programs so no single program's dispatch sequence is memorized by the branch
-  predictor: the many-residuals-per-frame deployment shape, as opposed to the warm
-  regime's memorized single program.
-
-## Authoring a matrix
-
-The `bench_matrix!` macro emits the cell functions and the `matrix_decls()` data
-from one declarative block. Write it in a `pub mod bench` of your consumer
-*library* crate (the cells must be `pub` so the sibling variant crates name them by
-path), then a four-line generator binary.
+## Example
 
 ```rust
 // in the consumer library crate: consumer::bench
@@ -137,14 +66,9 @@ bench_matrix! {
 }
 ```
 
-A feature-gated cell carries `#[feature = "..."]` between the tag and the closure;
-those features flow into the sibling's carrier dependency. A cell that needs a
-different construction declares its own `setup |..| -> St { .. }` before the
-closure (the `direct`-style cell); the scaffold times that per-cell setup instead
-of the shared one, and the cell reads that setup's own state type. `cold_cycle(M)`
-cells take a third parameter `k` (the iteration index): `cell switch |s, k, seed|`.
-`baseline` and `floor` name cells by tag and are checked at expansion, so a typo is
-a compile error rather than a silent wrong baseline.
+A feature-gated cell carries `#[feature = "..."]` between the tag and the closure, and those features flow into the sibling's carrier dependency. A cell that needs a different construction declares its own `setup |..| -> St { .. }` before the closure (the `direct`-style cell), and the scaffold times that per-cell setup instead of the shared one, with the cell reading that setup's own state type. `cold_cycle(M)` cells take a third parameter `k`, the iteration index, as in `cell switch |s, k, seed|`. `baseline` and `floor` name cells by tag and are checked at expansion, so a typo is a compile error and not a silent wrong baseline.
+
+The generator binary is all of this:
 
 ```rust
 // the whole generator binary
@@ -154,17 +78,9 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
-`generate_all` writes one isolated variant crate per `(sweep value, cell)`, each a
-one-line call to `scaffold::warm` (or `scaffold::cold_cycle`) naming your `setup`
-and cell by path, and rewrites the `bench.toml` sections. The measurement logic
-lives in the scaffold, so the generated files have nothing to get wrong.
+`generate_all` writes one isolated variant crate per `(sweep value, cell)`, each a one-line call to `scaffold::warm` (or `scaffold::cold_cycle`) naming the setup and the cell by path, and rewrites the `bench.toml` sections. The measurement logic lives in the scaffold, so the generated files hold nothing that can be measured wrong.
 
-### The hand-written equivalent
-
-The macro is plain `macro_rules!`; it expands to `pub fn setup(..)`,
-`pub fn cell_<tag>(..)`, and `pub fn matrix_decls() -> Vec<MatrixDecl>` exactly as
-you would write them by hand, so the two forms are interchangeable. The hand form,
-useful when a family needs shaping the macro grammar does not cover:
+The same block written by hand, which is the exact expansion of the macro:
 
 ```rust
 // in the consumer library crate: consumer::bench
@@ -216,23 +132,41 @@ pub fn matrix_decls() -> Vec<mockspace_bench_matrix::MatrixDecl> {
 }
 ```
 
-```rust
-// the whole generator binary
-fn main() -> std::io::Result<()> {
-    let decls = bench_carrier::bench::matrix_decls();
-    mockspace_bench_matrix::generate_all(&decls, std::path::Path::new("."))
-}
-```
+## Motivation
 
-The hand form is the exact expansion of the `bench_matrix!` block above; reach for
-it only when a family needs shaping the grammar does not cover.
+The scaffold takes the cell as a generic `FnMut` parameter and never as a `fn` pointer. A generic parameter is monomorphized and inlined with no indirection, whereas a `fn` pointer brings back an indirect call the optimizer may decline to devirtualize, and the measured region would then include a call the real deployment would not. That one signature choice carries the whole isolation argument, and `scaffold::warm` and `scaffold::cold_cycle` enforce it.
 
-## Status
+The disciplines the scaffold owns, so that a consumer never touches them:
 
-The engine (`scaffold`, `decl`, `generate_all`, the canonical template), the
-`bench_matrix!` macro, and the `FfiBenchCall` ABI extension that surfaces the
-`setup_ns` / `first_ns` / `digest` columns (and the setup-vs-iteration report table
-with the tier breakeven `k*`) are all complete and tested. Remaining items are
-reporter refinements (floor-aware normalise, digest cross-validation) tracked in
-`TODO.md`. The carrier interpreter-composition matrix that produced this crate is
-crate's first intended consumer and its regression test.
+- **Anti-hoist chain.** `scaffold` seeds `acc` from `output[0]`, folds one keep-alive per iteration and writes it back inside the timed loop, so the calibrated reps form a loop-carried dependency the optimizer cannot collapse.
+- **Shared seed table.** A fixed 16-entry `SEEDS` table, identical across sizes and cells, so a cross-size or cross-cell comparison varies only the thing under test. Seeds drawn from `input[k % N]` would not do, since the harness fills the input differently per size.
+- **One keep-alive fold per iteration.** The cell returns a single `u64` and the scaffold folds it once per outer iteration, never once per node, since an O(N) checksum inside the inner loop dilutes every ratio.
+- **Setup against iteration, always measured.** `setup` is a required argument the scaffold brackets with counter reads, so the one-time build cost (S) cannot hide in untimed prep. Every cell reports both its per-iteration cost (I) and its setup cost (S), and the tier breakeven `k* = (S_b - S_a) / (I_a - I_b)` is computable from data the matrix always carries.
+- **Reps-invariant fidelity digest.** Under calibration the reps count depends on timing, so the final `output` bytes vary with it and cannot witness fidelity across cells. The scaffold computes a separate digest on a fixed-seed, fixed-init single pass, on its own channel, which makes the cross-validation meaningful. The authoritative fidelity anchor stays the consumer's byte-exact cross-validation `#[test]`s, and the digest is a smoke check.
+- **Cold, aliased-predictor regime.** `scaffold::cold_cycle` cycles M distinct programs so no single program's dispatch sequence is memorized by the branch predictor, which is the many-residuals-per-frame deployment shape, as opposed to the warm regime's memorized single program.
+
+## Extras
+
+### Status
+
+The engine (`scaffold`, `decl`, `generate_all` and the canonical template), the `bench_matrix!` macro, and the `FfiBenchCall` ABI extension that surfaces the `setup_ns`, `first_ns` and `digest` columns, with the setup-against-iteration report table and the tier breakeven `k*`, are complete and tested. What remains is reporter refinements, floor-aware normalise and digest cross-validation, tracked in `TODO.md`.
+
+### The three layers
+
+`mockspace-bench-harness` is the transport: cdylib-per-variant isolation, the subprocess driver and the multi-axis spec to variant-crate codegen (`MatrixSpec`, `expand`, `render`, `generate`), which knows nothing about honest measurement. This crate is the discipline on top of it, the `scaffold` wrappers, the `decl` data model, `generate_all` and the single canonical template. The consumer owns its domain.
+
+## Support
+
+Feel free to contribute! If unsure about wasting work, the best practice is to throw in an issue describing what you'd do, and only then commit to writing a big PR, because chances are, it might not be something that belongs here. However, forks are always a valid choice and we'd encourage everyone to experiment and have their own takes on this. When doing this, do mind the license(s) though!
+
+Whether you use this project, have learned something from it, or just like it, please consider supporting it by buying me a coffee, so I can dedicate more time on open-source projects like this :)
+
+<a href="https://buymeacoffee.com/orgrinrt" target="_blank"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" alt="Buy Me A Coffee" style="height: auto !important;width: auto !important;" ></a>
+
+## License
+
+> The project is licensed under the **Mozilla Public License 2.0**.
+
+`SPDX-License-Identifier: MPL-2.0`
+
+> You can check out the full license [here](https://github.com/hiisi-digital/mockspace/blob/dev/LICENSE)
