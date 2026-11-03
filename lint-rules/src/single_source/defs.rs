@@ -19,7 +19,7 @@ use std::path::{Component, Path, PathBuf};
 
 use tree_sitter::Node;
 
-use super::shape::canonical_declaration;
+use super::shape::{Parts, canonical_declaration, canonical_parts};
 use super::value::{canonical_type, canonical_value};
 use crate::{CrateSourceFile, LintContext, attribute_is_cfg_test, is_cfg_test_mod, make_parser};
 
@@ -58,6 +58,9 @@ pub(super) struct TypeDef {
     /// What it declares in canonical form (`canonical_declaration`): two types of
     /// one name are one concept when this agrees.
     pub shape: String,
+    /// The same declaration split into generics, members and frame (`canonical_parts`), read at the
+    /// same node as `shape` so the two cannot describe different items.
+    pub parts: Parts,
 }
 
 pub(super) struct ValueDef {
@@ -94,7 +97,13 @@ pub(super) fn collect_crate(crate_name: &str, ctx: &LintContext) -> Vec<Def> {
     } else {
         ctx.all_sources
     };
+    collect_sources(crate_name, sources)
+}
 
+/// Every definition a crate makes outside test code, read from its source files directly. A tool
+/// has no `LintContext` and reads a crate's files itself, so it comes in here; a lint comes in
+/// through `collect_crate`, and both read a crate the same way.
+pub(super) fn collect_sources(crate_name: &str, sources: &[CrateSourceFile]) -> Vec<Def> {
     let mut parser = make_parser();
     let files: Vec<File> = sources
         .iter()
@@ -251,6 +260,7 @@ impl<'a> Walker<'a> {
             .map(|(_, label)| *label)
             .unwrap_or("type");
         let shape = canonical_declaration(node, source);
+        let parts = canonical_parts(node, source);
         self.push(
             node,
             source,
@@ -259,6 +269,7 @@ impl<'a> Walker<'a> {
             Item::Type(TypeDef {
                 kind: label,
                 shape,
+                parts,
             }),
         );
     }

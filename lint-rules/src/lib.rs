@@ -58,6 +58,8 @@ pub use changelist_seal::{active_round_findings, says_nothing};
 /// because a pack's own tests read it and no lint is promised anything by it.
 #[doc(hidden)]
 pub mod agent_identity_conformance;
+mod crate_sources;
+pub use crate_sources::collect_crate_sources;
 mod deprecation_comparison;
 mod owed_comparison;
 pub use owed_comparison::{OwedComparison, owed_comparison};
@@ -89,6 +91,7 @@ pub mod round_id;
 mod registrable_completeness;
 mod repr_c_abi_safety;
 mod single_source;
+pub use single_source::declared::{DeclaredMember, DeclaredParts, DeclaredType, declared_types};
 pub mod src_layout;
 pub mod timing;
 mod dispatch;
