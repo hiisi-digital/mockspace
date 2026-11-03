@@ -37,5 +37,31 @@ inline mod dir ignores the stem|single_source/defs.rs|file_dir: scope\.mod_dir\.
 bin file root removed|single_source/defs.rs|file\.ends_with\("\.rs"\) => Some\(true\)@@false => Some(true)
 non-mod-rs file does not nest under its stem|single_source/defs.rs|if owns_dir \{ parent\.clone\(\) \} else \{ parent\.join\(stem\) \}@@parent.clone()
 orphans not walked|single_source/defs.rs|if !walker\.reached\.contains\(&i\) \{@@if false {
+a type is grouped by its name alone|single_source.rs|\.entry\(\(def\.name\.as_str\(\), ty\.shape\.as_str\(\)\)\)@@.entry((def.name.as_str(), ""))
+the keyword left out of the shape|single_source/shape.rs|if is_noise\(child\) \|\| is_closing_comma\(child\)@@if is_noise(child) || matches!(child.kind(), "struct" | "enum" | "union" | "trait") || is_closing_comma(child)
+a semicolon left out of the shape|single_source/shape.rs|if is_noise\(child\) \|\| is_closing_comma\(child\)@@if is_noise(child) || child.kind() == ";" || is_closing_comma(child)
+comments kept in the shape|single_source/shape.rs|node\.kind\(\)\.contains\("comment"\)\n( +)\|\| matches!@@false\n\1|| matches!
+attributes kept in the shape|single_source/shape.rs|"attribute_item" \| "inner_attribute_item" \| "visibility_modifier"@@"visibility_modifier"
+visibilities kept in the shape|single_source/shape.rs|\| "visibility_modifier"@@
+a closing comma kept in the shape|single_source/shape.rs|if node\.kind\(\) != ","@@if true
+a comment ends the look for the closer|single_source/shape.rs|if !is_noise\(sibling\) \{@@if true {
+tuple fields sorted|single_source/shape.rs|"declaration_list"\];@@"declaration_list", "ordered_field_declaration_list"];
+members left in the order written|single_source/shape.rs|members\.sort\(\);@@let _ = ();
+variants always sorted|single_source/shape.rs|let sorted = !variants_are_numbered_by_place\(node, self\.source\);@@let sorted = true;
+a fieldless enum not numbered by place|single_source/shape.rs|fieldless \|\| has_repr\(item, source\)@@has_repr(item, source)
+a repr not numbering the variants|single_source/shape.rs|fieldless \|\| has_repr\(item, source\)@@fieldless
+hand numbered variants keep their order|single_source/shape.rs|variants\.iter\(\)\.all\(numbered\)@@false
+a method body kept in the shape|single_source/shape.rs| \|\| Some\(child\) == body@@
+bounds kept in the order written|single_source/shape.rs|set\.sort\(\);\n( +)set\n@@set
+merged bounds kept in the order written|single_source/shape.rs|\.map\(\|\(left, mut set\)\| \{\n( +)set\.sort\(\);@@.map(|(left, mut set)| {
+bounds written inline dropped|single_source/shape.rs|bounds\.entry\(name\)\.or_default\(\)\.extend\(set\);@@let _ = (name, set);
+bounds in a where clause dropped|single_source/shape.rs|bounds\.entry\(left\)\.or_default\(\)\.extend\(set\);@@let _ = (left, set);
+a repeated bound kept|single_source/shape.rs|set\.dedup\(\);@@
+generics left as written|single_source/shape.rs|if at_generics && generics\.is_some\(\) \{@@if false {
+generic parameters compared by name|single_source/shape.rs|to: format!\("\$\{\}\.\{index\}", self\.depth\)@@to: text.to_string()
+scope depth left out of the name|single_source/shape.rs|to: format!\("\$\{\}\.\{index\}", self\.depth\)@@to: format!("\$.{index}")
+lifetimes named as types|single_source/shape.rs|"lifetime_parameter" => \(Class::Lifetime,@@"lifetime_parameter" => (Class::Type,
+const parameters not renamed|single_source/shape.rs|"const_parameter" => \(Class::Const, param\.child_by_field_name\("name"\)\),@@"const_parameter" => return,
+a path segment not told from a type|single_source/shape.rs|"identifier" => class != Class::Lifetime,@@"identifier" => class == Class::Const,
 TABLE
 echo "killed=$killed survived=$survived other=$broken"

@@ -19,7 +19,8 @@ use std::path::{Component, Path, PathBuf};
 
 use tree_sitter::Node;
 
-use super::value::{canonical_declaration, canonical_type, canonical_value};
+use super::shape::canonical_declaration;
+use super::value::{canonical_type, canonical_value};
 use crate::{CrateSourceFile, LintContext, attribute_is_cfg_test, is_cfg_test_mod, make_parser};
 
 /// One definition found in a crate.
