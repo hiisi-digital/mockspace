@@ -1,241 +1,44 @@
 # `mockspace`
 
-<div align="center" style="text-align: center;">
+[![Crates.io](https://img.shields.io/crates/v/cargo-mock)](https://crates.io/crates/cargo-mock) [![docs.rs](https://img.shields.io/docsrs/cargo-mock)](https://docs.rs/cargo-mock)
 
-[![GitHub Stars](https://img.shields.io/github/stars/hiisi-digital/mockspace.svg)](https://github.com/hiisi-digital/mockspace/stargazers)
-[![Crates.io](https://img.shields.io/crates/v/cargo-mock)](https://crates.io/crates/cargo-mock)
-[![docs.rs](https://img.shields.io/docsrs/cargo-mock)](https://docs.rs/cargo-mock)
-[![GitHub Issues](https://img.shields.io/github/issues/hiisi-digital/mockspace.svg)](https://github.com/hiisi-digital/mockspace/issues)
-![License](https://img.shields.io/github/license/hiisi-digital/mockspace?color=%23009689)
+> A design-first workflow engine for Rust projects, with the design as the thing that counts and the source following from it.
 
-> A design-first workflow engine for Rust projects. It has no opinion about what gets built with it, and a fairly strong one about how the design gets there.
+`mockspace` lives in a `mock/` directory next to your code. Design work goes through rounds, from a topic to a locked plan for the docs, then a locked plan for the source, then an archive, and the transitions are subcommands that rename files and check the invariants so nobody edits a suffix by hand. Templates under `mock/` turn into a generated `docs/` tree and a crate graph, and a lint pipeline runs at commit, build and push, with a severity per gate.
 
-</div>
+It has no say in what you build, only that what you decided got written down and locked before the code, so it fits multi-crate workspaces where the decisions matter. On a small project the ceremony will cost more than it gives, and for linting plain source there are better tools than this one.
 
-`mockspace` lives in a `mock/` directory next to the code it governs. It walks design work through a state machine, from exploring a topic, to a locked plan for the docs, to applying that plan to source, to archiving the whole thing. Templates under `mock/` become a generated documentation tree and a crate dependency graph, and a lint pipeline runs at three gates, commit, build and push, with a severity per gate.
-
-Underneath it there are a few claims about how design work should behave, and they are worth stating plainly because adopting the tool means adopting them. Source is never the authority. The design template is the artifact that counts, source follows from it, and the lints keep the two honest with each other. Transitions happen through subcommands that rename files and check invariants, never by editing a filename suffix by hand, because a state machine whose invariants are advisory stops being one fairly quickly.
-
-None of that says anything about what gets built. Crate naming, numeric discipline, the frameworks a project pulls in and the lints particular to its domain are all the project's own. `mockspace` only cares that whatever was decided got written down, reviewed, locked and is reproducible afterwards.
-
-What it costs is worth being upfront about. The ceremony is real, and on a small project it is likely to feel like more than it returns. The plan gets written before the code and cannot be skipped when there is a hurry, which is the intent and is also occasionally infuriating.
+It is pre-1.0 and the api still moves, so don't lean on it for anything that can't take a change.
 
 ## Usage
 
-Install the launcher once per machine:
+Install the launcher once per machine, and activate the hooks once per clone:
 
 ```bash
 cargo install cargo-mock
+cargo mock activate
 ```
 
-That installs `cargo-mock` and `mock`, the same tool under cargo's subcommand
-convention and a short direct form. There is no `build.rs` bootstrap, no
-`.cargo` alias, and no proxy crate: the launcher is the sole entry.
-
-Each repository pins the engine it runs in its root `mockspace.toml`:
+Each repository pins the engine it runs in its `mockspace.toml`:
 
 ```toml
 mockspace_version = "0.0.2"
 ```
 
-The engine is not on crates.io, so a version resolves against the matching git
-tag instead. `mockspace_branch = "dev"` follows development and moves under the repo
-by design, and `mockspace_rev` holds an exact commit, for a repo that would rather nothing moved at all.
+The engine isn't on crates.io, so a version resolves against the matching git tag. `mockspace_branch = "dev"` follows development and moves under you by design, and `mockspace_rev` holds an exact commit. The launcher builds the pinned engine once into a shared per-version cache and runs it, so every repo on the same pin shares the build.
 
-A lint pack in `[lint-crates]` pinned by `branch` follows that branch the same
-way, resolved against the remote once an hour while the remote answers, and
-built at the last tip it saw when the remote cannot be reached, with a warning
-saying how old that tip is. The remote gets five seconds to answer, reading how
-ssh is configured included, since this runs inside the commit hook. A remote
-that stays out of reach is asked again on every run once the hour is up, so
-each branch-pinned pack can cost those five seconds, one after another. git
-does not prompt on the terminal, a credential helper is told not to open a
-window, which Git Credential Manager honours and a helper that ignores it does
-not, and ssh runs in batch mode, unless the clone or the environment already
-says how ssh runs, in which case that is left alone. Then ssh may ask for a
-passphrase, and the run gives up on the answer after the five seconds while the
-prompt, or a helper's window, can stay up. A pack pinned by `git` alone,
-with no `branch`, follows the remote's default branch through cargo and stays
-at what the lockfile holds. Pin it by `rev` or `tag` if it should stay where it
-is.
+The commands you reach for most:
 
-The launcher builds the pinned engine once into a shared per-version cache and
-execs it, so every repo on the same pin shares one build and the working
-directory never matters.
-
-Activate the hooks once per clone:
-
-```bash
-cargo mock activate
-```
-
-## Example
-
-```bash
-cargo mock                       # default: check + parse + lint + generate
-cargo mock --lint-only --commit  # lint at commit-gate severity, skip generation
-cargo mock --lint-only --strict  # lint at push-gate severity (used by pre-push hook)
-cargo mock lock                  # transition: DOC -> DRAFT, or IMPL -> CLOSED
-cargo mock close                 # archive a CLOSED round
-cargo mock test                  # cargo test across every tree mockspace owns, the benches when they moved (or are asked for)
-cargo mock tools                 # every subcommand and project tool, with usage
-cargo mock lints                 # every lint, its severity here, its reach, and where the two disagree
-mock locate                      # where this repo keeps its mockspace, shell-assignable
-```
-
-For the full subcommand surface, configuration reference, lint authoring, and template structure, see the [usage guide](https://github.com/hiisi-digital/mockspace/blob/dev/docs/USAGE_GUIDE.md).
-
-## Motivation
-
-- Multi-crate Rust workspaces where the design decisions are consequential enough to want a paper trail of them.
-- Projects that would rather have invariants enforced mechanically than socially, because the social version keeps not working.
-- Workspaces where keeping generated documentation in step with source by hand has stopped being sustainable.
-
-Where it isn't:
-
-- Single-file scripts, one-crate demos and quick prototypes. The ceremony costs more than it returns and tends to get resented.
-- Projects where the design genuinely does live in the code, and writing it down twice would be writing it down twice.
-
-A source linter is probably not what this is either. `mockspace` will lint source as well, but more established, more proven and better-documented tools exist for that in most languages, and those are the better pick. What this is for is the part above the source: the design, the plan, and whether the two still agree with each other a month later.
-
-## Extras
-
-### Status
-
-Pre-1.0, and it moves. The tool is in daily use across a stack of consumer crates and grows whatever those crates turn out to need, so the api hasn't settled and breaking changes should be expected. Releases are tagged, and the log between two of them is what moved.
-
-I'd caution against adopting this just yet for anything that cannot afford to have the tool shift under it. Two reworks are in flight and either will move things: the plugin ABI v1 redesign, and a successor model for the design-round workflow (see [the research notes](https://github.com/hiisi-digital/mockspace/blob/dev/docs/research/)).
-
-### The other crates
-
-| Component | Purpose |
+| Command | What it does |
 |---|---|
-| `mockspace` (binary + library) | The runtime: bootstrap, build integration, generation pipeline, lint runner, transition subcommands. |
-| `mockspace-lint-rules` | The `Lint` and `Tool` traits, plus the built-in rules: general quality checks, and the design-round lints that enforce the phase transitions. The lints in a repo's own `mock/lints/` compose against it. |
-| `mockspace-bench-core` | The bench framework: `Routine` trait, hardware-counter timing, and an FFI bridge so variants compiled separately can be compared in one run. The harness adds workload and cache control, validation, Pareto analysis, history, perf and disassembly sensors, and findings reporting. |
-| `mock bench` | The command surface over that framework. `init` scaffolds a `mock/benches/` tree that is configuration and nothing else, `run` generates the driver binary from `bench.toml` and runs the configured benches, `test` runs `cargo test` across every crate the tree owns, and `report` regenerates the findings. A hand-written driver crate stays available as the escape hatch. |
-| `cargo-mock` / `mock` launcher | The sole entrypoint, installed as two binaries from one source. Resolves the engine version a repo pins in its `mockspace.toml`, builds that engine once into a shared per-version cache, and execs it; `mock locate` answers where a repo keeps its mockspace. |
-| `mockspace-manifest` | The `mockspace.toml` keys the launcher reads, and the durable git-hook gate. Shared between the launcher and the engine so the two cannot disagree about what a key means, which is the only reason it is a crate of its own rather than a module in either. |
-| `mockspace-bench-matrix` | A semantic-matrix layer over the bench harness: declare cells, sweep them across axes, and get isolated per-cell timing with the measurement discipline already applied. Opinionated on purpose, and the harness underneath stays usable directly if the opinions do not fit. |
+| `cargo mock` | check, parse, lint and generate |
+| `cargo mock lock` | move a round from `DOC` to `DRAFT`, or from `IMPL` to `CLOSED` |
+| `cargo mock close` | archive a closed round |
+| `cargo mock test` | run the tests of every tree mockspace owns |
+| `cargo mock tools` | list every subcommand and project tool |
+| `cargo mock lints` | list every lint with its severity here |
 
-### Design rounds
-
-The unit of design work in mockspace is a *round*. A round walks five phases:
-
-| Phase | Meaning |
-|---|---|
-| `TOPIC` | Exploration. Topic and research material is committed; no changelist exists yet. |
-| `DOC` | A doc changelist is active. Templates are the only thing changing. |
-| `DRAFT` | The doc changelist is locked. The src changelist has not been authored. |
-| `IMPL` | The src changelist is active. Source under the consumer crates is being written to match what the docs already promised. |
-| `CLOSED` | Both changelists locked. Round is ready to archive. |
-
-Phases are detected from filename suffixes inside `mock/design_rounds/`. Transitions happen through `cargo mock lock` / `unlock` / `deprecate` / `close` / `archive`, never through manual renames. Each one validates its invariants, commits the rename itself when asked with `--auto-commit`, and leaves a stable history anchor.
-
-A successor model for this workflow is in development. It makes tasks, phases, manifests and epochs concepts in their own right, and demotes the branch to ambient context. See [the successor design](https://github.com/hiisi-digital/mockspace/blob/dev/docs/research/TASKS_BRANCHES_PHASES_EPOCHS_DESIGN.md).
-
-### Lint pipeline
-
-Three sources contribute rules:
-
-- **Built-in lints** in `mockspace-lint-rules`. Universal quality checks (file size, undocumented types, no empty crate) and the design-round lints that hold the phases above to their transitions.
-- **Consumer lints** in `mock/lints/<name>.rs`. Each file exports a Rust function returning a lint trait object. The engine discovers them and compiles them, together with any imported packs, into one lint library it loads at run time. The generated crate and its build do not live in the worktree. They sit in a store shared by every worktree of the repository, under `$CARGO_TARGET_DIR/mockspace-lints/` when that is set and under `$XDG_CACHE_HOME/mockspace/lints/` (or `~/.cache/mockspace/lints/`) otherwise, in a directory keyed by the repository's origin url, the mock directory below its root, the engine's lint-rules revision, the resolved revision of each pack and, for a run of one project tool, the tool's name. Worktrees at the same revisions share one dependency build; `<mock>/target/mockspace-lints/shared-dir` names the directory a worktree used by a run of the whole content, never by a run of one tool. `cargo mock clean` leaves the store alone, and each run removes the directories whose worktree is gone or that nothing has used for fourteen days. The library a run loads is kept in the `built/` directory of the same store, under a key made from its inputs: the lint sources, the generated manifest with the worktree's paths taken out, each package it resolves to, the toolchain, and the cargo config files the build reads. Beside it is the list of files the compiler opened, from cargo's own dep-info, and a worktree checks that list against its own files before loading, so a second worktree of the same content builds nothing and a file a lint includes or a module in a subdirectory is part of what is checked. The build is given a short list of variables (where the toolchain, the registry and the target directory are, the network and the terminal) and no others, and the release profile on its command line, so `RUSTFLAGS` or `CARGO_PROFILE_RELEASE_*` set in a shell do not reach it, while a `.cargo/config.toml` does and is part of the key. A variable it was given that a lint, a tool or a dependency reads with `env!` or `option_env!` is recorded and compared too, and a library whose tool or path package has a build script or a procedural macro, or reads the directory of its own manifest, is not kept, since the worktree leaks into what it writes. Paths the compiler writes for the lints and the generated crate (`file!()`, a panic location) name them by label, not by where the worktree sits; the own paths of a tool or path package still name the worktree. Kept libraries unused for fourteen days are removed. A machine with none of `CARGO_TARGET_DIR`, `XDG_CACHE_HOME` and `HOME` set is refused, since the crate is built and loaded and cannot sit in a directory every user can write to.
-- **Config-driven rules** under `[lints.<rule-name>]` in the same `mockspace.toml`. The `forbidden-imports` rule covers the common case of "this scope must not import these paths".
-
-A lint declares how much it reads (one file, one crate, the workspace, or the whole repository), and a run saves what each of the narrower ones found and replays it while nothing it reads has moved. The store is one directory for the machine, `MOCKSPACE_NO_VERDICTS=1` switches it off for a run and `MOCKSPACE_TIMINGS=1` prints where the run spent its time; the usage guide has the rest.
-
-A check that cannot run at a gate is a tool instead, and so is anything that writes files rather than judging them; tools have a section of their own below.
-
-Each lint declares a severity per gate. The same lint can be `info` at commit, `warn` at build, and `error` at push. The five design-round lints (`changelist-required`, `changelist-doc-gate`, `changelist-lock`, `changelist-immutability`, `changelist-seal`) are on at `error` by default, and a project turns one down only by saying so in its own config.
-
-### Tools
-
-A tool is what a project runs by name, as `mock <name>`, and it is one of two kinds. A check that cannot be a lint is the first: a lint runs at a gate and answers a question nobody asked, and some checks cannot do that, because they need a question from the person running them or they answer with a ranking rather than a verdict. A maker is the second, a generator, a scaffolder or an exporter whose product is the files it writes rather than a verdict about the tree, so the question a gate would ask of it does not come up at all.
-
-A tool is usually a crate under `mock/tools/<name>/`, and there the directory name is the subcommand. It does not have to live in the repository it serves: a lint pack declared in `[lint-crates]` may carry tools too, and one tool wanted by several projects belongs in the pack rather than copied into each. A pack's tool is compiled into the same library the consumer lints are, so it may ship a lint alongside itself. A tool in a directory of the repository is compiled alone when it is the one run (`mock <tool>`), in a library of its own that holds no lint and no other tool, and in the same library as the lints in every other run (`mock check`, `mock tools`), which is where a name a pack registers too is found. Each such whole run leaves the names registered twice in `target/mockspace-lints/duplicate-tools`, and a run of the one tool reads that file: it exits 2 when its name is in it, and takes one whole build when the file is not there yet.
-
-Two of them registering the same name is refused rather than resolved, since `mock <name>` would otherwise run whichever loaded first. That is worth knowing before pulling a pack in: a tool the pack now ships and the local copy it replaces both register, and the refusal covers every whole run, and a run of one tool refuses only the colliding name.
-
-```rust
-// mock/tools/phrase-search/src/lib.rs
-use mockspace::tool::{ArgSpec, NotALint, Purpose, Tool, ToolContext, ToolReport};
-
-pub struct PhraseSearch;
-
-impl Tool for PhraseSearch {
-    fn name(&self) -> &'static str { "phrase-search" }
-    fn description(&self) -> &'static str { "find a phrase across wrapped lines" }
-    fn purpose(&self) -> Purpose { Purpose::Check(NotALint::TakesAQuestion) }
-    fn args(&self) -> &[ArgSpec] {
-        &[ArgSpec { name: "phrase", required: true, description: "what to look for" }]
-    }
-    fn run(&self, ctx: &ToolContext<'_>) -> ToolReport {
-        ToolReport::reported(format!("searching for {}", ctx.args.join(" ")), 1)
-    }
-}
-
-mockspace::lint_pack! { tools: [PhraseSearch] }
-```
-
-`purpose` has no default, because it is the declaration that keeps the gate populated, and a check cannot be written without saying why it is not a lint. The reason takes one of two values:
-
-- `TakesAQuestion`, when a required argument comes from the person. A gate has nobody to ask.
-- `NoFailingCase`, when the answer is the output and no threshold separates pass from fail.
-
-Neither is a matter of taste and both are checked. A tool claiming to take a question and declaring no required argument is refused; one claiming no failing case and returning a finding that blocks a gate fails the run with exit 2, the code every broken contract exits with. Being slow, or needing git history, are not reasons: a repo lint is handed the repository root and may run git itself, so a check with those properties is a lint.
-
-A maker declares what it writes instead of a reason, as patterns relative to the repository root:
-
-```rust
-fn purpose(&self) -> Purpose { Purpose::Make { writes: &["docs/generated/**", "CHANGELOG.md"], roots: &[] } }
-```
-
-The patterns are anchored, so `CHANGELOG.md` is the one at the root and not every file of that name. A maker declaring nothing is refused before it runs, and so is a pattern that is empty, leaves the tree, has a `.git` segment in any letter case, has a `[` or `]` (which git reads as a class and the audit reads literally), or is made only of wildcards, since `**/?*` holds a tool to nothing just as `**` does. While a maker runs, the engine compares the worktree before and after, prints every path that changed, and fails the run with exit 2 on a write outside the declaration.
-
-A maker whose output location is chosen on the command line names the argument at the start of a pattern, and declares a fixed root the argument has to fall under:
-
-```rust
-fn purpose(&self) -> Purpose {
-    Purpose::Make {
-        writes: &["{output}.rs", "{output}/**"],
-        roots:  &[ArgRoot { arg: "output", under: "src/icons/*" }],
-    }
-}
-```
-
-The engine reads the argument from the actual command line before the run and puts it into the pattern, so `mock bake src/icons/ui` may write `src/icons/ui.rs` and anything under `src/icons/ui/`, and is failed for a write anywhere else it is observed. A value that is absolute, has a `..` or `.git` segment, carries a glob character or does not match its root is refused with exit 2 before the tool runs, and so is one whose path in the tree, up to the first wildcard of any pattern it starts, passes through a symlink, wherever the link points, since writes through it would land where they are not observed. A symlink already committed further down, inside `src/icons/ui/`, is not checked, and a write through it is not seen. A pattern naming an argument the tool does not declare, an argument with no root, a root nothing names, and a root that would be refused as a write are each refused before anything runs. An optional argument that was not given admits nothing.
-
-A maker has no way to express a gating judgement. Its findings report what it produced, at warning or info, and a finding at error at any gate fails the run with exit 2 as a broken contract. A make that fails returns `Inconclusive`, its reason saying what failed and on which input, and exits nonzero as any inconclusive run does. Gating stays with checks and lints. What a maker produced is visible only through the paths it declared, which `mock tools --long` shows with the root of every argument they name, and the list of what it wrote that the engine prints after each run.
-
-The comparison sees what `git status` sees. Ignored paths are asked about only inside the declaration, so a maker whose output is gitignored is seen writing it, while an ignored write outside the declaration is not checked; neither is anything under `.git/`, a write outside the worktree, including one through a symlink the declaration did not lead to, or a permission-only change to a file that was already modified. Where git cannot report the tree, a maker is not run at all, and where it cannot report it after the run, the run is inconclusive.
-
-A tool returns one of three outcomes rather than a list of findings. `Clean` carries what it examined, because a clean verdict over nothing is not a pass, and for a maker it is a make that succeeded; a make that failed is `Inconclusive`. `Findings` carries `LintError`s, the same type a lint produces, so a check that turns out to be gateable becomes a lint without rewriting them, and a maker reports what it produced the same way, at warning or info. `Inconclusive` says the run establishes nothing, and it fails: a check that silently did not run is worse than no check, since both print the same green.
-
-`mock tools` lists every tool with its kind, and `mock tools --long` or `mock help <name>` adds what each one is held to.
-
-### Generated documentation
-
-A `cargo mock` run with no subcommand regenerates the `docs/` tree from templates under `mock/`. That includes a top-level `DESIGN.md`, a `STRUCTURE.md` plus Graphviz `.dot` and rendered `.png` / `.svg` files from the per-crate item index, deep dives, and per-crate overviews. The generator owns the top level of `docs/`, and a file sitting there that the run did not produce is swept. Hand-written documents belong in a subdirectory, which the sweep does not descend into, or outside `docs/` entirely.
-
-### Git hooks
-
-`mockspace` never touches `.git/hooks/`. Durable hooks live in the user config home and delegate to a per-repo validator under the mock directory's `target/hooks/`, which runs mockspace's own validation and then whatever the repository keeps at `.git/hooks/<name>`, with the same arguments and the same stdin, so a hook another tool installed there still runs and its refusal still counts. Where the working tree has no generated hooks yet, as in a fresh worktree, the durable hooks that follow a merge commit or a rebase build them by running `cargo mock --generate-only`, but only when cargo lists `mock` among its commands, and `pre-commit`, `commit-msg` and `pre-push` do the same while a merge has left a kept side owed; only `pre-commit` stages what that regenerates. Nothing runs past a refusal of mockspace's own. The launcher wires them on first contact and the engine keeps them current; deactivation (`cargo mock deactivate`) is explicit and reversible, and git then falls back to whatever the user already had. Where a repository's `core.hooksPath` is git-shook's, mockspace does not take the key: it registers the durable hooks with git-shook as one entry among the others, in a `00-mockspace.toml` manifest in the clone's `.git/shook/manifests/`, registered with `git shook install --yes --only 00-mockspace` so that it consents to nothing but its own manifest. The leading `00-` makes the gate sort before the other entries, which git-shook runs in sorted order up to the first refusal. The gate still ends in the repository's own `.git/hooks/<name>`, as everywhere else, except for an event where git-shook kept a copy of that hook as its `00-existing` entry, which already runs it, so the gate does not chain to it a second time. A hook git-shook kept as `00-existing` runs first, as the entry that sorts ahead of the gate, so it runs before mockspace's own validation and not after a pass as it does without git-shook; a repository hook with side effects that should wait for the gate belongs in a manifest named to sort after `00-mockspace`. A hook git-shook left in place because a manifest registers what it does is recorded by it as declined, and the gate skips the file while it still equals that record. A copy of the gate that git-shook kept as `00-existing` when it took the key is removed, so the gate does not run twice. Deactivation removes the gate's entry and leaves `core.hooksPath`, and anything saved for it, alone.
-
-The merge drivers that keep generated files, registry rows, closed rounds, test history, append-only files and lockfiles from conflicting are registered in each clone's own git config by the engine's first run there. `cargo mock register-drivers --global` writes the same six into the user's git config as well, with commands that name no clone, so a clone made later, a linked worktree or a container that never ran `cargo mock` there still has them; run inside a repository, it also unsets that clone's older entry for the generated-file driver where the entry names a path, since git prefers a clone's entry to the user's.
-
-The message lints a project imports from its packs are run at the commit and at the push. The `commit-msg` hook hands them the message and who the commit is by, the author and committer that `git var` reports for it, and the `pre-push` hook does the same for every commit the push publishes for the first time, reading each one's pair from the commit itself. A message alone does not say whether an agent made the commit, since an agent committing under its own name leaves no trailer, so a lint that judges bylines can judge the identity as well. When git cannot name the author or the committer the `commit-msg` hook blocks with the reason, instead of passing the message alone, and the engine refuses a pushed record whose header does not parse. A pull request body never passes through git and is handed no identity.
-
-### Assistant configuration
-
-If `mock/agent/` is populated with templates, mockspace renders coordinated configuration from those templates for common AI coding assistants (Claude Code, GitHub Copilot CLI, others as templates require). One source produces semantically equivalent output for each platform. A small set of builtin skills renders alongside: sketching and benchmarking discipline on by default, an interactive design-talk flow opt-in, each declinable per repository in `mock/agent/config.toml`. This is a configuration surface, not a feature; the tool's identity is what it does for human developers.
-
-## Support
-
-Feel free to contribute! If unsure about wasting work, the best practice is to throw in an issue describing what you'd do, and only then commit to writing a big PR, because chances are, it might not be something that belongs here. However, forks are always a valid choice and we'd encourage everyone to experiment and have their own takes on this. When doing this, do mind the license(s) though!
-
-Whether you use this project, have learned something from it, or just like it, please consider supporting it by buying me a coffee, so I can dedicate more time on open-source projects like this :)
-
-<a href="https://buymeacoffee.com/orgrinrt" target="_blank"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" alt="Buy Me A Coffee" style="height: auto !important;width: auto !important;" ></a>
+The [usage guide](https://github.com/hiisi-digital/mockspace/blob/dev/docs/USAGE_GUIDE.md) has the rest, including configuration, lint authoring and the template structure.
 
 ## License
 
@@ -243,4 +46,4 @@ Whether you use this project, have learned something from it, or just like it, p
 
 `SPDX-License-Identifier: MPL-2.0`
 
-> You can check out the full license [here](https://github.com/hiisi-digital/mockspace/blob/dev/LICENSE)
+> You can check out the full license [here](https://github.com/hiisi-digital/mockspace/blob/main/LICENSE)
