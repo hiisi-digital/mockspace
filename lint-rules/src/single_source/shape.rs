@@ -483,3 +483,97 @@ fn has_repr(item: Node, source: &str) -> bool {
     }
     false
 }
+
+/// One member of a declaration, split so that two declarations can be compared by what their members
+/// are and by what they are called apart.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Member {
+    /// What the member is called: a field, a variant or a trait item. A tuple field is its position.
+    pub name: String,
+    /// What the member declares, in the canonical form: a field's type, a variant's payload, a trait
+    /// item's whole signature. Empty for a variant that carries nothing.
+    pub body: String,
+}
+
+impl Member {
+    /// The member as one comparable string, name and body together.
+    pub fn whole(&self) -> String {
+        format!("{} {}", self.name, self.body)
+    }
+}
+
+/// A declaration split into what the name of the type does not enter: its generics and its members,
+/// each in the canonical form of [`canonical_declaration`], so a copy under another name has the same
+/// parts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Parts {
+    /// The generic parameters and their bounds, merged as in the canonical declaration. Empty when the
+    /// type has none.
+    pub generics: String,
+    pub members:  Vec<Member>,
+}
+
+/// The generics and the members of a struct, enum, trait or union in canonical form.
+pub(super) fn canonical_parts(node: Node, source: &str) -> Parts {
+    let mut shape = Shape {
+        source,
+        renames: Vec::new(),
+        depth: 0,
+    };
+    shape.parts(node)
+}
+
+impl<'s> Shape<'s> {
+    fn parts(&mut self, node: Node<'s>) -> Parts {
+        let generics = self.open_generics(node);
+        let mut members = Vec::new();
+        if let Some(body) = node.child_by_field_name("body") {
+            let mut cursor = body.walk();
+            let mut place = 0usize;
+            for member in body.named_children(&mut cursor).filter(|m| !is_noise(*m)) {
+                members.push(self.member(member, body.kind(), &mut place));
+            }
+        }
+        self.renames.clear();
+        self.depth -= usize::from(generics.is_some());
+        Parts {
+            generics: generics.unwrap_or_default(),
+            members,
+        }
+    }
+
+    fn member(&mut self, member: Node<'s>, list: &str, place: &mut usize) -> Member {
+        let source = self.source;
+        let text = |name: Option<Node>| name.map(|n| source[n.byte_range()].to_string());
+        match member.kind() {
+            "field_declaration" => {
+                let name = text(member.child_by_field_name("name")).unwrap_or_default();
+                let body = member
+                    .child_by_field_name("type")
+                    .map(|ty| self.node(ty))
+                    .unwrap_or_default();
+                Member { name, body }
+            },
+            "enum_variant" => {
+                let name = text(member.child_by_field_name("name")).unwrap_or_default();
+                let mut body = member
+                    .child_by_field_name("body")
+                    .map(|payload| self.node(payload))
+                    .unwrap_or_default();
+                if let Some(value) = member.child_by_field_name("value") {
+                    body = format!("{body} = {}", self.node(value));
+                }
+                Member { name, body }
+            },
+            _ if list == "ordered_field_declaration_list" => {
+                let name = place.to_string();
+                *place += 1;
+                Member { name, body: self.node(member) }
+            },
+            _ => {
+                let name = text(member.child_by_field_name("name")).unwrap_or_default();
+                Member { name, body: self.node(member) }
+            },
+        }
+    }
+}

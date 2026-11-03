@@ -104,6 +104,7 @@
 //!   `cfg(test)` declaration would have exempted them.
 //! - A file no `mod` declaration reaches is counted as ordinary source.
 
+pub(crate) mod declared;
 mod defs;
 mod shape;
 mod value;
