@@ -36,6 +36,7 @@ pub mod lint;
 pub mod lint_catalogue;
 pub mod model;
 mod pack_pin;
+pub mod pairing;
 pub mod panel;
 mod plumbing;
 pub mod parse;
