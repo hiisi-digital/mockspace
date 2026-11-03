@@ -529,6 +529,16 @@ pub(super) fn canonical_parts(node: Node, source: &str) -> Parts {
 
 impl<'s> Shape<'s> {
     fn parts(&mut self, node: Node<'s>) -> Parts {
+        // The type's own name is not part of what it declares, so a member that names it (a link to the
+        // next node) reads the same under whatever the type is called.
+        let source: &'s str = self.source;
+        if let Some(name) = node.child_by_field_name("name") {
+            self.renames.push(Rename {
+                class: Class::Type,
+                name:  &source[name.byte_range()],
+                to:    "$self".to_string(),
+            });
+        }
         let generics = self.open_generics(node);
         let mut members = Vec::new();
         let body = node.child_by_field_name("body");
