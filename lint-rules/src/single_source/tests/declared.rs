@@ -36,7 +36,7 @@ fn a_struct_is_split_into_its_named_fields() {
     assert!(ty.fully_pub());
     assert_eq!(
         members(&ty),
-        [("index".into(), "u64".into()), ("at".into(), "u32".into())]
+        [("at".into(), "u32".into()), ("index".into(), "u64".into())]
     );
 }
 
@@ -59,11 +59,10 @@ fn a_variant_carries_its_payload_as_its_body() {
     let ty = only("pub enum Run { Pause, Step(u32), Seek { to: u64 } }");
     let got = members(&ty);
     assert_eq!(got.len(), 3);
-    assert_eq!(got[0], ("Pause".to_string(), String::new()));
-    assert_eq!(got[1].0, "Step");
-    assert!(got[1].1.contains("u32"), "{got:?}");
-    assert_eq!(got[2].0, "Seek");
-    assert!(got[2].1.contains("to") && got[2].1.contains("u64"), "{got:?}");
+    let body = |name: &str| got.iter().find(|(n, _)| n == name).map(|(_, b)| b.clone()).unwrap();
+    assert_eq!(body("Pause"), "");
+    assert!(body("Step").contains("u32"), "{got:?}");
+    assert!(body("Seek").contains("to") && body("Seek").contains("u64"), "{got:?}");
 }
 
 #[test]
@@ -92,4 +91,47 @@ fn a_type_in_test_code_is_not_declared() {
     let found = read("#[cfg(test)]\nmod tests { pub struct Hidden { pub a: u8 } }\npub struct Seen { pub a: u8 }");
     let names: Vec<&str> = found.iter().map(|t| t.name.as_str()).collect();
     assert_eq!(names, ["Seen"]);
+}
+
+/// Every spelling of one name that the canonical shape tells apart or not, so that the parts a tool
+/// compares can never call two declarations equal that single-source calls different, nor the reverse.
+const SPELLINGS: &[&str] = &[
+    "pub struct X { pub a: u8, pub b: u16 }",
+    "pub struct X { pub b: u16, pub a: u8 }",
+    "pub struct X { pub a: u8 }",
+    "pub struct X;",
+    "pub struct X {}",
+    "pub struct X(pub u8, pub u16);",
+    "pub struct X(pub u16, pub u8);",
+    "pub enum X { A, B }",
+    "#[repr(u8)] pub enum X { A, B }",
+    "#[repr(u8)] pub enum X { B, A }",
+    "pub enum X { A(u8), B }",
+    "pub enum X { B, A(u8) }",
+    "pub trait X { fn put(&self, b: u8); }",
+    "pub trait X: Copy { fn put(&self, b: u8); }",
+    "pub trait X: Copy + Clone { fn put(&self, b: u8); }",
+    "pub trait X: Clone + Copy { fn put(&self, b: u8); }",
+    "pub union X { pub a: u8, pub b: u16 }",
+    "pub struct X<T: Copy> { pub a: T }",
+    "pub struct X<U> where U: Copy { pub a: U }",
+];
+
+#[test]
+fn equal_parts_are_equal_shapes_and_the_reverse() {
+    // Mutation: `frame` left out of `Parts`, so a supertrait, an enum order or a unit body goes unseen.
+    let types: Vec<DeclaredType> = SPELLINGS.iter().map(|s| only(s)).collect();
+    for (i, a) in types.iter().enumerate() {
+        for (j, b) in types.iter().enumerate() {
+            assert_eq!(
+                a.shape == b.shape,
+                a.parts == b.parts,
+                "`{}` against `{}`: same shape {}, same parts {}",
+                SPELLINGS[i],
+                SPELLINGS[j],
+                a.shape == b.shape,
+                a.parts == b.parts
+            );
+        }
+    }
 }
