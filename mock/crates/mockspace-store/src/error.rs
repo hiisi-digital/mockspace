@@ -79,6 +79,13 @@ pub enum StoreError {
         context: String,
         source:  std::io::Error,
     },
+    /// An instance (a directory holding the files of a ref) cannot be made, read or moved as
+    /// asked. `paths` names the files that are the reason, where there are any.
+    Instance {
+        dir:   String,
+        why:   &'static str,
+        paths: Vec<String>,
+    },
 }
 
 impl fmt::Display for StoreError {
@@ -170,6 +177,22 @@ impl fmt::Display for StoreError {
                 context,
                 source,
             } => write!(f, "{context}: {source}"),
+            Self::Instance {
+                dir,
+                why,
+                paths,
+            } => {
+                write!(f, "instance `{dir}`: {why}")?;
+                if !paths.is_empty() {
+                    let shown: Vec<&str> = paths.iter().take(5).map(String::as_str).collect();
+                    write!(f, " ({}", shown.join(", "))?;
+                    if paths.len() > 5 {
+                        write!(f, " and {} more", paths.len() - 5)?;
+                    }
+                    write!(f, ")")?;
+                }
+                Ok(())
+            },
         }
     }
 }
