@@ -8,17 +8,17 @@
 [![GitHub Issues](https://img.shields.io/github/issues/hiisi-digital/mockspace.svg)](https://github.com/hiisi-digital/mockspace/issues)
 ![License](https://img.shields.io/github/license/hiisi-digital/mockspace?color=%23009689)
 
-> A design-first workflow engine for Rust projects. It has no opinion about what you build, and a fairly strong one about how the design gets there.
+> A design-first workflow engine for Rust projects. It has no opinion about what gets built with it, and a fairly strong one about how the design gets there.
 
 </div>
 
-`mockspace` lives in a `mock/` directory next to your code. It walks design work through a state machine, from exploring a topic, to a locked plan for the docs, to applying that plan to source, to archiving the whole thing. Templates under `mock/` become a generated documentation tree and a crate dependency graph, and a lint pipeline runs at three gates, commit, build and push, with a severity per gate.
+`mockspace` lives in a `mock/` directory next to the code it governs. It walks design work through a state machine, from exploring a topic, to a locked plan for the docs, to applying that plan to source, to archiving the whole thing. Templates under `mock/` become a generated documentation tree and a crate dependency graph, and a lint pipeline runs at three gates, commit, build and push, with a severity per gate.
 
-Underneath it there are a few claims about how design work should behave, and they are worth stating plainly because they are what you are agreeing to. Source is never the authority. The design template is the artifact that counts, source follows from it, and the lints keep the two honest with each other. Transitions happen through subcommands that rename files and check invariants, never by editing a filename suffix yourself, because a state machine whose invariants are advisory stops being one fairly quickly.
+Underneath it there are a few claims about how design work should behave, and they are worth stating plainly because adopting the tool means adopting them. Source is never the authority. The design template is the artifact that counts, source follows from it, and the lints keep the two honest with each other. Transitions happen through subcommands that rename files and check invariants, never by editing a filename suffix by hand, because a state machine whose invariants are advisory stops being one fairly quickly.
 
-None of that says anything about what you build. Crate naming, numeric discipline, which frameworks you pull in, the lints particular to your domain: all yours. `mockspace` only cares that whatever you decided got written down, reviewed, locked and is reproducible afterwards.
+None of that says anything about what gets built. Crate naming, numeric discipline, the frameworks a project pulls in and the lints particular to its domain are all the project's own. `mockspace` only cares that whatever was decided got written down, reviewed, locked and is reproducible afterwards.
 
-What it costs is worth being upfront about. The ceremony is real, and on a small project it will feel like more than it gives you. You write the plan before the code, and you cannot skip that when you are in a hurry, which is the point and is also occasionally infuriating.
+What it costs is worth being upfront about. The ceremony is real, and on a small project it is likely to feel like more than it returns. The plan gets written before the code and cannot be skipped when there is a hurry, which is the intent and is also occasionally infuriating.
 
 ## Usage
 
@@ -39,9 +39,8 @@ mockspace_version = "0.0.2"
 ```
 
 The engine is not on crates.io, so a version resolves against the matching git
-tag instead. `mockspace_branch = "dev"` follows development and moves under you
-by design, and `mockspace_rev` holds an exact commit, which is what you want if
-you would rather nothing moved at all.
+tag instead. `mockspace_branch = "dev"` follows development and moves under the repo
+by design, and `mockspace_rev` holds an exact commit, for a repo that would rather nothing moved at all.
 
 A lint pack in `[lint-crates]` pinned by `branch` follows that branch the same
 way, resolved against the remote once an hour while the remote answers, and
@@ -88,16 +87,16 @@ For the full subcommand surface, configuration reference, lint authoring, and te
 
 ## Motivation
 
-- Multi-crate Rust workspaces where the design decisions are consequential enough that you want a paper trail of them.
+- Multi-crate Rust workspaces where the design decisions are consequential enough to want a paper trail of them.
 - Projects that would rather have invariants enforced mechanically than socially, because the social version keeps not working.
 - Workspaces where keeping generated documentation in step with source by hand has stopped being sustainable.
 
 Where it isn't:
 
-- Single-file scripts, one-crate demos and quick prototypes. The ceremony costs more than it returns and you'll resent it.
+- Single-file scripts, one-crate demos and quick prototypes. The ceremony costs more than it returns and tends to get resented.
 - Projects where the design genuinely does live in the code, and writing it down twice would be writing it down twice.
 
-If what you actually want is a source linter, this is probably not it either. `mockspace` will lint your source, but there are more established, more proven and better-documented tools for that in whatever language you're in, and you should use one of those. What this is for is the part above the source: the design, the plan, and whether the two still agree with each other a month later.
+A source linter is probably not what this is either. `mockspace` will lint source as well, but more established, more proven and better-documented tools exist for that in most languages, and those are the better pick. What this is for is the part above the source: the design, the plan, and whether the two still agree with each other a month later.
 
 ## Extras
 
@@ -105,7 +104,7 @@ If what you actually want is a source linter, this is probably not it either. `m
 
 Pre-1.0, and it moves. The tool is in daily use across a stack of consumer crates and grows whatever those crates turn out to need, so the api hasn't settled and breaking changes should be expected. Releases are tagged, and the log between two of them is what moved.
 
-I'd caution against adopting this just yet for anything you cannot afford to have shift under you. Two reworks are in flight and either will move things: the plugin ABI v1 redesign, and a successor model for the design-round workflow (see [the research notes](https://github.com/hiisi-digital/mockspace/blob/dev/docs/research/)).
+I'd caution against adopting this just yet for anything that cannot afford to have the tool shift under it. Two reworks are in flight and either will move things: the plugin ABI v1 redesign, and a successor model for the design-round workflow (see [the research notes](https://github.com/hiisi-digital/mockspace/blob/dev/docs/research/)).
 
 ### The other crates
 
