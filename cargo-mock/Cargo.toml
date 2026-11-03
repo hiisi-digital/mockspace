@@ -9,7 +9,7 @@ description = "Launcher for the mockspace design-round workflow engine: resolves
 # The repository's own, since this crate is the whole of what an operator
 # installs and there is nothing narrower to say. Cargo ships whatever `readme`
 # names whether or not `include` mentions it.
-readme = "../README.md"
+readme = "README.md"
 # `renki` is the floor and it declares 1.88. Stated here too, or an older
 # toolchain fails somewhere inside a dependency instead of at this manifest.
 rust-version = "1.88"

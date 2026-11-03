@@ -194,7 +194,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
     // broken.
     let canon_location = if declared_canon.is_empty() {
         "nowhere this project has declared: it names no `canon_paths`, so there is no canon here \
-         to reason from and the question of where it should live is open"
+         to reason from and where it should live is open"
             .to_string()
     } else {
         let named = declared_canon
@@ -204,50 +204,27 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             .join(", ");
         format!("{named}, which this project declares as its canon")
     };
-    // **The reading surface, named only where the project has one.**
-    //
-    // A canon is rows; a document that renders those rows is how it is read
-    // and printed. Where the project keeps no such directory, the paragraph
-    // describing one is a paragraph about a thing it does not have, which is
-    // the same defect `canon_location` above exists to avoid.
+    // The reading surface, named only where the project has one.
     let canon_view = if canon_is_the_reserved_directory {
         format!(
-            "**`{mock_rel}/canon/` is the reading surface, never the authority.** It holds \
-             `.md.tmpl` documents that render those rows for reading and for print. Editing one \
-             changes nothing and is overwritten when documents generate; changing what the canon \
-             says means changing rows.\n\n"
+            "- **`{mock_rel}/canon/` is the reading surface, never the authority.** Its `.md.tmpl` documents render the rows. Editing one changes nothing and is overwritten when documents generate; change rows.\n"
         )
     } else {
         String::new()
     };
-    // The skill's longer form of the same two paragraphs, gated on the same
-    // fact. Empty where the project keeps no such directory, so the skill says
-    // nothing about a reading surface rather than naming one that resolves to
-    // nothing.
+    // The skill's form of the same, gated on the same fact.
     let canon_view_paragraphs = if canon_is_the_reserved_directory {
         format!(
-            "`{mock_rel}/canon/` is the reading surface, not the authority. It holds `.md.tmpl` \
-             documents that pull the canon in with `{{{{ <ns> }}}}` for a whole namespace or \
-             `{{{{ <ns>::<slug>::<field> }}}}` for one field, so the canon reads as a document and \
-             prints as a PDF without anybody transcribing it. **Those documents are a view.** \
-             Changing what the canon says means changing rows; editing the view changes nothing \
-             and is overwritten the next time documents generate.\n\n**So a canon file is \
-             `.md.tmpl` and it is generated from rows.** A `.md` sitting there holding canon prose \
-             that no row backs is the failure this shape exists to prevent: it reads exactly like \
-             canon and nothing points at it, nothing checks it, and nothing else renders from it."
+            "`{mock_rel}/canon/` is the reading surface, not the authority.\n\n\
+             - Its `.md.tmpl` documents pull the canon in with `{{{{ <ns> }}}}` (a whole namespace) or `{{{{ <ns>::<slug>::<field> }}}}` (one field).\n\
+             - Those documents are a view. Changing what the canon says means changing rows; editing the view changes nothing and is overwritten at the next generation.\n\
+             - A canon file is `.md.tmpl` generated from rows. A `.md` there holding canon prose no row backs is the failure this shape prevents."
         )
     } else if declared_canon.is_empty() {
-        // Not "the rows are the whole of it", which was the first wording and
-        // is a claim that the project has rows that are its canon. It has said
-        // no such thing, and the sentence above it in the same file says so, so
-        // the two disagreed inside one document.
-        "There is no reading surface here either, and there could not be: a rendered canon renders \
-         something, and this project has not said what. The two questions are one question."
+        "There is no reading surface here: this project has not said what a rendered canon would render."
             .to_string()
     } else {
-        "This project keeps no rendered canon directory, so there is nothing to read instead of \
-         the rows it has declared. The rows are the whole of it."
-            .to_string()
+        "This project keeps no rendered canon directory. The rows are the whole of it.".to_string()
     };
 
     let mut rules = vec![
@@ -287,13 +264,13 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                 "docs/*.svg".to_string(),
             ],
             body:     substitute_builtin_vars(
-                concat!(
-                    "STOP. Do NOT edit any file directly under `docs/`. These are AUTO-GENERATED by `cargo mock`. ",
-                    "Edit the source templates in `{mock_dir}/` (root DESIGN.md.tmpl, WORKFLOW.md.tmpl, PRINCIPLES.md.tmpl) ",
-                    "or the `DESIGN.md.tmpl` and `README.md.tmpl` of a crate in {src_dirs}, then run `cargo mock` to regenerate.",
-                    "\n\nIn a `git merge` or a rebase a generated file does not conflict. `.gitattributes` sends the top level of `docs/` to the `mockspace-generated` merge driver, which `cargo mock` registers in the clone's git config. It keeps this side's copy of a generated file (read from its header, or from the diagram beside a rendered image) and merges any other file in `docs/` as git does, but only where the hook that regenerates afterwards is installed: `post-merge` for a merge, `post-rewrite` for a rebase, found with `git rev-parse --git-path hooks/<name>`, and generated under `<mock>/target/hooks` (a fresh worktree builds it when `cargo mock` resolves). The regeneration is a follow-up commit (`chore: regenerate generated files after merge`, or `after rebase`) or, for a merge that stopped, part of the commit that concludes it. ",
-                    "A cherry-pick, revert, `git am`, `git checkout -m` or stash application regenerates nothing, so a generated file conflicts there: regenerate with `cargo mock` once the sources are resolved, never pick a side. Three cases still stop, as git hands them to no driver: modify/delete of a generated file, an octopus merge over differing documents, and `-X ours` or `-X theirs` on a hand-written file in `docs/`. While a regeneration is owed, `mockspace-kept-ours` under the git directory stands: a push is refused, and the next commit regenerates or, if it cannot, is refused too (run `cargo mock`). A failed regeneration warns and aborts nothing.",
-                ),
+                r#"STOP. Do NOT edit any file directly under `docs/`. These are AUTO-GENERATED by `cargo mock`.
+
+- Edit the source templates in `{mock_dir}/` (root DESIGN.md.tmpl, WORKFLOW.md.tmpl, PRINCIPLES.md.tmpl) or the `DESIGN.md.tmpl` and `README.md.tmpl` of a crate in {src_dirs}, then run `cargo mock`.
+- A generated file does not conflict in `git merge` or rebase: the `mockspace-generated` driver keeps this side's copy and a follow-up regeneration commit follows. Cherry-pick, revert, `git am`, `git checkout -m` and stash application regenerate nothing: run `cargo mock` once the sources are resolved, never pick a side.
+- Still stops: modify/delete of a generated file, an octopus merge over differing documents, `-X ours` or `-X theirs` on a hand-written file in `docs/`.
+- While a regeneration is owed, `mockspace-kept-ours` under the git directory stands: a push is refused, and the next commit regenerates or, if it cannot, is refused (run `cargo mock`).
+- Details: the `merging` skill."#,
                 &mock_rel,
                 project_name,
                 crate_prefix,
@@ -303,9 +280,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             name:     "registry-merge".to_string(),
             apply_to: vec![format!("{mock_rel}/registry/**/*.toml")],
             body:     substitute_builtin_vars(
-                concat!(
-                    "Registry rows merge by `[[namespace]]` and `id`: additions on both sides stay, only a row changed two ways conflicts. See the `reference-syntax` skill. Merges: the `merging` skill.",
-                ),
+                "Registry rows merge by `[[namespace]]` and `id`: additions on both sides stay, only a row changed two ways conflicts. See the `reference-syntax` skill. Merges: the `merging` skill.",
                 &mock_rel,
                 project_name,
                 crate_prefix,
@@ -330,34 +305,37 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             name:     "mock-workspace".to_string(),
             apply_to: vec![format!("{mock_rel}/**")],
             body:     substitute_builtin_vars(
-                concat!(
-                    "## Mock workspace rules\n",
-                    "\n",
-                    "The mock workspace at `{mock_dir}/` is the design source of truth for {project_name}'s target architecture.\n",
-                    "\n",
-                    "### Five documentation layers per crate\n",
-                    "1. **README.md.tmpl** (3-10 lines) -- crate summary, inserted into root DESIGN.md\n",
-                    "2. **DESIGN.md.tmpl** -- shipping contract. Every backticked type name here is expected to exist in source; the `design-doc-source-mismatch` lint enforces it.\n",
-                    "3. **BACKLOG.md.tmpl** -- designed-but-deferred promissory notes. Decisions made, not yet shipped. Keep names UNBACKTICKED so the design-doc lint ignores them. Promote items into DESIGN.md.tmpl when they ship; don't duplicate.\n",
-                    "4. **SHAME.md.tmpl** -- known gaps. Escape hatch for lints: a `## <key>` header with 50+ word explanation silences a lint violation keyed by `<key>` (type name, changelist filename, etc.).\n",
-                    "5. **DEEPDIVE_*.md.tmpl** -- topic-specific deep dives.\n",
-                    "\n",
-                    "### Design rounds\n",
-                    "No design modification without a completed design round document in `design_rounds/`. Each round has \"Current state\" and \"Changes proposed\" sections. When the round supersedes a deprecated CL, the active CL must carry a `## Comparison to deprecated changelist` section (enforced by the `deprecation-comparison` lint).\n",
-                    "\n",
-                    "### What the phase gate covers\n",
-                    "\n",
-                    "**Per-crate documents under {src_dirs} and Rust source that declares something. Nothing else.** Root documents, `Cargo.toml` and a `.rs` file carrying only module docs are not gated, so editing one needs no round.\n",
-                    "\n",
-                    "### Rules\n",
-                    "- Every crate must have `src/lib.rs` and `README.md.tmpl`\n",
-                    "- Dependencies in `Cargo.toml` must match the target architecture layers\n",
-                    "- A merge that conflicts or a gate refuses: the `merging` skill\n",
-                    "\n",
-                    "Fires when changing framework design, adding or modifying a type or a crate, or editing anything under `{mock_dir}/`.\n",
-                    "\n",
-                    "**Use the `mockup-workflow` skill** for what each gate boundary means and why, and for the validation pipeline each run walks.\n",
-                ),
+                r#"## Mock workspace rules
+
+`{mock_dir}/` is the design source of truth for {project_name}'s target architecture.
+
+### Five documentation layers per crate
+
+1. `README.md.tmpl`: 3-10 lines, the crate summary, inserted into root DESIGN.md.
+2. `DESIGN.md.tmpl`: the shipping contract. Every backticked type name in it must exist in source (lint `design-doc-source-mismatch`).
+3. `BACKLOG.md.tmpl`: designed-but-deferred decisions. Names UNBACKTICKED so the design-doc lint ignores them. Promote an item into DESIGN.md.tmpl when it ships; do not duplicate.
+4. `SHAME.md.tmpl`: known gaps. A `## <key>` header with a 50+ word explanation silences the lint violation keyed by `<key>` (a type name, a changelist filename).
+5. `DEEPDIVE_*.md.tmpl`: topic-specific deep dives.
+
+### Design rounds
+
+- No design modification without a completed round in `design_rounds/`; each round has "Current state" and "Changes proposed".
+- A changelist superseding a deprecated one carries `## Comparison to deprecated changelist` (lint `deprecation-comparison`).
+
+### Phase gate
+
+- Covers per-crate documents under {src_dirs} and Rust source that declares something. Nothing else: root documents, `Cargo.toml` and a `.rs` file with only module docs need no round.
+
+### Rules
+
+- Every crate has `src/lib.rs` and `README.md.tmpl`.
+- `Cargo.toml` dependencies match the target architecture layers.
+- A merge that conflicts or a gate refuses: the `merging` skill.
+
+Fires when changing framework design, adding or modifying a type or a crate, or editing anything under `{mock_dir}/`.
+
+**Use the `mockup-workflow` skill** for the gate boundaries and the validation pipeline.
+"#,
                 &mock_rel,
                 project_name,
                 crate_prefix,
@@ -367,34 +345,17 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             name:     "bench-and-sketch-discipline".to_string(),
             apply_to: vec![format!("{mock_rel}/benches/**"), format!("{mock_rel}/research/**")],
             body:     substitute_builtin_vars(
-                concat!(
-                    "## Benches live in the bench framework, never in sketches\n",
-                    "\n",
-                    "Any benchmark, any measurement whose numbers feed a decision, goes in `{mock_dir}/benches/` ",
-                    "using the mockspace bench framework to its full potential (`cargo mock bench init` scaffolds it; ",
-                    "`cargo mock bench run` drives it; `bench.toml` registers benches and sizes; each variant is its ",
-                    "own cdylib crate under `variants/` built on `mockspace-bench-core` + `mockspace-bench-macro`).\n",
-                    "\n",
-                    "Sketches (`{mock_dir}/research/sketches/`) are for checking simpler things: does it compile, does ",
-                    "the trait solve, does the shape work at all, with a WORKS / FAILS / INCONCLUSIVE outcome. Sketches ",
-                    "are NOT for benching. The moment a sketch would need a timer, an iteration loop, or a performance ",
-                    "claim, it is a bench and it moves to `{mock_dir}/benches/` under the harness. A question with both ",
-                    "halves splits: the feasibility half is a sketch, the measurement half is a bench.\n",
-                    "\n",
-                    "**Do not re-roll the framework's own pieces inside a bench.** Timing helpers, bump ",
-                    "providers and stat collection come from `mockspace-bench-core`; a bench crate ",
-                    "hand-rolling them is reinventing the framework it sits next to.\n",
-                    "\n",
-                    "Fires before writing any timing loop, and before any claim that one thing is faster, ",
-                    "cheaper or smaller than another.\n",
-                    "\n",
-                    "**Invoke the skill before starting, not after**, because the mistake both prevent is ",
-                    "made in the first thirty seconds, when a quick probe in a temp directory or a quick ",
-                    "timing loop in a scratch file feels cheaper than doing it properly. **Use the ",
-                    "`sketching` skill** for feasibility work and **the `benchmarking` skill** for ",
-                    "measurement; each carries the conventions, the deliverable and the failure modes for ",
-                    "its side, and why the framework beats a hand-rolled loop.\n",
-                ),
+                r#"## Benches live in the bench framework, never in sketches
+
+- Any benchmark, and any measurement whose numbers feed a decision, goes in `{mock_dir}/benches/` under the mockspace bench framework: `cargo mock bench init` scaffolds, `cargo mock bench run` drives, `bench.toml` registers benches and sizes, each variant is its own cdylib crate under `variants/` on `mockspace-bench-core` + `mockspace-bench-macro`.
+- Sketches (`{mock_dir}/research/sketches/`) check feasibility only: does it compile, does the trait solve, does the shape work, with a WORKS / FAILS / INCONCLUSIVE outcome.
+- A sketch that needs a timer, an iteration loop or a performance claim is a bench and moves to `{mock_dir}/benches/`. A question with both halves splits: feasibility is a sketch, measurement is a bench.
+- Do not re-roll the framework's pieces in a bench: timing helpers, bump providers and stat collection come from `mockspace-bench-core`.
+
+Fires before writing any timing loop, and before any claim that one thing is faster, cheaper or smaller than another.
+
+Invoke the skill before starting. **Use the `sketching` skill** for feasibility work and **the `benchmarking` skill** for measurement.
+"#,
                 &mock_rel,
                 project_name,
                 crate_prefix,
@@ -412,66 +373,38 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                 [format!("{d}/**/*.md.tmpl"), format!("{d}/**/*.rs")]
             }))
             // What the project declared, and nothing where it declared
-            // nothing. The reserved directory used to be chained in as a guess
-            // for the undeclared case, which attached the rule to a path the
-            // body in the same breath says the project has not named. The
-            // other five globs are structural and cover a project either way.
+            // nothing. The other five globs are structural and cover a
+            // project either way.
             .chain(declared_canon.clone())
             .collect(),
             body:     {
                 let body = substitute_builtin_vars(
-                concat!(
-                    "## The canon, design, code chain\n",
-                    "\n",
-                    "Three tiers, and they govern each other in one direction only.\n",
-                    "\n",
-                    "**Canon is the theory: the intent, the choices made, and the reasoning behind ",
-                    "them, in the abstract.** It is typed rows rather than prose, it governs what the ",
-                    "design is and how the design converges, and it lives at {canon_location}. Canon ",
-                    "scattered across research notes in whatever shape each round left it is not ",
-                    "canon; it is drift with a confident name.\n",
-                    "\n",
-                    "{canon_view}",
-                    "**Design is the spec.** In this project that is the `*.md.tmpl` in {src_dirs} ",
-                    "and its siblings. A design says what a specific thing is, concretely enough that a ",
-                    "competent reader can implement it. This is where concrete snippets, concrete ",
-                    "namings and backticks earn their place; they do not belong in the canon. Design ",
-                    "rounds sit below the canon too, and reason from it rather than settling it.\n",
-                    "\n",
-                    "**Code is last, and it is the tier that gets nuked.** Implementation is ",
-                    "mechanical: it writes down what the design says, and the design only says what ",
-                    "the canon told it to.\n",
-                    "\n",
-                    "### The mutation order\n",
-                    "\n",
-                    "To change code, nothing is nuked first, but **nothing may appear in code that the ",
-                    "design does not say**: a change introducing something the design is silent on is ",
-                    "an undeclared design change wearing the leaf tier's freedom. To change a design, ",
-                    "the code under it is nuked first, not migrated. To change a canon row, every ",
-                    "design that declares it is nuked first, and the code beneath those. Adding a row ",
-                    "nukes nothing, and neither does a purely additive edit: the trigger is ",
-                    "invalidation, not editing.\n",
-                    "\n",
-                    "**Canon is never deleted, only demoted**, and a superseded row stays referenceable ",
-                    "through its provenance, so the next canon is built with the old one in view.\n",
-                    "\n",
-                    "### Two rules that hold now\n",
-                    "\n",
-                    "**Every design document must declare the canon it relates to.** A design that ",
-                    "serves ",
-                    "no canon has no reason to exist: if a piece of the spec answers to nothing in the ",
-                    "canon, that is a defect in the design, not a missing footnote.\n",
-                    "\n",
-                    "**Naming a canon that does not exist is a hard failure**, and so is depending on ",
-                    "one that has been superseded. Both are meant to fail every gate a document passes ",
-                    "through: commit, push and build.\n",
-                    "\n",
-                    "Fires when writing or changing canon, a design, or the code beneath them.\n",
-                    "\n",
-                    "**Use the `canon-tiers` skill** for where the canon lives and why, the mutation ",
-                    "order at length, telling which tier something is, and what is built as against ",
-                    "what is intended.\n",
-                ),
+                r#"## The canon, design, code chain
+
+Three tiers, each governing the one below.
+
+- **Canon is the theory**: intent, choices made and their reasoning, in the abstract, as typed rows. Lives at {canon_location}.
+{canon_view}- **Design is the spec**: the `*.md.tmpl` in {src_dirs} and its siblings. Concrete snippets, namings and backticks belong here, not in the canon. Design rounds sit below the canon and reason from it.
+- **Code is last**: mechanical transcription of the design. It is the tier that gets nuked.
+
+### The mutation order
+
+- Changing code: nothing has to be nuked first, but nothing may appear in code that the design does not say. A change introducing something the design is silent on is an undeclared design change wearing the leaf tier's freedom.
+- Changing a design: nuke the code under it first, not migrated.
+- Changing a canon row: every design that declares it is nuked first, and the code beneath those.
+- Adding a row nukes nothing. A purely additive edit nukes nothing: the trigger is invalidation, not editing.
+- `cargo mock --nuke` takes the source down; `--nuke=docs` takes the designs and the source under them. It names every file, asks (`--y` answers) and refuses an uncommitted tree.
+- Canon is never deleted, only demoted. A superseded row stays referenceable through its provenance.
+
+### Two rules that hold now
+
+- Every design document must declare the canon it relates to. A design serving no canon has no reason to exist.
+- Naming a canon that does not exist is a hard failure, and so is depending on one that has been superseded. Both are meant to fail at commit, push and build.
+
+Fires when writing or changing canon, a design, or the code beneath them.
+
+**Use the `canon-tiers` skill** for where the canon lives, the mutation order at length, telling which tier a document is, and what is built as against intended.
+"#,
                     &mock_rel, project_name, crate_prefix,
                 )
                 .replace("{canon_location}", &canon_location)
@@ -484,38 +417,18 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             name: "design-round-consumes-its-inheritance".to_string(),
             apply_to: vec![format!("{mock_rel}/design_rounds/**")],
             body: substitute_builtin_vars(
-                concat!(
-                    "## A round consumes what was filed for it, and never sheds it\n",
-                    "\n",
-                    "A topic file left open in TOPIC phase is a filing: somebody found something while working ",
-                    "elsewhere and left it in the way so the next round would have to address it. This round is that ",
-                    "next round. Every flat topic in `{mock_dir}/design_rounds/` is this round's work, whoever wrote it ",
-                    "and whenever.\n",
-                    "\n",
-                    "**Every open topic is named in this round's changelists.** Say what it changes, or say why it ",
-                    "needs nothing. A topic that turns out to be out of scope still gets that written down, with the ",
-                    "reason. Silence is indistinguishable from having missed it.\n",
-                    "\n",
-                    "**Never shed one.** Do not stash it, do not delete it, do not move it to another branch, and do ",
-                    "not close the round leaving it unmentioned. If it genuinely belongs to later work it is re-filed ",
-                    "as a fresh flat topic after this round closes, so the next round inherits it the same way.\n",
-                    "\n",
-                    "**Before opening a changelist, check every ref** for flat topics and archived round ",
-                    "directories this branch cannot see, and pull in what it finds. Do this while still in ",
-                    "TOPIC: consuming a topic into a round whose changelist is already written adds work the ",
-                    "changelist does not cover, which is the failure this prevents rather than a way around ",
-                    "it.\n",
-                    "\n",
-                    "**A topic file is a transcript and accretes.** One file per subject, added to as the ",
-                    "round returns to it, and the freeze on a committed topic is against rewriting rather ",
-                    "than against appending. Never edit or delete what is already recorded, because that is ",
-                    "the audit trail.\n",
-                    "\n",
-                    "Fires while a design round is open, and before opening a changelist in one.\n",
-                    "\n",
-                    "**Use the `design-round` skill** for the three ways a filing disappears, and for how ",
-                    "long a topic file should be before it wants splitting or appending elsewhere.\n",
-                ),
+                r#"## A round consumes what was filed for it, and never sheds it
+
+- Every flat topic in `{mock_dir}/design_rounds/` is this round's work, whoever wrote it and whenever.
+- Name every open topic in this round's changelists: what it changes, or why it needs nothing, with the reason.
+- Never shed one: do not stash it, delete it, move it to another branch, or close the round leaving it unmentioned. A topic that belongs to later work is re-filed as a fresh flat topic after the round closes.
+- Before opening a changelist, check every ref for flat topics and archived round directories this branch cannot see, and pull in what it finds. Do it in TOPIC.
+- A topic file is a transcript and accretes: one file per subject, appended to as the round returns to it. Never edit or delete what is recorded.
+
+Fires while a design round is open, and before opening a changelist in one.
+
+**Use the `design-round` skill** for the three ways a filing disappears and how long a topic file should be.
+"#,
                 &mock_rel, project_name, crate_prefix,
             ),
     });
@@ -528,7 +441,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                     [format!("{d}/**/*.md"), format!("{d}/**/*.md.tmpl")]
                 }))
                 .collect(),
-            body: "## Per-crate documentation templates\nREADME.md.tmpl files are SHORT (3-10 lines). They contain the crate's purpose, what it depends on, and what depends on it. They are inserted into the generated DESIGN.md via {{crate_summaries}}. Do not put detailed design information here -- that goes in DESIGN.md.tmpl or DEEPDIVE_*.md.tmpl.".to_string(),
+            body: "## Per-crate documentation templates\n- `README.md.tmpl` is 3-10 lines: the crate's purpose, what it depends on, what depends on it.\n- It is inserted into the generated DESIGN.md via {{crate_summaries}}.\n- Detailed design goes in `DESIGN.md.tmpl` or `DEEPDIVE_*.md.tmpl`.".to_string(),
     });
 
     // On by default, from `mock/agent/config.toml`. A generated snapshot of what
@@ -557,584 +470,208 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
         rules.push(BuiltinRule {
             name: "panel-discipline".to_string(),
             apply_to: vec!["**".to_string()],
-            body: format!(
-                "## How a panel works\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
-                "A panel is several personas working one question: arguing, converging, proposing. They talk, they converge, they propose and present. They do not write canon.",
-                "Every seat is minted, never counted or guessed. `mock panel seat <slug> <persona> <topic...>` allocates the next seat number from the panel's own inventory file, one past whatever is already recorded there. Two dispatches minting at once are serialised by a lock on the inventory, so the second waits for the first and reads the number the first wrote. The number never comes from a caller's own tally. Ninety-nine is the last seat a panel may ever mint; past it, the panel is over, not paused, and the next step is closing it or opening a new one for whatever remains.",
-                "Consolidation is enforced, not optional. Once a panel has minted enough seats since its last consolidation, minting refuses until `mock panel consolidate <slug> <note...>` records what was decided. `mock panel status [slug]` reports whether a panel is presently open (has minted seats no consolidation covers yet) and how many seats remain before the next one is due.",
-                "Everything is logged into one formalised inventory file per panel, `<mock>/panel/<slug>.toml`: every seat, every consolidation, in order. It is the whole ledger, and it is what `mock check` reads to decide whether canon is being touched while a panel is still open.",
-                "No panel writes canon directly. A panel talks, converges, and proposes; only the coordinating human or agent adds what it produced into the project's canonical registries or documents, and only once the panel has consolidated. `mock check` refuses a change touching a configured canon path while any panel is open, as the mechanical half of this; the rest is discipline this rule states so every panel member reads it too."
-            ),
+            body: "## How a panel works\n\n- A panel is several personas working one question: arguing, converging, proposing. Panels do not write canon.\n- `mock panel seat <slug> <persona> <topic...>` mints the next seat number from the panel's inventory file under a lock. Never count or guess a number. Ninety-nine is the last seat; past it the panel is over: close it or open a new one.\n- Minting refuses once enough seats are minted since the last consolidation (`panel_consolidate_every` in `mockspace.toml`, or the inventory's own cadence) until `mock panel consolidate <slug> <note...>` records what was decided.\n- `mock panel status [slug]` reports whether a panel is open (seats no consolidation covers) and how many seats remain before the next consolidation is due; with no slug, every panel under `<mock>/panel/`.\n- The ledger is `<mock>/panel/<slug>.toml`: every seat and consolidation, in order.\n- Only the coordinating human or agent adds what a panel produced to the canonical registries or documents, and only after the panel consolidated. `mock check` refuses a change touching a configured canon path while any panel is open.".to_string(),
         });
     }
 
     // --- Builtin Skills ---
 
     let design_round_body = substitute_builtin_vars(
-        concat!(
-            "# Design round conversation\n",
-            "\n",
-            "Design rounds are the only way to change the framework's design. This skill\n",
-            "codifies the conversational flow for running a design round with the user.\n",
-            "\n",
-            "## The flow\n",
-            "\n",
-            "A design round is a series of topic conversations, followed by a changelist,\n",
-            "followed by execution. The conversations happen FIRST. No mockspace edits until\n",
-            "the changelist is approved.\n",
-            "\n",
-            "### Step 1: Topic conversations (TOPIC phase)\n",
-            "\n",
-            "For each topic in the round:\n",
-            "\n",
-            "1. **Research.** Gather the complete current state. This means ALL mentions\n",
-            "   across ALL docs, not just the immediate or similarly named doc. Search the\n",
-            "   entire `docs/` directory for every reference to the types, traits, and\n",
-            "   concepts under discussion. Include prior design rounds. Note the\n",
-            "   generation timestamp of each doc so we know which ones probably supersede\n",
-            "   others. Present older docs too; they may contain context that was lost.\n",
-            "\n",
-            "   Do not read only the crate's own generated document. Search for the type name, the\n",
-            "   trait name across every `.md` file. If a concept appears in\n",
-            "   a deep dive, a different crate's overview, DESIGN.md, PRINCIPLES.md, or a\n",
-            "   prior design round, that context matters and must be included.\n",
-            "\n",
-            "   The mock source is also read, but separately. Never present source findings\n",
-            "   without first presenting what ALL docs say. The docs may already answer the\n",
-            "   question; if they do, say so. If they contradict each other, say so.\n",
-            "\n",
-            "2. **Present.** Show the user the current state and your analysis. Be thorough.\n",
-            "   Include relevant code paths, type signatures, and cross-crate dependencies.\n",
-            "   Lead with what the docs say (with timestamps and locations). Then show where\n",
-            "   the source diverges. Never frame a doc-answered question as an open design\n",
-            "   question. Never skip presenting a finding because it seems obvious; the user\n",
-            "   makes all decisions, not the agent.\n",
-            "\n",
-            "3. **Ask.** Use AskUserQuestion with premade options (2-4 choices) plus always\n",
-            "   leave a free-text \"Other\" option. The user may want to write freeform thoughts.\n",
-            "   One question at a time. Do not batch questions.\n",
-            "\n",
-            "4. **Record.** After the user decides, record the decision in the design round\n",
-            "   topic file. Move to the next subtopic or next topic.\n",
-            "\n",
-            "5. **Repeat.** Continue until all topics in the round have decisions recorded.\n",
-            "\n",
-            "### Step 2: Doc changelist (enters DOC phase)\n",
-            "\n",
-            "Only after ALL topic conversations are complete:\n",
-            "\n",
-            "1. Write the doc changelist: `design_rounds/{id}_changelist.doc.md`.\n",
-            "2. Per-crate, per-file, mechanical. Every doc template to create, rewrite, or update.\n",
-            "3. Section-level detail: what to add, remove, keep.\n",
-            "4. Commit the changelist. It can be iteratively updated and recommitted -- the\n",
-            "   doc changelist is a living document during DOC phase.\n",
-            "\n",
-            "The doc changelist's existence opens the **DOC phase**: `*.md.tmpl` doc template\n",
-            "edits are now allowed. Source changes (`src/*.rs`) are still blocked.\n",
-            "\n",
-            "### Step 3: Doc-only execution (DOC phase)\n",
-            "\n",
-            "Apply all doc template changes listed in the doc changelist:\n",
-            "\n",
-            "1. Edit `*.md.tmpl` templates per the changelist.\n",
-            "2. Commit doc changes. This is the only window for doc template edits.\n",
-            "3. Update the doc changelist if needed (iterate). Recommit.\n",
-            "\n",
-            "### Step 4: Lock docs, plan source (DRAFT phase)\n",
-            "\n",
-            "When all doc changes are applied and the doc changelist is finalized:\n",
-            "\n",
-            "1. **Lock the doc changelist**: `cargo mock lock`. This renames\n",
-            "   `{id}_changelist.doc.md` to `{id}_changelist.doc.lock.md`\n",
-            "   and commits. Doc templates are now frozen.\n",
-            "2. Write the **source changelist**: `design_rounds/{id}_changelist.src.md`.\n",
-            "   This is written against the actual locked doc state. Per-crate, per-file,\n",
-            "   mechanical. Every source file to create, modify, or update. Commit it.\n",
-            "\n",
-            "### Step 5: Source execution (IMPL phase)\n",
-            "\n",
-            "The source changelist's existence opens the **IMPL phase**:\n",
-            "\n",
-            "1. Execute source changes (`src/*.rs`) per the source changelist, in subsequent\n",
-            "   commits.\n",
-            "2. Validate with `cargo check`. Regenerate docs with `cargo mock`.\n",
-            "3. Update the source changelist if needed (iterate). Recommit.\n",
-            "\n",
-            "### Step 6: Lock source (CLOSED phase)\n",
-            "\n",
-            "When all source changes are applied:\n",
-            "\n",
-            "1. **Lock the source changelist**: `cargo mock lock`. Round complete.\n",
-            "2. **Close the round**: `cargo mock close`. Archives the round's files: its\n",
-            "   changelists, the files starting with the id of one of them, and the files\n",
-            "   one of them names, and any flat file given as `--take <file>`. Any other flat\n",
-            "   file stays where it is and is listed.\n",
-            "\n",
-            "## The round id: get it from the command, never from the clock\n",
-            "\n",
-            "`{id}` in every filename below is the round's id. **Run `cargo mock round-id`\n",
-            "and use what it prints**, once, when the round is opened, for every file of\n",
-            "it. Do not type the minute by hand: other sessions on other branches open\n",
-            "rounds in the same minute, and two closed rounds with one id collide when\n",
-            "they merge.\n",
-            "\n",
-            "An id is `YYYYMMDDHHMM-tttt`: the minute, then a four character tag drawn\n",
-            "from the branch, host and time, and checked against the working tree, the\n",
-            "`round/*` tags and `origin/dev` and `origin/main`. A bare `YYYYMMDDHHMM` from\n",
-            "an older round is still an id and sorts by minute with the new ones.\n",
-            "\n",
-            "If a merge is refused with `round id collision`, two branches closed rounds\n",
-            "with one id. Abort the merge, switch to the branch you want to rename, and run\n",
-            "`cargo mock rename-round <id> --auto-commit`. It renames the directory, the\n",
-            "files that carry the id, the `round:` line of `.meta` and the local\n",
-            "`round/<id>/*` tags. Then merge again.\n",
-            "\n",
-            "## File layout: flat while active, subdir after close\n",
-            "\n",
-            "**Every active-round file lives FLAT at the `design_rounds/` root.**\n",
-            "Never create `design_rounds/<id>/<filename>`-style paths during\n",
-            "an open round; that's the ARCHIVE location for closed rounds only.\n",
-            "\n",
-            "Active-round paths (flat):\n",
-            "\n",
-            "```\n",
-            "design_rounds/{id}_topic.{name}.md\n",
-            "design_rounds/{id}_changelist.doc.md          (DOC phase)\n",
-            "design_rounds/{id}_changelist.doc.lock.md     (after lock)\n",
-            "design_rounds/{id}_changelist.src.md          (IMPL phase)\n",
-            "design_rounds/{id}_changelist.src.lock.md     (after lock)\n",
-            "```\n",
-            "\n",
-            "`cargo mock close` moves the round's files into `design_rounds/{id}/` and\n",
-            "`cargo mock archive` into `design_rounds/{id}-abandoned/`; these are the only\n",
-            "steps that create a subdirectory. Once a round is closed, every file inside its\n",
-            "subdirectory is frozen.\n",
-            "\n",
-            "`cargo mock lock` and `cargo mock close` with `--auto-commit` commit only the\n",
-            "round's own files, then bring the index to that commit for those paths, so\n",
-            "`git status` is clean afterwards and the push gate reads the locked changelist\n",
-            "as committed. Anything staged elsewhere stays staged. Do not `git reset` or\n",
-            "restage after either.\n",
-            "\n",
-            "The `mockspace-write-guard` hook treats any path matching\n",
-            "`design_rounds/[^/]+/` as a closed-round archive and denies writes\n",
-            "to it at HARD_ERROR. If you hit that deny, check the target path:\n",
-            "you almost certainly meant `design_rounds/{id}_topic.{name}.md`\n",
-            "(flat), not `design_rounds/{id}/{id}_topic.{name}.md`\n",
-            "(subdir = archived).\n",
-            "\n",
-            "This rule is absolute. Do not mkdir under `design_rounds/` during an\n",
-            "open round for any reason; the state machine owns that layout.\n",
-            "\n",
-            "## Rules\n",
-            "\n",
-            "- All conversation first. No mockspace edits during topic discussions.\n",
-            "- **Active rounds live FLAT in `design_rounds/`.** See File layout above.\n",
-            "  Subdirectories under `design_rounds/` are ALWAYS archived-round storage,\n",
-            "  never active work. The write-guard hook enforces this at HARD_ERROR.\n",
-            "- One question at a time. Never batch multiple questions.\n",
-            "- Always offer free-text input as an option. The user's thoughts may not fit\n",
-            "  premade choices.\n",
-            "- Record decisions in the topic file as they are made.\n",
-            "- The doc changelist covers ALL topics in the round. It is the doc execution plan.\n",
-            "- The src changelist is written after docs are locked, against actual doc state.\n",
-            "- Do not skip either changelist. Without them, execution is ad hoc.\n",
-            "- **A topic file is a transcript and accretes.** One file per subject, added to\n",
-            "  as the talk returns to it. The freeze on a committed topic is against\n",
-            "  REWRITING, not against appending: never edit or delete what is recorded, that\n",
-            "  is the audit trail, but adding a later section is how a transcript works.\n",
-            "  Start a new file when the SUBJECT changes, not when a question is answered.\n",
-            "  Under roughly 300 words a file is a fragment of another one and belongs there\n",
-            "  instead, since most of it will be heading rather than content; over roughly\n",
-            "  2000 words it carries two subjects and wants splitting along the seam.\n",
-            "- **No new topics after changelist.** Once a changelist is committed, the round\n",
-            "  is crystallized. No new topic files can be created. To add new topics,\n",
-            "  deprecate the changelist (`cargo mock deprecate`) and return to TOPIC phase.\n",
-            "- **Doc changelist is living during DOC phase only.** It can be iteratively\n",
-            "  updated and recommitted during doc execution. After locking (`cargo mock lock`),\n",
-            "  it is frozen forever.\n",
-            "- **Src changelist is living during IMPL phase only.** Same rules apply.\n",
-            "- **Phase gates are global.** Lints check the entire working tree, not just staged\n",
-            "  files. Untracked or unstaged changes to blocked paths will block commits. Revert\n",
-            "  disallowed changes before committing.\n",
-            "- **Lock before source.** Never start source changes until the doc changelist is\n",
-            "  locked (`cargo mock lock`) and the source changelist is written.\n",
-            "- **Deprecation replaces addendums.** If a changelist needs revision, deprecate\n",
-            "  it with `cargo mock deprecate` (or `cargo mock unlock` for locked CLs). Write\n",
-            "  a new changelist with a \"Comparison to deprecated changelist\" section.\n",
-            "  `deprecate` and `unlock` print the section it owes, with the names to mention.\n",
-            "- **Full context, always.** Before presenting any finding, search ALL docs for\n",
-            "  every mention of the relevant types, traits, and concepts. Do not\n",
-            "  read only the immediate crate doc. Include timestamps so the user can judge\n",
-            "  which docs supersede others. Present older/superseded docs too for context.\n",
-            "- **Always present for the user's decision.** Never decide on your own that\n",
-            "  something is \"clearly a code bug\" and skip presentation. Every finding gets\n",
-            "  presented. Every decision is the user's. Even if the docs unambiguously\n",
-            "  answer a question, present the docs' answer and let the user confirm.\n",
-            "- **Docs before source.** Always present what the docs say first. Then show\n",
-            "  where the source diverges. If the docs already answer the question, say so\n",
-            "  explicitly when presenting. Never frame a doc-answered question as an open\n",
-            "  design question.\n",
-            "\n",
-            "## What this is NOT\n",
-            "\n",
-            "- This is not brainstorming. Design rounds have structure: current state,\n",
-            "  proposed changes, per-crate scope.\n",
-            "- This is not implementation planning. The changelist is the plan. There is\n",
-            "  no separate \"implementation plan\" step.\n",
-            "- This is not a rubber stamp. The user makes the design decisions. You\n",
-            "  research, present options, and record.\n",
-            "\n",
-            "## Three ways a filing disappears, all observed\n",
-            "\n",
-            "**A topic on a branch that never merged.** The next round branches from trunk, ",
-            "cannot see it, and reports the question as still open because the files say so. ",
-            "Starting a round by branching fresh from trunk drops every filing that has not landed ",
-            "there.\n",
-            "\n",
-            "**A topic swept into somebody else's archive.** `close` takes the round's changelists, ",
-            "the files that start with the id of one of them, and the files one of them names; ",
-            "any other flat file stays where it is, and `close` lists what it left. ",
-            "A topic filed while another round is in flight is therefore left open, ",
-            "unless that round's changelist names it or it carries that round's id, ",
-            "and an older `close` that swept every loose flat file ",
-            "filed it under that round's name. ",
-            "`archive`, which abandons a round, takes the same files ",
-            "while the round has changelists. In the TOPIC phase, with none, ",
-            "`archive` takes every flat file there and names the archive ",
-            "by the earliest one.\n",
-            "\n",
-            "**An archive missing from a branch.** A closed round's directory is finished history ",
-            "and belongs on every branch. When it exists only on a branch that never merged, the ",
-            "entire paper trail for that design conversation is absent from trunk, and nothing ",
-            "reports it.\n",
-            "\n",
-            "If the round has moved past TOPIC when a filing turns up, deprecate the changelist and ",
-            "return to TOPIC rather than folding the work in behind it.\n",
-            "\n",
-            "## How long a topic file should be\n",
-            "\n",
-            "Size is the check. Under roughly 300 words a topic file is almost certainly a fragment ",
-            "of another one, and most of what is in it will be heading and metadata rather than ",
-            "content; find the file it belongs to and append there. Over roughly 2000 words it is ",
-            "carrying more than one subject and wants splitting along the seam.\n",
-            "\n",
-            "A topic that settles in three lines does not earn a file: it is appended to the file ",
-            "for the subject it belongs to, under a new heading. **Start a new file when the subject ",
-            "changes, not when a question is answered.**\n",
-        ),
+        r#"# Design round conversation
+
+A design round is topic conversations, then a doc changelist, then a source changelist, then execution. No mockspace edit before the doc changelist exists. `cargo mock status` shows the round, its phase and what may be edited.
+
+## Round id
+
+- Run `cargo mock round-id` once when the round opens and use what it prints for every file of the round. Never type the minute.
+- An id is `YYYYMMDDHHMM-tttt`. A bare `YYYYMMDDHHMM` from an older round is still an id.
+- Merge refused with `round id collision`: abort the merge, switch to the branch to rename, run `cargo mock rename-round <id> --auto-commit` (renames the directory, the files carrying the id, the `round:` line of `.meta`, the local `round/<id>/*` tags), merge again.
+
+## File layout
+
+- Active-round files live flat in `design_rounds/`. Never create `design_rounds/<id>/...` during an open round.
+- Flat paths:
+  - `design_rounds/{id}_topic.{name}.md`
+  - `design_rounds/{id}_changelist.doc.md`, `{id}_changelist.doc.lock.md` after lock
+  - `design_rounds/{id}_changelist.src.md`, `{id}_changelist.src.lock.md` after lock
+- `cargo mock close` moves the round's files into `design_rounds/{id}/`; `cargo mock archive` into `design_rounds/{id}-abandoned/`. They are the only steps that create a subdirectory. A closed round's files are frozen.
+- The `mockspace-write-guard` hook denies writes to `design_rounds/[^/]+/` at HARD_ERROR. On that deny, the intended path is the flat one.
+- `lock`, `close` and `archive` with `--auto-commit` commit only the round's own files and bring the index to that commit for those paths. Do not `git reset` or restage after.
+
+## Steps
+
+1. Topic phase, per topic:
+   - Research: search every `.md` in `docs/` for every mention of the types, traits and concepts, including prior rounds and deep dives. Note each doc's generation timestamp so the user can judge which supersedes which, and present older and superseded docs too. Then read the mock source, separately.
+   - Present: what the docs say first, with timestamps and locations; then where the source diverges. A doc-answered question is never framed as open. Every finding is presented, even one the docs unambiguously answer (present the docs' answer and let the user confirm); every decision is the user's.
+   - Ask: `AskUserQuestion`, 2-4 premade options plus free-text "Other", one question per call.
+   - Record the decision in the topic file. Repeat until every topic has one.
+2. Doc changelist (opens DOC): `design_rounds/{id}_changelist.doc.md`. Per crate, per file, every doc template to create, rewrite or update, with section-level detail. Commit it. It is living during DOC.
+3. DOC execution: edit `*.md.tmpl` per the changelist, commit. Source stays blocked.
+4. `cargo mock lock` (DOC to DRAFT): renames the doc changelist to `.doc.lock.md` and commits; doc templates are frozen. Write `{id}_changelist.src.md` against the locked docs, per crate, per file, and commit it (opens IMPL).
+5. IMPL: edit `src/*.rs` per the source changelist, validate with `cargo check`, regenerate with `cargo mock`. The source changelist is living during IMPL.
+6. `cargo mock lock` (IMPL to CLOSED), then `cargo mock close`. Close takes the changelists, the files starting with the id of one, the files one names, and any flat file given as `--take <file>` (repeatable); any other flat file stays and is listed.
+
+## Rules
+
+- All conversation before any mockspace edit.
+- One question at a time. Always offer free text.
+- Record decisions in the topic file as they are made.
+- The doc changelist covers every topic of the round. The source changelist is written after the docs lock, against the actual doc state. Neither is skipped.
+- A topic file is a transcript and accretes: one file per subject, a later section appended when the talk returns to it. Never edit or delete what a committed topic records. Start a new file when the subject changes, not when a question is answered.
+- Topic size: under about 300 words is a fragment, append it to the file it belongs to; over about 2000 words carries two subjects, split it.
+- No new topic after a changelist is committed. Deprecate the changelist (`cargo mock deprecate`) to return to TOPIC.
+- Doc and source changelists are living only in their own phase and frozen after `lock`.
+- Phase gates are global: lints read the whole working tree, staged, unstaged and untracked. Revert disallowed changes before committing.
+- No source change before the doc changelist is locked and the source changelist is written.
+- Deprecation replaces addendums. Revise with `cargo mock deprecate` (or `cargo mock unlock` for a locked pair). The new changelist carries a "Comparison to deprecated changelist" section; `deprecate` and `unlock` print the section it owes with the names to mention. A bare-title stub beside a locked changelist of its kind is retired by `deprecate` in any phase.
+- A round is not brainstorming, not an implementation plan (the changelist is the plan), and not a rubber stamp.
+
+## A filing disappears in three ways
+
+- A topic on a branch that never merged. A round branched fresh from trunk cannot see it.
+- A topic swept into another round's archive. `close` takes only what its changelists name or share an id with; a topic filed while another round is in flight stays open unless that round names it or carries its id. `archive` with changelists takes the same; in TOPIC with none it takes every flat file and is named by the earliest.
+- A closed round's directory present only on an unmerged branch.
+
+If a filing turns up after TOPIC, deprecate the changelist and return to TOPIC.
+"#,
         &mock_rel,
         project_name,
         crate_prefix,
     );
 
     let mockup_workflow_body = substitute_builtin_vars(
-        concat!(
-            "# Mockup-first workflow\n",
-            "\n",
-            "All design, documentation, and API changes flow through the mock workspace first.\n",
-            "This is the only way to change the framework's design. No exceptions.\n",
-            "\n",
-            "## Documentation structure\n",
-            "\n",
-            "DOCUMENTATION LIVES WITH ITS DOMAIN CRATE. Three layers, in the crate's own\n",
-            "directory, which is one of {src_dirs}:\n",
-            "\n",
-            "```\n",
-            "<crate directory>/\n",
-            "  README.md.tmpl                <- SHORTEST (3-10 lines, for root DESIGN.md)\n",
-            "  DESIGN.md.tmpl                <- MIDDLE-LENGTH overview (-> the crate's generated doc)\n",
-            "  DEEPDIVE_<SUBJECT>.md.tmpl    <- FULL deep dive (-> <CRATE>_<SUBJECT>.md)\n",
-            "```\n",
-            "\n",
-            "The root `DESIGN.md.tmpl` is SHORT: principles + per-crate summaries + links.\n",
-            "Domain-specific documentation NEVER goes in root templates.\n",
-            "\n",
-            "## When this applies\n",
-            "\n",
-            "- Adding a new trait, type, or extension contract\n",
-            "- Changing existing type signatures\n",
-            "- Adding a new crate\n",
-            "- Updating design documentation\n",
-            "- Implementing a feature in a real crate (mock first, then implement)\n",
-            "\n",
-            "## Steps\n",
-            "\n",
-            "### 0. Design round (for design changes)\n",
-            "\n",
-            "If you are changing the framework's design (new types, renamed traits, changed\n",
-            "access patterns, new crate, restructured concepts), you MUST create a design\n",
-            "round FIRST. See the `design-round` skill for the full conversational flow.\n",
-            "\n",
-            "The round follows five phases with lint-enforced gates:\n",
-            "\n",
-            "| Phase | Gate | Docs | Source | CL |\n",
-            "|-------|------|------|--------|----|",
-            "\n",
-            "| TOPIC | no changelists | no | no | n/a |\n",
-            "| DOC | `*_changelist.doc.md` | yes | no | doc CL (iterate) |\n",
-            "| DRAFT | `*_changelist.doc.lock.md` | no (SHAME ok) | no | src CL creation |\n",
-            "| IMPL | `*_changelist.src.md` | no (SHAME ok) | yes | src CL (iterate) |\n",
-            "| CLOSED | `*_changelist.src.lock.md` | no | no | no |\n",
-            "\n",
-            "1. Create topic files in `design_rounds/`. Get them approved. (TOPIC)\n",
-            "2. Write doc changelist: `design_rounds/{id}_changelist.doc.md`. Commit. (DOC)\n",
-            "3. Apply doc template changes per the doc changelist. Commit them. (DOC)\n",
-            "4. Lock doc CL: `cargo mock lock`. (DRAFT)\n",
-            "5. Write src changelist: `design_rounds/{id}_changelist.src.md`. Commit. (IMPL)\n",
-            "6. Apply source changes per the src changelist. (IMPL)\n",
-            "7. Lock src CL: `cargo mock lock`. (CLOSED)\n",
-            "8. Archive: `cargo mock close`.\n",
-            "\n",
-            "To revise a changelist, deprecate it with `cargo mock deprecate` (unlocked) or\n",
-            "`cargo mock unlock` (locked). New CL must include \"Comparison to deprecated\n",
-            "changelist\" section.\n",
-            "`deprecate` and `unlock` print the section it owes, with the names to mention.\n",
-            "\n",
-            "Enforcement is global: lints check the entire working tree (staged + unstaged +\n",
-            "untracked). Disallowed changes in any category block commits entirely.\n",
-            "\n",
-            "If you are only fixing a bug, updating wording, or making a non-design change\n",
-            "(implementation in real crates that matches existing mock), skip this step.\n",
-            "\n",
-            "### 1. Edit the mock workspace\n",
-            "\n",
-            "```bash\n",
-            "cd {mock_dir}\n",
-            "```\n",
-            "\n",
-            "- **Crate design overview**: edit `<crate directory>/DESIGN.md.tmpl`\n",
-            "- **Deep dives**: edit or create `<crate directory>/DEEPDIVE_<SUBJECT>.md.tmpl`\n",
-            "- **Crate summary**: edit `<crate directory>/README.md.tmpl`\n",
-            "- **Types/traits**: edit mock crate sources in `<crate directory>/src/*.rs`\n",
-            "- **Framework-wide docs**: edit root `*.md.tmpl` files\n",
-            "- **Agent rules/skills**: edit templates in `agent/` directory\n",
-            "- **New crates**: add a directory under one of {src_dirs} and to the `Cargo.toml` members list\n",
-            "\n",
-            "### 2. Validate\n",
-            "\n",
-            "```bash\n",
-            "cd {mock_dir}\n",
-            "cargo check\n",
-            "```\n",
-            "\n",
-            "The mock workspace must compile. Fix errors before proceeding.\n",
-            "\n",
-            "### 3. Regenerate docs\n",
-            "\n",
-            "```bash\n",
-            "cargo mock\n",
-            "```\n",
-            "\n",
-            "This runs:\n",
-            "1. `cargo check` (safety net)\n",
-            "2. Lint pass (naming, exports, consistency)\n",
-            "3. Clean `docs/` (deletes ALL top-level files; subdirectories untouched)\n",
-            "4. Doc generation -> DESIGN.md, STRUCTURE.md, per-crate overviews, deep dives, passthrough templates\n",
-            "5. Agent rule generation -> .claude/ (CLAUDE.md, rules, skills, hooks, settings.json) and .github/ (copilot-instructions.md, instructions, skills, hooks)\n",
-            "\n",
-            "If any step fails, fix the mock and retry.\n",
-            "\n",
-            "### 4. Real crates (future phase)\n",
-            "\n",
-            "Real crates do not exist during the design phase. This step applies only after\n",
-            "the mockspace is locked and immutable. Until then, your work is done after step 3.\n",
-            "\n",
-            "When the time comes: match mock signatures in real crate implementations. The\n",
-            "mock is the source of truth; real code conforms to it.\n",
-            "\n",
-            "### 5. Test (future phase)\n",
-            "\n",
-            "```bash\n",
-            "cargo mock test\n",
-            "cargo clippy --workspace\n",
-            "```\n",
-            "\n",
-            "`cargo mock test` rather than `cargo test`: it also runs the tool, bench and lint\n",
-            "trees a plain `cargo test` never reaches, and, where cargo-nextest is installed,\n",
-            "runs only the members something they depend on changed under since their suite\n",
-            "last passed, and in them only the integration-test binaries (`tests/<name>.rs`) whose\n",
-            "own files, library or dependencies moved, so a change confined to one test file runs\n",
-            "that binary; what it cannot place moves more: the library, a file under `tests/` no binary\n",
-            "names and the manifest move every binary, and a test that reads the environment is\n",
-            "rebuilt on every file any binary claims. It holds the slow tests to\n",
-            "`[test] heavy_threads` at a time, and skips a slow test whose last pass still stands.\n",
-            "`--cheap` also defers the slow tests that have passed before; `--full` runs every\n",
-            "member asked for, every binary of it; `--no-cache` runs every slow test and every\n",
-            "binary too. Run `--full --no-cache` once at the end of a piece of work and once\n",
-            "after merging the trunk. The bench tree, which compiles every arm, runs only when a\n",
-            "bench input, or a local crate a bench depends on, moved since it last passed, and\n",
-            "also under `--benches`, `--full` or `--no-cache`, so the whole-suite run covers it;\n",
-            "a `-p` leaves it out unless `--benches` is given too, and the run says when it did.\n",
-            "Commit `<mock>/test-history/` with the work, unless `[test.history]` keeps it on a\n",
-            "git ref: it is the record of what passed at which fingerprint, and a clone without it\n",
-            "runs everything once.\n",
-            "A test or binary deleted since is dropped from the run and pruned from it by the\n",
-            "next run; do not hand-edit the record to clear one. A run writes and removes only\n",
-            "the files of the members it ran, in the flavour it ran in, plus those of members the\n",
-            "workspace no longer has, so a run for one member leaves every other file as it was.\n",
-            "`[test.opt_level]` sets the opt level (`0` to `3`, `\"s\"`, `\"z\"`) a named member and its\n",
-            "tests are compiled at, whatever the manifest says, `--plain` runs included; a member\n",
-            "it does not name keeps the manifest's, and changing the table reruns the members.\n",
-            "The members are built without debug info, whatever the manifest or a cargo config\n",
-            "says, and a crate gets symbols only where one is needed to trace a problem: a member\n",
-            "whose tests failed last time, or one named with `--debug=<crate>` or `-p <crate>\n",
-            "--debug`, which also runs it. `--no-debug` gives none, `[test] debug` sets the level\n",
-            "(`line-tables-only` by default) and `[test] lean = false` leaves the profile alone.\n",
-            "A cargo config that sets debug info is reported and overridden for the run, never\n",
-            "edited, dependencies included. Rustflags with `-g` or `-C debuginfo=` give every crate\n",
-            "debug info and cannot be overridden, so they are reported and the run stops calling\n",
-            "the rest lean. Symbols never decide whether a member reruns.\n",
-            "`cargo mock help test` says what selects and what is cached.\n",
-            "\n",
-            "## What NOT to do\n",
-            "\n",
-            "- Never edit files in `docs/` directly. They are ALL generated. Changes WILL be lost.\n",
-            "- Never edit anything in `.claude/` or `.github/` directly. They are generated from `agent/` templates.\n",
-            "- Never add types/traits to real crates without first defining them in the mock.\n",
-            "- Never put domain-specific documentation in root `DESIGN.md.tmpl`. Use the crate.\n",
-            "- Never skip the `cargo check` validation step.\n",
-            "- Never skip the `cargo mock` regeneration step after mock changes.\n",
-            "- Never modify doc templates (README.md.tmpl, DESIGN.md.tmpl, DEEPDIVE_*.md.tmpl)\n",
-            "  without an unlocked doc changelist in `design_rounds/` (DOC phase).\n",
-            "- Never modify source files without a source changelist (`*_changelist.src.md`)\n",
-            "  in `design_rounds/` (IMPL phase).\n",
-            "- Never create new topic files after a changelist exists. The changelist\n",
-            "  crystallizes the round. Deprecate the changelist to return to TOPIC phase.\n",
-            "- Never rewrite or delete what a committed topic already records; that is the\n",
-            "  audit trail. Appending a later section to it is expected and is how a topic\n",
-            "  file accretes across a talk.\n",
-            "- Never reference or reason about real crate code during the design phase.\n",
-            "  Real crates do not exist. The mock is the only codebase.\n",
-            "- Never write discovered rules into memory files, plan files, or session notes.\n",
-            "  Write them into mockspace templates (the only persistent documentation).\n",
-            "\n",
-            "## Generated file headers\n",
-            "\n",
-            "All generated docs and agent rules start with:\n",
-            "\n",
-            "```\n",
-            "<!--\n",
-            "  AUTO-GENERATED: DO NOT EDIT DIRECTLY\n",
-            "  Generated by: mockspace (tools/mockspace)\n",
-            "  ...\n",
-            "-->\n",
-            "```\n",
-            "\n",
-            "If you see this header, do not edit the file.\n",
-            "\n",
-            "## What the phase gate covers, and what it does not\n",
-            "\n",
-            "The gate protects two things and nothing else: per-crate documents under ",
-            "{src_dirs}, and Rust source. Knowing the boundary saves opening a round for work ",
-            "that never needed one.\n",
-            "\n",
-            "- **Root documents (`{mock_dir}/*.md.tmpl`: DESIGN, PRINCIPLES, WORKFLOW, and any ",
-            "other) are NOT gated.** Edit them in any phase. They describe the workspace rather ",
-            "than a crate's contract, so they are not what a round exists to keep honest.\n",
-            "- **`Cargo.toml` is NOT gated.** Manifests are wiring: dependency edges are what the ",
-            "layer numbering, the structure graph and the document ordering all read, and a crate ",
-            "with no manifest contributes none. Only `*.rs` files trip the source gate.\n",
-            "- **A `.rs` file that declares nothing is NOT gated.** A crate root carrying only ",
-            "module documentation and inner attributes is scaffolding, not source. It becomes ",
-            "source the moment it declares anything, and every commit is re-checked, so nothing ",
-            "lands behind a stub.\n",
-            "- **Per-crate `*.md.tmpl` IS gated**, to the DOC phase. **`*.rs` with declarations IS ",
-            "gated**, to IMPL.\n",
-            "\n",
-            "## The validation pipeline each run walks\n",
-            "\n",
-            "1. `cargo check`, and every mock crate must compile\n",
-            "2. Parse, where tree-sitter extracts the pub items from each `lib.rs`\n",
-            "3. Lint, where the architecture rules are enforced\n",
-            "4. Generate: docs, graphs and agent rules, from the templates\n",
-        ),
+        r#"# Mockup-first workflow
+
+Design, documentation and API changes go through the mock workspace first.
+
+## Documentation layout
+
+Documentation lives with its domain crate, in the crate's directory under {src_dirs}:
+
+```
+<crate directory>/
+  README.md.tmpl                shortest, 3-10 lines, into root DESIGN.md
+  DESIGN.md.tmpl                middle-length overview, into the crate's generated doc
+  DEEPDIVE_<SUBJECT>.md.tmpl    full deep dive, into <CRATE>_<SUBJECT>.md
+```
+
+- Root `DESIGN.md.tmpl` is short: principles, per-crate summaries, links. Domain documentation never goes in root templates.
+- Generated files start with the `AUTO-GENERATED: DO NOT EDIT DIRECTLY` header. Do not edit one.
+
+## Applies to
+
+- A new trait, type or extension contract.
+- A changed type signature.
+- A new crate.
+- Updated design documentation.
+- A feature in a real crate (mock first).
+
+A bug fix, a wording change, or an implementation matching the existing mock skips the round.
+
+## Phases
+
+| Phase | Gate | Docs | Source | CL |
+|-------|------|------|--------|----|
+| TOPIC | no changelists | no | no | n/a |
+| DOC | `*_changelist.doc.md` | yes | no | doc CL (iterate) |
+| DRAFT | `*_changelist.doc.lock.md` | no (SHAME ok) | no | src CL creation |
+| IMPL | `*_changelist.src.md` | no (SHAME ok) | yes | src CL (iterate) |
+| CLOSED | `*_changelist.src.lock.md` | no | no | no |
+
+1. Topic files in `design_rounds/`, approved (TOPIC).
+2. Doc changelist, commit (DOC). Apply doc template changes, commit.
+3. `cargo mock lock` (DRAFT). Source changelist, commit (IMPL). Apply source changes.
+4. `cargo mock lock` (CLOSED), `cargo mock close`.
+5. Revise a changelist with `cargo mock deprecate` (unlocked) or `cargo mock unlock` (locked); the new one carries "Comparison to deprecated changelist".
+6. Enforcement is global: staged, unstaged and untracked changes all count.
+
+The `design-round` skill carries the conversation flow and file layout.
+
+## What the phase gate covers
+
+- Gated: per-crate `*.md.tmpl` under {src_dirs} (DOC phase) and `*.rs` that declares something (IMPL phase).
+- Not gated: root `{mock_dir}/*.md.tmpl` (DESIGN, PRINCIPLES, WORKFLOW and others), `Cargo.toml`, and a `.rs` file carrying only module docs and inner attributes. A `.rs` file is gated the moment it declares anything.
+
+## Edit
+
+- Crate overview: `<crate directory>/DESIGN.md.tmpl`.
+- Deep dive: `<crate directory>/DEEPDIVE_<SUBJECT>.md.tmpl`.
+- Crate summary: `<crate directory>/README.md.tmpl`.
+- Types and traits: `<crate directory>/src/*.rs`.
+- Framework-wide docs: root `*.md.tmpl`.
+- Agent rules and skills: templates in `agent/`.
+- New crate: a directory under one of {src_dirs} and an entry in the `Cargo.toml` members list.
+
+## Validate and regenerate
+
+- `cargo check` in `{mock_dir}`; the mock must compile.
+- `cargo mock` runs: `cargo check`, parse (tree-sitter pub items of each `lib.rs`), lints, clean of `docs/` top level (subdirectories untouched), document generation (DESIGN.md, STRUCTURE.md, per-crate overviews, deep dives, passthrough templates), agent file generation into `.claude/` and `.github/`.
+- Useful flags: `--lint-only`, `--generate-only` (`--stage`, `--commit-regenerated`), `--doc-only`, `--scope <crates>`, `--commit` and `--strict` for the commit and push severities, `--dir <path>`.
+- `cargo mock check` is the readiness report (git, phase, build, tests, lints). `cargo mock tools` and `cargo mock lints` list every subcommand, tool and lint live. `cargo mock help <command>` is the full help of one.
+- `cargo mock clean` removes generated output. `cargo mock activate` / `deactivate` set and restore `core.hooksPath`.
+- `cargo mock --nuke` takes the source down so it can be rewritten from the designs; `--nuke=docs` takes the designs and the source under them. It names every file first and asks (`--y` answers). It refuses a tree with anything uncommitted.
+
+## Real crates
+
+- Real crates do not exist during the design phase; after lockdown they match the mock signatures. The `real-code-guard` skill covers it.
+
+## Test
+
+- `cargo mock test`, not `cargo test`: it also runs the tool, bench and lint trees.
+- Members rerun only when their fingerprint moved since their suite last passed. Under nextest, integration-test binaries rerun only when their own files, the library or dependencies moved.
+- `--cheap` defers heavy tests that have passed before. `--full` runs every member asked for, every binary. `--no-cache` runs cached heavy tests and left-out binaries too. `--plain` uses `cargo test` and reaches doc tests. `--benches` includes the bench tree; `-p` leaves it out without it.
+- Run `--full --no-cache` once at the end of a piece of work and once after merging the trunk.
+- `[test]` keys: `heavy_after_secs` (10), `heavy_threads` (1), `timeout_secs` (900), `commit` (warn runs `--cheap`, error also blocks, off and info run nothing), `debug`, `lean`. `[test.opt_level]` maps a member to an opt level (0 to 3, "s", "z").
+- Members build without debug info. Symbols only for a member whose tests failed last time, or `--debug=<crate>` / `-p <crate> --debug`. `--no-debug` gives none. `[test] lean = false` leaves the profile alone. Rustflags with `-g` or `-C debuginfo=` give every crate symbols and cannot be overridden.
+- Commit `{mock_dir}/test-history/` with the work unless `[test.history]` keeps it on a git ref. Do not hand-edit it. A deleted test or binary is pruned by the next run.
+- `cargo mock help test` says what selects and what is cached. Everything after `test` goes to cargo.
+
+## Never
+
+- Edit `docs/`, `.claude/` or `.github/` directly.
+- Add a type or trait to a real crate before the mock defines it.
+- Put domain documentation in root `DESIGN.md.tmpl`.
+- Skip `cargo check` or the `cargo mock` regeneration.
+- Modify doc templates without an unlocked doc changelist (DOC phase) or source without a source changelist (IMPL phase).
+- Create a topic file after a changelist exists.
+- Rewrite or delete what a committed topic records; appending is expected.
+- Reason about real crate code during the design phase.
+- Write discovered rules into memory files, plan files or session notes; write them into mockspace templates.
+"#,
         &mock_rel,
         project_name,
         crate_prefix,
     );
 
     let real_code_guard_body = substitute_builtin_vars(
-        concat!(
-            "# Real code guard\n",
-            "\n",
-            "**STOP. Real crates do not exist during the design phase.**\n",
-            "\n",
-            "The mock workspace is the only codebase. Real crates (the code outside\n",
-            "`{mock_dir}/`) are not maintained, not referenced, and not part of the current\n",
-            "workflow. They may contain legacy code; it is irrelevant.\n",
-            "\n",
-            "No real code is written until the mockspace is locked and immutable. If you are\n",
-            "about to modify a file in a real crate, `examples/`, or any Rust source outside\n",
-            "`{mock_dir}/`: stop. You are in the wrong place.\n",
-            "\n",
-            "## When this skill applies (future phase)\n",
-            "\n",
-            "After mockspace lockdown, when implementation begins, the mock workspace MUST\n",
-            "reflect the intended design. This is non-negotiable.\n",
-            "\n",
-            "## Documentation structure reminder\n",
-            "\n",
-            "Documentation lives with its domain crate in the mock workspace, in the crate's\n",
-            "own directory, one of {src_dirs}:\n",
-            "\n",
-            "```\n",
-            "<crate directory>/\n",
-            "  README.md.tmpl                <- shortest summary (inserted into DESIGN.md)\n",
-            "  DESIGN.md.tmpl                <- middle-length overview (-> the crate's generated doc)\n",
-            "  DEEPDIVE_<SUBJECT>.md.tmpl    <- deep dives (-> <CRATE>_<SUBJECT>.md)\n",
-            "```\n",
-            "\n",
-            "## Checklist before touching real code\n",
-            "\n",
-            "1. **Mock crate exists?** Check `<crate directory>/src/lib.rs` in {src_dirs}\n",
-            "   has the type, trait, or contract you want to implement.\n",
-            "\n",
-            "2. **Mock compiles?** Run `cargo check` in `{mock_dir}/`.\n",
-            "\n",
-            "3. **Docs regenerated?** Run `cargo mock`.\n",
-            "   Check generated docs reflect the change.\n",
-            "\n",
-            "4. **Lints pass?** The `cargo mock` lint pass must complete with zero violations.\n",
-            "\n",
-            "Only after all four pass should you begin implementing in the real crates.\n",
-            "\n",
-            "## What implementation looks like\n",
-            "\n",
-            "Match the mock signatures. The mock defines the public API contract:\n",
-            "- Same type names\n",
-            "- Same trait definitions\n",
-            "- Same extension contracts\n",
-            "\n",
-            "The implementation adds:\n",
-            "- Real data structures (not `PhantomData` placeholders)\n",
-            "- Actual logic (not `todo!()`)\n",
-            "- Platform-specific code\n",
-            "- Performance optimizations\n",
-            "- Tests\n",
-            "\n",
-            "## What to do if the mock is wrong\n",
-            "\n",
-            "If the mock has a design flaw discovered during implementation:\n",
-            "\n",
-            "1. Stop implementing\n",
-            "2. Create a design round topic file (`design_rounds/{id}_topic.{name}.md`)\n",
-            "3. Get the topic approved, write a doc changelist (`*_changelist.doc.md`)\n",
-            "4. Apply doc fixes (DOC phase)\n",
-            "5. Lock the doc changelist (`cargo mock lock`)\n",
-            "6. Write a source changelist (`*_changelist.src.md`) in DRAFT phase\n",
-            "7. Apply source fixes (IMPL phase)\n",
-            "8. Lock the source changelist (`cargo mock lock`)\n",
-            "9. Regenerate docs, then continue implementation\n",
-            "\n",
-            "Never diverge from the mock \"because it's faster.\" The mock IS the spec.\n",
-            "Never modify mock docs without an unlocked doc changelist (DOC phase).\n",
-            "Never modify source without a source changelist (IMPL phase).\n",
-            "\n",
-            "## Exceptions\n",
-            "\n",
-            "None. If you think you need an exception, you are wrong. Fix the mock.\n",
-        ),
+        r#"# Real code guard
+
+- Real crates (code outside `{mock_dir}/`), `examples/` and any Rust source outside `{mock_dir}/` are not touched during the design phase. The mock workspace is the only codebase.
+- No real code until the mockspace is locked. After lockdown the mock reflects the intended design and the real crates match its signatures: same type names, trait definitions and extension contracts.
+- Implementation adds real data structures (no `PhantomData` placeholders), real logic (no `todo!()`), platform code, optimisations and tests.
+
+## Checklist before touching real code
+
+1. The mock crate has the type, trait or contract: `<crate directory>/src/lib.rs` in {src_dirs}.
+2. `cargo check` passes in `{mock_dir}/`.
+3. `cargo mock` regenerated the docs and they reflect the change.
+4. The `cargo mock` lint pass has zero violations.
+
+## When the mock is wrong
+
+1. Stop implementing.
+2. Topic file `design_rounds/{id}_topic.{name}.md`, approved.
+3. Doc changelist, doc fixes (DOC), `cargo mock lock`.
+4. Source changelist (DRAFT), source fixes (IMPL), `cargo mock lock`.
+5. `cargo mock`, then continue.
+
+## Never
+
+- Diverge from the mock for speed. The mock is the spec.
+- Modify mock docs without an unlocked doc changelist.
+- Modify mock source without a source changelist.
+- Take an exception.
+"#,
         &mock_rel,
         project_name,
         crate_prefix,
