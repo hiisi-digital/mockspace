@@ -115,6 +115,8 @@ const SPELLINGS: &[&str] = &[
     "pub union X { pub a: u8, pub b: u16 }",
     "pub struct X<T: Copy> { pub a: T }",
     "pub struct X<U> where U: Copy { pub a: U }",
+    "pub struct X { pub next: Option<Box<X>> }",
+    "pub struct X { pub next: Option<Box<Y>> }",
 ];
 
 #[test]
@@ -134,4 +136,22 @@ fn equal_parts_are_equal_shapes_and_the_reverse() {
             );
         }
     }
+}
+
+#[test]
+fn two_types_of_one_name_on_one_line_each_keep_their_own_parts() {
+    let found = read("mod a { pub struct X { pub a: u8 } } mod b { pub struct X { pub b: u16, pub c: u8 } }");
+    assert_eq!(found.len(), 2);
+    assert_ne!(found[0].shape, found[1].shape);
+    assert_ne!(found[0].parts, found[1].parts, "the second reading matched the first by name and row");
+    assert_eq!(found[0].parts.members.len() + found[1].parts.members.len(), 3);
+}
+
+#[test]
+fn a_member_naming_its_own_type_reads_the_same_under_another_name() {
+    let a = only("pub struct Node { pub next: Option<Box<Node>>, pub value: u8 }");
+    let b = only("pub struct Link { pub next: Option<Box<Link>>, pub value: u8 }");
+    assert_eq!(a.parts, b.parts);
+    let c = only("pub struct Link { pub next: Option<Box<Other>>, pub value: u8 }");
+    assert_ne!(a.parts, c.parts, "naming another type is not naming itself");
 }
