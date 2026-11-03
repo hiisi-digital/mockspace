@@ -1,50 +1,52 @@
 # Merging
 
-Merges here are automated as far as git can be taught to do them, and judged by what they add rather than by what they touch. Three parts: the files that merge by a driver, the files that only grow, and a merge commit inside a design round.
+Three parts: files that merge by a driver, files that only grow, and a merge commit inside a design round.
 
 ## Files that merge by a driver
 
-`cargo mock` writes the `.gitattributes` lines and registers each driver in the clone's git config (and, with `cargo mock register-drivers --global`, in the user's), so a merge touching these reports no conflict.
+`cargo mock` writes the `.gitattributes` lines and registers each driver in the clone's git config. `cargo mock register-drivers --global` writes them into the user's git config too, with commands naming no clone: a later clone, a worktree or a fresh container then calls them.
 
-- **Generated documents.** The top level of `docs/` goes to the `mockspace-generated` driver. It keeps this side's copy of a generated file (read from its header, or from the diagram beside a rendered image) and merges any other file in `docs/` as git does, but only where the hook that regenerates afterwards is installed: `post-merge` for a merge, `post-rewrite` for a rebase, found with `git rev-parse --git-path hooks/<name>`, and generated under `<mock>/target/hooks`, or buildable there: a fresh worktree has none, and the hook then runs `cargo mock --generate-only` itself after the merge. A rebase's replayed commits may carry the upstream's copy; the tip does not. The regeneration is a follow-up commit (`chore: regenerate generated files after merge`, or `after rebase`) or, for a merge that stopped, part of the commit that concludes it. The `generated_files_*` tests enforce this.
-- **Cargo lockfiles.** The mock directory's `Cargo.lock`, and each path `mockspace.toml` names under `lockfiles`, go to the `mockspace-lockfile` driver, the same script as above and under the same condition: where a regeneration follows, it text-merges the two sides, keeps ours on a conflict and writes the path down, and the follow-up resolves the merged manifests with `cargo metadata` and commits the lock with every member in it. Elsewhere the lock conflicts as text.
-- **Registry rows.** Merged by `[[namespace]]` and `id`: additions on both sides stay, only a row changed two ways conflicts.
-- **Test history and closed rounds.** The `test-history` skill and the round id check carry their own merge drivers.
-
-A cherry-pick, revert, `git am`, `git checkout -m` or stash application regenerates nothing, so a generated file conflicts there: regenerate with `cargo mock` once the sources are resolved, never pick a side.
+- Generated documents: the top level of `docs/` goes to `mockspace-generated`.
+  - It keeps this side's copy of a generated file (read from its header, or from the diagram beside a rendered image) and merges any other file in `docs/` as git does.
+  - Only where the regenerating hook is installed: `post-merge` for a merge, `post-rewrite` for a rebase (`git rev-parse --git-path hooks/<name>`), generated under `<mock>/target/hooks` or buildable there; a fresh worktree has none and the hook runs `cargo mock --generate-only` itself.
+  - The regeneration is a follow-up commit (`chore: regenerate generated files after merge`, or `after rebase`) or, for a merge that stopped, part of the concluding commit. A rebase's replayed commits may carry the upstream's copy; the tip does not.
+- Cargo lockfiles: the mock directory's `Cargo.lock` and each path under `lockfiles` in `mockspace.toml` go to `mockspace-lockfile`, same condition: where a regeneration follows it text-merges, keeps ours on conflict, writes the path down, and the follow-up resolves with `cargo metadata` and commits the lock with every member. Elsewhere the lock conflicts as text.
+- Registry rows: `merge-registry`, by `[[namespace]]` and `id`. Additions on both sides stay; only a row changed two ways conflicts, with markers around that row alone. A row deleted on one side and untouched on the other is deleted.
+- Closed rounds: `<mock>/design_rounds/*/.meta` goes to `merge-round-meta`; two closed rounds with one id exit 1 and name `cargo mock rename-round <id>`.
+- Test history: the `test-history` skill.
+- Cherry-pick, revert, `git am`, `git checkout -m` and stash application regenerate nothing: a generated file conflicts there. Run `cargo mock` once the sources are resolved, never pick a side.
 
 ## Files that only grow
 
-A list of `mod` lines, a table of strings, a log of known gaps: each changes by someone adding to it and by nobody touching what is already there. `.gitattributes` sends these to the `mockspace-append` merge driver, which `cargo mock` registers in the clone's git config (and, with `cargo mock register-drivers --global`, in the user's) and which runs `cargo mock merge-additions`.
+`mockspace-append` runs `cargo mock merge-additions` for a list of `mod` lines, a table of strings, a log of known gaps.
 
-- **Neither side changed or removed a line of the base**: both sides' additions stay, each in the spot it was made in. Where both added at one spot, ours comes first and theirs after it, each in its own order.
-- **Either side edited or removed a base line**, or both added one of the same lines at one spot, or the file has no base or no final newline: the file is merged as text, with conflict markers labelled `ours` and `theirs` and git's exit status. The driver never selects a side.
-- **The same line added at two different spots stays at both**, and **one key given two values by the two sides stays twice**, which is not valid TOML: the driver reads lines and not keys, as git's own merge does, and it is for the parser of the file to refuse it.
-
-Mockspace names each source package's `SHAME.md.tmpl` and `BACKLOG.md.tmpl`. A project names the rest in `mockspace.toml`:
+- Neither side changed or removed a base line: both sides' additions stay, each in its own spot. Both added at one spot: ours first, then theirs, each in its own order.
+- Either side edited or removed a base line, both added one of the same lines at one spot, or the file has no base or no final newline: merged as text, markers labelled `ours` and `theirs`, git's exit status. It never selects a side.
+- The same line added at two different spots stays at both. One key given two values by the two sides stays twice (invalid TOML); the file's parser refuses it.
+- Mockspace names each source package's `SHAME.md.tmpl` and `BACKLOG.md.tmpl`. A project names the rest:
 
 ```toml
 append_only = ["content/strings/en.toml", "<crate directory>/src/tests/mod.rs"]
 ```
 
-Each entry is a `.gitattributes` pattern relative to the repository root, as narrow as the file it names. A directory is not an entry: a pattern ending in `/` governs nothing, because attributes are not inherited by what is inside a directory (`git check-attr` gives `unspecified` for every file in it), so `cargo mock` drops it with a warning. Name the files. Run `cargo mock` once and the lines and the driver are written; an entry taken out of the list takes its line out of `.gitattributes` on the next run. Any line there ending `merge=mockspace-append` is the driver's block, a hand-written one included, and is rewritten with it.
-
-A file that is regenerated by a tool (a results index the bench driver rewrites, a lockfile) is not append-only: its base lines change on every run. It is regenerated after the merge.
+- Each entry is a `.gitattributes` pattern relative to the repository root, as narrow as the file. A directory is not an entry (attributes are not inherited by what is inside it; a trailing `/` is dropped with a warning). Name the files. Run `cargo mock` to write the lines; an entry removed from the list is removed from `.gitattributes` on the next run. Any line ending `merge=mockspace-append` is the driver's block, a hand-written one included, and is rewritten.
+- A file a tool regenerates (a results index the bench driver rewrites, a lockfile) is not append-only; regenerate it after the merge.
 
 ## A merge inside a design round
 
-The phase gates judge what somebody wrote. A merge commit is judged by what it adds beyond its parents, per staged file:
+A merge commit is judged by what it adds beyond its parents, per staged file.
 
-- a file byte-identical to one parent, or to what git's own three-way merge produces, adds nothing;
-- a conflict settled by keeping lines of both sides adds nothing, when every staged line is a line some parent carries, no line appears more often than the base has it plus what each parent added to it (so two sides that each add a blank separator both stand, and a second copy of a line both parents carry once does not), every line all the parents carry is still there as often as the parent with the fewest, and the sides keep their own order, where one side moved a line both share, the whole of either side's order and never a mix of the two;
-- a line neither parent has, a line repeated beyond that, a line every parent has that is gone, or shared lines in an order no single parent has, is an edit and is gated as one. A refused merge says which of these it found.
-
-So `git merge <trunk>` is committed once, in whatever phase the round is in, designs and source together. Resolve a conflict by consolidating both sides and keep no line you wrote yourself in the merge commit: a new line goes into its own commit, in the phase that permits it. Committing the merged designs in DOC, the source in IMPL and merging again is not needed and not done.
-
-The editor's write guard follows the same reading while a merge is in progress. A Write or Edit to a path git lists as unmerged, matched as the whole path and never as a directory holding one, is let through in any phase, so the conflict markers in a design template or a source file can be removed whatever the round is in; every other path stays gated, and so does every Bash command that writes, and a path stops being open once its resolution is staged. Check with `git ls-files -u`.
-
-The sides' sections go one after the other, in either order, each in its own order: that keeps both as new sections and moves neither. The order test is a greedy longest-common-subsequence split in linear space, so a rare consolidation that only another split explains is refused, which is the safe direction. Up to four parents are tried in every order (24 for four); more are tried in the given order and its reverse, and an octopus that only another order explains is refused. No size skips the test: the time is capped per comparison, and a file where one comparison passes the cap (a file can need several, one per parent for each ordering tried) is reported with a message naming it and gated as an authored change. Where the parents have no merge base (unrelated histories, or a shallow clone that cut it off) the repeat bound cannot be computed, so the line test excuses nothing and the file is gated as authored, with a message saying so; a file taken whole from one parent or reproduced by git's own merge still passes. The panel-canon gate takes the same merge filter beside the phase gates: canon staged by a merge is judged by what it adds beyond its parents, and only the canon paths are tested. An octopus is covered by the line tests and not by the three-way reproduction, which wants a single merge base.
+- Adds nothing: a file byte-identical to one parent or to git's three-way merge; a conflict settled by keeping lines of both sides, when every staged line is a line some parent carries, no line appears more often than the base has it plus what each parent added, every line all parents carry is still there as often as the parent with the fewest, and the sides keep their own order (where one side moved a shared line, the whole of either side's order, never a mix).
+- Is an edit, gated as one: a line neither parent has, a line repeated beyond that, a line every parent has that is gone, shared lines in an order no single parent has. A refused merge says which.
+- `git merge <trunk>` is committed once, in whatever phase the round is in, designs and source together. Consolidate both sides' sections one after the other, in either order, each in its own order. Keep no line you wrote yourself in the merge commit: a new line goes into its own commit, in the phase that permits it.
+- The order test is a greedy longest-common-subsequence split in linear space, so a rare consolidation only another split explains is refused. Up to four parents are tried in every order; more are tried in the given order and its reverse.
+- Time is capped per comparison; a file where one comparison passes the cap is reported by name and gated as authored. No merge base (unrelated histories, shallow clone): the repeat bound cannot be computed, the file is gated as authored with a message; a file taken whole from one parent or reproduced by git's merge still passes.
+- The panel-canon gate takes the same merge filter: canon staged by a merge is judged by what it adds, and only canon paths are tested. An octopus is covered by the line tests, not the three-way reproduction.
+- The editor's write guard follows the same reading during a merge: a Write or Edit to a path git lists as unmerged (whole path, never a directory holding one) passes in any phase. Every other path stays gated, and so does every Bash command that writes. A path stops being open once its resolution is staged. Check with `git ls-files -u`.
 
 ## A registry directory kept on a ref
 
-A directory declared in `[[registry.store]]` of `mockspace.toml` is kept on a git ref (`refs/mock/<namespace>`, or `refs/heads/mock/<namespace>` on the remote) and is not in the tree, so a merge of the tree never meets it. Its writes go through `mock registry-append`, which fetches, runs the registry checks over the files as they would stand after the write, and pushes with a lease. When another writer pushed first, the registry merge by row runs on the files and the checks run again on the result: rows added on both sides stay, a row changed two ways is refused and nothing is pushed. A fetch that fails is an error and never a registry with no rows; the tree copy of a mounted directory is not read. The writer reads rows and not documents, so removing a row a generated document names is not caught at the write, and a plain lint-only commit or push does not run the scan either; the next generation run (`cargo mock`), a commit concluding a merge, or the post-merge and post-rewrite hooks report the dangling reference.
+- A directory declared in `[[registry.store]]` of `mockspace.toml` is kept on `refs/mock/<namespace>` (`refs/heads/mock/<namespace>` on the remote) and is not in the tree. A tree merge never meets it, and the tree copy of a mounted directory is not read.
+- Writes go through `mock registry-append <namespace>::<id> <field> <value> [--local]`: fetch, run the registry checks on the files as they would stand, push with a lease. When another writer pushed first, the row merge runs and the checks run again: rows added on both sides stay; a row changed two ways is refused and nothing is pushed. A failed fetch is an error, never an empty registry.
+- A delegate at `.mockspace/hooks/registry-append` (repository root or any directory above, nearest wins) runs first: exit 0 means it did the whole step, 3 leaves it to mockspace, anything else is a failure. `--local` skips it.
+- The writer reads rows, not documents: removing a row a generated document names is not caught at the write, nor by a plain lint-only commit or push. The next `cargo mock`, a commit concluding a merge, or the post-merge and post-rewrite hooks report the dangling reference.
