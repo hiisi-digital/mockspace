@@ -24,7 +24,8 @@
 //! parameters, and the variants of an enum that is fieldless or has a `repr` unless every variant
 //! is numbered by hand. A comma that closes a tuple of one element is kept, since it tells it from a
 //! parenthesised type. Only the first segment of a path can be a generic parameter, so the last is
-//! never renamed.
+//! never renamed, and neither is a name that declares an item (a variant, a method, an associated
+//! constant or type), whatever a parameter is called.
 //!
 //! What it does not see, which a copy can use to be missed or to be found:
 //!
@@ -34,6 +35,10 @@
 //!   reads it, so two types that sort differently can agree.
 
 use tree_sitter::Node;
+
+mod parts;
+pub(super) use parts::canonical_parts;
+pub use parts::{Member, Parts};
 
 /// Lists whose members are a set. The variants of an enum are one only when the enum allows it.
 const UNORDERED_LISTS: &[&str] = &["field_declaration_list", "declaration_list"];

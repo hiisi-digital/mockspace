@@ -30,6 +30,7 @@ use mockspace_lint_rules::{
     LintMode,
     LintPack,
     RepoContext,
+    collect_crate_sources,
     timing,
 };
 
@@ -217,55 +218,6 @@ pub fn lint_edit(
             .filter(|e| e.path.as_deref().unwrap_or("src/lib.rs") == here)
             .collect(),
     )
-}
-
-/// Walk `crate_dir/src/**/*.rs` and return every file's (rel_path, text),
-/// with `src/lib.rs` first when it exists. Silently skips unreadable
-/// files; errors surface via the lint pass seeing missing content.
-fn collect_crate_sources(crate_dir: &Path) -> Vec<CrateSourceFile> {
-    let src_dir = crate_dir.join("src");
-    if !src_dir.is_dir() {
-        return Vec::new();
-    }
-    let mut out: Vec<CrateSourceFile> = Vec::new();
-    walk_rs(&src_dir, crate_dir, &mut out);
-    // Sort so `src/lib.rs` lands first, then everything else in path order.
-    out.sort_by(|a, b| {
-        let a_is_lib = a.rel_path == PathBuf::from("src/lib.rs");
-        let b_is_lib = b.rel_path == PathBuf::from("src/lib.rs");
-        match (a_is_lib, b_is_lib) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.rel_path.cmp(&b.rel_path),
-        }
-    });
-    out
-}
-
-fn walk_rs(dir: &Path, crate_dir: &Path, out: &mut Vec<CrateSourceFile>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            walk_rs(&path, crate_dir, out);
-            continue;
-        }
-        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
-            continue;
-        }
-        let text = match std::fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let rel_path = path.strip_prefix(crate_dir).unwrap_or(&path).to_path_buf();
-        out.push(CrateSourceFile {
-            rel_path,
-            text,
-        });
-    }
 }
 
 /// Run all lints (per-crate + cross-crate) against crates.
