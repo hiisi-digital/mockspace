@@ -11,48 +11,104 @@
 //! because the hash is gone with the object. So a pairing holds three keys.
 //!
 //! - the commit hash, which settles it at once when the commit is still there;
-//! - the commit's time, which says where in the history to look when the hash is gone;
+//! - the commit's author time, which says where in the history to look when the hash is gone,
+//!   and which a rebase or a cherry-pick keeps where it resets the committer time;
 //! - a digest of the tree, computed here from paths and contents with no git object in it, which
 //!   says which of the commits near that time is the one, and which stays the same under a
 //!   rewrite that keeps the files.
 //!
 //! The record is written once, by [`Pairing::render`], and read once, by [`Pairing::parse`].
 //! The trailer a commit carries (`Mock-Ref: <name> <hash> <time> <digest>`) and a pin file are
-//! both this line, so neither can drift from the other.
+//! both this line, so neither can drift from the other. A [`Pairing`] and a [`Trailer`] can only
+//! be made through [`Pairing::new`] and [`Trailer::new`] or by parsing, and both check what
+//! [`Pairing::parse`] checks, so what `render` writes is always what `parse` reads.
 //!
 //! Nothing here runs git. The caller lists the candidate commits and gives a function that
 //! reads a commit's files; [`resolve`] decides.
 
+use std::collections::BTreeSet;
+
 use sha2::{Digest, Sha256};
+
+use crate::pairing_time::{iso, parse_iso};
 
 /// The trailer key a commit carries a pairing under.
 pub const TRAILER_KEY: &str = "Mock-Ref";
 
-/// How far from the recorded time a commit may be and still be looked at when the hash is gone.
-/// A day: a pairing is written at the commit, so a rehouse or a rewrite moves the time by
-/// hours at most, and the digest is what decides among the commits inside it.
+/// How far from the recorded time a commit may be and still be read when the hash is gone. The
+/// window only bounds how many commits are read, and the digest decides among them.
 pub const DEFAULT_WINDOW_SECS: i64 = 24 * 60 * 60;
+
+/// The bytes a [`tree_digest`] starts with, so that a change to the encoding is a change to
+/// every digest rather than a silent disagreement between two versions.
+const DIGEST_TAG: &[u8] = b"mock-tree-digest-v1\0";
 
 /// One commit tied to the data it was gated against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pairing {
-    /// The commit hash, 40 or 64 lowercase hex digits.
-    pub hash:   String,
-    /// The commit's time, in seconds since the epoch (UTC).
-    pub time:   i64,
-    /// [`tree_digest`] of the commit's files, 64 lowercase hex digits.
-    pub digest: String,
+    hash:   String,
+    time:   i64,
+    digest: String,
 }
 
 /// A pairing under the name of the data ref it is for, as a commit carries it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Trailer {
-    /// The data ref's name: lowercase letters, digits, `_` and `-`, led by a letter or a digit.
-    pub name:    String,
-    pub pairing: Pairing,
+    name:    String,
+    pairing: Pairing,
 }
 
 impl Pairing {
+    /// A pairing of `hash` (40 or 64 lowercase hex digits), the commit's author time in seconds
+    /// since the epoch (UTC, between years 0000 and 9999), and `digest` ([`tree_digest`] of the
+    /// commit's files, 64 lowercase hex digits).
+    ///
+    /// # Errors
+    ///
+    /// When any of the three is outside what is said above.
+    pub fn new(
+        hash: impl Into<String>,
+        time: i64,
+        digest: impl Into<String>,
+    ) -> Result<Self, String> {
+        let (hash, digest) = (hash.into(), digest.into());
+        if !is_hex(&hash, &[40, 64]) {
+            return Err(format!(
+                "the hash `{hash}` is not 40 or 64 lowercase hex digits"
+            ));
+        }
+        if !is_hex(&digest, &[64]) {
+            return Err(format!(
+                "the digest `{digest}` is not 64 lowercase hex digits"
+            ));
+        }
+        if parse_iso(&iso(time)).is_err() {
+            return Err(format!(
+                "the time {time} is not between the years 0000 and 9999"
+            ));
+        }
+        Ok(Self {
+            hash,
+            time,
+            digest,
+        })
+    }
+
+    /// The commit hash.
+    pub fn hash(&self) -> &str {
+        &self.hash
+    }
+
+    /// The commit's author time, in seconds since the epoch (UTC).
+    pub const fn time(&self) -> i64 {
+        self.time
+    }
+
+    /// The [`tree_digest`] of the commit's files.
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
     /// The pairing as a line: `<hash> <time> <digest>`, the time as `YYYY-MM-DDTHH:MM:SSZ`.
     pub fn render(&self) -> String {
         format!("{} {} {}", self.hash, iso(self.time), self.digest)
@@ -73,25 +129,41 @@ impl Pairing {
                 fields.len()
             ));
         };
-        if !is_hex(hash, &[40, 64]) {
-            return Err(format!(
-                "the hash `{hash}` is not 40 or 64 lowercase hex digits"
-            ));
-        }
-        if !is_hex(digest, &[64]) {
-            return Err(format!(
-                "the digest `{digest}` is not 64 lowercase hex digits"
-            ));
-        }
-        Ok(Self {
-            hash:   hash.to_owned(),
-            time:   parse_iso(time)?,
-            digest: digest.to_owned(),
-        })
+        Self::new(hash, parse_iso(time)?, digest)
     }
 }
 
 impl Trailer {
+    /// A trailer for the data ref `name`: lowercase letters, digits, `_` and `-`, led by a
+    /// letter or a digit.
+    ///
+    /// # Errors
+    ///
+    /// When the name is not one.
+    pub fn new(name: impl Into<String>, pairing: Pairing) -> Result<Self, String> {
+        let name = name.into();
+        if !is_ref_name(&name) {
+            return Err(format!(
+                "the ref name `{name}` is not lowercase letters, digits, `_` and `-`, led by a \
+                 letter or a digit"
+            ));
+        }
+        Ok(Self {
+            name,
+            pairing,
+        })
+    }
+
+    /// The data ref's name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The pairing the trailer carries.
+    pub const fn pairing(&self) -> &Pairing {
+        &self.pairing
+    }
+
     /// The trailer line a commit message carries.
     pub fn render(&self) -> String {
         format!("{TRAILER_KEY}: {} {}", self.name, self.pairing.render())
@@ -113,16 +185,7 @@ impl Trailer {
         let (name, pairing) = rest
             .split_once(' ')
             .ok_or_else(|| format!("`{line}` names no pairing after the ref name"))?;
-        if !is_ref_name(name) {
-            return Err(format!(
-                "the ref name `{name}` is not lowercase letters, digits, `_` and `-`, led by a \
-                 letter or a digit"
-            ));
-        }
-        Ok(Self {
-            name:    name.to_owned(),
-            pairing: Pairing::parse(pairing)?,
-        })
+        Self::new(name, Pairing::parse(pairing)?)
     }
 }
 
@@ -151,15 +214,20 @@ pub fn trailers(message: &str) -> Result<Vec<Trailer>, String> {
     Ok(out)
 }
 
-/// The digest of a set of files: SHA-256 over each file's path and contents, in path order,
-/// each length-prefixed so that no two different sets run together into the same bytes. No git
+/// The digest of a set of files, as bytes fed to SHA-256: the tag `mock-tree-digest-v1` and a NUL,
+/// then for each file in ascending path order the path's length in bytes as 8 little-endian
+/// bytes, the path, the content's length as 8 little-endian bytes, and the content. The lengths
+/// make the stream read back one way only, so no two different sets give the same bytes. No git
 /// object is read, so the same files give the same digest in any repository they are in.
 ///
-/// Paths are relative and `/` separated, as git lists them. File modes are not part of it.
+/// Paths are relative and `/` separated, as git lists them. File modes are not part of it, and
+/// the digest cannot tell a symlink from a file that holds the link's text: a caller whose tree
+/// has symlinks must refuse them before it gets here.
 ///
 /// # Errors
 ///
-/// When a path is empty, absolute, holds a backslash or a `.` or `..` segment, or is given twice.
+/// When a path is empty, absolute, holds a backslash or a `.` or `..` segment, is given twice, or
+/// is a file and also a directory of another path.
 pub fn tree_digest<'a, I>(files: I) -> Result<String, String>
 where
     I: IntoIterator<Item = (&'a str, &'a [u8])>,
@@ -174,16 +242,28 @@ where
 }
 
 /// [`tree_digest`] a file at a time, for a tree too large to hold: the files are given in
-/// ascending path order, one after another, and only the one in hand is in memory.
-#[derive(Debug, Default)]
+/// ascending path order, one after another. The paths are kept, to refuse a file that is also
+/// a directory, and the contents are not.
+#[derive(Debug)]
 pub struct TreeHasher {
     hasher: Sha256,
-    last:   Option<String>,
+    given:  BTreeSet<String>,
+}
+
+impl Default for TreeHasher {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TreeHasher {
     pub fn new() -> Self {
-        Self::default()
+        let mut hasher = Sha256::new();
+        hasher.update(DIGEST_TAG);
+        Self {
+            hasher,
+            given: BTreeSet::new(),
+        }
     }
 
     /// The next file. Its path has to be above the one before it, which also refuses a path
@@ -192,10 +272,11 @@ impl TreeHasher {
     /// # Errors
     ///
     /// When the path is not a relative path of `/` separated names without `.` or `..`, is
-    /// given twice, or is not above the path before it.
+    /// given twice, is not above the path before it, or has a directory that was given as a
+    /// file.
     pub fn file(&mut self, path: &str, content: &[u8]) -> Result<(), String> {
         check_path(path)?;
-        if let Some(last) = &self.last {
+        if let Some(last) = self.given.last() {
             if path == last {
                 return Err(format!("the path `{path}` is given twice"));
             }
@@ -206,11 +287,19 @@ impl TreeHasher {
                 ));
             }
         }
+        for (at, _) in path.match_indices('/') {
+            if self.given.contains(&path[.. at]) {
+                return Err(format!(
+                    "`{}` is a file, and `{path}` is under it",
+                    &path[.. at]
+                ));
+            }
+        }
         self.hasher.update((path.len() as u64).to_le_bytes());
         self.hasher.update(path.as_bytes());
         self.hasher.update((content.len() as u64).to_le_bytes());
         self.hasher.update(content);
-        self.last = Some(path.to_owned());
+        self.given.insert(path.to_owned());
         Ok(())
     }
 
@@ -239,7 +328,7 @@ fn check_path(path: &str) -> Result<(), String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate<'a> {
     pub hash: &'a str,
-    /// The commit's time, in seconds since the epoch (UTC).
+    /// The commit's author time, in seconds since the epoch (UTC).
     pub time: i64,
 }
 
@@ -263,6 +352,10 @@ pub enum Resolution {
     },
     /// The hash is gone and no commit near the recorded time has the recorded digest.
     Missing,
+    /// As [`Resolution::Missing`], but the history the caller holds is cut short, so the commit
+    /// may be one that was not fetched. [`resolve`] never gives this: it does not know how much
+    /// history it was given, and the caller that does turns a `Missing` into this one.
+    Truncated,
 }
 
 /// Which commit a pairing names, among `candidates`.
@@ -337,12 +430,18 @@ const fn is_hex(s: &str, lengths: &[usize]) -> bool {
 
 /// Whether `s` is a data ref name, which is also what a trailer calls the ref: lowercase letters,
 /// digits, `_` and `-`, led by a letter or a digit.
-pub fn is_ref_name(s: &str) -> bool {
-    let mut chars = s.chars();
-    chars
-        .next()
-        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+pub const fn is_ref_name(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let letter_or_digit = matches!(bytes[i], b'a'..=b'z' | b'0'..=b'9');
+        let inner = bytes[i] == b'_' || bytes[i] == b'-';
+        if !(letter_or_digit || (i > 0 && inner)) {
+            return false;
+        }
+        i += 1;
+    }
+    !bytes.is_empty()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -353,76 +452,6 @@ fn hex(bytes: &[u8]) -> String {
         out.push(char::from(DIGITS[usize::from(b & 15)]));
     }
     out
-}
-
-/// Days since 1970-01-01 of a civil date (proleptic Gregorian).
-const fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = (month + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-/// The civil date of a day count since 1970-01-01.
-const fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + if month <= 2 { 1 } else { 0 };
-    (year, month, day)
-}
-
-/// A time as `YYYY-MM-DDTHH:MM:SSZ`.
-fn iso(secs: i64) -> String {
-    let days = secs.div_euclid(86_400);
-    let rest = secs.rem_euclid(86_400);
-    let (y, m, d) = civil_from_days(days);
-    format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
-        rest / 3600,
-        rest % 3600 / 60,
-        rest % 60
-    )
-}
-
-/// Reads the one format [`iso`] writes: four-digit year, a real date, a real time, `Z`.
-fn parse_iso(s: &str) -> Result<i64, String> {
-    let bad = || format!("`{s}` is not a UTC time as `YYYY-MM-DDTHH:MM:SSZ`");
-    let b = s.as_bytes();
-    if b.len() != 20
-        || b[4] != b'-'
-        || b[7] != b'-'
-        || b[10] != b'T'
-        || b[13] != b':'
-        || b[16] != b':'
-        || b[19] != b'Z'
-    {
-        return Err(bad());
-    }
-    let num = |from: usize, to: usize| -> Result<i64, String> {
-        let part = &s[from .. to];
-        if part.bytes().all(|c| c.is_ascii_digit()) {
-            part.parse::<i64>().map_err(|_| bad())
-        } else {
-            Err(bad())
-        }
-    };
-    let (y, mo, d) = (num(0, 4)?, num(5, 7)?, num(8, 10)?);
-    let (h, mi, se) = (num(11, 13)?, num(14, 16)?, num(17, 19)?);
-    if !(1 ..= 12).contains(&mo) || !(1 ..= 31).contains(&d) || h > 23 || mi > 59 || se > 59 {
-        return Err(bad());
-    }
-    let secs = days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60 + se;
-    // a day past the end of its month does not round-trip, so Feb 30 is refused here
-    if iso(secs) == s { Ok(secs) } else { Err(bad()) }
 }
 
 #[cfg(test)]

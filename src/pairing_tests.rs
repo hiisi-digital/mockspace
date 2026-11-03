@@ -77,48 +77,6 @@ fn a_path_given_twice_and_a_path_that_is_not_relative_are_refused() {
     assert!(files(&[(".hidden/..data/a.b", b"")]).is_ok());
 }
 
-#[test]
-fn a_time_goes_to_text_and_back_for_the_dates_that_trip_a_calendar() {
-    for (secs, text) in [
-        (0, "1970-01-01T00:00:00Z"),
-        (T, "2026-11-03T10:15:23Z"),
-        (951_782_400, "2000-02-29T00:00:00Z"),
-        (1_709_164_799, "2024-02-28T23:59:59Z"),
-        (1_709_164_800, "2024-02-29T00:00:00Z"),
-        (1_709_251_200, "2024-03-01T00:00:00Z"),
-        (4_102_444_799, "2099-12-31T23:59:59Z"),
-        (-1, "1969-12-31T23:59:59Z"),
-    ] {
-        assert_eq!(iso(secs), text);
-        assert_eq!(parse_iso(text).unwrap(), secs, "{text}");
-    }
-}
-
-#[test]
-fn a_time_that_is_not_one_real_utc_time_in_the_one_format_is_refused() {
-    for bad in [
-        "2026-02-30T00:00:00Z",
-        "2025-02-29T00:00:00Z",
-        "1900-02-29T00:00:00Z",
-        "2026-13-01T00:00:00Z",
-        "2026-00-10T00:00:00Z",
-        "2026-11-03T24:00:00Z",
-        "2026-11-03T10:60:00Z",
-        "2026-11-03T10:15:60Z",
-        "2026-11-03 10:15:23Z",
-        "2026-11-03T10:15:23",
-        "2026-11-03T10:15:23+00:00",
-        "2026-11-03T10:15:23.5Z",
-        "26-11-03T10:15:23Z",
-        "2026-1-03T10:15:23Z",
-        "+026-11-03T10:15:23Z",
-        "2026-11-03T10:15:2xZ",
-        "",
-    ] {
-        assert!(parse_iso(bad).is_err(), "{bad}");
-    }
-}
-
 fn pairing() -> Pairing {
     Pairing {
         hash:   H1.to_owned(),
@@ -447,4 +405,78 @@ fn a_file_at_a_time_refuses_a_path_given_twice_and_a_path_that_is_not_relative()
     // the refused ones were not taken in: the next ascending file still goes
     hasher.file("b", b"2").unwrap();
     assert_eq!(hasher.finish(), files(&[("a", b"1"), ("b", b"2")]).unwrap());
+}
+
+// The expected digests below were made outside this code: the bytes written with `printf` as the
+// doc of `tree_digest` describes them (the tag and a NUL, then for each file the path's length as
+// 8 little-endian bytes, the path, the content's length as 8 little-endian bytes, the content)
+// and hashed with `sha256sum`. A change to the encoding changes them.
+#[test]
+fn the_digest_is_the_one_a_stream_written_by_hand_gives() {
+    assert_eq!(
+        files(&[]).unwrap(),
+        "f3d4e777047927c3c0e8a2fcac7e30e29104419ee4c2328eee6e7aadd126112a"
+    );
+    assert_eq!(
+        files(&[("b/c.toml", b"yy"), ("a.toml", b"x\n")]).unwrap(),
+        "c3dfe547838b57615041c99ee22f2408cf753eb5ab3963a00d88b7278382e504"
+    );
+    assert_eq!(
+        files(&[("e", b"")]).unwrap(),
+        "2c183f55ec8c36836cd5b92de2a4c67fe463100b8c4f4414faeb3fcf5ee6e6a5"
+    );
+}
+
+#[test]
+fn a_file_that_is_also_a_directory_is_refused_however_far_apart_they_sort() {
+    let err = files(&[("a", b"1"), ("a/b", b"2")]).unwrap_err();
+    assert!(err.contains("`a` is a file"), "{err}");
+    // `a-b` sorts between `a` and `a/b`, so remembering only the last path would miss it
+    let err = files(&[("a", b"1"), ("a-b", b"3"), ("a/b", b"2")]).unwrap_err();
+    assert!(err.contains("`a` is a file"), "{err}");
+    let mut hasher = TreeHasher::new();
+    hasher.file("a", b"1").unwrap();
+    hasher.file("a-b", b"3").unwrap();
+    assert!(hasher.file("a/b", b"2").is_err());
+    // the controls: names that only start the same way
+    assert!(files(&[("a-b", b"3"), ("a/b", b"2")]).is_ok());
+    assert!(files(&[("a.toml", b"1"), ("a/b", b"2")]).is_ok());
+    assert!(files(&[("a/b", b"1"), ("a/c/d", b"2")]).is_ok());
+}
+
+#[test]
+fn a_pairing_is_only_made_of_a_real_hash_a_real_digest_and_a_time_that_has_a_year() {
+    assert!(Pairing::new(H1, T, D1).is_ok());
+    for (hash, time, digest, what) in [
+        (&H1[.. 39], T, D1, "a short hash"),
+        (
+            "0123456789ABCDEF0123456789abcdef01234567",
+            T,
+            D1,
+            "an uppercase hash",
+        ),
+        (H1, T, &D1[.. 63], "a short digest"),
+        (H1, -62_167_219_201, D1, "a time before year 0000"),
+        (H1, 253_402_300_800, D1, "a time in year 10000"),
+    ] {
+        assert!(Pairing::new(hash, time, digest).is_err(), "{what}");
+    }
+    // the controls: the first and the last second that have four-digit years
+    assert!(Pairing::new(H1, -62_167_219_200, D1).is_ok());
+    assert!(Pairing::new(H1, 253_402_300_799, D1).is_ok());
+    // and whatever is made, renders to a line that reads back
+    for time in [-62_167_219_200, -1, 0, T, 253_402_300_799] {
+        let made = Pairing::new(H2, time, D2).unwrap();
+        assert_eq!(Pairing::parse(&made.render()), Ok(made));
+    }
+}
+
+#[test]
+fn a_trailer_is_only_made_for_a_name_a_ref_can_have() {
+    let p = Pairing::new(H1, T, D1).unwrap();
+    assert!(Trailer::new("registry", p.clone()).is_ok());
+    for bad in ["", "Registry", "-registry", "_x", "a b", "a/b", "a.b"] {
+        assert!(Trailer::new(bad, p.clone()).is_err(), "{bad:?}");
+    }
+    const _: () = assert!(is_ref_name("registry") && is_ref_name("a-b_c9") && !is_ref_name("-x"));
 }
