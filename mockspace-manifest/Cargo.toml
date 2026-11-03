@@ -8,7 +8,7 @@ edition = "2024"
 # published and depends on it.
 publish = true
 description = "The mockspace.toml keys the mockspace launcher reads, and the durable git-hook gate, shared between the launcher and the engine."
-readme = "../README.md"
+readme = "README.md"
 rust-version = "1.88"
 license = "MPL-2.0"
 repository = "https://github.com/hiisi-digital/mockspace"
