@@ -173,3 +173,24 @@ fn a_supertrait_and_a_where_on_self_give_one_set_of_bounds_in_the_parts() {
     let c = only("pub trait Tr: Copy { fn f(&self); }");
     assert_ne!(a.parts, c.parts, "a bound fewer is another trait");
 }
+
+#[test]
+fn a_unit_struct_and_an_empty_tuple_struct_are_two_declarations_in_the_parts() {
+    // Mutation: the kind of the body left out of the frame, so both read as `struct ;`.
+    let unit = only("pub struct Marker;");
+    let tuple = only("pub struct Marker();");
+    assert_eq!(unit.parts.members, tuple.parts.members, "neither has a member");
+    assert_ne!(unit.parts, tuple.parts);
+}
+
+#[test]
+fn the_order_of_variants_numbered_by_place_is_in_the_frame_and_the_order_of_others_is_not() {
+    // Mutation: the order left out of the frame, which a consumer treating members as a bag needs.
+    let ab = only("pub enum Mode { A, B }");
+    let ba = only("pub enum Mode { B, A }");
+    assert_ne!(ab.parts.frame, ba.parts.frame, "the place is the number");
+    let numbered_ab = only("pub enum Mode { A = 1, B = 2 }");
+    let numbered_ba = only("pub enum Mode { B = 2, A = 1 }");
+    assert_eq!(numbered_ab.parts.frame, numbered_ba.parts.frame, "a hand numbered variant keeps no place");
+    assert_eq!(numbered_ab.parts, numbered_ba.parts);
+}
