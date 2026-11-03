@@ -5,28 +5,6 @@
 
 use super::*;
 
-/// Recursively collect every `*.toml` under `dir`, skipping dot-directories.
-/// Depth is deliberately unbounded: how a project organises its registry is
-/// its own business, and the loader has no opinion.
-fn collect_toml_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
-    entries.sort_by_key(|e| e.file_name());
-    for entry in entries {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if path.is_dir() {
-            if !name.starts_with('.') {
-                collect_toml_files(&path, out);
-            }
-        } else if name.ends_with(".toml") {
-            out.push(path);
-        }
-    }
-}
-
 /// Render a `toml_edit` value as the plain string the tooling stores. Arrays
 /// join with a comma so a multi-valued field still greps and still renders.
 fn value_to_string(v: &toml_edit::Item) -> String {
@@ -49,45 +27,69 @@ fn value_to_string(v: &toml_edit::Item) -> String {
     }
 }
 
-/// Load every registry row declared under `<mock>/registry/`.
+/// Load every registry row declared under `<mock>/registry/`, from the directory, or say why it
+/// could not be read: a directory that cannot be walked is an error, never a registry with no rows.
 ///
 /// Rows whose namespace is not declared are skipped rather than rejected: a
 /// project may keep unrelated TOML in the tree, and refusing to start over an
-/// unknown key would be the wrong failure.
-pub fn load_registry(mock_dir: &Path, namespaces: &[RegistryNamespace]) -> Registry {
-    load_registry_of(mock_dir, namespaces, None)
+/// unknown key would be the wrong failure. This is the directory form every project
+/// has had; [`load_registry_from`] takes the stores a project declares, and is what
+/// the engine itself calls.
+pub fn load_registry_in_dir(
+    mock_dir: &Path,
+    namespaces: &[RegistryNamespace],
+) -> Result<Registry, RegistryStoreError> {
+    load_registry_from(&RegistryStores::directory(mock_dir), namespaces, None)
 }
 
-/// Load the rows of the namespaces in `wanted` only, or every row when it is `None`.
+/// Load the rows of the namespaces in `wanted` only, or every row when it is `None`, from
+/// `stores`.
 ///
 /// A file whose text never writes a `[[key]]` header of a wanted namespace is not parsed at
 /// all, which is where the time goes on a registry holding one very large namespace. Such a
 /// file is also left out of `files_read`, because it was not read as registry data.
-pub fn load_registry_of(
-    mock_dir: &Path,
+pub fn load_registry_from(
+    stores: &RegistryStores,
+    namespaces: &[RegistryNamespace],
+    wanted: Option<&BTreeSet<String>>,
+) -> Result<Registry, RegistryStoreError> {
+    if namespaces.is_empty() {
+        return Ok(Registry::default());
+    }
+    let mut files = Vec::new();
+    for rel in stores.files()? {
+        let text = stores
+            .read(&rel)?
+            .and_then(|bytes| String::from_utf8(bytes).ok());
+        files.push((rel, text));
+    }
+    Ok(rows_of_texts(stores.root(), files, namespaces, wanted))
+}
+
+/// The rows of `files`, each a path under the registry `root` and its text (`None` for a
+/// file that could not be read as text). The one place a registry's text becomes rows, so
+/// what the writer checks is what the loader would load.
+pub(crate) fn rows_of_texts(
+    root: &Path,
+    files: Vec<(String, Option<String>)>,
     namespaces: &[RegistryNamespace],
     wanted: Option<&BTreeSet<String>>,
 ) -> Registry {
     let mut reg = Registry::default();
-    if namespaces.is_empty() {
-        return reg;
-    }
-    let root = mock_dir.join("registry");
-    if !root.is_dir() {
-        return reg;
-    }
     let known: BTreeSet<&str> = namespaces.iter().map(|n| n.key.as_str()).collect();
-
-    let mut files = Vec::new();
-    collect_toml_files(&root, &mut files);
-    let all_files = files.clone();
+    let source_of = |rel: &str| {
+        rel.split('/')
+            .fold(root.to_path_buf(), |p, part| p.join(part))
+    };
+    let all_files: Vec<PathBuf> = files.iter().map(|(r, _)| source_of(r)).collect();
     let mut read = Vec::new();
     let needles: Vec<String> = wanted
         .map(|w| w.iter().map(|k| format!("[[{k}]]")).collect())
         .unwrap_or_default();
 
-    for path in files {
-        let Ok(text) = fs::read_to_string(&path) else {
+    for (rel, text) in files {
+        let path = source_of(&rel);
+        let Some(text) = text else {
             continue;
         };
         // A header written with inner spaces (`[[ key ]]`) is valid TOML and the needle does
@@ -185,20 +187,23 @@ fn namespace_names_in<'a>(text: &'a str, keys: &BTreeSet<&str>) -> BTreeSet<&'a 
 /// and a name of a declared namespace written in the text of a loaded row, where a reference
 /// to it would sit. An expression asking what refers to or rests on a row (`refsto`,
 /// `sourcesof`) can be answered by any row, so it loads all of them.
-pub fn load_registry_for_expr(
-    mock_dir: &Path,
+/// The rows an expression reads, from `stores`: only the namespaces it names, and those they refer to.
+pub fn load_registry_for_expr_from(
+    stores: &RegistryStores,
     namespaces: &[RegistryNamespace],
     expr: &str,
-) -> Registry {
+) -> Result<Registry, RegistryStoreError> {
     if expr.contains("refsto") || expr.contains("sourcesof") {
-        return load_registry(mock_dir, namespaces);
+        return load_registry_from(stores, namespaces, None);
     }
     let keys: BTreeSet<&str> = namespaces.iter().map(|n| n.key.as_str()).collect();
     let ref_fields = super::model::reference_fields(namespaces);
-    let mut wanted: BTreeSet<String> =
-        namespace_names_in(expr, &keys).into_iter().map(String::from).collect();
+    let mut wanted: BTreeSet<String> = namespace_names_in(expr, &keys)
+        .into_iter()
+        .map(String::from)
+        .collect();
     loop {
-        let reg = load_registry_of(mock_dir, namespaces, Some(&wanted));
+        let reg = load_registry_from(stores, namespaces, Some(&wanted))?;
         let mut reach: BTreeSet<String> = BTreeSet::new();
         for ns in namespaces.iter().filter(|n| wanted.contains(&n.key)) {
             for f in &ns.fields {
@@ -214,14 +219,21 @@ pub fn load_registry_for_expr(
                 // A `ref` field holds `namespace::slug` bare, with no `{{ }}` around it.
                 if text.contains("{{") || refs.is_some_and(|r| r.contains(field)) {
                     reach.extend(
-                        namespace_names_in(text, &keys).into_iter().map(String::from),
+                        namespace_names_in(text, &keys)
+                            .into_iter()
+                            .map(String::from),
                     );
                 }
             }
         }
         if reach.is_subset(&wanted) {
-            return reg;
+            return Ok(reg);
         }
         wanted.extend(reach);
     }
+}
+
+/// The registry of a project, from the stores its config declares: the directory unless it mounts a ref.
+pub fn load_registry_for(cfg: &crate::config::Config) -> Result<Registry, RegistryStoreError> {
+    load_registry_from(&cfg.registry_stores()?, &cfg.registry_namespaces, None)
 }

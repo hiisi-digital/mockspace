@@ -381,3 +381,63 @@ fn the_cargo_config_the_run_builds_with_moves_every_member() {
     assert!(moved(&three, &at(Some("[profile.dev.package.\"web\"]\nopt-level = 3\n"))).is_empty());
     assert_eq!(none, at(None), "no config is the salt there always was");
 }
+
+fn graph_lock(serde: &str, itoa: &str) -> String {
+    format!(
+        r#"version = 4
+
+[[package]]
+name = "ext"
+version = "0.1.0"
+
+[[package]]
+name = "itoa"
+version = "{itoa}"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "i"
+
+[[package]]
+name = "lim"
+version = "0.1.0"
+
+[[package]]
+name = "mesh"
+version = "0.1.0"
+
+[[package]]
+name = "render"
+version = "0.1.0"
+dependencies = ["itoa", "lim", "mesh"]
+
+[[package]]
+name = "serde"
+version = "{serde}"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "s"
+
+[[package]]
+name = "tool"
+version = "0.1.0"
+dependencies = ["ext", "serde"]
+
+[[package]]
+name = "web"
+version = "0.1.0"
+dependencies = ["render"]
+"#
+    )
+}
+
+/// A lock move on one edge reruns that edge's dependents and nobody else, which
+/// `the_lockfile_moves_every_package` pins for a lock that does not read.
+#[test]
+fn a_lock_move_on_one_edge_moves_only_the_members_that_reach_it() {
+    let r = Repo::new("lock-edge");
+    r.write("mock/Cargo.lock", &graph_lock("1.0.0", "1.0.0"));
+    let before = r.fp();
+    r.write("mock/Cargo.lock", &graph_lock("1.0.1", "1.0.0"));
+    assert_eq!(moved(&before, &r.fp()), vec!["tool"]);
+    let before = r.fp();
+    r.write("mock/Cargo.lock", &graph_lock("1.0.1", "1.0.9"));
+    assert_eq!(moved(&before, &r.fp()), vec!["render", "web"]);
+}

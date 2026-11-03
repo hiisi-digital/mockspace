@@ -4,7 +4,7 @@
 //--------------------------------------------------------------------------------------------------
 
 //! Canonical forms of a constant's type and value, so two spellings of one
-//! thing compare equal and two different things never do.
+//! value compare equal. What a type declares is `shape`.
 //!
 //! A value is compared only when it is *closed*: built from literals and the
 //! operators between them. Anything that names something (a path, a call, a

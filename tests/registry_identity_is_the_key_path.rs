@@ -20,7 +20,7 @@ use std::fs;
 use std::path::Path;
 
 use mockspace::registry::{
-    Registry, RegistryNamespace, load_registry, referrers, render_table, table_cells, validate,
+    Registry, RegistryNamespace, load_registry_in_dir, referrers, render_table, table_cells, validate,
     validate_row_references,
 };
 
@@ -109,7 +109,8 @@ fn load(layout: &[(&str, &[usize])]) -> (tempfile::TempDir, Vec<RegistryNamespac
         write(&mock.join("registry").join(file), &text);
     }
     let cfg = mockspace::config::Config::from_dir(mock);
-    let reg = load_registry(mock, &cfg.registry_namespaces);
+    let reg = load_registry_in_dir(mock, &cfg.registry_namespaces)
+        .expect("the registry directory reads");
     (dir, cfg.registry_namespaces, reg)
 }
 
@@ -210,7 +211,8 @@ fn one_key_path_in_two_files_is_refused_and_both_files_are_named() {
     write(&mock.join("registry/subject.toml"), &sky);
     write(&mock.join("registry/elsewhere/in/the/tree/again.toml"), &sky);
     let cfg = mockspace::config::Config::from_dir(mock);
-    let reg = load_registry(mock, &cfg.registry_namespaces);
+    let reg = load_registry_in_dir(mock, &cfg.registry_namespaces)
+        .expect("the registry directory reads");
 
     let findings = validate(&cfg.registry_namespaces, &reg);
     assert_eq!(findings.len(), 1, "{:?}", findings.iter().map(|f| &f.message).collect::<Vec<_>>());
@@ -233,7 +235,8 @@ fn the_same_row_id_in_two_namespaces_is_two_rows() {
         "[[subject]]\nid = \"sky\"\nwhat = \"x\"\n\n[[tenet]]\nid = \"sky\"\nsubject = \"sky\"\ntext = \"y\"\n",
     );
     let cfg = mockspace::config::Config::from_dir(mock);
-    let reg = load_registry(mock, &cfg.registry_namespaces);
+    let reg = load_registry_in_dir(mock, &cfg.registry_namespaces)
+        .expect("the registry directory reads");
     assert!(reg.duplicates.is_empty(), "{:?}", reg.duplicates);
     assert!(reg.get("subject::sky").is_some() && reg.get("tenet::sky").is_some());
 }
@@ -270,7 +273,8 @@ fn renaming_a_slug_does_not_move_a_group() {
             .join("\n");
         write(&mock.join("registry/terms.toml"), &text);
         let cfg = mockspace::config::Config::from_dir(mock);
-        let reg = load_registry(mock, &cfg.registry_namespaces);
+        let reg = load_registry_in_dir(mock, &cfg.registry_namespaces)
+            .expect("the registry directory reads");
         let term = cfg.registry_namespaces.iter().find(|n| n.key == "term").unwrap();
         render_table(term, &reg, &cfg)
             .lines()
@@ -307,7 +311,8 @@ text = \"late\"
 ";
     write(&mock.join("registry/terms.toml"), text);
     let cfg = mockspace::config::Config::from_dir(mock);
-    let reg = load_registry(mock, &cfg.registry_namespaces);
+    let reg = load_registry_in_dir(mock, &cfg.registry_namespaces)
+        .expect("the registry directory reads");
     let term = cfg.registry_namespaces.iter().find(|n| n.key == "term").unwrap();
     let out = render_table(term, &reg, &cfg);
     let headings: Vec<&str> = out.lines().filter(|l| l.starts_with("### ")).collect();

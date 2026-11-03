@@ -7,7 +7,9 @@
 //!
 //! Two findings, both about one concept defined in more than one crate:
 //!
-//! - the same type name (struct, enum, trait, union) defined in two crates;
+//! - the same type (struct, enum, trait, union), same name and same shape,
+//!   defined in two crates. A different shape under one name is two types, and
+//!   the same shape under two names is a coincidence; neither is this finding;
 //! - the same constant or static, same name, same type and same value, defined
 //!   in two crates. A different value under one name is two constants, and the
 //!   same value under two names is a coincidence; neither is this finding.
@@ -38,6 +40,27 @@
 //! Only the item's own qualifier is read: a plain `pub` item inside a private
 //! module is compared as `pub`.
 //!
+//! # How types are compared
+//!
+//! A type is compared by the name it is defined under and by what it declares,
+//! in a canonical form (`shape::canonical_declaration`): the keyword, the
+//! generics with their bounds, and the members. Two definitions are one finding
+//! when the name and the form are equal, and the rest are not reported.
+//!
+//! - Left out of the form: comments, attributes and visibilities; a comma that
+//!   only closes a list; the names of generic parameters, which are compared by
+//!   their place in the list; where a bound is written, so `<T: Copy>` and
+//!   `where T: Copy` agree; the order of a list of bounds; the body of a trait
+//!   method, so a required method and a provided one still differ.
+//! - A set, so its order does not matter: the fields of a struct or a union, the
+//!   items of a trait, and the variants of an enum unless they are numbered by
+//!   their place.
+//! - In order: the fields of a tuple struct, the parameters of a function, the
+//!   generic parameters, and the variants of an enum that is fieldless or has a
+//!   `repr` while at least one of them has no number of its own.
+//! - A copy that has drifted by a field, a bound or a signature is another
+//!   declaration and is not reported.
+//!
 //! # How values are compared
 //!
 //! A value is compared as its canonical token form. An integer is its decimal
@@ -63,13 +86,14 @@
 //! - Items inside a function body, and associated constants in an `impl` or a
 //!   `trait`, which belong to their type rather than to the crate.
 //! - A `static` in an `extern` block, which has no value of its own.
-//! - Names are compared as written. A type re-exported under another name, or two
-//!   unrelated types that share a name by accident, are told apart by nobody.
+//! - Names are compared as written. A type re-exported under another name is
+//!   told apart by nobody, and a copy that drifted is another declaration (see above).
 //! - Values are not evaluated: `16` and `1 << 4` are different values here. Two
 //!   spellings of one string (`"\u{41}"` and `"A"`, or a raw string) differ too,
 //!   and so do `1000` and `1000u32` inside an expression.
 //! - An open value (see above), and a type spelled through a different path
-//!   (`u32` against `core::primitive::u32`), never match.
+//!   (`u32` against `core::primitive::u32`), whether in a constant or in a
+//!   declaration, are not matched.
 //! - A `cfg` other than a test-only one does not exempt anything: the same
 //!   constant under `cfg(unix)` in one crate and `cfg(windows)` in another is two
 //!   definitions. `cfg_attr` is not read, so a `#[cfg_attr(test, path = "..")]`
@@ -80,7 +104,9 @@
 //!   `cfg(test)` declaration would have exempted them.
 //! - A file no `mod` declaration reaches is counted as ordinary source.
 
+pub(crate) mod declared;
 mod defs;
+mod shape;
 mod value;
 
 use std::collections::BTreeMap;
@@ -91,9 +117,9 @@ use crate::{Lint, LintContext, LintError, Severity, WorkspaceLint};
 /// Whether only fully `pub` items are compared across crates. See the module doc.
 const COMPARE_ONLY_PUB: bool = true;
 
-/// Pairs of crate suffixes where duplicate type names are expected.
-/// Macro-util crates and their parent crates often define matching types
-/// at different abstraction levels (parsing vs. runtime).
+/// Pairs of crate suffixes where a definition in both is expected, whatever its shape.
+/// A macro-util crate is a proc-macro crate, and the crate that uses its macros depends on it,
+/// so it cannot depend on that crate in turn and holds its own copy of what the two share.
 /// Full crate names are built as `<prefix>-<suffix>` at check time.
 const EXEMPT_PAIRS: &[(&str, &str)] =
     &[("macro-util", "behavior"), ("macro-util", "resource"), ("macro-util", "signal")];
@@ -147,11 +173,16 @@ fn check(crates: &[(&str, &LintContext)], only_pub: bool) -> Vec<LintError> {
         .collect();
 
     // Grouped in a sorted map so the findings come out in one order.
-    let mut types: BTreeMap<&str, Vec<&Def>> = BTreeMap::new();
+    let mut types: BTreeMap<(&str, &str), Vec<&Def>> = BTreeMap::new();
     let mut values: BTreeMap<(&str, &str, &str, &str), Vec<&Def>> = BTreeMap::new();
     for def in &all_defs {
         match &def.item {
-            Item::Type(_) => types.entry(def.name.as_str()).or_default().push(def),
+            Item::Type(ty) => {
+                types
+                    .entry((def.name.as_str(), ty.shape.as_str()))
+                    .or_default()
+                    .push(def)
+            },
             Item::Value(v) => {
                 values
                     .entry((v.kind, def.name.as_str(), v.ty.as_str(), v.value.as_str()))
@@ -162,12 +193,13 @@ fn check(crates: &[(&str, &LintContext)], only_pub: bool) -> Vec<LintError> {
     }
 
     let mut errors = Vec::new();
-    for (name, defs) in &types {
+    for ((name, _), defs) in &types {
         report(defs, &exempt_full, "type", &mut errors, |dup, first| {
-            let Item::Type(kind) = &dup.item else { unreachable!("grouped as a type") };
+            let Item::Type(ty) = &dup.item else { unreachable!("grouped as a type") };
             format!(
-                "{}{kind} `{name}` also defined in {}: one definition per concept",
+                "{}{} `{name}` also defined with the same shape in {}: one definition per concept",
                 qualifier(dup),
+                ty.kind,
                 first.crate_name
             )
         });

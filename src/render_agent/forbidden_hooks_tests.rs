@@ -161,7 +161,11 @@ fn repo_with_crates(repo: &Path, forbidden: &str) -> Config {
         let dir = repo.join("mock/crates").join(krate);
         fs::create_dir_all(dir.join("src")).unwrap();
         fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"{krate}\"\n")).unwrap();
-        fs::write(dir.join("src/lib.rs"), "pub fn f() {}\n").unwrap();
+        // A function of its own per crate: a scoped gate run hands the lints that compare crates
+        // every crate, and one `f` in both is a duplicate that has nothing to do with the hook.
+        // The tests that write `f` into `sim-core` or a new crate leave `other` its own.
+        let name = krate.replace('-', "_");
+        fs::write(dir.join("src/lib.rs"), format!("pub fn {name}() {{}}\n")).unwrap();
     }
     let mut cfg = cfg_with_rule(repo);
     cfg.crate_prefix = "sim".to_string();

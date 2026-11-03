@@ -262,7 +262,8 @@ fn the_view_built_from_a_real_directory_carries_the_edges() {
     );
     let mock = tmp.path().join("mock");
     let cfg = mockspace::config::Config::from_dir(&mock);
-    let reg = mockspace::registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+    let reg = mockspace::registry::load_registry_in_dir(&cfg.mock_dir, &cfg.registry_namespaces)
+        .expect("the registry directory reads");
     let view = mockspace::registry::build_view(&reg, &cfg.registry_namespaces);
 
     assert_eq!(view.len(), 3, "two slots and one answer");

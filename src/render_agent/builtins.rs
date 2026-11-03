@@ -59,9 +59,7 @@ set -uo pipefail
 __INPUT=$(cat)
 {{{{HOOK_HELPERS}}}}
 
-# Fail closed without jq. Every field below comes from it, and with empty
-# fields DOMAIN stays empty and the gate allows everything: a gate reporting
-# success while enforcing nothing, the exact failure this hook replaces.
+# Fail closed without jq: with empty fields the gate would allow everything.
 command -v jq >/dev/null 2>&1 \
     || deny "the message gate cannot run: jq is not on PATH. It refuses rather than passing what it cannot read; install jq and retry."
 
@@ -69,36 +67,10 @@ TOOL_NAME=$(echo "$__INPUT" | jq -r '.tool_name // ""' 2>/dev/null || echo "")
 COMMAND=$(_extract "command")
 FILE_PATH=""
 
-# The ENTIRE tool input, serialised. Scanning this rather than one field is what
-# makes a heredoc, a single-quoted body, a `--body` argument and an MCP tool's
-# structured fields all visible to the same check.
+# The entire tool input, serialised: a heredoc, a single-quoted body, `--body` and an MCP tool's fields are all visible to one check.
 INPUT_ALL=$(echo "$__INPUT" | jq -r '.tool_input | tostring' 2>/dev/null || echo "")
 
-# Only this repo's business.
-#
-# The shared `_scope_or_allow` cannot be used here: it allows when both
-# FILE_PATH and COMMAND are empty, which is every MCP tool, and those are the
-# tools this hook exists to cover. Scope on the process cwd instead, which is
-# where an MCP tool operates, falling back to the command's mention of the repo.
-#
-# A command that names a repository has said which repository it is about, and
-# that beats the cwd. `git -C <path>` and `--git-dir <path>` both name one, and
-# addressing every repo by absolute path is the convention here, so a shell
-# sitting in one repo commits in another routinely. On the cwd alone this
-# repo's gate claimed those commits, and having claimed one it linted the whole
-# serialised tool input as though it were the subject, so a long command was
-# denied for a length it never had.
-#
-# Every comparison below is made against the root both as written and as the
-# filesystem resolves it. A root under a symlink is the ordinary case rather
-# than the exotic one: on macOS `/var` links to `/private/var`, so a shell that
-# has to take its cwd from the kernel reports the second spelling while the
-# root was generated as the first, and a check comparing one of the two clears
-# a path that is this repository.
-#
-# `pwd -P` throughout, because plain `pwd` is logical: `cd /var/x && pwd` hands
-# back `/var/x` unresolved, so resolving a path by cd-ing to it and asking is a
-# no-op without the flag, which is a fix that looks correct and does nothing.
+# Only this repo's business. A command naming a repository (`git -C <path>`, `--git-dir <path>`) beats the cwd. Every root comparison is made as written and as resolved (`pwd -P`), since a root under a symlink is ordinary.
 _root_resolved=$(cd "$__HOOK_REPO_ROOT" 2>/dev/null && pwd -P) || _root_resolved=""
 [ -n "$_root_resolved" ] || _root_resolved="$__HOOK_REPO_ROOT"
 
@@ -110,19 +82,8 @@ _is_this_repo() {{
     return 1
 }}
 
-# Merge control authors no message. `git merge --abort` and its siblings back
-# out of or step past an operation in progress, and the message lints fail
-# while a conflicted merge leaves markers in the tree, so taking them as a
-# message refused the one command that clears the markers and left an agent
-# unable to leave a merge it could not finish. Each form is cut out of the
-# command before the verb tests below look at it, which keeps a chain honest:
-# `git merge --abort && git commit -m x` still has its commit.
-#
-# `--continue` is not here on purpose. It concludes the operation with a
-# commit, and a commit opens an editor or takes `-m` or `-F`, so it can author
-# a message and stays linted. `--skip` on `revert` and `cherry-pick` and
-# `--show-current-patch` on `am` write nothing. The flag must end the word, so
-# `--abortx` is not control.
+# Merge control authors no message: `git merge --abort`, `--quit`, and the `--abort|--quit|--skip` forms of revert, cherry-pick and am (`--show-current-patch` for am) are cut from the command before the verb tests, so `git merge --abort && git commit -m x` keeps its commit.
+# `--continue` is not control: it concludes with a commit and stays linted. The flag must end the word.
 _CONTROL_FORM='(^|[^[:alnum:]_-])git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(merge[[:space:]]+--(abort|quit)|revert[[:space:]]+--(abort|quit|skip)|cherry-pick[[:space:]]+--(abort|quit|skip)|am[[:space:]]+--(abort|quit|skip|show-current-patch))([[:space:]]|$|[)"'"'"';&|])'
 COMMAND_AUTHORING=$(printf '%s\n' "$COMMAND" | sed -E "s/$_CONTROL_FORM/\1 /g")
 
@@ -130,9 +91,7 @@ _names_this_repo=0
 _names_other_repo=0
 _bare_git_message=0
 if [ -n "$COMMAND" ]; then
-    # A git message verb with no repository in front of it runs wherever the
-    # shell is, so an explicit path elsewhere in the same command says nothing
-    # about this one and the cwd is still the answer for it.
+    # A git message verb with no repository in front of it runs wherever the shell is, so an explicit path elsewhere says nothing about it.
     if echo "$COMMAND_AUTHORING" | grep -qE '\bgit[[:space:]]+(commit|tag|notes|merge|revert|cherry-pick|am)\b'; then
         _bare_git_message=1
     fi
@@ -142,16 +101,8 @@ if [ -n "$COMMAND" ]; then
         case "$_p" in
             -*) continue ;;
         esac
-        # A relative `-C` resolves against the cwd. One that resolves to
-        # nothing is compared as written, which is right for an absolute path
-        # and declines to guess for anything else.
-        #
-        # `-C` is not git's alone: `grep`, `make` and `tar` all take one, and a
-        # value that names a real directory is indistinguishable from git's
-        # here. `grep -C 3` falls out because a number resolves to nothing;
-        # `make -C /some/dir` does not, and is read as a repository this hook is
-        # not about. What stops that mattering is the unqualified-git test
-        # above, so the two are load-bearing together rather than separately.
+        # A relative `-C` resolves against the cwd; one that resolves to nothing is compared as written.
+        # `-C` is also taken by grep, make and tar; the unqualified-git test above keeps that harmless.
         _abs=$(cd "$_p" 2>/dev/null && pwd -P) || _abs=""
         [ -n "$_abs" ] || _abs="$_p"
         if _is_this_repo "$_abs" || _is_this_repo "$_p"; then
@@ -184,8 +135,7 @@ fi
 DOMAIN=""
 _lower_tool=$(printf '%s' "$TOOL_NAME" | tr '[:upper:]' '[:lower:]')
 
-# Forge tools, by name shape. `pr-`, `-pr` and `-pr-` catch the MCP naming
-# conventions in the wild without needing a list of every server.
+# Forge tools by name shape (`pr-`, `-pr`, `-pr-`, pull request, merge request), covering MCP naming without a list of servers.
 case "$_lower_tool" in
     # `pr` as a whole word in the name, however the server spells its
     # separators: create_pr, pr-create, createPullRequest, merge_request.
@@ -200,21 +150,11 @@ if [ -z "$DOMAIN" ]; then
     esac
 fi
 
-# Shell commands. Checked after tool names so an MCP tool that also carries a
-# command string is classified by what it is rather than by what it wraps.
-#
-# A forge command is a message only where its verb writes one. `gh pr view`,
-# `list`, `diff` and `checks` write nothing, and taking every `gh pr` as a body
-# refused plain reads whenever the engine could not run from where the shell
-# stood. `gh api` writes whatever its fields say, a pull request's title and
-# body included, so any field makes it a message unless the method is `GET`.
-# Flags may stand between the program and its verb, `gh -R o/r pr create`, each
-# with or without a value.
+# Shell commands, checked after tool names. A forge command is a message only where its verb writes one; `gh api` with any field is a message unless the method is `GET`. Flags may stand between the program and its verb.
 _FLAGS='([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
 _FORGE_WRITE='\bgh'"$_FLAGS"'[[:space:]]+(pr[[:space:]]+(create|edit|comment|review|merge|close)|issue[[:space:]]+(create|edit|comment|close)|release[[:space:]]+(create|edit)|gist[[:space:]]+(create|edit))\b'
 _GLAB_WRITE='\bglab'"$_FLAGS"'[[:space:]]+(mr[[:space:]]+(create|update|note|merge|close)|issue[[:space:]]+(create|update|note|close)|release[[:space:]]+(create|update))\b'
-# One command of a chain at a time, so a `GET` in one cannot excuse a write in
-# the next. The method is case-blind, as `gh` takes it.
+# One chained command at a time, so a `GET` cannot excuse a write in the next.
 _forge_api_write() {{
     local cmds seg
     cmds=${{COMMAND//&&/$'\n'}}
@@ -242,15 +182,7 @@ fi
 # Nothing that authors a durable message: not this hook's concern.
 [ -z "$DOMAIN" ] && allow
 
-# Now that the domain is known, the repository a command names can decide it.
-#
-# This test sits here rather than beside the scope check above, and the position
-# is the whole of what makes it safe. `-C` belongs to `tar`, `make` and others,
-# so a command carrying one and a `gh pr create` beside it would otherwise be
-# waved through as though it were a commit into another repository, and the
-# forge body would go unchecked. A commit message is the only domain where the
-# question "which repository is this about" is even meaningful: a pull request
-# body is about the forge rather than about a worktree.
+# The repository a command names decides a commit message only here, after the domain is known: `-C` also belongs to tar and make, and a forge body is about the forge, not a worktree.
 if [ "$DOMAIN" = "commit-message" ] \
    && [ "$_names_this_repo" != "1" ] \
    && [ "$_names_other_repo" = "1" ] \
@@ -263,9 +195,7 @@ fi
 # ---------------------------------------------------------------------------
 SUBMIT="$INPUT_ALL"
 
-# A message handed over by file reference is still a message. `-F`, `--file`,
-# `--body-file` and their `=` forms all name one, and the predecessor read none
-# of them, so writing the body to a file was a complete bypass.
+# A message handed over by file (`-F`, `--file`, `--body-file`) is still a message.
 _read_referenced_files() {{
     local text="$1" f
     for f in $(printf '%s\n' "$text" \
@@ -288,16 +218,11 @@ if [ -z "$(printf '%s' "$SUBMIT" | tr -d '[:space:]')" ]; then allow; fi
 # ---------------------------------------------------------------------------
 # Verdict, with a short-lived cache
 # ---------------------------------------------------------------------------
-# The same message is commonly seen twice within seconds: once here, before the
-# command runs, and again by the commit-msg git hook once it does. The cache
-# makes the second lookup free without ever making a stale verdict reusable.
+# The same message is seen twice within seconds (here, then the commit-msg git hook); the cache makes the second free.
 _CACHE_DIR="${{TMPDIR:-/tmp}}/mockspace-message-cache"
 _CACHE_TTL=30
 mkdir -p "$_CACHE_DIR" 2>/dev/null || true
-# Keyed on the repo, the policy content, the domain and the text. Without the
-# first two, two repos with different [attribution] policy and one identical
-# message shared a verdict for the TTL, so a byline permitted in one passed in
-# one that forbids it.
+# Keyed on repo, policy, domain and text, so repos with different policy never share a verdict.
 _KEY=$({{ printf '%s\0%s\0%s\0' "$__HOOK_REPO_ROOT" "$DOMAIN" "$SUBMIT"; cat "$__HOOK_REPO_ROOT/{mock_rel}/agent/config.toml" 2>/dev/null || true; }} | cksum | tr -d ' ')
 _CACHE_FILE="$_CACHE_DIR/$_KEY"
 
@@ -325,10 +250,7 @@ fi
 
 {launcher_lookup}
 
-# From this repository's root, never from wherever the shell stands. The engine
-# finds its policy and its pin by walking up from its cwd, so a call scoped here
-# by the path it names and issued from another tree read that tree's config, or
-# a workspace holding several repositories, and was refused for it.
+# Run from the repository root: the engine finds its policy and pin from its cwd.
 [ -d "$__HOOK_REPO_ROOT" ] \
     || deny "the message gate cannot run: its repository $__HOOK_REPO_ROOT is not there. Regenerate the hooks with cargo mock from where the repository now is."
 _OUT=$(cd "$__HOOK_REPO_ROOT" 2>/dev/null && printf '%s\n' "$SUBMIT" \
@@ -342,9 +264,7 @@ if [ "$_RC" -eq 0 ]; then
 fi
 
 printf 'fail' > "$_CACHE_FILE" 2>/dev/null || true
-# Handed over raw. `deny` escapes it, and escaping twice is worse than not
-# escaping at all: the quote arrives as a backslash and a quote, so the reason
-# reads as though the linter had written the backslashes itself.
+# Raw: `deny` escapes it.
 _REASON=$_OUT
 deny "message policy rejected this ${{DOMAIN}}. $_REASON"
 "##
@@ -406,32 +326,7 @@ fi
 if echo "$REL_PATH" | grep -qE '^[^/]+\.md\.tmpl$'; then
     allow
 fi
-# The repository this hook is about is the one it was generated for, and asking
-# git from the process cwd answers about whichever repository the shell happens
-# to be standing in.
-#
-# That is not an exotic case. Addressing a member repository by absolute path is
-# the convention, so a session sitting at a workspace root and editing a file
-# inside a member by its full path is ordinary, and there the cwd's repository
-# is the workspace, which has no design rounds in it at all. Every query below
-# then returns nothing, the phase reads TOPIC, and the edit is refused with a
-# message naming a phase the round is not in, which is a true statement about
-# the wrong repository and reads as a true statement about the right one.
-#
-# The target is asked first, because the target is what the phase governs.
-#
-# The hook's own root is not enough on its own, and believing it was is how the
-# first version of this widened the gate. `_scope_or_allow` proves the file is
-# inside this repository only when `FILE_PATH` is set; on the command branch it
-# accepts a command that merely mentions the root, or any cwd under it. So a
-# command like `grep -r <thisrepo> && sed -i <otherrepo>/mock/crates/x/lib.rs`
-# passes the scope check here and writes there, and pinning the root to this
-# hook's own would read the phase out of a repository the write does not touch.
-# The old cwd version happened to refuse that one; a root pinned to the hook
-# would allow it, which is a gate that got wider rather than more correct.
-#
-# So: the target's own repository, then the hook's, then the cwd. Each is a
-# narrower claim than the one after it about which repository the write is in.
+# The repository this hook is about is the one it was generated for. Addressing a member repository by absolute path is the convention, so the cwd's repository may be the workspace, with no design rounds. The phase is read from the target's own repository, then the hook's, then the cwd, each a narrower claim than the next about which repository the write is in.
 REPO_ROOT=$(git -C "$(dirname "$TARGET")" rev-parse --show-toplevel 2>/dev/null || echo "")
 if [[ -z "$REPO_ROOT" ]]; then
     REPO_ROOT=$(git -C "$__HOOK_REPO_ROOT" rev-parse --show-toplevel 2>/dev/null || echo "")
@@ -443,15 +338,7 @@ if [[ -z "$REPO_ROOT" ]]; then
     allow
 fi
 # --- A merge's conflict is resolved whatever the phase ---
-# A merge that conflicts in a design template or a source file leaves the
-# markers in the working tree, and the phase would refuse the edit that removes
-# them, so the merge could not be finished and the only way on was around the
-# gate. While a merge is in progress a Write or Edit to a path git lists as
-# unmerged is let through, in any phase. The path stops being unmerged when its
-# resolution is staged, so this opens no other file and no later edit of a
-# resolved one. The match is on the whole path, never a prefix: a directory
-# holding a conflict stays gated, and a Bash command names targets this hook
-# does not parse, so it is never let through here.
+# A merge conflict in a design template or a source file leaves markers the phase would refuse to remove. While a merge is in progress, a Write or Edit to a path git lists as unmerged passes in any phase; the match is on the whole path, and a Bash command is never let through.
 if [[ -n "$FILE_PATH" ]] && git -C "$REPO_ROOT" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
     UNMERGED_REL="${{MOCK_ROOT}}/${{REL_PATH}}"
     if git -C "$REPO_ROOT" ls-files -u -z -- ":(literal)$UNMERGED_REL" 2>/dev/null \
@@ -460,10 +347,7 @@ if [[ -n "$FILE_PATH" ]] && git -C "$REPO_ROOT" rev-parse -q --verify MERGE_HEAD
     fi
 fi
 # --- Detect phase ---
-# All git ls-files queries run with `-C "$REPO_ROOT"` so phase detection is
-# cwd-independent. Without it, invocations from a subdir (e.g. `mock/`) would
-# resolve `mock/design_rounds/` relative to cwd, return nothing, and fall back
-# to TOPIC, blocking legitimate IMPL-phase edits.
+# Every git query runs with `-C "$REPO_ROOT"`, so phase detection is cwd-independent.
 DOC_CL_ACTIVE=$(git -C "$REPO_ROOT" ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
     | grep -E "^${{MOCK_ROOT}}/design_rounds/[^/]+_changelist\.doc\.md$" \
     | head -1) || true
@@ -567,12 +451,7 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
             if [[ "$PHASE" == "IMPL" ]]; then allow; fi
             deny "BLOCKED: cannot edit source changelist '${{BASENAME}}' -- not in IMPL phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-immutability (HARD_ERROR)"
         fi
-        # Committed means in HEAD, not in the index: a topic is staged the
-        # moment it is written so phase detection sees it, and freezing it
-        # there refuses the first real edit to a file that holds one heading.
-        # And frozen against rewriting, not against accretion: a topic grows by
-        # sections appended as the discussion comes back to it, so an edit that
-        # keeps every committed byte where it was goes on to the phase check.
+        # Committed means in HEAD, not in the index. Frozen against rewriting, not accretion: an edit keeping every committed byte in place goes on to the phase check.
         if ! $IS_CHANGELIST && [[ -n "$(git -C "$REPO_ROOT" ls-tree --name-only HEAD -- "$FULL_GIT_PATH" 2>/dev/null)" ]]; then
             if ! topic_edit_only_adds "$FULL_GIT_PATH"; then
                 deny "BLOCKED: topic '${{BASENAME}}' is committed and FROZEN.\\n\\nWhat a commit holds is not rewritten; append below it instead.\\n\\nCurrent phase: ${{PHASE}}"
@@ -585,9 +464,7 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
         fi
         allow
     fi
-    # A round has one changelist of each kind. The phase reads tracked files, so a first one that is
-    # only in the working tree leaves the phase where it was and a second would pass the checks
-    # below, then be committed beside it by whatever commits everything.
+    # A round has one changelist of each kind. The phase reads tracked files, so a first one only in the working tree leaves the phase unchanged and a second would pass the checks.
     if $IS_CHANGELIST && ! $IS_LOCKED && ! $IS_DEPRECATED; then
         CL_KIND=doc
         if $IS_SRC_CHANGELIST; then CL_KIND=src; fi
@@ -675,7 +552,7 @@ fi
 if [[ "$IS_MOCKSPACE" != "true" ]]; then
     allow
 fi
-context "MOCKSPACE REMINDER: You are operating on mockspace files. Follow the design round workflow: TOPIC -> DOC -> DRAFT -> IMPL -> CLOSED. Check phase before editing. Use 'cargo mock' commands for phase transitions."
+context "MOCKSPACE: design round TOPIC -> DOC -> DRAFT -> IMPL -> CLOSED. Check the phase with 'cargo mock status' before editing. Transitions: 'cargo mock lock', 'deprecate', 'unlock', 'close'."
 "##
     )
 }
@@ -753,7 +630,7 @@ if _gate_intact; then allow; fi
 ( cd "$root" && cargo mock ) >/dev/null 2>&1 || true
 if _gate_intact; then allow; fi
 
-deny "mockspace gate is broken and self-heal failed: the git validator at $validator is missing, or core.hooksPath is not wired to mockspace and, where git-shook holds it, the gate is not registered with it. Agent commits and pushes are blocked until it is restored. Run 'cargo mock' from $root, then retry."
+deny "mockspace gate is broken and self-heal failed: the git validator at $validator is missing, or core.hooksPath is not wired to mockspace (or, where git-shook holds it, the gate is not registered with it). Agent commits and pushes are blocked. Run 'cargo mock' from $root, then retry."
 "##
     .to_string()
 }
@@ -773,7 +650,7 @@ if ! echo "$COMMAND" | grep -q "git commit"; then allow; fi
 # Check for YAGNI-like keywords in the commit message
 YAGNI_PATTERNS="yagni|premature|over-engineer|overkill|good enough for now|not needed yet|too early|unnecessary complexity|keep it simple"
 if echo "$COMMAND" | grep -qiE "$YAGNI_PATTERNS"; then
-    context "WARNING: YAGNI-flavored reasoning detected in commit message. This project embraces the ideal when designing -- extensible, trait-based, registered. Shortcuts justified by 'you ain't gonna need it' are not welcome. Reconsider the commit message."
+    context "WARNING: YAGNI-flavored reasoning in the commit message. This project designs for the ideal: extensible, trait-based, registered. Reconsider the message."
 fi
 allow
 "##

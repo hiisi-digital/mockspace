@@ -36,6 +36,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use mockspace_store::DirStore;
+
 use super::junit::{Case, Outcome, package_of};
 
 /// 2: a member's record also keeps each test binary that passed, and a fingerprint is
@@ -61,6 +63,28 @@ pub struct Flavour {
     /// Each test binary at the fingerprint it last ran whole and passed at, kept
     /// across a run in which another binary of its member failed.
     pub bins:  BTreeMap<String, String>,
+    /// Each test binary that last ran whole and failed, by the tests that failed.
+    /// Every other test of it passed at that same fingerprint.
+    #[serde(default)]
+    pub red:   BTreeMap<String, Red>,
+}
+
+/// The tests of one binary that failed when it ran whole at `at`.
+///
+/// A binary built from the same inputs holds the same tests, so those the run
+/// did not name passed at `at` and stand. The next run at `at` runs these and
+/// nothing else of the binary.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Red {
+    /// The binary's fingerprint when it failed.
+    pub at:    String,
+    /// The names that failed, sorted.
+    pub names: Vec<String>,
+    /// A digest of the tests the binary listed when it failed ([`super::live::digest`]).
+    /// A narrowing stands only while the listing is the same, and only against a
+    /// listing that was read; absent, it never does.
+    #[serde(default)]
+    pub listed: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -93,6 +117,8 @@ pub(crate) struct MemberFile {
     pub(crate) tests:   BTreeMap<String, BTreeMap<String, TestRecord>>,
     #[serde(default)]
     pub(crate) bins:    BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) red:     BTreeMap<String, Red>,
 }
 
 impl MemberFile {
@@ -121,12 +147,12 @@ pub struct Scope<'a> {
 }
 
 impl Scope<'_> {
-    fn ran(&self, member: &str) -> bool {
+    pub(super) fn ran(&self, member: &str) -> bool {
         self.ran.iter().any(|m| m == member)
     }
 
     /// A member the workspace no longer has, whose record is no longer wanted.
-    fn gone(&self, member: &str) -> bool {
+    pub(super) fn gone(&self, member: &str) -> bool {
         !self.workspace.iter().any(|m| m == member)
     }
 }
@@ -140,43 +166,13 @@ impl History {
     /// parse, or is of another version, is passed over: a lost record costs one
     /// run of that member, and refusing to test over it would cost more.
     pub fn load(mock_dir: &Path) -> History {
-        let mut h = History {
-            version: VERSION,
-            ..History::default()
-        };
-        let Ok(flavours) = std::fs::read_dir(Self::dir(mock_dir)) else {
-            return h;
-        };
-        for fdir in flavours.flatten() {
-            let Ok(files) = std::fs::read_dir(fdir.path()) else {
-                continue;
-            };
-            for file in files.flatten() {
-                let Some(m) = std::fs::read_to_string(file.path())
-                    .ok()
-                    .and_then(|t| serde_json::from_str::<MemberFile>(&t).ok())
-                    .filter(|m| m.version == VERSION || m.version == PREVIOUS)
-                else {
-                    continue;
-                };
-                let older = m.version == PREVIOUS;
-                let f = h.flavour_mut(&m.flavour);
-                // The fingerprints of an older record were made of other inputs,
-                // so no pass of it stands. What a test took does not depend on
-                // them, and is what says which tests are heavy.
-                if let Some(g) = m.green.filter(|_| !older) {
-                    f.green.insert(m.member.clone(), g);
-                }
-                for (bin, mut tests) in m.tests {
-                    if older {
-                        tests.values_mut().for_each(|t| t.passed_at = None);
-                    }
-                    f.tests.entry(bin).or_default().extend(tests);
-                }
-                f.bins.extend(m.bins);
+        Self::load_from(&DirStore::new(Self::dir(mock_dir))).unwrap_or_else(|e| {
+            eprintln!("note: could not read the test history: {e}");
+            History {
+                version: VERSION,
+                ..History::default()
             }
-        }
-        h
+        })
     }
 
     /// Writes the files of the members the run covered where their content
@@ -189,41 +185,9 @@ impl History {
     /// version, or not a record at all. Taking the memory for the whole directory
     /// deleted every one of those, and rewrote an older record without its green.
     pub fn save(&self, mock_dir: &Path, scope: &Scope) -> Result<(), String> {
-        let root = Self::dir(mock_dir);
-        // The run's own flavour: the files of its members are written, and one
-        // left with nothing to record is removed, or a green record a failure
-        // took away would load back from it.
-        let dir = root.join(flavour_dir(scope.flavour));
-        let members = self
-            .flavours
-            .get(scope.flavour)
-            .map(|f| member_files(scope.flavour, f))
-            .unwrap_or_default();
-        remove_where(&dir, |m| {
-            scope.gone(m) || (scope.ran(m) && !members.contains_key(m))
-        })?;
-        for (member, m) in members.into_iter().filter(|(member, _)| scope.ran(member)) {
-            let path = dir.join(format!("{member}.json"));
-            let text = m.render();
-            if std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
-                continue;
-            }
-            std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-            // Beside itself and renamed over, so an interrupted write
-            // leaves the previous record rather than half of one.
-            let tmp = dir.join(format!(".{member}.json.tmp"));
-            std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
-            std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))?;
-        }
-        // Every other flavour's files belong to the runs made in it, and only a
-        // member the workspace no longer has loses one, in whichever directory
-        // it sits and whether or not it could be read.
-        for fdir in std::fs::read_dir(&root).into_iter().flatten().flatten() {
-            if fdir.path() != dir {
-                remove_where(&fdir.path(), |m| scope.gone(m))?;
-            }
-        }
-        Ok(())
+        self.save_to(&DirStore::new(Self::dir(mock_dir)), scope, None, "test history")
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 
     pub fn flavour(&self, key: &str) -> Option<&Flavour> {
@@ -331,11 +295,17 @@ impl History {
         f.bins.retain(|bin, _| {
             !members.iter().any(|m| m == package_of(bin)) || live.contains_key(bin)
         });
+        // A red binary is kept while every test it names still exists, else it
+        // is run whole again.
+        f.red.retain(|bin, r| {
+            !members.iter().any(|m| m == package_of(bin))
+                || live.get(bin).is_some_and(|now| r.names.iter().all(|n| now.contains(n)))
+        });
     }
 }
 
 /// One flavour's memory as the files it is kept in, by member.
-fn member_files(flavour: &str, f: &Flavour) -> BTreeMap<String, MemberFile> {
+pub(super) fn member_files(flavour: &str, f: &Flavour) -> BTreeMap<String, MemberFile> {
     let mut members: BTreeMap<String, MemberFile> = BTreeMap::new();
     let blank = |member: &str| {
         MemberFile {
@@ -367,19 +337,15 @@ fn member_files(flavour: &str, f: &Flavour) -> BTreeMap<String, MemberFile> {
             .bins
             .insert(bin.clone(), at.clone());
     }
-    members
-}
-
-/// Removes the record files in `dir` whose member `doomed` names.
-fn remove_where(dir: &Path, doomed: impl Fn(&str) -> bool) -> Result<(), String> {
-    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        let p = e.path();
-        let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned());
-        if p.extension().is_some_and(|x| x == "json") && stem.is_some_and(|s| doomed(&s)) {
-            std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-        }
+    for (bin, red) in &f.red {
+        let member = package_of(bin);
+        members
+            .entry(member.to_string())
+            .or_insert_with(|| blank(member))
+            .red
+            .insert(bin.clone(), red.clone());
     }
-    Ok(())
+    members
 }
 
 /// Whether a new timing says nothing the old one did not: on the same side of
@@ -394,7 +360,7 @@ fn tenths(secs: f64) -> f64 {
 
 /// The directory a flavour's files sit in: `default` for none, else its
 /// arguments with everything but letters, digits and dashes made a dash.
-fn flavour_dir(flavour: &str) -> String {
+pub(super) fn flavour_dir(flavour: &str) -> String {
     let mut out = String::new();
     for ch in flavour.trim().chars() {
         let ch = if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' };

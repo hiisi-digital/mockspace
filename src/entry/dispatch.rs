@@ -28,6 +28,21 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
         .cloned()
 }
 
+/// Which way the pre-push dependency gate goes for this invocation: the mode the
+/// run is in, `deny_check` from the config, and whether `--deps-unchanged` was
+/// passed, which is the generated pre-push hook's claim about the pushed range
+/// (`deny::Claim`). `--scope infra` is not that claim: a crate can be called
+/// `infra`, and a hook generated before the flag existed sends `--scope infra`
+/// for ranges that do change a manifest.
+fn deny_gate(args: &[String], mode: LintMode, enabled: bool) -> crate::deny::Gate {
+    let claim = if args.iter().any(|a| a == "--deps-unchanged") {
+        crate::deny::Claim::DepsUnchanged
+    } else {
+        crate::deny::Claim::None
+    };
+    crate::deny::gate(mode == LintMode::Push, enabled, claim)
+}
+
 /// Whether this invocation is one that repairs or inspects rather than gates.
 ///
 /// These stay usable when the pack will not build, because `clean` and
@@ -742,6 +757,15 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     .unwrap_or("");
                 return registry::cmd_query(&cfg, expr);
             },
+            "links" => {
+                let id = args
+                    .iter()
+                    .skip_while(|a| a.as_str() != "links")
+                    .nth(1)
+                    .map(String::as_str)
+                    .unwrap_or("");
+                return registry::cmd_links(&cfg, id);
+            },
             "check" => {
                 return cmd_check(&cfg);
             },
@@ -936,12 +960,32 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         }
     }
 
+    // --scope restricts linting to specific crates
+    let scope_arg = args
+        .iter()
+        .position(|a| a == "--scope")
+        .map(|i| args.get(i + 1).map(|s| s.as_str()).unwrap_or(""));
+
+    let is_infra_only = scope_arg == Some("infra");
+
     // Pre-push dependency gate: cargo-deny (advisories, license compatibility
     // across the transitive graph, bans, sources). Blocks on a real violation;
     // skipped when deny.toml or cargo-deny is absent. Config-gated (deny_check,
-    // default true).
-    if mode == LintMode::Push && cfg.deny_check {
-        match crate::deny::check(&cfg.repo_root, cfg.deny_check) {
+    // default true). Stands down on `--deps-unchanged`, which the generated
+    // pre-push hook sends for a range it found to change no manifest, lockfile,
+    // deny config or cargo config, and which this takes from any caller without
+    // checking it (see `deny::Claim`), so a push of registry rows alone does not
+    // pay for a check of a dependency graph it did not touch.
+    match deny_gate(&args, mode, cfg.deny_check) {
+        crate::deny::Gate::Off => {},
+        crate::deny::Gate::StandDown => {
+            if crate::deny::has_config(&cfg.repo_root) {
+                eprintln!(
+                    "--- deny: skipped, --deps-unchanged (the caller says the pushed range holds no manifest, lockfile, deny config or cargo config) ---"
+                );
+            }
+        },
+        crate::deny::Gate::Run => match crate::deny::check(&cfg.repo_root, cfg.deny_check) {
             Ok(actions) => {
                 for action in actions {
                     eprintln!("--- deny: {action} ---");
@@ -952,16 +996,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 eprintln!("BLOCKED: {msg}");
                 return ExitCode::FAILURE;
             },
-        }
+        },
     }
-
-    // --scope restricts linting to specific crates
-    let scope_arg = args
-        .iter()
-        .position(|a| a == "--scope")
-        .map(|i| args.get(i + 1).map(|s| s.as_str()).unwrap_or(""));
-
-    let is_infra_only = scope_arg == Some("infra");
 
     // --- Detect nuked workspace ---
     // Verify the claims the narrowing flags make. Each exists to skip work that
@@ -1083,7 +1119,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         // The registry, flattened once for both arms. A repo lint checking it gets
         // the same rows and the same reverse edges a document's `refsto` resolves
         // against, rather than a second reading of the same files.
-        let lint_registry = registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+        let lint_registry = match registry::load_registry_for(&cfg) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            },
+        };
         let lint_registry_view = registry::build_view(&lint_registry, &cfg.registry_namespaces);
         // The panel ledger lives here rather than in the lint crate, so the answer
         // is computed once and handed over, the same way the registry view is.
@@ -1178,11 +1220,14 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     .collect();
                 if doc_only {
                     eprintln!(
-                        "  scoped to: {} (doc-only: source lints skipped)",
+                        "  scoped to: {} (doc-only: source lints skipped; cross-crate lints read every crate)",
                         names.join(", ")
                     );
                 } else {
-                    eprintln!("  scoped to: {}", names.join(", "));
+                    eprintln!(
+                        "  scoped to: {} (cross-crate lints read every crate)",
+                        names.join(", ")
+                    );
                 }
                 let violations = lint::run_lints(
                     &crates,
@@ -1413,7 +1458,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // Loaded before the passthrough templates because they resolve references
     // against it. A project declaring no namespaces gets an empty registry and
     // every step below is a no-op.
-    let registry = registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+    let registry = match registry::load_registry_for(&cfg) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
 
     // The index is built before ANY reference resolves, including the ones
     // held inside row data. Resolving data against an empty index was the
@@ -2309,5 +2360,47 @@ mod scoped_tool_law_tests {
         // the control: the same directory and name as a subcommand is cut
         let b: Vec<String> = ["mock", "ticket-add"].iter().map(|s| s.to_string()).collect();
         assert_eq!(scoped_tool(&b, dir.path()), Some("ticket-add"));
+    }
+}
+
+#[cfg(test)]
+mod deny_gate_tests {
+    use super::*;
+    use crate::deny::Gate;
+
+    fn args(rest: &[&str]) -> Vec<String> {
+        std::iter::once("mock".to_string())
+            .chain(rest.iter().map(|s| s.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn only_the_hooks_claim_stands_the_dependency_gate_down() {
+        // The call site in `run` goes through this function and nothing else, so the
+        // decision the engine makes for a push is the one pinned here: the claim in
+        // a push stands it down, and each way of not making it keeps it.
+        let push = LintMode::Push;
+        assert_eq!(
+            deny_gate(&args(&["--lint-only", "--strict", "--deps-unchanged"]), push, true),
+            Gate::StandDown
+        );
+        assert_eq!(
+            deny_gate(&args(&["--lint-only", "--strict", "--scope", "infra", "--deps-unchanged"]), push, true),
+            Gate::StandDown
+        );
+        // `--scope infra` alone is what a hook generated before the claim sends for
+        // a range that may change a manifest, and what a crate named `infra` gives.
+        assert_eq!(
+            deny_gate(&args(&["--lint-only", "--strict", "--scope", "infra"]), push, true),
+            Gate::Run
+        );
+        assert_eq!(deny_gate(&args(&["--lint-only", "--strict"]), push, true), Gate::Run);
+        // The claim is the push's: a commit or a build is not for this gate at all,
+        // and `deny_check = false` switches it off whatever is claimed.
+        assert_eq!(
+            deny_gate(&args(&["--deps-unchanged"]), LintMode::Commit, true),
+            Gate::Off
+        );
+        assert_eq!(deny_gate(&args(&["--deps-unchanged"]), push, false), Gate::Off);
     }
 }

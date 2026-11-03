@@ -34,6 +34,12 @@ pub struct TestSettings {
     pub lean:             bool,
     /// The debug info a crate gets when it needs symbols.
     pub debug:            DebugLevel,
+    /// The first word of the stderr line a test prints to report the work it did
+    /// (`<marker> <unit> <n>`), so its timing can be read per unit of work.
+    pub work_marker:      String,
+    /// Where the test history is kept when it is not the directory under `<mock>/test-history`:
+    /// a git ref, fetched and pushed by `mock test` itself.
+    pub history:          Option<crate::registry::RefDecl>,
 }
 
 /// The debug info cargo can be asked for, less none: what a crate that needs
@@ -137,6 +143,9 @@ pub const DEFAULT_HEAVY_THREADS: u32 = 1;
 /// alone, so a test is killed for hanging rather than for being slow.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 900;
 
+/// The first word of a test's work line unless `[test] work_marker` names another.
+pub const DEFAULT_WORK_MARKER: &str = "MOCK-WORK";
+
 impl TestSettings {
     /// Whether a commit runs the tests: at `warn` or `error`, never below.
     pub fn commit_runs(&self) -> bool {
@@ -159,6 +168,8 @@ impl Default for TestSettings {
             opt_level:        BTreeMap::new(),
             lean:             true,
             debug:            DebugLevel::LineTablesOnly,
+            work_marker:      DEFAULT_WORK_MARKER.to_string(),
+            history:          None,
         }
     }
 }
@@ -175,6 +186,8 @@ pub(crate) struct RawTest {
     opt_level:        BTreeMap<String, RawOpt>,
     lean:             Option<bool>,
     debug:            Option<RawDebug>,
+    work_marker:      Option<String>,
+    history:          Option<crate::registry::RefDecl>,
 }
 
 /// A debug level as written: cargo's own spelling, a number, a word or a bool.
@@ -252,14 +265,30 @@ impl RawTest {
                 })?
             },
         };
+        if self.history.as_ref().is_some_and(|h| h.dir.is_some()) {
+            return Err(
+                "[test.history] names a `dir`, which is the key of a [[registry.store]]; a test history has no directory"
+                    .into(),
+            );
+        }
         Ok(TestSettings {
             heavy_after_secs,
             heavy_threads,
             timeout_secs,
             commit,
             opt_level,
+            history: self.history,
             lean: self.lean.unwrap_or(d.lean),
             debug,
+            work_marker: match self.work_marker {
+                None => d.work_marker,
+                Some(m) if !m.is_empty() && !m.contains(char::is_whitespace) => m,
+                Some(m) => {
+                    return Err(format!(
+                        "[test] work_marker is one word without whitespace; got {m:?}"
+                    ));
+                },
+            },
         })
     }
 }
@@ -271,6 +300,16 @@ mod tests {
     fn parse(text: &str) -> Result<TestSettings, String> {
         let raw: RawTest = toml_edit::de::from_str(text).map_err(|e| e.to_string())?;
         raw.resolve()
+    }
+
+    #[test]
+    fn a_history_declaration_naming_a_registry_directory_is_refused_at_load() {
+        let err = parse("[history]\ndir = \"ticket\"\n").unwrap_err();
+        assert!(err.contains("history") && err.contains("dir"), "{err}");
+        assert!(
+            parse("[history]\nnamespace = \"x\"\n").is_ok(),
+            "control: the same declaration without a directory reads"
+        );
     }
 
     #[test]
@@ -417,6 +456,16 @@ mod tests {
         for bad in ["0", "false", "\"none\"", "\"line\"", "3", "\"\""] {
             let e = parse(&format!("debug = {bad}\n")).unwrap_err();
             assert!(e.contains("[test] debug"), "{bad}: {e}");
+        }
+    }
+
+    #[test]
+    fn the_work_marker_is_one_word_and_defaults_to_the_upstream_one() {
+        assert_eq!(parse("").unwrap().work_marker, "MOCK-WORK");
+        assert_eq!(parse("work_marker = \"PROJ-WORK\"\n").unwrap().work_marker, "PROJ-WORK");
+        for bad in ["\"\"", "\"TWO WORDS\""] {
+            let e = parse(&format!("work_marker = {bad}\n")).unwrap_err();
+            assert!(e.contains("work_marker"), "{bad}: {e}");
         }
     }
 }

@@ -218,6 +218,17 @@ const COMMANDS: &[Cmd] = &[
                   absent one queries nothing.",
     },
     Cmd {
+        name:    "links",
+        summary: "list a registry row's links from both ends",
+        args:    &[],
+        help:    "Takes `<namespace>::<slug>` and prints what the row links to and \
+                  what links to it, each with the field that states the link. A \
+                  link is written once, on one row, in a `ref` or `ref[]` field \
+                  as `namespace::slug` or in a field typed as a namespace; the \
+                  other end is derived here and by `refsto`, so nobody writes \
+                  both sides.",
+    },
+    Cmd {
         name:    "registry-append",
         summary: "add one string to a list field of a registry row",
         args:    &[],
@@ -581,7 +592,8 @@ pub(crate) fn print_help() -> ExitCode {
     println!("OPTIONS");
     println!("    --dir <path>       the mock workspace to act on, instead of");
     println!("                       searching upward from the working directory");
-    println!("    --scope <crates>   limit linting to a comma-separated crate list");
+    println!("    --scope <crates>   limit the per-crate lints to a comma-separated crate");
+    println!("                       list; every workspace lint reads every crate");
     println!("    --doc-only         limit linting to documentation");
     println!("    --lint-only        lint without regenerating anything");
     println!("    --generate-only    regenerate without checking or linting; the merge");
@@ -599,6 +611,9 @@ pub(crate) fn print_help() -> ExitCode {
     println!();
     println!("    --scope and --doc-only are verified against what is staged: a");
     println!("    narrower claim than the staged set is refused rather than obeyed.");
+    println!("    --deps-unchanged is the pre-push hook's claim that the pushed range");
+    println!("    changes no manifest, lockfile, deny.toml or .cargo/config; it is not");
+    println!("    verified, and with --strict it stands the dependency gate down.");
     println!();
     println!("Configuration lives in mockspace.toml at the repo root.");
     println!();

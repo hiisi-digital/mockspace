@@ -36,12 +36,15 @@ pub mod graph;
 pub mod history;
 pub mod history_guard;
 pub mod history_merge;
+pub mod history_store;
 pub mod junit;
 pub mod live;
+pub mod lock;
 pub mod nextest;
 mod report;
 pub mod select;
 pub mod settings;
+pub mod timings;
 pub mod units;
 
 use std::path::{Path, PathBuf};
@@ -108,7 +111,7 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
         },
     };
     let fp_or_empty = fp.clone().unwrap_or_default();
-    let mut history = history::History::load(&cfg.mock_dir);
+    let (mut history, history_store) = history::History::open(cfg);
     let flavour = inv.flavour();
     let mut plan = select::plan(&Inputs {
         mode:       if fp.is_some() { inv.mode } else { Mode::Full },
@@ -177,6 +180,11 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     };
     if let Some(live) = &live {
         plan.retain_live(live);
+    } else {
+        // A narrowing stands only against the listing it was made with, and
+        // none was read, so every binary runs whole.
+        plan.rerun.clear();
+        plan.rerun_listed.clear();
     }
 
     report::plan(&plan, inv, &fp_or_empty, cfg);
@@ -201,7 +209,10 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     let _ = std::fs::remove_file(&junit);
 
     let packages: Vec<String> = plan.run.iter().map(|(n, _)| n.clone()).collect();
-    let filter = nextest::filterset(inv.filter.as_deref(), &plan.skip, &plan.reuse);
+    let filter = nextest::filterset(inv.filter.as_deref(), &plan.skip, &plan.reuse, &plan.rerun);
+    let load_before = mockspace_bench_harness::env::load_1m();
+    let commit = mockspace_bench_harness::env::collect_git_commit_marked();
+    let threads_env = std::env::var("NEXTEST_TEST_THREADS").ok();
     let status = nextest::command(&nextest::RunSpec {
         mock_dir:     &cfg.mock_dir,
         tool_config:  &tool_config,
@@ -214,9 +225,24 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     .status();
     let code = status.as_ref().ok().and_then(|s| s.code());
 
-    let cases = std::fs::read_to_string(&junit)
-        .map(|x| junit::parse(&x))
-        .unwrap_or_default();
+    let report = std::fs::read_to_string(&junit).unwrap_or_default();
+    let cases = junit::parse(&report);
+    // Every test of the run is timed and spooled, whatever the plan did with it.
+    timings::record_run(
+        &timings::Run {
+            state:       &state,
+            flavour:     &flavour,
+            profile:     &profile,
+            passed:      &inv.passed,
+            report:      &report,
+            load_before,
+            threads_env: threads_env.as_deref(),
+            commit:      &commit,
+            fingerprint: fp.as_ref(),
+        },
+        &cases,
+        &cfg.test.work_marker,
+    );
     // What failed is what the next run builds with symbols, recorded whether or
     // not a fingerprint could be taken.
     failed.settle(
@@ -249,8 +275,8 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
             history.prune(&flavour, &run_members, live);
         }
         let complete = nextest::ran_to_the_end(code) && !inv.narrowed();
-        let greens = select::greens(&plan, &cases, complete);
-        let mut binaries = select::binary_outcomes(&plan, &cases, fp, complete);
+        let greens = select::greens(&plan, &cases, complete, live.as_ref());
+        let mut binaries = select::binary_outcomes(&plan, &cases, fp, complete, live.as_ref());
         if let Some(live) = &live {
             binaries
                 .passed
@@ -266,16 +292,29 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
                 f.green.remove(name);
             }
         }
-        if let Err(e) = history.save(&cfg.mock_dir, &history::Scope {
-            flavour:   &flavour,
-            ran:       &run_members,
-            workspace: &graph.members,
-        }) {
+        if let Some(store) = &history_store
+            && let Err(e) = history.keep(
+                cfg,
+                store.as_ref(),
+                &history::Scope {
+                    flavour:   &flavour,
+                    ran:       &run_members,
+                    workspace: &graph.members,
+                },
+                fp,
+            )
+        {
             eprintln!("note: could not keep this run's history: {e}");
         }
     }
 
     report::outcome(&plan, &cases, cfg.test.heavy_after_secs);
+    if status.as_ref().is_ok_and(|s| s.success())
+        && let Some(why) = select::empty_filtered_run(&plan, &cases, inv.filtered())
+    {
+        eprintln!("mock test: {why}");
+        return Some(ExitCode::FAILURE);
+    }
     Some(if status.is_ok_and(|s| s.success()) {
         ExitCode::SUCCESS
     } else {

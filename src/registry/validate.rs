@@ -37,12 +37,19 @@ pub fn validate_provenance(
     // project declared. The design says provenance is deliberately not
     // universal; the hardcoded name made it universal anyway.
     let bearing = super::reference_fields(namespaces);
+    let keys = super::namespace_keys(namespaces);
 
     for row in reg.rows.values() {
         let empty = Vec::new();
         let names = bearing.get(&row.namespace).unwrap_or(&empty);
         for raw in names.iter().filter_map(|n| row.fields.get(n)) {
             for item in raw.split(", ").filter(|s| !s.trim().is_empty()) {
+                // A link to a row shares the field with the file citations and
+                // is checked by `validate_links`, which resolves it against the
+                // rows rather than against a root.
+                if super::link_target(item, &keys).is_some() {
+                    continue;
+                }
                 let Some(p) = FileRef::parse(item) else {
                     out.push(RegistryFinding {
                     kind: "malformed-provenance",
@@ -405,6 +412,8 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
     let Some(reg) = doc.get("registry").and_then(|i| i.as_table()) else {
         return out;
     };
+    // A key of `[[registry.store]]` that is not read refuses the config as it parses (the one
+    // declaration is `deny_unknown_fields`), so there is nothing to report here.
     let Some(spaces) = reg.get("namespace").and_then(|i| i.as_array_of_tables()) else {
         return out;
     };
@@ -579,7 +588,14 @@ pub(crate) fn check_schemas_with(
                 .lines()
                 .filter(|l| l.contains("error") || l.contains("does not match"))
                 .map(|l| l.trim().to_string())
-                .collect();
+                .collect::<Vec<String>>();
+            // A run that failed is a failure whatever it managed to log: its logger can lose the last
+            // lines when the process exits, and no lines is not the same as no problem.
+            let failures = if failures.is_empty() {
+                vec!["taplo failed and logged no line that names a problem.".to_string()]
+            } else {
+                failures
+            };
             SchemaCheck::Ran {
                 failures,
             }
@@ -665,7 +681,7 @@ pub fn namespace_root_collisions(
     // Two declarations under one key, which nothing refused and which the
     // engine itself does not resolve consistently.
     //
-    // A key is global over the whole of `<mock>/registry/`: `load_registry`
+    // A key is global over the whole of `<mock>/registry/`: `load_registry_in_dir`
     // builds one set of known keys and walks the tree against it, and a row is
     // addressed `<namespace>::<slug>` with no part of its path in the address.
     // So a second declaration does not partition anything. It supplies a

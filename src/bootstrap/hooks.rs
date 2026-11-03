@@ -183,10 +183,11 @@ while IFS=' ' read -r _bl_ref bl_local _bl_rref bl_remote; do
     if [ -z "$bl_local" ]; then
         continue
     fi
-    if [ "$bl_local" = "0000000000000000000000000000000000000000" ]; then
+    # An id of nothing but zeros is git's null id, of whatever width the repository's hash has.
+    if [ -z "${bl_local//0/}" ]; then
         continue
     fi
-    if [ "$bl_remote" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$bl_remote" 2>/dev/null; then
+    if [ -z "${bl_remote//0/}" ] || ! git cat-file -e "$bl_remote" 2>/dev/null; then
         # New branch or unknown remote: scan commits not already on any remote.
         # Bounded by `--not --remotes`; when the remote has never been fetched
         # this widens to all local history, which is the safe (over-)inclusive
@@ -516,22 +517,30 @@ echo "pre-push: running mockspace validation..."
 # in the loop body would exit the script if the left side is false, so
 # use explicit `if` blocks for every short-circuit.
 #
-# Empty stdin (no refs piped, rare with `push --tags` variants on some
-# git versions) → the loop simply does not run; the post-loop fall-
-# through handles full-scope correctly.
+# Empty stdin is what git feeds the hook for a push that is already up to
+# date (it runs the hook all the same): the loop does not run, PUSH_REFS stays
+# 0, and the push takes the full scope below. With no ref there is no range to
+# scope by, and a hook that is fed nothing for another reason must not stand
+# down, so an empty push runs everything. A push of deleted refs is told apart
+# from it by PUSH_REFS, which counts the lines it was given.
 FULL_REASON=""
 CHANGED_CRATES=""
 PUSH_REPO_ONLY=""
 PUSH_NOT_REGISTRY=""
+PUSH_REFS=0
+PUSH_DELETES=0
 while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     if [ -z "$local_sha" ]; then
         continue
     fi
-    # Delete-only push (local_sha all zeros): nothing to lint.
-    if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+    PUSH_REFS=$((PUSH_REFS + 1))
+    # A deleted ref (local_sha all zeros, whatever the hash width) publishes no commit, so it adds nothing to lint.
+    # It is counted, because a push of nothing but deletions has no scope at all (below).
+    if [ -z "${{local_sha//0/}}" ]; then
+        PUSH_DELETES=$((PUSH_DELETES + 1))
         continue
     fi
-    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    if [ -n "$remote_sha" ] && [ -z "${{remote_sha//0/}}" ]; then
         FULL_REASON="new branch"
         break
     fi
@@ -551,12 +560,24 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     fi
     PUSH_FILES=$(git diff --name-only --no-renames "$remote_sha".."$local_sha" -- "$MOCK_DIR/" 2>/dev/null || true)
     PUSH_CHANGED=$(ms_union "$(ms_crates_of "$PUSH_FILES")" "$(ms_ws_crates_of "$PUSH_FILES")")
+    # A dependency input anywhere in the repository, not only under the mock
+    # directory the diff above is limited to: cargo-deny reads manifests,
+    # lockfiles, its own config and cargo's (`[source]` and `[patch]` sit in
+    # `.cargo/config`). A push free of them in every ref is what `--deps-unchanged`
+    # below claims, and what lets the dependency gate stand down, so a ref that
+    # touches one is not for it. A diff that fails to run counts as a change,
+    # which keeps the gate. What cargo-deny reads from outside the repository, the
+    # advisory database and the yank state of a crate, moves with no push at all.
+    PUSH_DEPS=""
+    if ! git diff --quiet "$remote_sha".."$local_sha" -- '*Cargo.toml' '*Cargo.lock' '*deny.toml' '*.cargo/config*' 2>/dev/null; then
+        PUSH_DEPS=1
+    fi
     if [ -z "$PUSH_CHANGED" ]; then
         # Registry rows are read by the repo lints and by no crate's, so a ref
         # that changes nothing else under the mock directory is for them alone.
         # Anything else that reaches no crate keeps the full run it always had.
         PUSH_OTHER=$(printf '%s\n' "$PUSH_FILES" | grep -v -e '^$' -e "^$MOCK_DIR/registry/" || true)
-        if [ -n "$PUSH_FILES" ] && [ -z "$PUSH_OTHER" ]; then
+        if [ -n "$PUSH_FILES" ] && [ -z "$PUSH_OTHER" ] && [ -z "$PUSH_DEPS" ]; then
             PUSH_REPO_ONLY=1
         else
             PUSH_NOT_REGISTRY=1
@@ -581,6 +602,16 @@ if [ -n "$CHANGED_CRATES" ]; then
         | sed 's/,$//')
 fi
 
+# Every line was a deletion: no commit is published, so there is nothing for the launcher to
+# lint. Without this the loop above leaves every scope variable empty, which is what a push
+# with no crate changes looks like too, and the push ran the full project to delete a branch.
+# A deletion beside a ref that publishes a commit leaves the scope to that ref.
+if [ "$PUSH_REFS" -gt 0 ] && [ "$PUSH_REFS" -eq "$PUSH_DELETES" ]; then
+    echo "  scope: none (the push deletes refs and publishes no commit)"
+    echo "pre-push: validation passed."
+    ms_chain "$@"
+fi
+
 if ms_nuked; then
     echo "  nuked workspace: skipping source checks"
     ARGS=(--lint-only --strict --doc-only)
@@ -590,7 +621,7 @@ elif [ -z "$FULL_REASON" ] && [ -z "$CHANGED_CRATES" ] && [ -n "$PUSH_REPO_ONLY"
     # The flag is checked against whatever is staged when the push runs, not against the pushed commits, so it
     # would also vouch for nothing about them.
     echo "  scope: repo lints only (the push changes nothing a crate's lints read)"
-    ARGS=(--lint-only --strict --scope infra)
+    ARGS=(--lint-only --strict --scope infra --deps-unchanged)
 elif [ -n "$FULL_REASON" ] || [ -z "$CHANGED_CRATES" ]; then
     echo "  scope: full project (${{FULL_REASON:-no crate changes}})"
     ARGS=(--lint-only --strict)

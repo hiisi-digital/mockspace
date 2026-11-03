@@ -76,7 +76,6 @@ pub(super) fn stage(root: &Path, files: &[(&str, &str)]) {
 fn stub_bin() -> &'static Path {
     static BIN: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     BIN.get_or_init(|| {
-
         let bin = std::env::temp_dir().join(format!("ms_hook_stubs_{}", std::process::id()));
         fs::create_dir_all(&bin).unwrap();
         // `cargo` records its arguments, one call to a line, in the file the run
@@ -384,7 +383,6 @@ fn a_push_of_registry_rows_alone_names_the_repo_lints_scope() {
     assert!(out.contains("scope: repo lints only"), "hook said:\n{out}");
     assert!(!out.contains("scope: full project"), "hook said:\n{out}");
 }
-
 
 #[test]
 fn an_empty_declaration_is_a_documentation_repository() {

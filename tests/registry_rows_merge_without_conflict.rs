@@ -146,7 +146,8 @@ fn the_row_is_what_counts_and_the_file_is_not() {
 fn loaded(r: &Repo) -> mockspace::registry::Registry {
     let mock = r.root.join("mock");
     let cfg = mockspace::config::Config::from_dir(&mock);
-    mockspace::registry::load_registry(&mock, &cfg.registry_namespaces)
+    mockspace::registry::load_registry_in_dir(&mock, &cfg.registry_namespaces)
+        .expect("the registry directory reads")
 }
 
 /// Each branch adds a row of the same table to a file of its own, in different directories.

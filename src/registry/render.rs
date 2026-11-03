@@ -431,6 +431,18 @@ fn render_rows(
                 .then_some((f.name.as_str(), target))
         })
         .collect();
+    // The fields holding file citations, which may hold row links as well.
+    let citing: BTreeSet<&str> = ns
+        .fields
+        .iter()
+        .filter(|f| is_reference_type(&f.r#type))
+        .map(|f| f.name.as_str())
+        .collect();
+    let keys: BTreeSet<&str> = cfg
+        .registry_namespaces
+        .iter()
+        .map(|n| n.key.as_str())
+        .collect();
 
     let mut out = String::new();
     out.push_str("| ");
@@ -478,6 +490,12 @@ fn render_rows(
                     return cell;
                 }
                 let raw = visible_value(row.fields.get(c).map(String::as_str).unwrap_or(""), cfg);
+                // A `ref` cell may hold row links beside its file citations.
+                let raw = if citing.contains(c.as_str()) {
+                    super::render_links(&raw, &keys)
+                } else {
+                    raw
+                };
                 // A pipe inside a cell would end the column early, and a
                 // newline would end the row. Both are realistic in prose
                 // fields, which is exactly why the source is TOML.

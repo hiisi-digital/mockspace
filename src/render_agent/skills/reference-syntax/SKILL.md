@@ -34,6 +34,35 @@ Three things are reported rather than passed:
 - **A target declaring `value_field`**, which renders a value rather than the
   slug and so cannot carry a relation.
 
+## One relation field, typed `ref[]`
+
+A namespace relates its rows to other rows through **one field typed `ref[]`**,
+conventionally `related`, and every row it relates to goes in it, whichever
+namespace that row sits in:
+
+```toml
+related = ["tenet::engine_time", "bevy::time_step", "research::202611010100_bevy-reference::NOTES::#time"]
+```
+
+An item of two segments, a declared namespace and a slug, is a link to that row.
+An item of three or more is a file citation into a root, checked as in
+[Addressing a citation](#addressing-a-citation). The two cannot be mistaken for
+each other, and each is held to its own rule: a link naming no row is
+`unknown-row-reference`, and one whose slug is not a slug is
+`malformed-row-reference`.
+
+**A field per target namespace (`bevy`, `ikiuni`, `canon`) is wrong.** It turns
+the schema into a list of places a relation may be written, lets one relation be
+written twice, and asks for a new field every time a namespace is added. A field
+typed as a namespace is for a field that is by its nature one namespace's, such
+as a slot an answer fills. A general "related to" is the `ref[]` field.
+
+**A link is written once, on one row, and the other end is derived, never
+written.** `{{ refsto(tenet::engine_time) }}` and
+`cargo mock links tenet::engine_time` list what links to the row and what it
+links to, each with the field that states it. Do not add the inverse to the
+other row.
+
 ## The values a field takes
 
 `values` lists a closed set, as strings, held in the field's own type: the schema
@@ -62,8 +91,8 @@ corpus a row was derived from, the live document that supersedes it, the code
 that implements it. Array order is precedence, so the first is the one a reader
 should follow and the rest are context.
 
-`{{ refsto(x) }}` is what **points at** x, derived from the typed fields above
-rather than stored, so nothing has to be kept in step. It is the direction most
+`{{ refsto(x) }}` is what **points at** x, derived from the typed fields and the
+links in `ref` fields above rather than stored, so nothing has to be kept in step. It is the direction most
 questions are asked in, and an empty answer is the finding: nothing answers that
 row.
 

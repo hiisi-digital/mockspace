@@ -199,7 +199,7 @@ pub struct Registry {
     /// Every `.toml` the loader opened under `registry/`, in the order it
     /// found them.
     ///
-    /// **Populated by `load_registry` and empty on every derived view.** The
+    /// **Populated by `load_registry_in_dir` and empty on every derived view.** The
     /// resolved whole-registry view carries it forward; the per-row view built
     /// during resolution leaves it empty, because cloning it per row was the
     /// quadratic cost that view exists to avoid. So an empty value means "not a
@@ -217,7 +217,7 @@ pub struct Registry {
     /// array-of-tables key, so any model built from path shape disagrees with
     /// it on a nested file and on a file whose name does not match its rows.
     pub files_read:   Vec<PathBuf>,
-    /// Every value a file wrote as a TOML date or time. Populated by `load_registry`,
+    /// Every value a file wrote as a TOML date or time. Populated by `load_registry_in_dir`,
     /// carried to the resolved view, and empty on the per-row view for the reason
     /// `files_read` is.
     pub unquoted_times: Vec<UnquotedTime>,

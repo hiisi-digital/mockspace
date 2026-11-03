@@ -125,6 +125,9 @@ pub struct Config {
     /// Declared registry namespaces. Empty when the project declares none, and
     /// every registry code path is a no-op in that case.
     pub registry_namespaces:    Vec<crate::registry::RegistryNamespace>,
+    /// The `[[registry.store]]` declarations: directories of the registry kept on a git ref.
+    /// Empty means the whole registry is the directory, as it is for every project today.
+    pub registry_stores:        Vec<crate::registry::RefDecl>,
     /// Whether to also emit a single document containing every deep dive.
     ///
     /// Off by default. Each deep dive already renders as a sibling of its
@@ -171,7 +174,11 @@ pub struct Config {
     pub auto_clippy_fix: bool,
     /// Run `cargo deny check` on push against the repo's `deny.toml` (advisories,
     /// license compatibility, bans, sources). Blocks on a violation; skipped when
-    /// cargo-deny or the config is absent. Default true.
+    /// cargo-deny or the config is absent, and for a push carrying `--deps-unchanged`,
+    /// which the generated hook sends for a range that changes no manifest,
+    /// lockfile, `deny.toml` or `.cargo/config*`, and which is taken from any
+    /// caller without being checked. A pass shows one line per
+    /// workspace root. Default true.
     pub deny_check:      bool,
 
     /// Everything read from `mock/agent/config.toml`. Grouped rather than
@@ -575,6 +582,9 @@ struct RawRef {
 struct RawRegistry {
     #[serde(rename = "namespace")]
     namespace: Vec<crate::registry::RegistryNamespace>,
+    /// Directories of the registry kept on a git ref instead of the tree.
+    #[serde(rename = "store")]
+    store: Vec<crate::registry::RefDecl>,
 }
 
 #[derive(Deserialize, Default)]
@@ -928,7 +938,7 @@ impl Config {
         // no declared roots, no lint configuration, and a green run over all of
         // it. An absent config is the different case and stays free, since a
         // project that keeps none is ordinary.
-        let raw: RawConfig = match toml_edit::de::from_str(&toml_content) {
+        let mut raw: RawConfig = match toml_edit::de::from_str(&toml_content) {
             Ok(raw) => raw,
             Err(e) => {
                 assert!(
@@ -1107,6 +1117,7 @@ impl Config {
         let auto_clippy_fix = clone_says(&repo_root, "autoClippyFix")
             .or(raw.auto_clippy_fix)
             .unwrap_or(true);
+        let registry_decl = raw.registry.take().unwrap_or_default();
         Config {
             mock_dir,
             crates_dir,
@@ -1126,9 +1137,8 @@ impl Config {
             unprefixed_crates: raw.unprefixed_crates,
             abi_version: raw.abi_version.unwrap_or(1),
             nuke_marker: DEFAULT_NUKE_MARKER.to_string(),
-            registry_namespaces: crate::registry::with_builtins(
-                &raw.registry.map(|r| r.namespace).unwrap_or_default(),
-            ),
+            registry_namespaces: crate::registry::with_builtins(&registry_decl.namespace),
+            registry_stores: registry_decl.store,
             deep_dive_index: raw.deep_dive_index.unwrap_or(false),
             ordered_docs: raw.ordered_docs.unwrap_or(false),
             primary_docs: raw.primary_docs,

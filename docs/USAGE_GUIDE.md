@@ -95,8 +95,8 @@ Transitions are subcommands, not manual renames:
 | Command                   | Effect                                                            | Valid phases            |
 |---------------------------|-------------------------------------------------------------------|-------------------------|
 | `cargo mock lock`         | Lock the active changelist (`DOC -> DRAFT`, `IMPL -> CLOSED`)     | `DOC`, `IMPL`           |
-| `cargo mock unlock`       | Deprecate src CL and unlock doc CL (destructive; source unchanged) | `DRAFT`, `IMPL`, `CLOSED` |
-| `cargo mock deprecate`    | Deprecate the active CL; in `IMPL` also unlocks doc CL; a stub changelist (bare title) beside a locked one of its kind is retired instead, in any phase | `DOC`, `IMPL`, or any with a stub |
+| `cargo mock unlock`       | Deprecate src CL and unlock doc CL (destructive; source unchanged); prints the comparison the replacement owes the `deprecation-comparison` lint | `DRAFT`, `IMPL`, `CLOSED` |
+| `cargo mock deprecate`    | Deprecate the active CL; in `IMPL` also unlocks doc CL; a stub changelist (bare title) beside a locked one of its kind is retired instead, in any phase; otherwise prints the comparison the replacement owes the `deprecation-comparison` lint: the `## Comparison to deprecated changelist` section with a `###` subheader for each `##` header, and the names it must mention | `DOC`, `IMPL`, or any with a stub |
 | `cargo mock close`        | Archive the round into a `<round-id>/` subdir with `.meta` + `.history`; takes the changelists, the files carrying the id of one, the files one names, any flat file given as `--take <file>`, and lists the flat files it leaves | `CLOSED` only       |
 | `cargo mock archive`      | Archive an abandoned round into a `<round-id>-abandoned/` subdir; with changelists it takes what `close` takes (without `--take`) and is named by their id, and in the TOPIC phase, with none, it takes every flat file and is named by the earliest | any                     |
 | `cargo mock migrate`      | Rename legacy `YYYY-MM-DD_*.md` files to the compact format       | any                     |
@@ -132,6 +132,7 @@ Those are the transitions. The subcommands that are not transitions:
 | `cargo mock check-message` | Lint one commit message, pull request body or comment against the configured policy, and for a commit with its author and committer (`--author`, `--committer`) |
 | `cargo mock check-edit` | Ask one per-crate lint (`--lint`) whether a Rust file (`--file`) would be clean once an edit is made: stdin is the new text, or with `--replace <file>` the text that replaces the one in that file. Takes `--edits <file>`, a JSON list of replacements, for a multi-edit tool. Exits 0 clean, 1 with the lint's blocking findings, 2 when the request cannot be answered (an unknown lint or gate, a lint judging the whole crate, a relative `--file`). The generated `forbidden-imports` hook calls it |
 | `cargo mock query` | Query the registry |
+| `cargo mock links <namespace>::<slug>` | The rows a row links to and the rows linking to it, with the `ref` field each link is written in |
 | `cargo mock bench` | Run the bench harness |
 | `cargo mock test` | Run the tests of every tree mockspace owns, the members and the benches only where something they depend on changed, or the benches when `--benches`, `--full` or `--no-cache` asks (`[test]` below) |
 | `cargo mock panel` | Mint or consolidate a panel seat, or report a panel's state |
@@ -162,8 +163,9 @@ Common flags:
 |---------------------|--------------------------------------------------------------|
 | `--lint-only`       | Run lints only; skip generation and dylib checks             |
 | `--doc-only`        | Skip source lints; run only doc-related checks               |
-| `--scope <csv>`     | Restrict lints to named crates (comma-separated, by directory name under any `src_dirs` entry) |
+| `--scope <csv>`     | Restrict the per-crate lints to named crates (comma-separated, by directory name under any `src_dirs` entry); the lints that compare crates read every crate |
 | `--scope infra`     | Infrastructure-only mode (no crate check, no crate lints)    |
+| `--deps-unchanged`  | The pre-push hook's claim that the pushed range changes no manifest, lockfile, `deny.toml` or `.cargo/config*`; not verified, and it stands the dependency gate down on push |
 | `--commit`          | Lint mode: `Commit` (typically most permissive gate)         |
 | `--strict`          | Lint mode: `Push` (strictest gate)                           |
 | `--nuke`            | Take the source down, leaving the designs. Names every file, then asks. |
@@ -171,7 +173,7 @@ Common flags:
 | `--y`               | Answer a `--nuke` in advance, for a second run and for a script. |
 | `--dir <path>`      | Override auto-discovered mock dir                            |
 
-The generated `pre-commit` hook runs `cargo mock --lint-only --commit` scoped to the crates it finds staged, where a crate is the directory directly under any directory the project declares in `src_dirs`. The generated `pre-push` hook runs `cargo mock --lint-only --strict`, scoped to the crates the push changed under the same directories. A staged or pushed shared input is never bounded to the crates beside it, so the hook passes no `--scope`: every crate and every repo lint run. The shared inputs are a file under `<mock>/lints/`, a file under the directory of a `[lint-crates]` pack declared by `path` (a pack is code the run compiles, and a pack sitting under a source directory is not scoped as a crate), and a `mockspace.toml` at the repo root or in the mock directory. The one flag a shared input can still carry is `--doc-only`, and the pre-commit hook adds it only when nothing staged is source: no `.rs` file and no crate `Cargo.toml` or `Cargo.lock` under a source directory, no workspace manifest or lockfile, and no file of a project lint or a path pack. Anything else staged beside it leaves the flag off, and the engine checks the claim against the same layout. The pre-push hook passes `--strict` without `--doc-only` whenever a shared input is among the pushed changes. A file under `<mock>/registry/` is not a shared input: the repo lints read the registry and every run makes them, and a crate's lints are handed no registry, so a commit that stages registry rows beside a crate is scoped to that crate, and a commit or push of registry rows alone runs `--scope infra`, the repo lints and no crate's. The commit adds `--doc-only` there, as a staged registry row always carried it, and the engine checks that against the staged index; the push never carries it, since the engine checks it against whatever is staged at push time and not against the pushed commits, and the repo lints that read the registry are skipped by it. The pre-commit `cargo clippy --fix` runs only in the packages that own a staged `.rs` file. A crate's own `Cargo.toml` and `Cargo.lock` are source of that crate: they scope the commit to it with the source lints on, so a `[features]` or `[lints]` edit is linted. A staged or pushed `Cargo.toml` or `Cargo.lock` reaches the crates of its own workspace and no others: the nearest directory at or above a source directory, up to the mock directory, whose `Cargo.toml` has a `[workspace]` table (the mock directory when none does). A nested workspace under the mock directory, such as a console with its own lockfile, is scoped by its own manifest and lockfile and not by the mock workspace's. The nuked-workspace shortcut on push applies only when every crate under the source directories carries the configured nuke marker, as the engine decides it. The hooks are regenerated by the next `cargo mock` run without `--lint-only`, which is when `src_dirs` changes reach them: the hooks themselves run only under `--lint-only`, which does not write hooks, so a commit that adds a source directory with source under it meets the old hook, and the engine refuses its `--scope infra` as omitting staged crates until `cargo mock` has been run once.
+The generated `pre-commit` hook runs `cargo mock --lint-only --commit` scoped to the crates it finds staged, where a crate is the directory directly under any directory the project declares in `src_dirs`. The generated `pre-push` hook runs `cargo mock --lint-only --strict`, scoped to the crates the push changed under the same directories. The scope narrows the per-crate lints only: every workspace lint, built-in or from a pack, reads every crate and reports what it finds, so a clash between a touched crate and an untouched one is found at the commit that makes it, and a finding the tree already carries stops the next commit as it stops the next push. A standing finding comes off the gate through the lint's `crates` binding under `[lints.<name>]`, never through the scope. A staged or pushed shared input is never bounded to the crates beside it, so the hook passes no `--scope`: every crate and every repo lint run. The shared inputs are a file under `<mock>/lints/`, a file under the directory of a `[lint-crates]` pack declared by `path` (a pack is code the run compiles, and a pack sitting under a source directory is not scoped as a crate), and a `mockspace.toml` at the repo root or in the mock directory. The one flag a shared input can still carry is `--doc-only`, and the pre-commit hook adds it only when nothing staged is source: no `.rs` file and no crate `Cargo.toml` or `Cargo.lock` under a source directory, no workspace manifest or lockfile, and no file of a project lint or a path pack. Anything else staged beside it leaves the flag off, and the engine checks the claim against the same layout. The pre-push hook passes `--strict` without `--doc-only` whenever a shared input is among the pushed changes. A file under `<mock>/registry/` is not a shared input: the repo lints read the registry and every run makes them, and a crate's lints are handed no registry, so a commit that stages registry rows beside a crate is scoped to that crate, and a commit or push of registry rows alone runs `--scope infra`, the repo lints and no crate's, and the push adds `--deps-unchanged`. The commit adds `--doc-only` there, as a staged registry row always carried it, and the engine checks that against the staged index; the push never carries it, since the engine checks it against whatever is staged at push time and not against the pushed commits, and the repo lints that read the registry are skipped by it. The pre-commit `cargo clippy --fix` runs only in the packages that own a staged `.rs` file. A crate's own `Cargo.toml` and `Cargo.lock` are source of that crate: they scope the commit to it with the source lints on, so a `[features]` or `[lints]` edit is linted. A staged or pushed `Cargo.toml` or `Cargo.lock` reaches the crates of its own workspace and no others: the nearest directory at or above a source directory, up to the mock directory, whose `Cargo.toml` has a `[workspace]` table (the mock directory when none does). A nested workspace under the mock directory, such as a console with its own lockfile, is scoped by its own manifest and lockfile and not by the mock workspace's. A push of nothing but deleted refs publishes no commit, so the pre-push hook prints `scope: none` and runs no lint; a deletion beside a ref that does publish a commit leaves the scope to that ref, and a push git feeds no ref line for, as it does for one already up to date, takes the full scope. The nuked-workspace shortcut on push applies only when every crate under the source directories carries the configured nuke marker, as the engine decides it. The hooks are regenerated by the next `cargo mock` run without `--lint-only`, which is when `src_dirs` changes reach them: the hooks themselves run only under `--lint-only`, which does not write hooks, so a commit that adds a source directory with source under it meets the old hook, and the engine refuses its `--scope infra` as omitting staged crates until `cargo mock` has been run once.
 
 This table (and the one above it) is not the exhaustive command reference; run `mock tools` for that, or `mock tools --long` for full usage and declared arguments per command. It never goes stale the way a hand-written list does, because it is computed from the same declarations the engine dispatches against.
 
@@ -265,15 +267,36 @@ It gates advisories (RustSec), license compatibility across the whole transitive
 dependency graph, dependency bans, and source registries, and blocks the push on a
 violation.
 
-It is skipped (never blocking) in four cases: there is no `deny.toml`; cargo-deny is
+It is skipped (never blocking) in five cases: there is no `deny.toml`; cargo-deny is
 not installed (`cargo install cargo-deny`); a workspace root's path carries a whole
 `research` path component, since that is a spike tree such as a panel's probe or a
-feasibility sketch, and nothing it depends on reaches a consumer; or a workspace
+feasibility sketch, and nothing it depends on reaches a consumer; a workspace
 root's `cargo metadata` resolves to no packages at all, the shape a repository has
-when every crate carries its own `[workspace]`. A non-spike root whose package graph
+when every crate carries its own `[workspace]`; or the push carries
+`--deps-unchanged`, described below. A non-spike root whose package graph
 cannot be read at all is the one case that still blocks rather than skips, since a
 broken manifest says nothing about whether it is clean. Set `deny_check = false` to
 opt out.
+
+A passing run prints one line per workspace root and nothing of what cargo-deny itself
+printed, which is every duplicate and unused allowance it found. cargo-deny is run with
+`--color never`, so the output reads the same whatever `CARGO_TERM_COLOR` is. A failing
+run shows the error diagnostics, the summary line cargo-deny writes to stdout, and its
+exit status, or the last forty lines of its error output when it failed without an error
+diagnostic.
+
+The generated pre-push hook sends `--deps-unchanged` with the repo-lints scope
+(`--scope infra`) for a push that changes only registry rows, and the dependency gate
+stands down on that flag. The flag is the sender's claim and the engine does not check it,
+since the pushed range is not visible to it, so a hand-typed `--deps-unchanged` stands the
+gate down as well; a hook generated before the flag existed
+cannot send it, so such a hook keeps the gate, and `--scope infra` on its own never
+stands the gate down. The hook takes the diff of every pushed ref and gives a push that
+touches a `Cargo.toml`, a `Cargo.lock`, a `deny.toml` or a `.cargo/config*` anywhere in
+the repository, not only under the mock directory, the full scope instead, without the
+flag, so the gate runs for it. That list is what cargo-deny reads from the repository.
+What it reads from outside it, the advisory database and the yank state of a crate,
+changes with no push at all, and a push that stands the gate down does not see it.
 
 ### Tests: `[test]`
 
@@ -301,11 +324,16 @@ and selects which to run rather than running them all:
   shaders and fixtures kept there included), every path outside it that its sources
   name as a `../` string literal (an `include_str!` of a content file, a directory joined
   to `CARGO_MANIFEST_DIR`), the shared inputs of every member compiled into its tests
-  (their libraries, never their `tests/`), and the workspace's lockfile, manifest,
-  toolchain pin and cargo and nextest configuration, and the cargo config `mock test`
-  generates from `[test.opt_level]`. A change to a member's library reaches that member
-  and everything depending on it, and nothing else; a change to a workspace input, that
-  table included, reruns every member.
+  (their libraries, never their `tests/`), the entries of the lockfile that the member
+  reaches through its dependencies (itself and everything below it, so a bump of one
+  edge reruns that edge's dependents only), and the workspace's manifest, toolchain pin
+  and cargo and nextest configuration, and the cargo config `mock test` generates from
+  `[test.opt_level]`. A change to a member's library reaches that member and everything
+  depending on it, and nothing else; a change to a workspace input, that table included,
+  reruns every member. A lockfile that does not parse moves every
+  member as it did before, and a member the lock does not hold moves with the whole file. What the lock cannot say is which cargo features the build
+  unifies across members, so a feature that one member's dependency turns on for
+  another's is seen only through the manifests, as it always was.
 - **Within a member that runs, an integration-test binary runs when its own inputs
   moved.** `tests/<name>.rs` and `tests/<name>/main.rs` are each a binary, built from
   their own files (the modules they declare, the files their string literals name inside
@@ -313,7 +341,15 @@ and selects which to run rather than running them all:
   their sources read from outside, the member's library and its dependencies. A binary
   that passed at inputs that have not moved is left out and listed as `reuse`, so a
   change confined to one `tests/<name>.rs` runs that binary, and a member that failed in
-  one binary reruns only that one. The library's own tests, the binaries and the examples
+  one binary reruns only that one. A binary that ran whole and failed in some tests is
+  kept with their names and the listing it had, and the next run at the same inputs and
+  the same listing runs those tests alone, listed as `rerun`; the rest passed in that
+  run and stand. Whole is judged against `nextest list`, never against the exit code: a
+  run that stopped at its first failure, or left a listed test out for any other reason,
+  settles no binary and no member it did not cover, and without a listing a run that
+  failed settles nothing. A run with a filter that started no test while the plan left tests
+  out ends in failure and counts what it left out, since a run that started nothing is
+  no pass; without a filter, or when the plan left nothing out, it is as before. The library's own tests, the binaries and the examples
   move with the member's shared files. What cannot be placed widens rather than being
   missed: a file under `tests/` that no binary claims, the manifest, the build script and
   the library move every binary; a binary that reads the environment or `file!()`, declares
@@ -321,6 +357,16 @@ and selects which to run rather than running them all:
   any binary claims; a manifest naming a test outside `tests/` narrows nothing. The values
   of environment variables are in no fingerprint, a path built at run time from pieces
   none of which names it is not seen, and `--full` and `--no-cache` run every binary.
+- **A run builds the tests and not the examples.** Without a target flag of its own
+  (`--lib`, `--bins`, `--examples`, `--all-targets` and the rest), `mock test` passes
+  `--tests` to nextest and to its listing, so an example is neither built nor linked to
+  run none of its tests; an example declared with `test = true` is still a test. Checking that
+  the examples still build is a step of its own.
+- **The partitions of one run share a history flavour.** `--partition count:n/m` does not
+  change what is compiled, so it is not part of the flavour; a partition settles no
+  member, binary or failure, as any narrowed run does. The generated nextest config
+  names the heavy tests in several overrides, one binary and a bounded run of its tests
+  each, since nextest refuses one expression naming hundreds.
 - **A test is heavy when its last run took `heavy_after_secs` or more.** Heavy tests run
   `heavy_threads` at a time in nextest's `@tool:mockspace:heavy` group, and a heavy test
   that passed at its binary's current fingerprint is skipped as cached.
@@ -421,6 +467,21 @@ its sources read from outside, the workspace-wide files) is refused, naming the 
 a run cut short, by a container restart or a full disk, leaves that. A merge commit whose
 nulled green is one the driver's rule drops is not refused.
 
+The record can instead be kept on a git ref, which keeps it out of the tree and out of every
+commit. `[test.history]` declares it; the empty table keeps it on `refs/heads/mock/test-history`
+of `origin`, and `remote`, `namespace` and `form` (`"branch"` or `"ref"`) change where. A run
+reads the ref once when it starts and writes its records back as one commit when it ends, and a
+run that finds another writer got there first merges the files with the driver's rule above. A
+ref that cannot be fetched is an error that is said aloud: the run goes on with every member
+running and records nothing, and never takes the failure for an empty history. The write names
+only the members the run covered and those the workspace no longer has, so the record of any
+other member stands untouched. The commit hook does not see a ref, so the writer asks the question `check-test-history` asks of a
+commit: it refuses a write that removes a member's green record while the member's fingerprint is
+still the one the record was made at (a run cut short or a flaky test leaves that), and asks again of
+the winner's state when another run pushed first. The check of `check-test-history` covers a record
+kept in the tree only. Without the table nothing changes:
+the record stays in `<mock>/test-history` as above.
+
 ```toml
 [test]
 heavy_after_secs = 10    # a test this slow or slower is heavy
@@ -429,11 +490,33 @@ timeout_secs = 900       # a test still running after this long fails
 commit = "off"           # a lint level: warn runs `mock test --cheap` on commit, error also blocks
 lean = true              # build every crate without debug info unless it needs symbols; false leaves the profile alone
 debug = "line-tables-only"  # what a crate that needs symbols gets: 1, 2, "limited", "full", "line-tables-only" or "line-directives-only"
+work_marker = "MOCK-WORK"  # first word of the stderr line a test prints to report its work, `MOCK-WORK <unit> <n>`
 
 [test.opt_level]         # optional: the opt level a member is built at under `mock test`,
                          # nextest or `--plain`; a name that is no member is ignored
 sim-core = 3             # 0 to 3, "s" or "z"; members not named keep their manifest's
+
+[test.history]          # optional: keep the record on a git ref instead of in the tree
+remote = "origin"       # the git remote it lives on
+namespace = "test-history"  # its name under refs/heads/mock/
+form = "branch"         # "branch" (refs/heads/mock/<namespace>) or "ref" (refs/mock/<namespace>)
 ```
+
+Every nextest run of `mock test` (not `--plain`, which hands the run to `cargo test` and writes no report) writes one row per test (name, binary, seconds, outcome, machine class, profile, test threads, load before and after, and a work count where the test reported one) as a shard under `<mock>/target/mockspace-test-state/timings-spool/samples/<yyyy-mm>/<machine-class>/`. A test reports work by printing `MOCK-WORK <unit> <n>` on stderr, `ticks 1200` for instance; `work_marker` renames the first word. Nextest is told to keep a passing test's stderr for this.
+
+### Registry on a git ref
+
+The registry is the `*.toml` files under `<mock>/registry/`, and by default it is that directory in the tree. A directory of it can instead be kept on a git ref, so its rows move without a commit in the work tree:
+
+```toml
+[[registry.store]]
+dir = "ticket"           # the directory under <mock>/registry/ the ref holds
+namespace = "registry/ticket"  # optional: the ref is refs/heads/mock/<namespace>; this is the default for dir = "ticket"
+remote = "origin"        # optional
+form = "branch"          # optional: "branch" (refs/heads/mock/...) or "ref" (refs/mock/...)
+```
+
+A key the declaration does not read refuses the config, as it does in `[test.history]`, and `dir` is required here and refused there. The tree's copy of a mounted directory is ignored, and a row says it was declared where it would sit in the tree. Every `cargo mock` fetches a ref it reads and fails, rather than reading an empty registry, when it cannot. A write to a ref goes through one writer, which refuses a file that is not TOML or a row without an `id`, any finding of the registry checks that it would raise more often than before the write, and a row the generated schema refuses (`taplo` runs over a copy of the registry as it would stand, so `taplo` and the generated schemas must be present). When another writer moved the ref first, the registry merge driver settles it row by row, the checks run again on the result, and a row changed two ways on both sides is not merged. `cargo mock registry-append` writes through the same writer, and does not ask a delegate hook about a row kept on a ref, since a hook edits the tree. The writer reads rows and not documents, so a write that removes a row a generated document names is let through. The next generation run (`cargo mock`) reports the dangling reference; a commit concluding a merge and the post-merge and post-rewrite hooks run generation and report it too, a plain lint-only commit or push does not, and a write to a ref makes no commit.
 
 ### Lints
 
@@ -544,7 +627,7 @@ The registry schema check (`taplo check`) is replayed the same way, counted as `
 
 The store is `$MOCKSPACE_VERDICTS_DIR`, else `$XDG_CACHE_HOME/mockspace/verdicts`, else `~/.cache/mockspace/verdicts`, one store for the machine, shared by every repository. It is content addressed and never committed, deleting it costs one full run, and entries not accessed for fourteen days are swept (on a mount that keeps no access times that means written fourteen days ago, which costs a rerun and nothing else). `MOCKSPACE_NO_VERDICTS=1` turns it off for a run, which is a full run, and `MOCKSPACE_TIMINGS=1` prints where a run spent its time and how many verdicts each lint replayed (`hit:<lint>`) or computed (`miss:<lint>`). `cargo mock lints` lists each lint's reach.
 
-`single-source` is the cross-package lint for one concept defined in more than one package. It reads every source file of every package, following `mod` declarations from the package roots, so a definition in a module file, a nested or `#[path]` module or a `cfg`-gated module is found; test code is exempt. Only items that are plain `pub` are compared across packages; a private, `pub(crate)`, `pub(super)` or `pub(in ..)` item belongs to its own package. It reports two finding kinds, `type` (the same struct, enum, trait or union name in two packages) and `constant` (the same `const` or `static` name, type and value in two packages), and `[lints.single-source.findings]` can set their severities apart. A constant is compared only when its value is built from literals, so a value that names something is never reported. The module doc of `lint-rules/src/single_source.rs` lists what it cannot see.
+`single-source` is the cross-package lint for one concept defined in more than one package. It reads every source file of every package, following `mod` declarations from the package roots, so a definition in a module file, a nested or `#[path]` module or a `cfg`-gated module is found; test code is exempt. Only items that are plain `pub` are compared across packages; a private, `pub(crate)`, `pub(super)` or `pub(in ..)` item belongs to its own package. It reports two finding kinds, `type` (a struct, enum, trait or union of the same name and the same declaration in two packages, the declaration compared without comments, attributes, visibilities, the names of generic parameters and the order of members that have none) and `constant` (the same `const` or `static` name, type and value in two packages), and `[lints.single-source.findings]` can set their severities apart. A constant is compared only when its value is built from literals, so a value that names something is never reported. The module doc of `lint-rules/src/single_source.rs` lists what it cannot see. A tool that asks how close two types are reads them the same way through `declared_types`, which hands each type over as its generics, its members and its frame, and reads the files of a crate through `collect_crate_sources`, so it counts what the lint counts.
 
 ## Generated documentation
 
