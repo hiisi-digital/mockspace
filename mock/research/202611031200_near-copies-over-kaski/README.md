@@ -24,3 +24,10 @@ a person reads and no gate. Whether each pair above is one concept is a call for
 crates and is not made here.
 
 Run again with `cargo mock near-copies <crate>...` once the pack carries the tool.
+
+Regenerate, from a checkout of kaski at `origin/dev` with the pack carrying the tool:
+
+    cargo mock near-copies --limit 100000 $(for d in mock/crates/* mock/tools/*; do [ -d $d/src ] && basename $d; done | sort -u)
+
+The committed `report.txt` was produced the same way through a driver that calls the tool directly,
+before the pack reached kaski.
