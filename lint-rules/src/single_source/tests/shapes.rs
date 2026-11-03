@@ -7,12 +7,12 @@
 
 use super::*;
 
-fn types(a: &str, b: &str) -> Vec<LintError> {
+pub(super) fn types(a: &str, b: &str) -> Vec<LintError> {
     findings(&[at_root("test-a", a), with_files("test-b", "mod m;", &[("src/m.rs", b)])])
 }
 
 /// The two declarations are one concept: one finding, whichever crate is read first.
-fn agree(a: &str, b: &str) {
+pub(super) fn agree(a: &str, b: &str) {
     let found = types(a, b);
     assert_eq!(
         found.len(),
@@ -29,7 +29,7 @@ fn agree(a: &str, b: &str) {
 }
 
 /// The two declarations share a name and nothing else: no finding, in either order.
-fn differ(a: &str, b: &str) {
+pub(super) fn differ(a: &str, b: &str) {
     let found = types(a, b);
     assert!(
         found.is_empty(),

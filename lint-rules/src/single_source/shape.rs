@@ -350,14 +350,16 @@ impl<'s> Shape<'s> {
 
     fn leaf(&self, node: Node<'s>) -> String {
         let text = &self.source[node.byte_range()];
-        // The last segment of a path names an item of that path, whatever a parameter is called.
-        let last_segment = node.parent().is_some_and(|parent| {
-            matches!(
+        // A name that declares an item (a variant, a method, an associated constant or type) or that
+        // is the last segment of a path names that item, whatever a parameter is called. Only a
+        // parameter's own declaration is a name that moves with the parameter.
+        let names_an_item = node.parent().is_some_and(|parent| {
+            !matches!(
                 parent.kind(),
-                "scoped_type_identifier" | "scoped_identifier"
+                "type_parameter" | "lifetime_parameter" | "const_parameter" | "lifetime"
             ) && parent.child_by_field_name("name") == Some(node)
         });
-        if last_segment {
+        if names_an_item {
             return text.to_string();
         }
         // A type is named by a `type_identifier`, and as the first segment of a path (`T::Item`) by an

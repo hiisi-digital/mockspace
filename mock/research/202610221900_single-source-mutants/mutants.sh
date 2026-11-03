@@ -2,6 +2,10 @@
 # Not in the table, because equivalent: dropping the lib.rs, main.rs and src/bin/<name>/main.rs
 # roots changes nothing, since those files own their directory by name and the
 # orphan walk reaches them first. Only src/bin/<name>.rs needs the root rule.
+# Also not in the table, because equivalent: dropping `lifetime_parameter` or `lifetime` from the
+# parents whose `name` is renamed with its parameter. The name of a lifetime parameter is a `lifetime`
+# node and the identifier inside a `lifetime` has no field, so `leaf` never sees either as an item's name.
+# Both survived the run, which is how this was found.
 # Mutation check for the `single-source` lint. Each line of the table below is one
 # mutant: the file, a perl substitution that must match exactly once, and a name.
 # A mutant is killed when `cargo test` fails with the change applied. A build
@@ -66,7 +70,10 @@ a path segment not told from a type|single_source/shape.rs|"identifier" => class
 bounded operands kept in the order written|single_source/shape.rs|operands\.sort\(\);@@let _ = ();
 a nested bounded type not flattened|single_source/shape.rs|self\.operands\(child, head, out\);@@out.push(self.node(child));
 the dyn or impl left off a bounded type|single_source/shape.rs|\*head = Some\(keyword\);@@let _ = keyword;
-the last segment of a path renamed|single_source/shape.rs|if last_segment \{@@if false {
+a name that declares an item renamed|single_source/shape.rs|if names_an_item \{@@if false {
+any node with a name field kept as written|single_source/shape.rs|parent\.child_by_field_name\("name"\) == Some\(node\)@@true
+a type parameter's own name kept as written|single_source/shape.rs|"type_parameter" \| "lifetime_parameter"@@"lifetime_parameter"
+a const parameter's own name kept as written|single_source/shape.rs|\| "const_parameter"@@
 a binder closed before the bounds are read|single_source/shape.rs|let binds = left\.kind\(\) == "higher_ranked_trait_bound";@@let binds = false;
 a predicate subject read as the type field|single_source/shape.rs|\.filter\(\|_\| binds\)@@
 a tuple of one loses its comma|single_source/shape.rs|if node\.parent\(\)\.is_some_and\(is_tuple_of_one\) \{@@if false {
