@@ -484,12 +484,20 @@ fn adopt_into_last_round(
         return ExitCode::FAILURE;
     };
     // A topic stamped after the day the round closed is the next round's, not this one's.
-    let closed_on: String = std::fs::read_to_string(dr.join(&round).join(".meta"))
-        .unwrap_or_default()
+    // The minute the closing commit was made, from the sha `.meta` recorded; the day alone only
+    // where that commit cannot be read.
+    let meta = std::fs::read_to_string(dr.join(&round).join(".meta")).unwrap_or_default();
+    let closed_at: Option<String> = meta
         .lines()
-        .find_map(|l| l.strip_prefix("close_date:"))
-        .map(|d| d.chars().filter(char::is_ascii_digit).collect())
-        .unwrap_or_default();
+        .find_map(|l| l.strip_prefix("closed:"))
+        .and_then(|sha| git_commit_stamp(cfg, sha.trim()));
+    let closed_on: String = closed_at.clone().unwrap_or_else(|| {
+        meta.lines()
+            .find_map(|l| l.strip_prefix("close_date:"))
+            .map(|d| d.chars().filter(char::is_ascii_digit).collect())
+            .unwrap_or_default()
+    });
+    let width = closed_on.len().min(12);
     let mut names: Vec<&String> = Vec::new();
     for name in take {
         if !names.contains(&name) {
@@ -502,12 +510,13 @@ fn adopt_into_last_round(
             eprintln!("error: --take {name}: {round}/ already holds a file of that name, and a closed round's file is not overwritten");
             refused = true;
         }
-        let stamped = lint_rules::round_id::split_prefix(name).map(|(id, _)| id[..id.len().min(8)].to_string());
-        if let Some(day) = stamped
+        let stamped = lint_rules::round_id::split_prefix(name).map(|(id, _)| id[..id.len().min(width)].to_string());
+        if let Some(at) = stamped
             && !closed_on.is_empty()
-            && day > closed_on
+            && at > closed_on
         {
-            eprintln!("error: --take {name}: stamped after {round} closed, so it is the next round's and stays flat");
+            let when = if closed_at.is_some() { "the minute" } else { "the day" };
+            eprintln!("error: --take {name}: stamped after {when} {round} closed ({closed_on}), so it is the next round's and stays flat");
             refused = true;
         }
     }

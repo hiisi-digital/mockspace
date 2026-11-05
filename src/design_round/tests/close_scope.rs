@@ -631,3 +631,51 @@ fn a_take_naming_no_flat_file_moves_nothing_when_no_round_is_open() {
     assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC, "no-such-file.md"]), ExitCode::FAILURE);
     assert!(dr.join(OWN_EARLIER_TOPIC).is_file());
 }
+
+/// A repository in `dir` with one commit made at a fixed time, and that commit's sha.
+fn commit_at_noon(dir: &Path) -> String {
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(dir)
+            .env("GIT_COMMITTER_DATE", "2026-10-23T12:00:00+0000")
+            .env("GIT_AUTHOR_DATE", "2026-10-23T12:00:00+0000")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    git(&["init", "-q"]);
+    std::fs::write(dir.join("f"), "x").unwrap();
+    git(&["add", "f"]);
+    git(&["commit", "-q", "-m", "close"]);
+    git(&["rev-parse", "HEAD"])
+}
+
+#[test]
+fn a_topic_stamped_the_same_day_but_after_the_closing_commit_stays_flat() {
+    let dir = tempfile::tempdir().unwrap();
+    let dr = dir.path().join("design_rounds");
+    std::fs::create_dir_all(&dr).unwrap();
+    let sha = commit_at_noon(dir.path());
+    let cfg = Config::from_dir(dir.path());
+    let stamp = git_commit_stamp(&cfg, &sha).expect("the commit is readable");
+    let day = &stamp[..8];
+    let after = format!("{day}2359_topic.after-the-close.md");
+    let before = format!("{day}0000_topic.before-the-close.md");
+    std::fs::write(dr.join(&after), "next\n").unwrap();
+    std::fs::write(dr.join(&before), "own\n").unwrap();
+    let round = "202610230520";
+    std::fs::create_dir_all(dr.join(round)).unwrap();
+    std::fs::write(
+        dr.join(round).join(".meta"),
+        format!("round: {round}\nclosed: {sha}\nclose_date: 2026-10-23\nabandoned: false\n"),
+    )
+    .unwrap();
+    assert_eq!(adopt(&dir, &[&after]), ExitCode::FAILURE, "same day, later than the close");
+    assert!(dr.join(&after).is_file());
+    // the control: one stamped before the close, on the same day, is filed
+    assert_eq!(adopt(&dir, &[&before]), ExitCode::SUCCESS);
+    assert!(dr.join(round).join(&before).is_file());
+}
