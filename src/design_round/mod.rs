@@ -419,6 +419,12 @@ pub fn cmd_close_taking(cfg: &Config, opts: &SubcmdOpts, take: &[String]) -> Exi
     let dr = design_rounds_dir(cfg);
     let phase = changelist_helpers::current_phase(&dr);
 
+    // A topic a close left flat, with no round open: `--take` files it under the newest closed
+    // round, since the close that left it cannot be run again.
+    if !take.is_empty() && !changelist_helpers::has_any_changelist(&dr) {
+        return adopt_into_last_round(cfg, opts, &dr, take);
+    }
+
     if phase != Phase::Done {
         eprintln!(
             "error: can only close a round in CLOSED phase (current: {})",
@@ -444,6 +450,93 @@ pub fn cmd_close_taking(cfg: &Config, opts: &SubcmdOpts, take: &[String]) -> Exi
     let round_name = determine_round_name(&all_cls);
 
     perform_archive(cfg, opts, &dr, &round_name, ArchiveKind::Closed, take)
+}
+
+/// Moves the flat files `take` names into the newest closed round of `dr`, the one with a `.meta`
+/// and the greatest id. The files stay as written, so what a round's `.meta` records is unchanged.
+fn adopt_into_last_round(
+    cfg: &Config,
+    opts: &SubcmdOpts,
+    dr: &Path,
+    take: &[String],
+) -> ExitCode {
+    let unknown: Vec<&String> = take
+        .iter()
+        .filter(|n| *n == "README.md" || n.contains('/') || !dr.join(n.as_str()).is_file())
+        .collect();
+    if !unknown.is_empty() {
+        for name in unknown {
+            eprintln!("error: --take {name}: no such flat file in design_rounds/");
+        }
+        return ExitCode::FAILURE;
+    }
+    let mut closed: Vec<String> = std::fs::read_dir(dr)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| lint_rules::round_id::is_round_dir(n))
+        .filter(|n| dr.join(n).join(".meta").is_file())
+        .collect();
+    closed.sort();
+    let Some(round) = closed.pop() else {
+        eprintln!("error: no closed round in design_rounds/ to file `--take` under");
+        return ExitCode::FAILURE;
+    };
+    // A topic stamped after the day the round closed is the next round's, not this one's.
+    // The minute the closing commit was made, from the sha `.meta` recorded; the day alone only
+    // where that commit cannot be read.
+    let meta = std::fs::read_to_string(dr.join(&round).join(".meta")).unwrap_or_default();
+    let closed_at: Option<String> = meta
+        .lines()
+        .find_map(|l| l.strip_prefix("closed:"))
+        .and_then(|sha| git_commit_stamp(cfg, sha.trim()));
+    let closed_on: String = closed_at.clone().unwrap_or_else(|| {
+        meta.lines()
+            .find_map(|l| l.strip_prefix("close_date:"))
+            .map(|d| d.chars().filter(char::is_ascii_digit).collect())
+            .unwrap_or_default()
+    });
+    let width = closed_on.len().min(12);
+    let mut names: Vec<&String> = Vec::new();
+    for name in take {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    let mut refused = false;
+    for name in &names {
+        if dr.join(&round).join(name.as_str()).exists() {
+            eprintln!("error: --take {name}: {round}/ already holds a file of that name, and a closed round's file is not overwritten");
+            refused = true;
+        }
+        let stamped = lint_rules::round_id::split_prefix(name).map(|(id, _)| id[..id.len().min(width)].to_string());
+        if let Some(at) = stamped
+            && !closed_on.is_empty()
+            && at > closed_on
+        {
+            let when = if closed_at.is_some() { "the minute" } else { "the day" };
+            eprintln!("error: --take {name}: stamped after {when} {round} closed ({closed_on}), so it is the next round's and stays flat");
+            refused = true;
+        }
+    }
+    if refused {
+        return ExitCode::FAILURE;
+    }
+    let mut touched = Vec::new();
+    for name in &names {
+        let from = dr.join(name.as_str());
+        let to = dr.join(&round).join(name.as_str());
+        if let Err(e) = std::fs::rename(&from, &to) {
+            eprintln!("error: failed to move {name}: {e}");
+            return ExitCode::FAILURE;
+        }
+        touched.push(from);
+        touched.push(to);
+    }
+    eprintln!("moved {} files to {round}/", names.len());
+    commit_or_suggest(cfg, opts, &touched, &format!("chore: file topics under round {round}"));
+    ExitCode::SUCCESS
 }
 
 pub fn cmd_archive(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {

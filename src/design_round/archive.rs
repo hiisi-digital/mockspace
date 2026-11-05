@@ -158,7 +158,7 @@ pub(crate) fn left_notice(left: &[String]) -> Option<String> {
     }
     out.push_str(
         "\n  a file of this round's among them lands flat unless it is named: `cargo mock close --take <file>` \
-         archives it with the round, on the close that comes next",
+         archives it with the round, on a close, or after one with `cargo mock close --take <file>`",
     );
     Some(out)
 }
