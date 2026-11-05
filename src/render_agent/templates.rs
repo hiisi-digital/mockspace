@@ -494,7 +494,7 @@ A design round is topic conversations, then a doc changelist, then a source chan
   - `design_rounds/{id}_topic.{name}.md`
   - `design_rounds/{id}_changelist.doc.md`, `{id}_changelist.doc.lock.md` after lock
   - `design_rounds/{id}_changelist.src.md`, `{id}_changelist.src.lock.md` after lock
-- `cargo mock close` moves the round's files into `design_rounds/{id}/`; `cargo mock archive` into `design_rounds/{id}-abandoned/`. They are the only steps that create a subdirectory. A closed round's files are frozen.
+- `cargo mock close` moves the round's files into `design_rounds/{id}/`; `cargo mock archive` into `design_rounds/{id}-abandoned/`. They are the only steps that create a subdirectory. A closed round's files are frozen, and the one way a file joins one later is `cargo mock close --take <file>` with no round open, which files a flat topic under the newest closed round and never overwrites a file there.
 - The `mockspace-write-guard` hook denies writes to `design_rounds/[^/]+/` at HARD_ERROR. On that deny, the intended path is the flat one.
 - `lock`, `close` and `archive` with `--auto-commit` commit only the round's own files and bring the index to that commit for those paths. Do not `git reset` or restage after.
 

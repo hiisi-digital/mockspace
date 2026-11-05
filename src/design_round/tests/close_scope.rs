@@ -506,3 +506,176 @@ fn close_refuses_a_take_that_is_a_path_and_not_a_flat_file_name() {
     }
     assert_eq!(names_in(&dr), sorted(&[DOC_LOCK, SRC_LOCK, OWN_TOPIC]));
 }
+
+// The close that left a topic flat cannot be run again, since the flat topic makes the phase TOPIC,
+// so `--take` with no round open files the topic under the newest closed round.
+#[test]
+fn take_with_no_round_open_files_a_flat_topic_under_the_newest_closed_round() {
+    let dir = closable(&[]);
+    let dr = dir.path().join("design_rounds");
+    let cfg = Config::from_dir(dir.path());
+    assert_eq!(cmd_close(&cfg, &OPTS), ExitCode::SUCCESS);
+    std::fs::write(dr.join(OWN_EARLIER_TOPIC), "own\n").unwrap();
+    assert_eq!(
+        cmd_close_taking(&cfg, &OPTS, &[OWN_EARLIER_TOPIC.to_string()]),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(
+        names_in(&dr.join("202610230520")),
+        sorted(&[DOC_LOCK, SRC_LOCK, OWN_EARLIER_TOPIC])
+    );
+    assert!(names_in(&dr).is_empty(), "nothing is left flat");
+}
+
+#[test]
+fn take_with_no_round_open_and_no_closed_round_moves_nothing() {
+    let dir = mock(&[(OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    assert_eq!(
+        cmd_close_taking(&Config::from_dir(dir.path()), &OPTS, &[OWN_EARLIER_TOPIC.to_string()]),
+        ExitCode::FAILURE
+    );
+    assert_eq!(names_in(&dr), sorted(&[OWN_EARLIER_TOPIC]));
+}
+
+/// A closed round `id` holding one file and a `.meta` that says when and how it closed.
+fn closed_round(dr: &Path, id: &str, abandoned: bool, date: &str) {
+    let d = dr.join(id);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("a.md"), "kept\n").unwrap();
+    std::fs::write(
+        d.join(".meta"),
+        format!("round: {id}\nclosed: abc\nclose_date: {date}\nabandoned: {abandoned}\n"),
+    )
+    .unwrap();
+}
+
+fn adopt(dir: &tempfile::TempDir, names: &[&str]) -> ExitCode {
+    let take: Vec<String> = names.iter().map(|n| (*n).to_string()).collect();
+    cmd_close_taking(&Config::from_dir(dir.path()), &OPTS, &take)
+}
+
+#[test]
+fn the_topic_a_close_left_flat_is_filed_by_the_next_take() {
+    // The case the ticket describes: the close leaves the topic flat and says so, and no round is open after it.
+    let dir = closable(&[(OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    assert_eq!(cmd_close(&Config::from_dir(dir.path()), &OPTS), ExitCode::SUCCESS);
+    assert_eq!(names_in(&dr), sorted(&[OWN_EARLIER_TOPIC]), "the close left it flat");
+    assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC]), ExitCode::SUCCESS);
+    assert!(names_in(&dr).is_empty());
+}
+
+#[test]
+fn the_newest_closed_round_is_the_one_filed_under_and_an_abandoned_one_is_never_it() {
+    let dir = mock(&[(OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    closed_round(&dr, "202610210000", false, "2026-10-21");
+    closed_round(&dr, "202610230520", false, "2026-10-23");
+    closed_round(&dr, "202610240000-abandoned", true, "2026-10-24");
+    assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC]), ExitCode::SUCCESS);
+    assert!(dr.join("202610230520").join(OWN_EARLIER_TOPIC).is_file(), "the newest closed round took it");
+    assert!(!dr.join("202610210000").join(OWN_EARLIER_TOPIC).exists());
+    assert!(!dr.join("202610240000-abandoned").join(OWN_EARLIER_TOPIC).exists());
+}
+
+#[test]
+fn a_file_the_closed_round_already_holds_is_never_overwritten() {
+    let dir = mock(&[(OWN_EARLIER_TOPIC, "new text\n")]);
+    let dr = dir.path().join("design_rounds");
+    closed_round(&dr, "202610230520", false, "2026-10-23");
+    std::fs::write(dr.join("202610230520").join(OWN_EARLIER_TOPIC), "frozen text\n").unwrap();
+    assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC]), ExitCode::FAILURE);
+    assert_eq!(
+        std::fs::read_to_string(dr.join("202610230520").join(OWN_EARLIER_TOPIC)).unwrap(),
+        "frozen text\n"
+    );
+    assert!(dr.join(OWN_EARLIER_TOPIC).is_file(), "the flat file is where it was");
+}
+
+#[test]
+fn a_topic_stamped_after_the_round_closed_is_the_next_rounds_and_stays_flat() {
+    let later = "202611050900_topic.the-next-round.md";
+    let dir = mock(&[(later, "next\n"), (OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    closed_round(&dr, "202610230520", false, "2026-10-23");
+    assert_eq!(adopt(&dir, &[later]), ExitCode::FAILURE);
+    assert!(dr.join(later).is_file());
+    // the control: the same call for a topic stamped before the close is accepted
+    assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC]), ExitCode::SUCCESS);
+}
+
+#[test]
+fn naming_a_file_twice_files_it_once_and_does_not_panic() {
+    let dir = mock(&[(OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    closed_round(&dr, "202610230520", false, "2026-10-23");
+    assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC, OWN_EARLIER_TOPIC]), ExitCode::SUCCESS);
+    assert!(dr.join("202610230520").join(OWN_EARLIER_TOPIC).is_file());
+}
+
+#[test]
+fn a_stray_deprecated_changelist_does_not_stop_the_take() {
+    let stray = "202610220000_changelist.doc.deprecated.md";
+    let dir = mock(&[(stray, "# old\n"), (OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    closed_round(&dr, "202610230520", false, "2026-10-23");
+    assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC]), ExitCode::SUCCESS);
+}
+
+#[test]
+fn a_take_naming_no_flat_file_moves_nothing_when_no_round_is_open() {
+    let dir = mock(&[(OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    closed_round(&dr, "202610230520", false, "2026-10-23");
+    assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC, "no-such-file.md"]), ExitCode::FAILURE);
+    assert!(dr.join(OWN_EARLIER_TOPIC).is_file());
+}
+
+/// A repository in `dir` with one commit made at a fixed time, and that commit's sha.
+fn commit_at_noon(dir: &Path) -> String {
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(dir)
+            .env("GIT_COMMITTER_DATE", "2026-10-23T12:00:00+0000")
+            .env("GIT_AUTHOR_DATE", "2026-10-23T12:00:00+0000")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    git(&["init", "-q"]);
+    std::fs::write(dir.join("f"), "x").unwrap();
+    git(&["add", "f"]);
+    git(&["commit", "-q", "-m", "close"]);
+    git(&["rev-parse", "HEAD"])
+}
+
+#[test]
+fn a_topic_stamped_the_same_day_but_after_the_closing_commit_stays_flat() {
+    let dir = tempfile::tempdir().unwrap();
+    let dr = dir.path().join("design_rounds");
+    std::fs::create_dir_all(&dr).unwrap();
+    let sha = commit_at_noon(dir.path());
+    let cfg = Config::from_dir(dir.path());
+    let stamp = git_commit_stamp(&cfg, &sha).expect("the commit is readable");
+    let day = &stamp[..8];
+    let after = format!("{day}2359_topic.after-the-close.md");
+    let before = format!("{day}0000_topic.before-the-close.md");
+    std::fs::write(dr.join(&after), "next\n").unwrap();
+    std::fs::write(dr.join(&before), "own\n").unwrap();
+    let round = "202610230520";
+    std::fs::create_dir_all(dr.join(round)).unwrap();
+    std::fs::write(
+        dr.join(round).join(".meta"),
+        format!("round: {round}\nclosed: {sha}\nclose_date: 2026-10-23\nabandoned: false\n"),
+    )
+    .unwrap();
+    assert_eq!(adopt(&dir, &[&after]), ExitCode::FAILURE, "same day, later than the close");
+    assert!(dr.join(&after).is_file());
+    // the control: one stamped before the close, on the same day, is filed
+    assert_eq!(adopt(&dir, &[&before]), ExitCode::SUCCESS);
+    assert!(dr.join(round).join(&before).is_file());
+}
