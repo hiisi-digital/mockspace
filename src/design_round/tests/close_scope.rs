@@ -537,3 +537,97 @@ fn take_with_no_round_open_and_no_closed_round_moves_nothing() {
     );
     assert_eq!(names_in(&dr), sorted(&[OWN_EARLIER_TOPIC]));
 }
+
+/// A closed round `id` holding one file and a `.meta` that says when and how it closed.
+fn closed_round(dr: &Path, id: &str, abandoned: bool, date: &str) {
+    let d = dr.join(id);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("a.md"), "kept\n").unwrap();
+    std::fs::write(
+        d.join(".meta"),
+        format!("round: {id}\nclosed: abc\nclose_date: {date}\nabandoned: {abandoned}\n"),
+    )
+    .unwrap();
+}
+
+fn adopt(dir: &tempfile::TempDir, names: &[&str]) -> ExitCode {
+    let take: Vec<String> = names.iter().map(|n| (*n).to_string()).collect();
+    cmd_close_taking(&Config::from_dir(dir.path()), &OPTS, &take)
+}
+
+#[test]
+fn the_topic_a_close_left_flat_is_filed_by_the_next_take() {
+    // The case the ticket describes: the close leaves the topic flat and says so, and no round is open after it.
+    let dir = closable(&[(OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    assert_eq!(cmd_close(&Config::from_dir(dir.path()), &OPTS), ExitCode::SUCCESS);
+    assert_eq!(names_in(&dr), sorted(&[OWN_EARLIER_TOPIC]), "the close left it flat");
+    assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC]), ExitCode::SUCCESS);
+    assert!(names_in(&dr).is_empty());
+}
+
+#[test]
+fn the_newest_closed_round_is_the_one_filed_under_and_an_abandoned_one_is_never_it() {
+    let dir = mock(&[(OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    closed_round(&dr, "202610210000", false, "2026-10-21");
+    closed_round(&dr, "202610230520", false, "2026-10-23");
+    closed_round(&dr, "202610240000-abandoned", true, "2026-10-24");
+    assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC]), ExitCode::SUCCESS);
+    assert!(dr.join("202610230520").join(OWN_EARLIER_TOPIC).is_file(), "the newest closed round took it");
+    assert!(!dr.join("202610210000").join(OWN_EARLIER_TOPIC).exists());
+    assert!(!dr.join("202610240000-abandoned").join(OWN_EARLIER_TOPIC).exists());
+}
+
+#[test]
+fn a_file_the_closed_round_already_holds_is_never_overwritten() {
+    let dir = mock(&[(OWN_EARLIER_TOPIC, "new text\n")]);
+    let dr = dir.path().join("design_rounds");
+    closed_round(&dr, "202610230520", false, "2026-10-23");
+    std::fs::write(dr.join("202610230520").join(OWN_EARLIER_TOPIC), "frozen text\n").unwrap();
+    assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC]), ExitCode::FAILURE);
+    assert_eq!(
+        std::fs::read_to_string(dr.join("202610230520").join(OWN_EARLIER_TOPIC)).unwrap(),
+        "frozen text\n"
+    );
+    assert!(dr.join(OWN_EARLIER_TOPIC).is_file(), "the flat file is where it was");
+}
+
+#[test]
+fn a_topic_stamped_after_the_round_closed_is_the_next_rounds_and_stays_flat() {
+    let later = "202611050900_topic.the-next-round.md";
+    let dir = mock(&[(later, "next\n"), (OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    closed_round(&dr, "202610230520", false, "2026-10-23");
+    assert_eq!(adopt(&dir, &[later]), ExitCode::FAILURE);
+    assert!(dr.join(later).is_file());
+    // the control: the same call for a topic stamped before the close is accepted
+    assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC]), ExitCode::SUCCESS);
+}
+
+#[test]
+fn naming_a_file_twice_files_it_once_and_does_not_panic() {
+    let dir = mock(&[(OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    closed_round(&dr, "202610230520", false, "2026-10-23");
+    assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC, OWN_EARLIER_TOPIC]), ExitCode::SUCCESS);
+    assert!(dr.join("202610230520").join(OWN_EARLIER_TOPIC).is_file());
+}
+
+#[test]
+fn a_stray_deprecated_changelist_does_not_stop_the_take() {
+    let stray = "202610220000_changelist.doc.deprecated.md";
+    let dir = mock(&[(stray, "# old\n"), (OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    closed_round(&dr, "202610230520", false, "2026-10-23");
+    assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC]), ExitCode::SUCCESS);
+}
+
+#[test]
+fn a_take_naming_no_flat_file_moves_nothing_when_no_round_is_open() {
+    let dir = mock(&[(OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    closed_round(&dr, "202610230520", false, "2026-10-23");
+    assert_eq!(adopt(&dir, &[OWN_EARLIER_TOPIC, "no-such-file.md"]), ExitCode::FAILURE);
+    assert!(dr.join(OWN_EARLIER_TOPIC).is_file());
+}

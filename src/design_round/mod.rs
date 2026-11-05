@@ -421,7 +421,7 @@ pub fn cmd_close_taking(cfg: &Config, opts: &SubcmdOpts, take: &[String]) -> Exi
 
     // A topic a close left flat, with no round open: `--take` files it under the newest closed
     // round, since the close that left it cannot be run again.
-    if !take.is_empty() && changelist_helpers::find_changelists(&dr).is_empty() {
+    if !take.is_empty() && !changelist_helpers::has_any_changelist(&dr) {
         return adopt_into_last_round(cfg, opts, &dr, take);
     }
 
@@ -474,23 +474,58 @@ fn adopt_into_last_round(
         .into_iter()
         .flatten()
         .flatten()
-        .filter(|e| e.path().join(".meta").is_file())
         .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| lint_rules::round_id::is_round_dir(n))
+        .filter(|n| dr.join(n).join(".meta").is_file())
         .collect();
     closed.sort();
     let Some(round) = closed.pop() else {
         eprintln!("error: no closed round in design_rounds/ to file `--take` under");
         return ExitCode::FAILURE;
     };
-    let mut touched = Vec::new();
+    // A topic stamped after the day the round closed is the next round's, not this one's.
+    let closed_on: String = std::fs::read_to_string(dr.join(&round).join(".meta"))
+        .unwrap_or_default()
+        .lines()
+        .find_map(|l| l.strip_prefix("close_date:"))
+        .map(|d| d.chars().filter(char::is_ascii_digit).collect())
+        .unwrap_or_default();
+    let mut names: Vec<&String> = Vec::new();
     for name in take {
-        let from = dr.join(name);
-        let to = dr.join(&round).join(name);
-        std::fs::rename(&from, &to).unwrap_or_else(|e| panic!("failed to move {name}: {e}"));
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    let mut refused = false;
+    for name in &names {
+        if dr.join(&round).join(name.as_str()).exists() {
+            eprintln!("error: --take {name}: {round}/ already holds a file of that name, and a closed round's file is not overwritten");
+            refused = true;
+        }
+        let stamped = lint_rules::round_id::split_prefix(name).map(|(id, _)| id[..id.len().min(8)].to_string());
+        if let Some(day) = stamped
+            && !closed_on.is_empty()
+            && day > closed_on
+        {
+            eprintln!("error: --take {name}: stamped after {round} closed, so it is the next round's and stays flat");
+            refused = true;
+        }
+    }
+    if refused {
+        return ExitCode::FAILURE;
+    }
+    let mut touched = Vec::new();
+    for name in &names {
+        let from = dr.join(name.as_str());
+        let to = dr.join(&round).join(name.as_str());
+        if let Err(e) = std::fs::rename(&from, &to) {
+            eprintln!("error: failed to move {name}: {e}");
+            return ExitCode::FAILURE;
+        }
         touched.push(from);
         touched.push(to);
     }
-    eprintln!("moved {} files to {round}/", take.len());
+    eprintln!("moved {} files to {round}/", names.len());
     commit_or_suggest(cfg, opts, &touched, &format!("chore: file topics under round {round}"));
     ExitCode::SUCCESS
 }
