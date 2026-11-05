@@ -506,3 +506,34 @@ fn close_refuses_a_take_that_is_a_path_and_not_a_flat_file_name() {
     }
     assert_eq!(names_in(&dr), sorted(&[DOC_LOCK, SRC_LOCK, OWN_TOPIC]));
 }
+
+// The close that left a topic flat cannot be run again, since the flat topic makes the phase TOPIC,
+// so `--take` with no round open files the topic under the newest closed round.
+#[test]
+fn take_with_no_round_open_files_a_flat_topic_under_the_newest_closed_round() {
+    let dir = closable(&[]);
+    let dr = dir.path().join("design_rounds");
+    let cfg = Config::from_dir(dir.path());
+    assert_eq!(cmd_close(&cfg, &OPTS), ExitCode::SUCCESS);
+    std::fs::write(dr.join(OWN_EARLIER_TOPIC), "own\n").unwrap();
+    assert_eq!(
+        cmd_close_taking(&cfg, &OPTS, &[OWN_EARLIER_TOPIC.to_string()]),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(
+        names_in(&dr.join("202610230520")),
+        sorted(&[DOC_LOCK, SRC_LOCK, OWN_EARLIER_TOPIC])
+    );
+    assert!(names_in(&dr).is_empty(), "nothing is left flat");
+}
+
+#[test]
+fn take_with_no_round_open_and_no_closed_round_moves_nothing() {
+    let dir = mock(&[(OWN_EARLIER_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    assert_eq!(
+        cmd_close_taking(&Config::from_dir(dir.path()), &OPTS, &[OWN_EARLIER_TOPIC.to_string()]),
+        ExitCode::FAILURE
+    );
+    assert_eq!(names_in(&dr), sorted(&[OWN_EARLIER_TOPIC]));
+}

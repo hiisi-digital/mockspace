@@ -419,6 +419,12 @@ pub fn cmd_close_taking(cfg: &Config, opts: &SubcmdOpts, take: &[String]) -> Exi
     let dr = design_rounds_dir(cfg);
     let phase = changelist_helpers::current_phase(&dr);
 
+    // A topic a close left flat, with no round open: `--take` files it under the newest closed
+    // round, since the close that left it cannot be run again.
+    if !take.is_empty() && changelist_helpers::find_changelists(&dr).is_empty() {
+        return adopt_into_last_round(cfg, opts, &dr, take);
+    }
+
     if phase != Phase::Done {
         eprintln!(
             "error: can only close a round in CLOSED phase (current: {})",
@@ -444,6 +450,49 @@ pub fn cmd_close_taking(cfg: &Config, opts: &SubcmdOpts, take: &[String]) -> Exi
     let round_name = determine_round_name(&all_cls);
 
     perform_archive(cfg, opts, &dr, &round_name, ArchiveKind::Closed, take)
+}
+
+/// Moves the flat files `take` names into the newest closed round of `dr`, the one with a `.meta`
+/// and the greatest id. The files stay as written, so what a round's `.meta` records is unchanged.
+fn adopt_into_last_round(
+    cfg: &Config,
+    opts: &SubcmdOpts,
+    dr: &Path,
+    take: &[String],
+) -> ExitCode {
+    let unknown: Vec<&String> = take
+        .iter()
+        .filter(|n| *n == "README.md" || n.contains('/') || !dr.join(n.as_str()).is_file())
+        .collect();
+    if !unknown.is_empty() {
+        for name in unknown {
+            eprintln!("error: --take {name}: no such flat file in design_rounds/");
+        }
+        return ExitCode::FAILURE;
+    }
+    let mut closed: Vec<String> = std::fs::read_dir(dr)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().join(".meta").is_file())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    closed.sort();
+    let Some(round) = closed.pop() else {
+        eprintln!("error: no closed round in design_rounds/ to file `--take` under");
+        return ExitCode::FAILURE;
+    };
+    let mut touched = Vec::new();
+    for name in take {
+        let from = dr.join(name);
+        let to = dr.join(&round).join(name);
+        std::fs::rename(&from, &to).unwrap_or_else(|e| panic!("failed to move {name}: {e}"));
+        touched.push(from);
+        touched.push(to);
+    }
+    eprintln!("moved {} files to {round}/", take.len());
+    commit_or_suggest(cfg, opts, &touched, &format!("chore: file topics under round {round}"));
+    ExitCode::SUCCESS
 }
 
 pub fn cmd_archive(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {

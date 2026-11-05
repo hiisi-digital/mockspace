@@ -99,7 +99,7 @@ const COMMANDS: &[Cmd] = &[
                   changelists, the files that start with the id of one, and \
                   the files one names, and any flat file given as \
                   --take <file> (repeatable); any other flat file stays and \
-                  is listed. Valid only from CLOSED. Accepts --auto-commit.",
+                  is listed. Valid only from CLOSED, except that --take with no round open files the named flat topics under the newest closed round. Accepts --auto-commit.",
     },
     Cmd {
         name:    "archive",
