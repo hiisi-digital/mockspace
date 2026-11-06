@@ -32,6 +32,17 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// What a blocked deny gate's message opens with when cargo-deny reported a violation.
+pub(crate) const FAILED_PREFIX: &str = "cargo deny check failed";
+
+/// What a blocked deny gate's message opens with when a root's package graph could not be read.
+pub(crate) const UNREAD_PREFIX: &str = "deny_check:";
+
+/// Whether `message` is one this gate blocks with.
+pub(crate) fn is_block_message(message: &str) -> bool {
+    message.starts_with(FAILED_PREFIX) || message.starts_with(UNREAD_PREFIX)
+}
+
 /// Run the deny gate. `Err(message)` on either of two things: cargo-deny
 /// reporting a violation in some workspace root, or a non-spike root whose
 /// package graph could not be read at all (the pre-push gate blocks on both).
@@ -97,7 +108,7 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
             },
             RootAction::Block => {
                 return Err(format!(
-                    "deny_check: could not read the package graph in {where_}, so nothing was checked"
+                    "{UNREAD_PREFIX} could not read the package graph in {where_}, so nothing was checked"
                 ));
             },
             RootAction::RunDeny => {
@@ -107,7 +118,7 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
                     },
                     Err(why) => {
                         return Err(format!(
-                            "cargo deny check failed in {where_} (license/advisory/ban/source violation)\n{why}"
+                            "{FAILED_PREFIX} in {where_} (license/advisory/ban/source violation)\n{why}"
                         ));
                     },
                 }

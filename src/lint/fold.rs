@@ -75,8 +75,9 @@ mod tests {
         let out = fold(&all, Some(2));
         // a: 2 shown + a count of 4; b: both, no count
         assert_eq!(out.len(), 2 + 1 + 2);
-        assert!(out[2].contains("[a]") && out[2].contains("4 more"));
-        assert!(out[3].contains("[b/") || out[3].contains("[b]") || out[3].contains("b"));
+        assert_eq!(out[2], format!("  [a] ... 4 more, {ALL_VAR}=all lists them"));
+        assert_eq!(out[3], finding("b", 0).to_string());
+        assert_eq!(out[4], finding("b", 1).to_string());
     }
 
     #[test]

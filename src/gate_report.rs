@@ -104,7 +104,7 @@ pub fn collect(findings_text: &str, raw: &str) -> Vec<Finding> {
         for line in raw.lines() {
             if let Some(rest) = line.trim().strip_prefix("BLOCKED:") {
                 let message = rest.trim();
-                let kind = if message.contains("deny") { "deny" } else { "blocked" };
+                let kind = if crate::deny::is_block_message(message) { "deny" } else { "blocked" };
                 all.push(Finding {
                     severity: "error".into(),
                     kind:     kind.into(),
@@ -174,18 +174,26 @@ pub fn write_logs(
     Ok(log)
 }
 
-/// Make `link` name `target`, as a symlink, or as a copy where a symlink cannot be made.
+/// Make `link` name `target`, as a symlink built at a name of this run's own and renamed into
+/// place, so a link another run is making is never written through.
 fn point(link: &Path, target: &Path) {
-    let _ = std::fs::remove_file(link);
     #[cfg(unix)]
     {
-        if let Some(name) = target.file_name()
-            && std::os::unix::fs::symlink(name, link).is_ok()
-        {
-            return;
+        let (Some(name), Some(base)) = (target.file_name(), link.file_name()) else { return };
+        let mut tmp_name = std::ffi::OsString::from(".tmp-");
+        tmp_name.push(std::process::id().to_string());
+        tmp_name.push("-");
+        tmp_name.push(base);
+        let tmp = link.with_file_name(tmp_name);
+        let _ = std::fs::remove_file(&tmp);
+        if std::os::unix::fs::symlink(name, &tmp).is_ok() && std::fs::rename(&tmp, link).is_err() {
+            let _ = std::fs::remove_file(&tmp);
         }
     }
-    let _ = std::fs::copy(target, link);
+    #[cfg(not(unix))]
+    {
+        let _ = (link, target);
+    }
 }
 
 fn prune(dir: &Path, gate: &str) {
@@ -232,7 +240,7 @@ pub fn run(args: &[&str]) -> ExitCode {
     let findings = collect(&findings_text, &raw);
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
+        .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
     let dir = git_dir().map(|g| g.join("mockspace"));
     let log = dir.as_deref().and_then(|d| write_logs(d, gate, stamp, &findings, &raw).ok());
     match log {

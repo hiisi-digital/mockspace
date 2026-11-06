@@ -63,7 +63,7 @@ fn a_line_round_trips_and_stays_on_one_line() {
 
 #[test]
 fn a_red_gate_with_no_lint_finding_is_summarised_from_its_blocked_lines() {
-    let raw = "   Compiling x\nBLOCKED: deny check failed (a)\n";
+    let raw = "   Compiling x\nBLOCKED: cargo deny check failed in x (a)\n";
     let all = collect("", raw);
     let s = summary("pre-push", &all, Path::new("/l"));
     assert!(s.contains("  deny: 1"), "{s}");
@@ -92,4 +92,34 @@ fn logs_hold_greppable_findings_the_raw_and_a_latest_link_and_are_pruned() {
     };
     assert_eq!(numbered(".log"), KEEP);
     assert_eq!(numbered(".raw"), KEEP);
+}
+
+#[test]
+fn only_the_deny_gates_own_messages_are_labelled_deny() {
+    let raw = "BLOCKED: cargo deny check failed in the root (x)\n\
+               BLOCKED: deny_check: could not read the package graph in y\n\
+               BLOCKED: the identity gate was denied by git\n";
+    let kinds: Vec<String> = collect("", raw).into_iter().map(|f| f.kind).collect();
+    assert_eq!(kinds, ["deny", "deny", "blocked"]);
+}
+
+#[test]
+fn a_latest_link_is_replaced_in_place_and_leaves_no_temporary_name_behind() {
+    let dir = scratch("point");
+    write_logs(&dir, "pre-push", 1, &[f("error", "file-size", 1)], "ONE\n").unwrap();
+    write_logs(&dir, "pre-push", 2, &[f("error", "file-size", 2)], "TWO\n").unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join("pre-push-latest.raw")).unwrap(), "TWO\n");
+    #[cfg(unix)]
+    {
+        let first = dir.join("pre-push-000000000001.raw");
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), "ONE\n", "the older log was written through");
+        let link = std::fs::read_link(dir.join("pre-push-latest.raw")).unwrap();
+        assert_eq!(link, Path::new("pre-push-000000000002.raw"));
+    }
+    let stray = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(".tmp-"))
+        .count();
+    assert_eq!(stray, 0);
 }
