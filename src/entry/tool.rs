@@ -361,8 +361,7 @@ pub(crate) fn run(
         Outcome::Inconclusive {
             reason,
         } => {
-            eprintln!("{name}: INCONCLUSIVE, so the run says nothing about the corpus.");
-            eprintln!("  {reason}");
+            eprintln!("{}", inconclusive_message(name, reason));
             ExitCode::FAILURE
         },
         Outcome::Findings(findings) => {
@@ -430,6 +429,12 @@ fn read_message(name: &str, examined: usize) -> String {
 /// rewording rather than by refusing (see the call site for why refusing is
 /// not available here), so the pin is on the words never asserting something
 /// the exit code contradicts.
+/// What an inconclusive run prints: the reason first, so a refusal reads as what it is and not as the
+/// tool failing, then the one line saying nothing was established.
+fn inconclusive_message(name: &str, reason: &str) -> String {
+    format!("{name}: {reason}\n  (INCONCLUSIVE: the run says nothing about the corpus.)")
+}
+
 fn examined_nothing_message(name: &str) -> String {
     format!(
         "{name}: examined nothing. A clean verdict over an empty population \
