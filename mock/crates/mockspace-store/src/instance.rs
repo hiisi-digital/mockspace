@@ -217,6 +217,44 @@ impl<'a> Instance<'a> {
         Ok(applied)
     }
 
+    /// Makes the ref from a directory that holds the files and has no ref yet: every regular file
+    /// of the directory is put onto an empty ref, and the directory is then an instance of it,
+    /// its base the commit written. Refused where the directory has a record already (it is
+    /// committed with [`Instance::apply`]), where the ref has a tip (it is instantiated into an
+    /// empty directory instead), and where the directory holds no files.
+    pub fn seed(&self, message: &str, hook: &dyn MergeHook) -> Result<Applied, StoreError> {
+        if self.base()?.is_some() {
+            return Err(self.fail("has a record already, so its changes go through apply", Vec::new()));
+        }
+        if self.store.local_tip()?.is_some() {
+            return Err(self.fail("is not made from a ref that already has a tip, which is instantiated", Vec::new()));
+        }
+        let here = self.walk()?;
+        if here.is_empty() {
+            return Err(self.fail("holds no files to seed the ref with", Vec::new()));
+        }
+        let mut edit = Edit::new();
+        for path in &here {
+            let bytes = std::fs::read(self.dir.join(path)).map_err(|e| self.io("reading", e))?;
+            edit = edit.put(path.clone(), bytes);
+        }
+        // The exclusion goes first: it is the step that can fail on a read-only checkout, and once
+        // the ref has a tip a failure after it leaves a directory that neither `seed` (the ref has a
+        // tip) nor `apply` (no record) takes.
+        self.exclude()?;
+        let applied = self.store.apply_from(None, &edit, message, hook)?;
+        let Some(tip) = applied.commit.clone() else {
+            return Err(self.fail("was seeded and the ref has no commit", Vec::new()));
+        };
+        if let Err(e) = self.record(&tip) {
+            return Err(self.fail(
+                "made the ref (tip and cause follow) but could not record the directory as its instance; remove its files and instantiate it",
+                vec![tip, e.to_string()],
+            ));
+        }
+        Ok(applied)
+    }
+
     /// Fetches the ref and brings the directory to its tip. A file changed here and on the tip
     /// both is a conflict, and so is a file here where the tip has a directory or the other way
     /// round: the call writes nothing and names the files, and the directory keeps what it had.
