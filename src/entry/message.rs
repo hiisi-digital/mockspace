@@ -146,6 +146,20 @@ fn message_invocation<'a>(req: &Request<'a>) -> Option<mockspace_lint_rules::Inv
     })
 }
 
+/// The finding a hook's gate report counts for one lint finding of a message.
+fn gate_finding(
+    severity: &str,
+    f: &mockspace_lint_rules::LintError,
+    req: &Request,
+) -> crate::gate_report::Finding {
+    crate::gate_report::Finding {
+        severity: severity.to_string(),
+        kind:     f.lint_name.to_string(),
+        location: req.origin.to_string(),
+        message:  f.message.to_string(),
+    }
+}
+
 /// Print findings and decide the exit code.
 fn report(
     findings: &[mockspace_lint_rules::LintError],
@@ -154,20 +168,25 @@ fn report(
     req: &Request,
 ) -> ExitCode {
     let mut blocking = 0usize;
+    let mut recorded = Vec::new();
     let mut warned = 0usize;
     for f in findings {
         match f.severity.effective(mode) {
             Level::Pass => {},
             Level::Info | Level::Warn => {
                 warned += 1;
+                recorded.push(gate_finding("warn", f, req));
                 eprintln!("  ! {} [{}]: {}", f.lint_name, req.origin, f.message);
             },
             Level::Error => {
                 blocking += 1;
+                recorded.push(gate_finding("error", f, req));
                 eprintln!("  x {} [{}]: {}", f.lint_name, req.origin, f.message);
             },
         }
     }
+
+    crate::gate_report::record(&recorded);
 
     if blocking > 0 {
         eprintln!();
@@ -353,6 +372,12 @@ pub(crate) fn run_batch(
                 "  x [{}]: the record's header does not parse: {fault}",
                 rec.origin
             );
+            crate::gate_report::record(&[crate::gate_report::Finding {
+                severity: "error".into(),
+                kind:     "message-header".into(),
+                location: rec.origin.to_string(),
+                message:  fault.to_string(),
+            }]);
             failed += 1;
             continue;
         }

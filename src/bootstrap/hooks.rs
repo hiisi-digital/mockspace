@@ -245,14 +245,32 @@ if [ -n "$PUSH_REVS" ]; then
             printf '%s <%s>\x1e%s <%s>\x1e%s\0' "$an" "$ae" "$cn" "$ce" "$rest"
         done
     }
-    # `--no-walk=unsorted` keeps the order the revs were fed in; plain
-    # `--no-walk` would re-sort by commit date.
-    set -o pipefail
-    printf '%s\n' "$PUSH_REVS" \
-        | git log --no-walk=unsorted --stdin -z --format='%an%x00%ae%x00%cn%x00%ce%x00%h %s%x1f%B' \
-        | ms_frame_records \
-        | "$launcher" check-message --domain commit-message --gate push --batch || exit 1
-    set +o pipefail
+    # The scan runs captured, as a gate does: green prints nothing, red prints
+    # `blocked: pre-push` and a line per lint with its count, and the per-commit
+    # lines go to the gate log under the git directory. `MOCKSPACE_VERBOSE=1`
+    # prints them as they come.
+    ms_scan_messages() {
+        local raw findings rc=0
+        raw=$(mktemp)
+        findings=$(mktemp)
+        trap 'rm -f "$raw" "$findings"; trap - RETURN INT TERM' RETURN INT TERM
+        set -o pipefail
+        # `--no-walk=unsorted` keeps the order the revs were fed in; plain
+        # `--no-walk` would re-sort by commit date.
+        printf '%s\n' "$PUSH_REVS" \
+            | git log --no-walk=unsorted --stdin -z --format='%an%x00%ae%x00%cn%x00%ce%x00%h %s%x1f%B' \
+            | ms_frame_records \
+            | MOCKSPACE_GATE_FINDINGS="$findings" "$launcher" check-message --domain commit-message --gate push --batch \
+                >"$raw" 2>&1 || rc=$?
+        set +o pipefail
+        if [ "$rc" -eq 0 ]; then
+            if [ -n "${MOCKSPACE_VERBOSE:-}" ] && [ "${MOCKSPACE_VERBOSE}" != "0" ]; then cat "$raw" >&2; fi
+            return 0
+        fi
+        "$launcher" gate-report pre-push "$raw" "$findings" >&2 || { cat "$raw" >&2; echo "blocked: pre-push" >&2; }
+        return "$rc"
+    }
+    ms_scan_messages || exit 1
 fi
 "##
     .to_string()
