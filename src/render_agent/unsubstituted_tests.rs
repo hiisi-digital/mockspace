@@ -19,6 +19,13 @@ fn no_builtin_rule_or_skill_ships_a_template_token() {
             && built.skills.iter().any(|s| s.dir_name == "benchmarking"),
         "control: the knobs turned the skills on"
     );
+    let files: Vec<_> =
+        built.skills.iter().flat_map(|s| s.files.iter().map(move |f| (s, f))).collect();
+    assert!(
+        files.iter().any(|(_, f)| f.rel_path == "scripts/consume-strays")
+            && files.iter().any(|(_, f)| f.rel_path == "nut.toml"),
+        "control: the skills carry their scripts and manifests"
+    );
     let tokens = ["{mock_dir}", "{project_name}", "{crate_prefix}", "{src_dirs}"];
     let texts = built
         .rules
@@ -29,6 +36,16 @@ fn no_builtin_rule_or_skill_ships_a_template_token() {
     for (name, text) in texts {
         for t in tokens {
             assert!(!text.contains(t), "`{name}` ships the token {t}");
+        }
+    }
+    for (skill, file) in files {
+        for t in tokens {
+            assert!(
+                !file.contents.contains(t),
+                "`{}/{}` ships the token {t}",
+                skill.dir_name,
+                file.rel_path
+            );
         }
     }
 }

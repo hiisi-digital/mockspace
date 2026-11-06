@@ -85,8 +85,9 @@ fragments at bootstrap time.
    new home for "what does the agent know about mockspace" is the
    `INDEX.md` at `.claude/agent_builtin/`.
 
-5. Verify with `cargo mock status`: the adoption signal carries
-   "agent surface installed" once the fragments are in place.
+5. Verify that `.claude/agent_builtin/INDEX.md` exists. `cargo mock status`
+   only reports `mockspace hooks: active` or `inactive` and says nothing of
+   the agent surface.
 
 ## Reference points
 
