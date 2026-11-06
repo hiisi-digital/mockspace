@@ -260,7 +260,7 @@ pub fn durable_hook(name: &str, hook_version: u32) -> String {
     };
     let kept_ours = if matches!(name, "pre-commit" | "pre-push") {
         format!(
-            "\n{builds}if ms_kept_live; then\n    echo \"\" >&2\n    echo \"BLOCKED: generated files kept from one side of a merge or rebase were not regenerated.\" >&2\n    ms_kept_say\n    exit 1\nfi\n\n"
+            "\n{builds}if ms_kept_live; then\n    echo \"blocked: {name}\" >&2\n    ms_kept_say\n    exit 1\nfi\n\n"
         )
     } else {
         format!("\n{builds}")
