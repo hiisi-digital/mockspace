@@ -277,11 +277,11 @@ ms_gate() {
     fi
     raw=$(mktemp)
     findings=$(mktemp)
-    MOCKSPACE_GATE="$gate" MOCKSPACE_GATE_FINDINGS="$findings" cargo mock "$@" >"$raw" 2>&1 || rc=$?
+    trap 'rm -f "$raw" "$findings"; trap - RETURN INT TERM' RETURN INT TERM
+    MOCKSPACE_GATE_FINDINGS="$findings" cargo mock "$@" >"$raw" 2>&1 || rc=$?
     if [ "$rc" -ne 0 ]; then
         cargo mock gate-report "$gate" "$raw" "$findings" >&2 || { cat "$raw" >&2; echo "blocked: $gate" >&2; }
     fi
-    rm -f "$raw" "$findings"
     return "$rc"
 }"##
         .to_string()

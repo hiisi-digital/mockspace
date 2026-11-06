@@ -85,6 +85,8 @@ mod hooks_src_dirs_workspace_tests;
 #[cfg(test)]
 mod hooks_lint_packs_tests;
 #[cfg(test)]
+mod hooks_gate_quiet_tests;
+#[cfg(test)]
 mod lint_crates_tests;
 
 /// Marker in generated hooks for identification and versioning.
