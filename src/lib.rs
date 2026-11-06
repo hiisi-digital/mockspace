@@ -27,6 +27,7 @@ pub mod build_dir;
 pub mod config;
 pub mod custom_lints;
 pub mod deny;
+pub mod gate_report;
 pub mod design_round;
 pub mod document;
 pub mod dylib_check;

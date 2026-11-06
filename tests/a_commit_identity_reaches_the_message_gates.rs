@@ -343,9 +343,17 @@ fn the_push_gate_refuses_a_branch_holding_an_agent_commit_and_passes_a_person_s(
     let out = git(&fx, &["push", "-q", "origin", "by-a-person"], PERSON);
     out.assert_ok();
     assert!(
-        out.text().contains("pre-push: validation passed"),
-        "the gate ran to its end. {}",
+        out.stdout.is_empty() && out.stderr.is_empty(),
+        "a green push prints nothing. {}",
         out.text()
+    );
+    let remote_heads = Command::new("git")
+        .args(["--git-dir", fx.remote.to_str().unwrap(), "branch", "--list"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&remote_heads.stdout).contains("by-a-person"),
+        "the push reached the remote"
     );
 
     // a branch with one commit by the agent among a person's is refused, and
@@ -357,14 +365,18 @@ fn the_push_gate_refuses_a_branch_holding_an_agent_commit_and_passes_a_person_s(
     let out = git(&fx, &["push", "-q", "origin", "by-an-agent"], PERSON);
     assert!(!out.status.success(), "must be refused. {}", out.text());
     let text = out.text();
+    assert!(text.contains("blocked: pre-push"), "{text}");
+    assert!(text.contains("  identity-probe: 2"), "a line per kind with its count. {text}");
     assert!(
-        text.contains("the author is an agent: Claude <noreply@anthropic.com>"),
-        "{text}"
+        !text.contains("the author is an agent"),
+        "the per-commit lines go to the log, not the terminal. {text}"
     );
-    assert!(text.contains("BLOCKED"), "{text}");
+    let log = fs::read_to_string(fx.repo.join(".git/mockspace/pre-push-latest.log"))
+        .unwrap_or_else(|e| panic!("the gate log is written: {e}. {text}"));
     assert!(
-        !text.contains("pre-push: validation passed"),
-        "the gate stopped at the message scan. {text}"
+        log.lines().any(|l| l.starts_with("error\tidentity-probe\t")
+            && l.ends_with("the author is an agent: Claude <noreply@anthropic.com>")),
+        "the log holds the finding on one greppable line. {log}"
     );
     let remote = Command::new("git")
         .args(["--git-dir", fx.remote.to_str().unwrap(), "branch", "--list"])
@@ -395,11 +407,10 @@ fn the_push_gate_refuses_a_branch_holding_an_agent_commit_and_passes_a_person_s(
         PERSON,
     );
     assert!(!out.status.success(), "{}", out.text());
-    assert!(
-        out.text().contains("the committer is an agent"),
-        "{}",
-        out.text()
-    );
+    assert!(out.text().contains("  identity-probe: 1"), "{}", out.text());
+    let log = fs::read_to_string(fx.repo.join(".git/mockspace/pre-push-latest.log")).unwrap();
+    assert!(log.contains("the committer is an agent"), "{log}");
+    assert!(!log.contains("the author is an agent"), "the log is this run's alone. {log}");
 
     // the repair: the same branch, every commit made again under a person
     git(&fx, &["switch", "-q", "by-an-agent"], PERSON).assert_ok();

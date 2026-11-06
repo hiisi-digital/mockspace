@@ -420,6 +420,8 @@ pub fn run_lints(
         }
     }
 
+    crate::gate_report::record(&gate_findings(&info, &warnings, &errors));
+
     for text in fold::sections(&info, &warnings, fold::wants_all()) {
         eprintln!("{text}");
     }
@@ -467,4 +469,26 @@ fn collect_all_docs(crate_dir: &Path) -> String {
     }
 
     content
+}
+
+/// The findings of a run as the gate log says them, for a hook that asked for them.
+fn gate_findings(
+    info: &[mockspace_lint_rules::LintError],
+    warnings: &[mockspace_lint_rules::LintError],
+    errors: &[mockspace_lint_rules::LintError],
+) -> Vec<crate::gate_report::Finding> {
+    let one = |severity: &str, e: &mockspace_lint_rules::LintError| crate::gate_report::Finding {
+        severity: severity.to_string(),
+        kind:     e.lint_name.to_string(),
+        location: match &e.path {
+            Some(p) => format!("{}/{}:{}", e.crate_name, p, e.line),
+            None => format!("{}:{}", e.crate_name, e.line),
+        },
+        message:  e.message.clone(),
+    };
+    let mut all = Vec::new();
+    all.extend(errors.iter().map(|e| one("error", e)));
+    all.extend(warnings.iter().map(|e| one("warn", e)));
+    all.extend(info.iter().map(|e| one("info", e)));
+    all
 }
