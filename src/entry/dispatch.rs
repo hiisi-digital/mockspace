@@ -57,6 +57,7 @@ fn is_recovery_command(args: &[String]) -> bool {
         "status",
         "migrate",
         "registry-append",
+        "data-refs",
     ];
     args.iter().skip(1).any(|a| RECOVERY.contains(&a.as_str()))
 }
@@ -745,6 +746,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             },
             "registry-append" => {
                 return crate::registry_append::run(&cfg, &subcommand_args(&args, "registry-append"));
+            },
+            "data-refs" => {
+                return crate::data_refs::run(&cfg, &subcommand_args(&args, "data-refs"));
             },
             "query" => {
                 // The argument after the subcommand, not a fixed position:

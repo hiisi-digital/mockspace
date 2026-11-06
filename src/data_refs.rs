@@ -5,8 +5,8 @@
 
 //! Directories of the mock directory kept on a git ref, declared in `mockspace.toml`.
 //!
-//! A `[[data_ref]]` names a ref namespace and the directories of the mock directory it holds. The
-//! files of those directories live in the ref, outside every branch, and an instance in the working
+//! A `[[data_ref]]` names a ref namespace and the one directory of the mock directory it holds. The
+//! files of that directory live in the ref, outside every branch, and an instance in the working
 //! tree (by default in place, under the mock directory) holds them for the tools that read files.
 //! Absent means none, so a project that declares nothing is read as it always was.
 //!
@@ -27,10 +27,11 @@ use serde::Deserialize;
 pub struct DataRefDecl {
     /// The ref namespace, `refs/mock/<namespace>`. Required, and unique among the declarations.
     pub namespace: Option<String>,
-    /// The directories under the mock directory the ref holds, as paths relative to it.
-    pub paths:     Vec<String>,
-    /// Where the instance is placed, relative to the mock directory. Defaults to the mock directory
-    /// itself, so each path of `paths` is instantiated where it is read today.
+    /// The directory under the mock directory the ref holds, relative to it. The root of the ref is
+    /// this directory, so one ref holds one directory and writers of different ones never meet.
+    pub path:      Option<String>,
+    /// Where the instance is placed, relative to the mock directory. Defaults to `path`, so the
+    /// instance is where the directory is read today.
     pub instance:  Option<String>,
     /// The remote the ref is fetched from and pushed to. Defaults to `origin`.
     pub remote:    Option<String>,
@@ -60,7 +61,6 @@ impl DataRefDecl {
 /// Every refusal of `decls` at once, so a config with several mistakes names them in one run.
 pub fn validate(decls: &[DataRefDecl]) -> Result<(), Vec<String>> {
     let mut why = Vec::new();
-    let mut seen: Vec<(&str, &str)> = Vec::new();
     for (i, d) in decls.iter().enumerate() {
         let at = format!("[[data_ref]] #{}", i + 1);
         match d.namespace.as_deref() {
@@ -71,29 +71,31 @@ pub fn validate(decls: &[DataRefDecl]) -> Result<(), Vec<String>> {
                 }
             },
         }
-        if d.paths.is_empty() {
-            why.push(format!("{at}: `paths` is empty, so the ref holds nothing"));
-        }
-        for p in &d.paths {
-            if let Some(bad) = path_problem(p) {
-                why.push(format!("{at}: path `{p}` {bad}"));
-                continue;
-            }
-            let p = p.trim_matches('/');
-            for (other_ns, other) in &seen {
-                if p == *other || p.starts_with(&format!("{other}/")) || other.starts_with(&format!("{p}/")) {
-                    why.push(format!("{at}: path `{p}` overlaps `{other}` of `{other_ns}`"));
+        match d.path.as_deref() {
+            None => why.push(format!("{at}: `path` is missing, so the ref holds nothing")),
+            Some(p) => {
+                if let Some(bad) = path_problem(p) {
+                    why.push(format!("{at}: path `{p}` {bad}"));
+                } else {
+                    let p = p.trim_matches('/');
+                    for (j, o) in decls.iter().enumerate().take(i) {
+                        let Some(other) = o.path.as_deref().map(|o| o.trim_matches('/')) else {
+                            continue;
+                        };
+                        if p == other || p.starts_with(&format!("{other}/")) || other.starts_with(&format!("{p}/")) {
+                            why.push(format!("{at}: path `{p}` overlaps `{other}` of [[data_ref]] #{}", j + 1));
+                        }
+                    }
                 }
-            }
-            seen.push((d.namespace.as_deref().unwrap_or(""), p));
+            },
         }
         if let Some(inst) = d.instance.as_deref() {
             if let Some(bad) = path_problem(inst) {
                 why.push(format!("{at}: instance `{inst}` {bad}"));
             }
         }
-        if let Err(e) = d.open(Path::new(".")).map(|_| ()) {
-            if d.namespace.as_deref().is_some_and(|n| !n.is_empty()) {
+        if d.namespace.as_deref().is_some_and(|n| !n.is_empty()) {
+            if let Err(e) = d.open(Path::new(".")) {
                 why.push(format!("{at}: {e}"));
             }
         }
@@ -114,6 +116,86 @@ fn path_problem(p: &str) -> Option<&'static str> {
         return Some("holds `.` or `..`");
     }
     None
+}
+
+impl DataRefDecl {
+    /// The directory the instance is placed in: `instance` if given, else `path`, under `mock_dir`.
+    pub fn instance_dir(&self, mock_dir: &Path) -> std::path::PathBuf {
+        let rel = self.instance.as_deref().or(self.path.as_deref()).unwrap_or("").trim_matches('/');
+        rel.split('/').fold(mock_dir.to_path_buf(), |p, part| p.join(part))
+    }
+}
+
+/// `cargo mock data-refs <status|instantiate|commit> [namespace]`. Prints one line per ref it
+/// touched, and a refusal on stderr; exits non-zero when any ref could not be done.
+pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode {
+    use std::process::ExitCode;
+
+    use mockspace_store::{Instance, Refuse, Store};
+
+    let Some((verb, rest)) = args.split_first() else {
+        eprintln!("data-refs: status, instantiate or commit [namespace]");
+        return ExitCode::FAILURE;
+    };
+    if !matches!(*verb, "status" | "instantiate" | "commit") {
+        eprintln!("data-refs: `{verb}` is none of status, instantiate or commit");
+        return ExitCode::FAILURE;
+    }
+    let wanted = rest.first().copied();
+    let decls: Vec<&DataRefDecl> = cfg.data_refs.iter().filter(|d| wanted.is_none_or(|w| d.namespace() == w)).collect();
+    if decls.is_empty() {
+        match wanted {
+            Some(w) => eprintln!("data-refs: no [[data_ref]] has the namespace `{w}`"),
+            None => println!("data-refs: no [[data_ref]] is declared"),
+        }
+        return if wanted.is_some() { ExitCode::FAILURE } else { ExitCode::SUCCESS };
+    }
+    let mut failed = false;
+    for d in decls {
+        let ns = d.namespace();
+        let outcome = (|| -> Result<String, String> {
+            let store = d.open(&cfg.repo_root)?;
+            let dir = d.instance_dir(&cfg.mock_dir);
+            let inst = Instance::new(&store, &dir).map_err(|e| e.to_string())?;
+            match *verb {
+                "status" => {
+                    let tip = store.local_tip().map_err(|e| e.to_string())?;
+                    let base = inst.base().map_err(|e| e.to_string())?;
+                    let dirty = if base.is_some() { inst.is_dirty().map_err(|e| e.to_string())? } else { false };
+                    Ok(format!(
+                        "tip {} base {} {}",
+                        tip.as_deref().unwrap_or("none"),
+                        base.as_deref().unwrap_or("none"),
+                        if dirty { "changed" } else { "clean" }
+                    ))
+                },
+                "instantiate" => {
+                    store.refresh().map_err(|e| e.to_string())?;
+                    let tip = inst.materialize().map_err(|e| e.to_string())?;
+                    Ok(format!("instantiated at {tip}"))
+                },
+                _ => {
+                    let message = format!("data: {ns}");
+                    let first = inst.base().map_err(|e| e.to_string())?.is_none()
+                        && store.local_tip().map_err(|e| e.to_string())?.is_none();
+                    let applied = if first { inst.seed(&message, &Refuse) } else { inst.apply(&message, &Refuse) }
+                        .map_err(|e| e.to_string())?;
+                    Ok(match applied.commit {
+                        Some(c) if applied.changed => format!("committed {c}"),
+                        _ => "nothing changed".to_string(),
+                    })
+                },
+            }
+        })();
+        match outcome {
+            Ok(line) => println!("{ns}: {line}"),
+            Err(why) => {
+                eprintln!("{ns}: {why}");
+                failed = true;
+            },
+        }
+    }
+    if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS }
 }
 
 #[cfg(test)]

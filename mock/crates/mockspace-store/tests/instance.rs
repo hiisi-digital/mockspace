@@ -414,3 +414,33 @@ fn applying_nothing_touches_neither_the_store_nor_the_remote() {
     assert!(!applied.changed && applied.commit.is_none());
     assert_eq!(w.commits(MOCK_REF), 1);
 }
+
+#[test]
+fn seed_makes_the_first_commit_of_a_ref_from_the_files_of_a_directory_and_refuses_a_ref_with_a_tip() {
+    let w = World::new();
+    let a = store(&w, "a");
+    let dir = inst_dir(&w, "a", "research");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("note.md"), "findings\n").unwrap();
+    std::fs::write(dir.join("sub/more.md"), "more\n").unwrap();
+    let i = Instance::new(&a, &dir).unwrap();
+    let applied = i.seed("data: research", &mockspace_store::Refuse).unwrap();
+    let tip = applied.commit.expect("a commit was made");
+    assert_eq!(a.local_tip().unwrap(), Some(tip.clone()));
+    assert_eq!(i.base().unwrap(), Some(tip));
+    assert!(!i.is_dirty().unwrap(), "the directory is what the ref holds");
+    assert_eq!(
+        git(&clone_path(&w, "a"), &["status", "--porcelain"]),
+        "",
+        "the branch's status does not see the instance"
+    );
+    // the control: a second seed is refused, the ref has its tip and the directory its record
+    let err = i.seed("again", &mockspace_store::Refuse).unwrap_err();
+    assert!(matches!(err, StoreError::Instance { .. }), "{err}");
+    // the control: an empty directory seeds nothing
+    let empty = inst_dir(&w, "a", "empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let b = store(&w, "b");
+    let err = Instance::new(&b, &empty).unwrap().seed("x", &mockspace_store::Refuse).unwrap_err();
+    assert!(err.to_string().contains("no files"), "{err}");
+}
