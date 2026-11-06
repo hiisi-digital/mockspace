@@ -479,7 +479,7 @@ Fires while a design round is open, and before opening a changelist in one.
     let design_round_body = substitute_builtin_vars(
         r#"# Design round conversation
 
-A design round is topic conversations, then a doc changelist, then a source changelist, then execution. No mockspace edit before the doc changelist exists. `cargo mock status` shows the round, its phase and what may be edited.
+A design round is topic conversations, then a doc changelist, then a source changelist, then execution. No mockspace edit before the doc changelist exists. `cargo mock check` reports the phase.
 
 ## Round id
 
