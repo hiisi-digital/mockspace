@@ -420,14 +420,7 @@ pub fn run_lints(
         }
     }
 
-    let shown = (!fold::wants_all()).then_some(fold::SHOWN_PER_LINT);
-    for text in [
-        fold::section("lint info", &info, shown),
-        fold::section("lint warnings", &warnings, shown),
-    ]
-    .into_iter()
-    .flatten()
-    {
+    for text in fold::sections(&info, &warnings, fold::wants_all()) {
         eprintln!("{text}");
     }
 

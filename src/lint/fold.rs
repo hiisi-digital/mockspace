@@ -43,6 +43,11 @@ pub fn section(title: &str, findings: &[LintError], shown: Option<usize>) -> Opt
 
 /// The lines to print for `findings`, in the order the lints first appear: each finding of a lint
 /// up to `shown`, then one line saying how many more it has. `shown` of `None` is every finding.
+pub fn sections(info: &[LintError], warnings: &[LintError], all: bool) -> Vec<String> {
+    let shown = (!all).then_some(SHOWN_PER_LINT);
+    [section("lint info", info, shown), section("lint warnings", warnings, shown)].into_iter().flatten().collect()
+}
+
 pub fn fold(findings: &[LintError], shown: Option<usize>) -> Vec<String> {
     let mut order: Vec<&'static str> = Vec::new();
     for f in findings {
@@ -97,6 +102,15 @@ mod tests {
         assert!(out[2].contains("[a]") && out[2].contains("4 more"), "{out:?}");
         assert!(out[3].contains("m0") && out[3].contains("b"), "{out:?}");
         assert!(out[4].contains("m1") && out[4].contains("b"), "{out:?}");
+    }
+
+    #[test]
+    fn a_run_prints_the_first_three_findings_of_a_lint_unless_all_is_asked() {
+        let out = sections(&[], &many("a", 4), false).join("\n");
+        assert!(out.contains("m2") && !out.contains("m3") && out.contains("1 more"), "{out}");
+        // The control: asking for all prints the fourth and no count.
+        let all = sections(&[], &many("a", 4), true).join("\n");
+        assert!(all.contains("m3") && !all.contains("more"), "{all}");
     }
 
     #[test]
