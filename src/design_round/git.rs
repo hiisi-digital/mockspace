@@ -96,16 +96,17 @@ pub(crate) fn chrono_date() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-/// The twelve-digit local `YYYYMMDDHHMM` stamp of commit `sha`, the form a round id carries, or
-/// `None` when the commit cannot be read (no git, or a `.meta` that recorded no sha).
-pub(crate) fn git_commit_stamp(cfg: &Config, sha: &str) -> Option<String> {
-    let out = Command::new("git")
-        .args(["show", "-s", "--format=%cd", "--date=format-local:%Y%m%d%H%M", sha])
-        .current_dir(&cfg.repo_root)
-        .output()
-        .ok()?;
+
+/// The twelve-digit local `YYYYMMDDHHMM` minute now, the form a round id carries. `close` writes it
+/// into `.meta` as `close_at`, so a later `--take` compares a topic's stamp with the minute the round
+/// closed and not with whichever commit happened to precede the closing one.
+pub(crate) fn minute_stamp() -> Option<String> {
+    let out = Command::new("date").args(["+%Y%m%d%H%M"]).output().ok()?;
     let text = String::from_utf8(out.stdout).ok()?;
-    let stamp = text.trim();
-    (out.status.success() && stamp.len() == 12 && stamp.bytes().all(|b| b.is_ascii_digit()))
-        .then(|| stamp.to_string())
+    valid_minute(text.trim()).map(str::to_string)
+}
+
+/// `s` when it is a twelve-digit `YYYYMMDDHHMM`, else nothing.
+pub(crate) fn valid_minute(s: &str) -> Option<&str> {
+    (s.len() == 12 && s.bytes().all(|b| b.is_ascii_digit())).then_some(s)
 }

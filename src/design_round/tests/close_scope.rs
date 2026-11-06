@@ -632,50 +632,57 @@ fn a_take_naming_no_flat_file_moves_nothing_when_no_round_is_open() {
     assert!(dr.join(OWN_EARLIER_TOPIC).is_file());
 }
 
-/// A repository in `dir` with one commit made at a fixed time, and that commit's sha.
-fn commit_at_noon(dir: &Path) -> String {
-    let git = |args: &[&str]| {
-        let out = std::process::Command::new("git")
-            .current_dir(dir)
-            .env("GIT_COMMITTER_DATE", "2026-10-23T12:00:00+0000")
-            .env("GIT_AUTHOR_DATE", "2026-10-23T12:00:00+0000")
-            .args(["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"])
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {args:?}");
-        String::from_utf8(out.stdout).unwrap().trim().to_string()
-    };
-    git(&["init", "-q"]);
-    std::fs::write(dir.join("f"), "x").unwrap();
-    git(&["add", "f"]);
-    git(&["commit", "-q", "-m", "close"]);
-    git(&["rev-parse", "HEAD"])
-}
-
-#[test]
-fn a_topic_stamped_the_same_day_but_after_the_closing_commit_stays_flat() {
-    let dir = tempfile::tempdir().unwrap();
-    let dr = dir.path().join("design_rounds");
-    std::fs::create_dir_all(&dr).unwrap();
-    let sha = commit_at_noon(dir.path());
-    let cfg = Config::from_dir(dir.path());
-    let stamp = git_commit_stamp(&cfg, &sha).expect("the commit is readable");
-    let day = &stamp[..8];
-    let after = format!("{day}2359_topic.after-the-close.md");
-    let before = format!("{day}0000_topic.before-the-close.md");
-    std::fs::write(dr.join(&after), "next\n").unwrap();
-    std::fs::write(dr.join(&before), "own\n").unwrap();
-    let round = "202610230520";
+/// A closed round `round` whose `.meta` records the minute it closed.
+fn round_closed_at(dr: &Path, round: &str, close_at: &str) {
     std::fs::create_dir_all(dr.join(round)).unwrap();
     std::fs::write(
         dr.join(round).join(".meta"),
-        format!("round: {round}\nclosed: {sha}\nclose_date: 2026-10-23\nabandoned: false\n"),
+        format!("round: {round}\nclosed: unknown\nclose_date: 2026-10-23\nclose_at: {close_at}\nabandoned: false\n"),
     )
     .unwrap();
-    assert_eq!(adopt(&dir, &[&after]), ExitCode::FAILURE, "same day, later than the close");
-    assert!(dr.join(&after).is_file());
-    // the control: one stamped before the close, on the same day, is filed
-    assert_eq!(adopt(&dir, &[&before]), ExitCode::SUCCESS);
-    assert!(dr.join(round).join(&before).is_file());
+}
+
+#[test]
+fn a_topic_is_filed_up_to_the_minute_the_round_closed_and_stays_flat_from_the_next_minute() {
+    let dir = mock(&[]);
+    let dr = dir.path().join("design_rounds");
+    round_closed_at(&dr, "202610230520", "202610231200");
+    let before = "202610231159_topic.before-the-close.md";
+    let at = "202610231200_topic.at-the-close.md";
+    let after = "202610231201_topic.after-the-close.md";
+    for name in [before, at, after] {
+        std::fs::write(dr.join(name), "t\n").unwrap();
+    }
+    assert_eq!(adopt(&dir, &[after]), ExitCode::FAILURE, "a minute past the close is the next round's");
+    assert!(dr.join(after).is_file());
+    // the controls: the minute before and the minute of the close are this round's
+    assert_eq!(adopt(&dir, &[before, at]), ExitCode::SUCCESS);
+    assert!(dr.join("202610230520").join(before).is_file());
+    assert!(dr.join("202610230520").join(at).is_file());
+}
+
+#[test]
+fn a_flat_file_with_no_round_id_leading_its_name_is_not_taken() {
+    let dir = mock(&[("notes.md", "n\n")]);
+    let dr = dir.path().join("design_rounds");
+    round_closed_at(&dr, "202610230520", "202610231200");
+    assert_eq!(adopt(&dir, &["notes.md"]), ExitCode::FAILURE);
+    assert!(dr.join("notes.md").is_file());
+}
+
+#[test]
+fn close_records_the_minute_it_ran_and_a_later_take_reads_it() {
+    let dir = closable(&[(OWN_TOPIC, "own\n")]);
+    let dr = dir.path().join("design_rounds");
+    assert_eq!(cmd_close(&Config::from_dir(dir.path()), &OPTS), ExitCode::SUCCESS);
+    let meta = std::fs::read_to_string(dr.join("202610230520").join(".meta")).unwrap();
+    let at = meta.lines().find_map(|l| l.strip_prefix("close_at: ")).expect("close_at is written");
+    assert!(valid_minute(at).is_some(), "{at}");
+    // a topic stamped far past that minute is the next round's, one far before it is this round's
+    let later = "209912312359_topic.far-later.md";
+    let earlier = "200001010000_topic.far-earlier.md";
+    std::fs::write(dr.join(later), "l\n").unwrap();
+    std::fs::write(dr.join(earlier), "e\n").unwrap();
+    assert_eq!(adopt(&dir, &[later]), ExitCode::FAILURE);
+    assert_eq!(adopt(&dir, &[earlier]), ExitCode::SUCCESS);
 }

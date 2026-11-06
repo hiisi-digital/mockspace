@@ -268,8 +268,9 @@ pub(crate) fn perform_archive(
 
     let head_sha = git_head_sha(cfg);
     let today = chrono_date();
+    let close_at = minute_stamp().map(|m| format!("close_at: {m}\n")).unwrap_or_default();
     let meta = format!(
-        "round: {archive_dir_name}\nclosed: {head_sha}\nclose_date: {today}\n{}\n",
+        "round: {archive_dir_name}\nclosed: {head_sha}\nclose_date: {today}\n{close_at}{}\n",
         kind.meta_status_line(),
     );
     let meta_path = archive_dir.join(".meta");
