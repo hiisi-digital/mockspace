@@ -21,7 +21,7 @@
 - Writes and removes only the files of the members it ran, in the flavour it ran in, plus members the workspace no longer has (pruned in every flavour's directory).
 - A run for `-p one-member`, with or without `--cheap`, leaves every other file byte for byte as found: a blank one a merge left, an older or newer version, one with conflict markers. None is the run's to delete, rewrite or read as a loss.
 - A member the run covered and left with nothing to record loses its file, so a failed green does not load back.
-- A file of another member that changed or vanished after a run for some other member is a defect to report. `git restore <path>` brings it back.
+- A file of another member that changed or vanished after a run for some other member is a defect to report. Copy a changed one aside first, then write it back from the last commit with `git show HEAD:<path> > <path>`; never `git restore` or `git checkout -- <path>` over it.
 
 ## History kept on a git ref
 

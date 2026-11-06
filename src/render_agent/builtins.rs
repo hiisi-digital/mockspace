@@ -565,7 +565,7 @@ if [[ "$SESSION_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
     fi
     : > "$SAID_DIR/$SESSION_ID" 2>/dev/null || true
 fi
-context "MOCKSPACE: design round TOPIC -> DOC -> DRAFT -> IMPL -> CLOSED. Check the phase with 'cargo mock status' before editing. Transitions: 'cargo mock lock', 'deprecate', 'unlock', 'close'."
+context "MOCKSPACE: design round TOPIC -> DOC -> DRAFT -> IMPL -> CLOSED. Check the phase with 'cargo mock check' before editing. Transitions: 'cargo mock lock', 'deprecate', 'unlock', 'close'."
 "##
     )
 }
