@@ -484,13 +484,16 @@ fn adopt_into_last_round(
         return ExitCode::FAILURE;
     };
     // A topic stamped after the day the round closed is the next round's, not this one's.
-    // The minute the closing commit was made, from the sha `.meta` recorded; the day alone only
-    // where that commit cannot be read.
+    // The minute `close` wrote into `.meta` as `close_at`; the day alone for a round closed before it
+    // wrote one. While a new round is open in TOPIC this timestamp is the only thing keeping its topics
+    // out of the old round, and it compares the local clock that stamped them with the one `close` read,
+    // so it is a boundary on one machine and a good guess across two.
     let meta = std::fs::read_to_string(dr.join(&round).join(".meta")).unwrap_or_default();
     let closed_at: Option<String> = meta
         .lines()
-        .find_map(|l| l.strip_prefix("closed:"))
-        .and_then(|sha| git_commit_stamp(cfg, sha.trim()));
+        .find_map(|l| l.strip_prefix("close_at:"))
+        .and_then(|m| valid_minute(m.trim()))
+        .map(str::to_string);
     let closed_on: String = closed_at.clone().unwrap_or_else(|| {
         meta.lines()
             .find_map(|l| l.strip_prefix("close_date:"))
@@ -511,6 +514,10 @@ fn adopt_into_last_round(
             refused = true;
         }
         let stamped = lint_rules::round_id::split_prefix(name).map(|(id, _)| id[..id.len().min(width)].to_string());
+        if stamped.is_none() {
+            eprintln!("error: --take {name}: no round id leads the name, so there is no telling whose it is; only a stamped flat file is taken");
+            refused = true;
+        }
         if let Some(at) = stamped
             && !closed_on.is_empty()
             && at > closed_on
