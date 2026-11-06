@@ -95,3 +95,17 @@ pub(crate) fn chrono_date() -> String {
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "unknown".to_string())
 }
+
+/// The twelve-digit local `YYYYMMDDHHMM` stamp of commit `sha`, the form a round id carries, or
+/// `None` when the commit cannot be read (no git, or a `.meta` that recorded no sha).
+pub(crate) fn git_commit_stamp(cfg: &Config, sha: &str) -> Option<String> {
+    let out = Command::new("git")
+        .args(["show", "-s", "--format=%cd", "--date=format-local:%Y%m%d%H%M", sha])
+        .current_dir(&cfg.repo_root)
+        .output()
+        .ok()?;
+    let text = String::from_utf8(out.stdout).ok()?;
+    let stamp = text.trim();
+    (out.status.success() && stamp.len() == 12 && stamp.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| stamp.to_string())
+}
