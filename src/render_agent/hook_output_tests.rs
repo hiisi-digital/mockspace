@@ -107,6 +107,7 @@ fn run(repo_root: &std::path::Path, script: &str, payload: &str) -> String {
     let out = Command::new("bash")
         .arg(&f)
         .current_dir(repo_root)
+        .env("TMPDIR", repo_root)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -343,4 +344,24 @@ fn a_returning_helper_is_caught() {
     // And a body whose only `exit 0` sits in a comment must not count.
     let commented = "context() {\n    # exit 0 would be wrong here\n    printf '%s' \"$1\"\n}\n";
     assert!(!finishes_the_hook(commented, "context()"));
+}
+
+#[test]
+fn the_reminder_is_said_once_per_session_and_again_for_another() {
+    let root = scratch();
+    let script = every_hook_for(&root, crate::render_agent::CLAUDE_HOOK_HELPERS)
+        .into_iter()
+        .find(|(n, _)| *n == "reminder")
+        .unwrap()
+        .1;
+    let said = |session: &str| {
+        let payload = bash_payload(&format!("cd {} && cargo mock status", root.display()))
+            .replace("\"session_id\":\"t\"", &format!("\"session_id\":\"{session}\""));
+        run(&root, &script, &payload).contains("MOCKSPACE: design round")
+    };
+    assert!(said("one"), "the first call of a session says it");
+    assert!(!said("one"), "the second call of the same session is silent");
+    assert!(!said("one"), "and the third");
+    // the control: without it the silence could be a hook that never speaks
+    assert!(said("two"), "another session hears it once too");
 }
