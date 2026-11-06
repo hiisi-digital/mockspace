@@ -39,11 +39,11 @@ What the sketch did not test, and what would still surprise you.
 
 - A passing sketch proves nothing until shown able to fail. Break the thing deliberately, confirm the sketch notices, record that you did.
 - Quote the compiler; do not summarise it.
-- Failures are results and are kept. Record the wall and what it is made of.
+- Failures are results and are kept, with the wall recorded.
 - Sketches are committed and never deleted. A sketch later shown wrong is renamed `*.deprecated.md` or superseded by a new sketch that cites it.
 - Reference a sketch by its directory name, never a commit hash.
 
 ## Boundary against benching
 
 - A question needing a timer, an iteration count, or the words "faster" or "cheaper" is a bench in `{mock_dir}/benches/` (the `benchmarking` skill).
-- A question with both halves splits: feasibility is a sketch, measurement is a bench. Never answer a performance question with a hand-rolled timing loop in a sketch.
+- A question with both halves splits: feasibility is a sketch, measurement is a bench.

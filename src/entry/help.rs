@@ -117,44 +117,23 @@ const COMMANDS: &[Cmd] = &[
         name:    "round-id",
         summary: "print a fresh design round id",
         args:    &[],
-        help:    "Prints one id for a round you are about to open, and nothing else: \
-                  the minute, YYYYMMDDHHMM, then a four character tag, \
-                  YYYYMMDDHHMM-tttt. Name every file of the round with it, \
-                  <id>_topic.<name>.md and <id>_changelist.doc.md, instead of a \
-                  bare minute that another branch may have taken. The tag is drawn \
-                  from the branch, host and time of the call, and walked past any \
-                  id the working tree, the round tags or origin/dev and origin/main \
-                  already hold. Ids written without a tag stay valid and sort with \
-                  the new ones by minute.",
+        help:    "Prints one id for a round you are about to open, and nothing else: YYYYMMDDHHMM-tttt, the minute and a four character tag. Name every file of the round with it, <id>_topic.<name>.md and <id>_changelist.doc.md, instead of a bare minute another branch may have taken. The tag is drawn from the branch, host and time of the call and walked past any id the working tree, the round tags or origin/dev and origin/main already hold. Ids without a tag stay valid and sort with the new ones by minute.",
     },
     Cmd {
         name:    "rename-round",
         summary: "give a round a new id, when two rounds share one",
         args:    &[],
-        help:    "`rename-round <old id or directory> [<new id>]` renames one round: the closed directory (or the flat files of the \
-                  active round) with the old id, every file inside that starts with \
-                  it, the `round:` line of .meta, and the local round/<old>/* tags. \
-                  The new id defaults to a fresh one on the same minute. Run it on \
-                  the branch to rename, before merging, when a merge was refused with \
-                  a round id collision. An abandoned round keeps its -abandoned and loses \
-                  its -N count. A closed round that origin/dev or origin/main \
-                  already holds exactly as committed has landed and is refused. \
-                  Accepts --auto-commit.",
+        help:    "`rename-round <old id or directory> [<new id>]` renames one round: the closed directory (or the flat files of the active round) with the old id, every file inside that starts with it, the `round:` line of .meta, and the local round/<old>/* tags. The new id defaults to a fresh one on the same minute. Run it on the branch to rename, before merging, when a merge was refused with a round id collision. An abandoned round keeps its -abandoned and loses its -N count. A closed round that origin/dev or origin/main already holds exactly as committed has landed and is refused. Accepts --auto-commit.",
     },
     Cmd {
         name:    "merge-round-meta",
         summary: "refuse a merge of two closed rounds that share an id, as git's merge driver",
         args:    &[],
-        help:    "The merge driver `cargo mock` installs for \
-                  <mock>/design_rounds/*/.meta; git calls it as `merge-round-meta %O \
-                  %A %B %P`. A .meta added on both sides with different content is \
-                  two rounds with one id: it exits 1 and names the id and `cargo mock \
-                  rename-round <id>`. Anything else merges as text. It needs no \
-                  project and installs nothing: the wiring is done by `cargo mock`.",
+        help:    "The merge driver `cargo mock` installs for <mock>/design_rounds/*/.meta; git calls it as `merge-round-meta %O %A %B %P`. A .meta added on both sides with different content is two rounds with one id: it exits 1 and names the id and `cargo mock rename-round <id>`. Anything else merges as text. Needs no project; `cargo mock` does the wiring.",
     },
     Cmd {
         name:    "status",
-        summary: "show the current round, its phase, and what may be edited",
+        summary: "say whether the mockspace git hooks are active",
         args:    &[],
         help:    "Reports whether the mockspace git hooks are active, and how to \
                   flip that if not.",
@@ -171,42 +150,13 @@ const COMMANDS: &[Cmd] = &[
         name:    "check-message",
         summary: "lint one commit message or forge body against the configured policy",
         args:    &[],
-        help:    "Lints one authored message against the configured message \
-                  policy. --domain selects which policy (see the domain tokens in \
-                  the error this prints when it is missing or wrong). --file \
-                  <path> reads the message from a file; with no --file it reads \
-                  the message from stdin, which is how a hook passes text it \
-                  extracted from a command. --author and --committer each take \
-                  an identity as git writes it, `Name <mailbox>`, and hand it to \
-                  the lints as who the commit is by; the commit-msg hook reads \
-                  both from `git var`. With --batch every record may carry its \
-                  own pair, which is how the pre-push hook sends them.",
+        help:    "Lints one authored message against the configured message policy. --domain selects the policy (the error lists the domain tokens when it is missing or wrong). --file <path> reads the message from a file, else stdin, which is how a hook passes text it extracted from a command. --author and --committer each take an identity as git writes it, `Name <mailbox>`, as who the commit is by; the commit-msg hook reads both from `git var`. With --batch every record may carry its own pair, which is how the pre-push hook sends them.",
     },
     Cmd {
         name:    "check-edit",
         summary: "ask one crate lint whether an edit not yet made would leave its file clean",
         args:    &[],
-        help:    "Asks the per-crate lint named by --lint about the file named by \
-                  --file, as the file would read after an edit, through the same \
-                  pass the gate gives every crate: the same configuration, binding, \
-                  filters and lint:allow markers. The generated hook adds --lint-only, which \
-                  skips the gate's own setup and changes no verdict. Stdin is the text the edit \
-                  writes; with --replace <file> it replaces the text in that file \
-                  in the target (every occurrence with --all, else the one), and \
-                  without it it is the target's whole new text. --edits <file> is \
-                  a JSON list of {old_string, new_string, replace_all} applied in \
-                  order, a first empty old_string creating the file, and stands in \
-                  for stdin, --replace and --all. An edit whose old text is absent \
-                  from the file, or occurs more than once without --all, is one the \
-                  editing tool refuses itself, so it gets no verdict and exits 0. \
-                  Prints the lint's blocking findings in the target file and exits \
-                  1 if there are any, 2 when the request cannot be answered: no \
-                  per-crate lint answers to the name (a lint judging the crate as a \
-                  whole is one), a required argument is missing, --file is not an \
-                  absolute path, or an input cannot be read. --gate \
-                  selects commit, push or build severities, commit by default, and \
-                  anything else is refused. \
-                  This is how an agent hook named after a lint reaches the lint.",
+        help:    "Asks the per-crate lint named by --lint about the file named by --file (an absolute path), as it would read after an edit, through the same pass the gate gives every crate: the same configuration, binding, filters and lint:allow markers. The generated hook adds --lint-only, which skips the gate's own setup and changes no verdict. Stdin is the text the edit writes: with --replace <file> it replaces the text in that file in the target (every occurrence with --all, else the one), without it it is the target's whole new text. --edits <file> is a JSON list of {old_string, new_string, replace_all} applied in order, a first empty old_string creating the file, and stands in for stdin, --replace and --all. An edit whose old text is absent, or occurs more than once without --all, is one the editing tool refuses itself, so it gets no verdict and exits 0. Prints the lint's blocking findings in the target and exits 1 if there are any, 2 when it cannot answer: no per-crate lint of that name (a lint judging the crate as a whole is one), a missing argument, a relative --file, or an unreadable input. --gate selects commit (default), push or build severities and refuses any other value. This is how an agent hook named after a lint reaches the lint.",
     },
     Cmd {
         name:    "query",
@@ -245,64 +195,25 @@ const COMMANDS: &[Cmd] = &[
         name:    "registry-append",
         summary: "add one string to a list field of a registry row",
         args:    &[],
-        help:    "Takes `<namespace>::<id> <field> <value> [--local]` and adds the value \
-                  to the row's `string[]` field, which is made where the row has none. The \
-                  namespace and the field must be declared, the row must exist, and a \
-                  value the field already holds is not added twice. Only the row's own \
-                  lines change; the rest of the file is as it was. It prints nothing on \
-                  success. A workspace may place a delegate at \
-                  `.mockspace/hooks/registry-append` in the repository root or any \
-                  directory above it, the nearest winning; it is run in the repository \
-                  root as `registry-append <namespace>::<id> <field> <value>` with \
-                  MOCKSPACE_REPO_ROOT and MOCKSPACE_MOCK_DIR set, and exit status 0 \
-                  means it did the whole step, 3 that it leaves the step to mockspace, \
-                  anything else a failure. `--local` skips the delegate, which is how \
-                  the delegate writes the row itself.",
+        help:    "Takes `<namespace>::<id> <field> <value> [--local]` and adds the value to the row's `string[]` field, made where the row has none. The namespace and field must be declared, the row must exist, and a value the field already holds is not added twice. Only the row's own lines change. Prints nothing on success. A delegate at `.mockspace/hooks/registry-append` in the repository root or any directory above it (nearest wins) takes the step over: it is run in the repository root as `registry-append <namespace>::<id> <field> <value>` with MOCKSPACE_REPO_ROOT and MOCKSPACE_MOCK_DIR set; exit status 0 means it did the whole step, 3 leaves it to mockspace, anything else is a failure. `--local` skips the delegate, which is how the delegate writes the row.",
     },
     Cmd {
         name:    "merge-registry",
         summary: "merge registry TOML by row, as git's merge driver",
         args:    &[],
-        help:    "The merge driver `cargo mock` installs for <mock>/registry/**/*.toml; \
-                  git calls it as `merge-registry %O %A %B %P %L` (base, ours, theirs, \
-                  path, marker length) and reads the result from the second. \
-                  Rows are keyed by their [[namespace]] and `id`, never by file or position, so two branches \
-                  that each added a row to the same spot both keep it. A row changed \
-                  on one side takes that change, one deleted on one side and untouched \
-                  on the other is deleted, and one changed differently on both sides \
-                  (or deleted against a change) is a conflict, written with markers \
-                  around that row alone and exit status 1. A file it cannot read as \
-                  rows is merged as text, as git would without it. It needs no \
-                  project and installs nothing: the wiring is done by `cargo mock`.",
+        help:    "The merge driver `cargo mock` installs for <mock>/registry/**/*.toml; git calls it as `merge-registry %O %A %B %P %L` (base, ours, theirs, path, marker length) and reads the result from the second. Rows are keyed by [[namespace]] and `id`, never by file or position, so rows two branches added to one spot both stay. A row changed on one side takes that change, one deleted on one side and untouched on the other is deleted, and one changed differently on both sides (or deleted against a change) is a conflict, written with markers around that row alone, exit status 1. A file it cannot read as rows is merged as text. Needs no project; `cargo mock` does the wiring.",
     },
     Cmd {
         name:    "register-drivers",
         summary: "register the merge drivers in the user's git config",
         args:    &[],
-        help:    "`register-drivers --global` writes the six merge drivers `cargo mock` \
-                  registers per clone into the user's git config as well, with commands that \
-                  name no clone: a clone made later, a worktree, or a container that never \
-                  ran `cargo mock` there then calls them when its `.gitattributes` names one. \
-                  Idempotent. Run inside a repository it also unsets that clone's older entry for the \
-                  generated-file driver where the entry names a path. It writes to the user \
-                  and clone config and nowhere else, and needs no \
-                  project.",
+        help:    "`register-drivers --global` writes the six merge drivers `cargo mock` registers per clone into the user's git config too, with commands that name no clone, so a later clone, a worktree or a container that never ran `cargo mock` calls them when its `.gitattributes` names one. Idempotent. Inside a repository it also unsets that clone's older generated-file driver entry where the entry names a path. Writes only the user and clone config. Needs no project.",
     },
     Cmd {
         name:    "merge-additions",
         summary: "merge a file that only grows, as git's merge driver",
         args:    &[],
-        help:    "The merge driver `cargo mock` installs for the files `append_only` in \
-                  mockspace.toml names (and each crate's SHAME and BACKLOG templates); git \
-                  calls it as `merge-additions %O %A %B %P %L` and reads the result from the \
-                  second. When neither side changed or removed a line of the base, both \
-                  sides' additions are kept as they are, each in the spot it was made in, \
-                  ours before theirs where both added to one spot. When either side \
-                  edited or removed a base line, or both added the same line to one spot, \
-                  or the file has no base or no final newline, the file is merged as \
-                  text, as git would without it, conflict markers and exit status 1 \
-                  included. It never picks a side. It needs no project and installs \
-                  nothing: the wiring is done by `cargo mock`.",
+        help:    "The merge driver `cargo mock` installs for the files `append_only` in mockspace.toml names (and each crate's SHAME and BACKLOG templates); git calls it as `merge-additions %O %A %B %P %L` and reads the result from the second. When neither side changed or removed a base line, both sides' additions are kept in the spot they were made, ours before theirs where both added to one spot. When either side edited or removed a base line, both added the same line to one spot, or the file has no base or no final newline, it is merged as text, as git would without it, conflict markers and exit status 1 included. It never picks a side. Needs no project; `cargo mock` does the wiring.",
     },
     Cmd {
         name:    "gate-report",
@@ -314,20 +225,7 @@ const COMMANDS: &[Cmd] = &[
         name:    "merge-test-history",
         summary: "merge a member's test-history file, as git's merge driver",
         args:    &[],
-        help:    "The merge driver `cargo mock` installs for <mock>/test-history/**/*.json; \
-                  git calls it as `merge-test-history %O %A %B %P %L` and reads the \
-                  result from the second. A green record (and a test binary's recorded \
-                  pass) is kept where both sides hold the same one or only one side \
-                  moved it from the base, and dropped where both moved it to different \
-                  values, since neither fingerprint is the merged tree's: the next \
-                  `cargo mock test` records it. It never picks between two greens \
-                  that both moved. Per-test results and timings are unioned, a test both \
-                  sides hold differently taking the later measurement (the side that \
-                  moved it, else the side that last changed the file later (for a `git merge`; a rebase or cherry-pick has no second tip to compare yet), else the longer \
-                  timing). Two files of different versions, members or flavours, or one \
-                  that is not a record, are refused with a message and exit status 1, \
-                  leaving the path conflicted. It needs no project and installs \
-                  nothing: the wiring is done by `cargo mock`.",
+        help:    "The merge driver `cargo mock` installs for <mock>/test-history/**/*.json; git calls it as `merge-test-history %O %A %B %P %L` and reads the result from the second. A green record (and a binary's recorded pass) is kept where both sides hold the same one or only one moved it from the base, and dropped where both moved it to different values (the next `cargo mock test` records it); it never picks between two greens that both moved. Per-test results and timings are unioned; a test both sides hold differently takes the later measurement (the side that moved it, else the side that last changed the file later (for a `git merge`; a rebase or cherry-pick has no second tip to compare yet), else the longer timing). Two files of different versions, members or flavours, or one that is not a record, are refused with exit status 1, leaving the path conflicted. Needs no project; `cargo mock` does the wiring.",
     },
     Cmd {
         name:    "check-test-history",
@@ -358,131 +256,24 @@ const COMMANDS: &[Cmd] = &[
             required:    true,
             description: "seat, consolidate, or status",
         }],
-        help:    "Mints and consolidates panel seats against a formalised, \
-                  indexed inventory file at <mock>/panel/<slug>.toml.\n\n\
-                  `mock panel seat <slug> <persona> <topic...>` mints the next \
-                  seat number (never counted or guessed; always one past the \
-                  highest number already in the file). Refused once the seat \
-                  cap (99, the last seat this ever allows) is reached, or once \
-                  the consolidation cadence is due and has not been met.\n\n\
-                  `mock panel consolidate <slug> <note...>` records a \
-                  consolidation covering every seat minted so far. Refused \
-                  when there is nothing new to consolidate.\n\n\
-                  `mock panel status [slug]` reports one panel's seat count, \
-                  whether it is open (has minted seats no consolidation \
-                  covers yet), and how many seats remain before the next \
-                  consolidation is due. With no slug, reports on every panel \
-                  declared under <mock>/panel/.",
+        help:    "Mints and consolidates panel seats against an indexed inventory file at <mock>/panel/<slug>.toml.\n\n\
+                  `mock panel seat <slug> <persona> <topic...>` mints the next seat number, one past the highest in the file. Refused at the seat cap (99) or once the consolidation cadence is due and unmet.\n\n\
+                  `mock panel consolidate <slug> <note...>` records a consolidation covering every seat minted so far. Refused when there is nothing new.\n\n\
+                  `mock panel status [slug]` reports a panel's seat count, whether it is open (seats no consolidation covers) and how many seats remain before the next consolidation is due. With no slug, every panel under <mock>/panel/.",
     },
     Cmd {
         name:    "test",
         summary: "run the tests of every tree mockspace owns, the members and the benches only where something changed",
         args:    &[],
-        help:    "Runs the tests of each tree separately: the mock \
-                  workspace's own members, every tool crate under \
-                  <mock>/tools/, every bench crate under <mock>/benches/, and \
-                  the generated lint crate carrying <mock>/lints/*.rs.\n\n\
-                  Only the first is reached by a plain `cargo test` in <mock>/. \
-                  The other three are compiled by mockspace outside the \
-                  workspace, so a repository can hold tools, benches and lints \
-                  with tests and run none of them while appearing to. A \
-                  repository whose `members` list is empty runs nothing at \
-                  all.\n\n\
-                  The benches tree is the most expensive of the four (every \
-                  arm is compiled on its own), so it runs only when its \
-                  inputs moved since it last passed, or when it is asked \
-                  for, with --benches or with --full or --no-cache, which \
-                  run every member whatever its record says. Beside a -p \
-                  naming crates it is left out unless --benches is given \
-                  too. Its inputs are the files git tracks or would track \
-                  under <mock>/benches/ (less results/ and history/, which \
-                  `mock bench run` writes, build output, and a lockfile \
-                  git does not track, which is the build's own), the files \
-                  of every local crate its manifests depend on by path, the \
-                  text of the manifests `mock bench` generates for arms \
-                  that have none, and what every build reads: the \
-                  workspace manifest, lockfile, toolchain pin, and cargo \
-                  and nextest configuration. A tree that has never passed \
-                  counts as moved, the record being kept under \
-                  <mock>/target. A run leaving it out says so, and so does \
-                  its last line, a failed run's included.\n\n\
-                  The members run under cargo-nextest where it is installed, \
-                  and under `cargo test` where it is not or with --plain. \
-                  Under nextest a member runs only when its fingerprint moved \
-                  since its suite last passed: its own files, the paths \
-                  outside it its sources name as `../` literals (content, \
-                  fixtures), the same for every member compiled into its \
-                  tests, and the lockfile, toolchain and cargo configuration. \
-                  Below the member it works per test binary: an integration \
-                  test (`tests/<name>.rs`, `tests/<name>/main.rs`) is built \
-                  from its own file, the modules it declares, the files its \
-                  string literals name inside the member, and what its \
-                  sources read from outside, and from the member's library \
-                  and the libraries it depends on, never from another \
-                  integration test. A binary that passed at inputs that have \
-                  not moved is left out of a member that runs (listed as \
-                  `reuse`), so a change confined to one test file runs that \
-                  binary. Anything it cannot place widens: a file under \
-                  tests/ no binary claims, the library, the manifest and the \
-                  build script move every binary, and a binary that reads \
-                  the environment or `file!()`, or declares a module inside a \
-                  macro or an inline module, is rebuilt on every claimed \
-                  file. A dependent is not moved by its dependency's tests. \
-                  A test that took `[test] heavy_after_secs` (10) or longer \
-                  last time is heavy: heavy tests run `[test] heavy_threads` \
-                  (1) at a time, and one that passed at its binary's current \
-                  fingerprint is skipped as cached. Every test is killed \
-                  after `[test] timeout_secs` (900). The run ends with the \
-                  slowest tests.\n\n\
-                  --full runs every member asked for, every binary of it. \
-                  --no-cache runs the cached heavy tests and the binaries it \
-                  would leave out too. \
-                  --cheap also defers every heavy \
-                  test that has passed before, running only new ones and ones \
-                  that failed last time, and leaves the members it deferred \
-                  for owing them. -p and --workspace choose members as in \
-                  cargo; with -p only the members tree runs, bench tree aside \
-                  (--benches). The record is \
-                  tracked, <mock>/test-history/<flavour>/<member>.json, \
-                  committed with the work so a fresh clone starts warm; \
-                  a test or binary that no longer exists is dropped from \
-                  the run and pruned from the record; \
-                  `--features x` has its own flavour. `[test] commit` gates a \
-                  commit as a lint level does: warn runs --cheap, error also \
-                  blocks, off and info run nothing. `[test.opt_level]` maps a \
-                  member to the opt level (0 to 3, \"s\", \"z\") it is built \
-                  at in the run's profile, --plain too; a change reruns \
-                  members. Doc tests do not run under nextest; --plain \
-                  reaches them.\n\n\
-                  The members are built without debug info, whatever the \
-                  manifest or a cargo config says, and a crate gets symbols \
-                  (`[test] debug`, line-tables-only unless set) only where \
-                  one is needed to trace a problem: a member whose tests \
-                  failed the last time (kept under <mock>/target, not in the \
-                  tracked record), or one named with --debug=<crate,...>, \
-                  which also chooses it and runs it whether or not it \
-                  passed. -p x --debug is the same for x; a bare --debug \
-                  with no -p gives symbols to every member that runs, and \
-                  --no-debug to none. A crate built with symbols is built \
-                  again with its dependents, not with its dependencies or \
-                  the rest, and the lean build stays beside it. A cargo \
-                  config or CARGO_PROFILE_*_DEBUG that sets debug info is \
-                  reported and overridden for the run, never edited; \
-                  `[test] lean = false` lets it stand. Dependencies are \
-                  lean too, one a manifest or a cargo config names for \
-                  itself included. Rustflags that give debug info, -g or \
-                  -C debuginfo= above none, in RUSTFLAGS, \
-                  CARGO_ENCODED_RUSTFLAGS or a cargo config, give it to \
-                  every crate and no profile setting undoes that: they \
-                  are reported and left, and the plan stops saying the \
-                  rest is lean.\n\n\
-                  Everything else after `test` is forwarded to each cargo \
-                  invocation, so `mock test --release` and `mock test -- \
-                  --nocapture` both work. A filter after `--` or an -E runs, \
-                  but leaves nothing recorded as passed whole.\n\n\
-                  The lint tree needs the generated crate to exist; `mock \
-                  check` generates it. It is reported as absent rather than \
-                  generated here, so one path knows how.",
+        help:    "Runs the tests of each tree separately: the mock workspace's members, every tool crate under <mock>/tools/, every bench crate under <mock>/benches/, and the generated lint crate carrying <mock>/lints/*.rs. Only the first is reached by a plain `cargo test` in <mock>/. An empty `members` list runs nothing.\n\n\
+                  Benches: the most expensive tree, so it runs only when its inputs moved since it last passed (record under <mock>/target; never passed counts as moved) or when asked: --benches, --full or --no-cache. With -p it is left out unless --benches is given. Inputs: the files git tracks or would track under <mock>/benches/ (less results/, history/, build output and an untracked lockfile), the files of every local crate its manifests depend on by path, the manifests `mock bench` generates for arms that have none, and the workspace manifest, lockfile, toolchain pin, and cargo and nextest configuration. A run leaving it out says so, its last line included.\n\n\
+                  Members: under cargo-nextest where installed, else (or with --plain) `cargo test`. Under nextest a member runs only when its fingerprint moved since its suite last passed: its own files, the paths outside it its sources name as `../` literals, the same for members compiled into its tests, and the lockfile, toolchain and cargo configuration. Below the member it works per test binary: an integration test (`tests/<name>.rs`, `tests/<name>/main.rs`) is built from its own file, the modules it declares, the files its string literals name inside the member, what its sources read from outside, and the member's library and dependencies, never another integration test. A binary that passed at unmoved inputs is left out of a member that runs (listed as `reuse`). Anything it cannot place widens: a file under tests/ no binary claims, the library, the manifest and the build script move every binary; a binary reading the environment or `file!()`, or declaring a module inside a macro or inline module, is rebuilt on every claimed file. A dependent is not moved by its dependency's tests.\n\n\
+                  Heavy tests: one that took `[test] heavy_after_secs` (10) or longer last time is heavy. Heavy tests run `[test] heavy_threads` (1) at a time, and one that passed at its binary's current fingerprint is skipped as cached. Every test is killed after `[test] timeout_secs` (900). The run ends with the slowest tests.\n\n\
+                  Flags: --full runs every member asked for, every binary. --no-cache also runs cached heavy tests and left-out binaries. --cheap defers every heavy test that has passed before, running only new and last-failed ones; deferred members stay owing them. -p and --workspace choose members as in cargo; with -p only the members tree runs (--benches adds the bench tree). Doc tests do not run under nextest; --plain reaches them.\n\n\
+                  Record: <mock>/test-history/<flavour>/<member>.json, tracked and committed with the work so a fresh clone starts warm; a vanished test or binary is dropped and pruned; `--features x` has its own flavour. `[test] commit` gates a commit as a lint level does: warn runs --cheap, error also blocks, off and info run nothing. `[test.opt_level]` maps a member to the opt level (0 to 3, \"s\", \"z\") it is built at, --plain too; a change reruns members.\n\n\
+                  Debug info: members are built without it whatever the manifest or a cargo config says. A crate gets symbols (`[test] debug`, line-tables-only unless set) only where needed: a member whose tests failed last time (kept under <mock>/target), or one named with --debug=<crate,...>, which also chooses and runs it. -p x --debug is the same for x; a bare --debug with no -p gives symbols to every member that runs; --no-debug gives none. A crate built with symbols is built again with its dependents, not with its dependencies or the rest, and the lean build stays beside it. A cargo config or CARGO_PROFILE_*_DEBUG setting debug info is reported and overridden for the run, never edited; `[test] lean = false` lets it stand. Dependencies are lean too, including one a manifest or cargo config names. Rustflags giving debug info (-g, -C debuginfo= above none) in RUSTFLAGS, CARGO_ENCODED_RUSTFLAGS or a cargo config give it to every crate and cannot be undone: they are reported and left, and the plan stops saying the rest is lean.\n\n\
+                  Everything else after `test` goes to each cargo invocation, so `mock test --release` and `mock test -- --nocapture` work. A filter after `--` or an -E runs but records nothing as passed whole.\n\n\
+                  The lint tree needs the generated crate; `mock check` generates it, and it is reported as absent here.",
     },
     Cmd {
         name:    "pdf",
@@ -527,35 +318,13 @@ const COMMANDS: &[Cmd] = &[
         name:    "tools",
         summary: "list every subcommand and project tool, with usage and kind",
         args:    &[],
-        help:    "Enumerates every builtin subcommand and every project tool \
-                  declared under <mock>/tools/, each with its usage line and \
-                  one-line summary, and each tool with its kind: a check that \
-                  cannot be a lint, or a maker that writes files. --long also \
-                  prints what each tool is held to (its reason, or the paths it \
-                  writes and the root of each argument a path starts \
-                  with), its declared \
-                  arguments and its longer help text where it has one. This is \
-                  the live answer: it is computed at the moment it is asked, \
-                  from the same declared shape every tool and every builtin \
-                  already carries, rather than from a list somebody \
-                  hand-maintained and that a new tool would not appear in.",
+        help:    "Lists every builtin subcommand and every project tool under <mock>/tools/, each with usage and a one-line summary, and each tool with its kind: a check that cannot be a lint, or a maker that writes files. --long adds what each tool is held to (its reason, or the paths it writes and the root of each path argument), its declared arguments and its longer help. Computed when asked.",
     },
     Cmd {
         name:    "lints",
         summary: "list every lint, with the severity this project gave it",
         args:    &[],
-        help:    "Enumerates every lint that runs here, of every kind, with the \
-                  severity that actually governs it and whether that came from \
-                  this project's [lints] tables or from a default nobody here \
-                  chose. That is the builtins and the loaded pack together, \
-                  because the engine runs both and a listing of either alone \
-                  under-counts what is checking you. Two disagreements are \
-                  reported because nothing else reports them: a lint the project \
-                  never named, and a configured severity naming no lint at all, \
-                  which reads like a live decision and governs nothing. Neither \
-                  is presented as a fault. The set is read from the engine and \
-                  the pack rather than from source, because a lint declares its \
-                  own name and grepping for the convention under-counts.",
+        help:    "Lists every lint that runs here, builtins and the loaded pack, with the severity that governs it and whether it came from this project's [lints] tables or a default. Reports a lint the project never named and a configured severity naming no lint, neither as a fault. Read from the engine and the pack, not from source.",
     },
     Cmd {
         name:    "help",

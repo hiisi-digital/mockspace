@@ -113,15 +113,7 @@ elif command -v cargo-mock >/dev/null 2>&1; then launcher="cargo-mock"
 fi
 
 if [ -z "$launcher" ]; then
-    echo "" >&2
-    echo "BLOCKED: the message gate cannot run: no mockspace launcher on PATH." >&2
-    echo "" >&2
-    echo "  commit-message policy (authorship trailers, commit style) is configured" >&2
-    echo "  in mock/agent/config.toml and enforced by the engine, so it needs the" >&2
-    echo "  launcher. Guessing a weaker policy here would contradict the configured" >&2
-    echo "  one, so the gate refuses instead." >&2
-    echo "" >&2
-    echo "  install it:  cargo install cargo-mock" >&2
+    echo "BLOCKED: the message gate cannot run: no mockspace launcher on PATH. Policy is set in the mock directory's agent/config.toml and enforced by the engine. Install: cargo install cargo-mock" >&2
     exit 1
 fi
 
@@ -166,9 +158,7 @@ elif command -v cargo-mock >/dev/null 2>&1; then launcher="cargo-mock"
 fi
 
 if [ -z "$launcher" ]; then
-    echo "" >&2
-    echo "BLOCKED: the message gate cannot run: no mockspace launcher on PATH." >&2
-    echo "  install it:  cargo install cargo-mock" >&2
+    echo "BLOCKED: the message gate cannot run: no mockspace launcher on PATH. Install: cargo install cargo-mock" >&2
     exit 1
 fi
 
@@ -368,8 +358,7 @@ if [ -f "$(git rev-parse --git-path MERGE_HEAD 2>/dev/null)" ] \
     # the engine removes the record once it has checked what it staged, so one
     # still standing is a regeneration that did not happen, whatever it exited
     if ms_kept_live; then
-        echo ""
-        echo "BLOCKED: generated files kept from one side of a merge or rebase were not regenerated."
+        echo "blocked: pre-commit" >&2
         ms_kept_say
         exit 1
     fi
@@ -381,7 +370,6 @@ fi
 # driver dropped a green is not that case and passes.
 if ! git diff --cached --quiet -- "$MOCK_DIR/test-history" 2>/dev/null; then
     if ! cargo mock check-test-history 2>&1; then
-        echo ""
         echo "BLOCKED: the test-history files in this commit lose a green record they have no reason to."
         exit 1
     fi
@@ -513,8 +501,7 @@ PREPUSH_STDIN=$(cat)
 # regenerated them since, are a stale document, and a push would publish it.
 {KEPT_OURS_SHELL}
 if ms_kept_live; then
-    echo "" >&2
-    echo "BLOCKED: generated files kept from one side of a merge or rebase were not regenerated, and this push would publish them." >&2
+    echo "blocked: pre-push" >&2
     ms_kept_say
     exit 1
 fi

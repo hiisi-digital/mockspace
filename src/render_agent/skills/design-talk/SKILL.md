@@ -1,6 +1,6 @@
 # Design talk flow
 
-Run when open design questions must be settled before implementation. The agent leads, the maintainer decides. Output: topic files kept in the repository, and an agreed path for the implementation flow. The talk is the synchronous decision conversation before the work, with a person in the loop.
+Run when open design questions must be settled before implementation. The agent leads, the maintainer decides. Output: topic files kept in the repository, and an agreed path for the implementation flow.
 
 ## Steps
 
@@ -21,7 +21,6 @@ Run when open design questions must be settled before implementation. The agent 
 
 ## Notes
 
-- Commit each topic file as its subject settles, not at the end.
 - A talk may seed several topics; each becomes its own round later.
 - A question cascading into a fresh design problem is surfaced as its own unit.
 - An expert dispatched for grounding gets a neutral brief with no hint of the wanted answer. A question put to a person does not; both need real, balanced alternatives.

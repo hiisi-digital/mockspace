@@ -167,24 +167,15 @@ pub(crate) fn generate_lint_derived_content(
         let mut body = String::new();
         let _ = writeln!(
             body,
-            "## Forbidden imports for scope `{scope}` (auto-generated from lint config)\n"
+            "## Forbidden imports for scope `{scope}`\n"
         );
         let _ = writeln!(
             body,
-            "The following are **forbidden** in crates matching `{scope}`."
-        );
-        let _ = writeln!(
-            body,
-            "Violations are reported by the `forbidden-imports` lint, at the severity `mock lints` shows for it in this repository.\n"
+            "Forbidden in crates matching `{scope}`, reported by the `forbidden-imports` lint:\n"
         );
         for (forbidden, reason) in rules {
             let _ = writeln!(body, "- `{forbidden}`: {reason}");
         }
-        let _ = writeln!(
-            body,
-            "\nDo NOT write code that uses any of these. Check before writing."
-        );
-
         let claude_fm = format!("---\napply_to: [{apply_to_list}]\n---\n\n");
         let copilot_fm = format!("---\napplyTo: [{apply_to_list}]\n---\n\n");
 

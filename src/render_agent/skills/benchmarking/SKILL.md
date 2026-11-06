@@ -51,7 +51,7 @@ A bench answers a measurement question: which is faster, what does it cost, wher
 
 ## Configuration
 
-- `mock/benches/bench.toml` is the root: globals `[timing]`, `[dispatch]`, `[build]`, `[workload.*]`, optional `[bench.<name>]` sections.
+- `{mock_dir}/benches/bench.toml` is the root: globals `[timing]`, `[dispatch]`, `[build]`, `[workload.*]`, optional `[bench.<name>]` sections.
 - Each bench is a directory with its own `bench.toml`, fields at top level (no wrapper table; the directory name is the bench name). Optional `[sweep.<name>]` sections carry per-sweep points and overrides.
 - Arms live in `<bench>/arms/<arm>/`, one measured cdylib each. `<bench>/support/` and root `support/` hold ordinary library crates the arms link.
 - Membership is declared in the root `[benchspace]` table:

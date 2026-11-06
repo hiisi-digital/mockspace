@@ -197,7 +197,7 @@ fn report(
         // Naming the resolved mode matters: the whole policy turns on it, and a
         // surprising verdict is nearly always a surprising mode.
         eprintln!("  resolved agent mode: {}", resolved.as_token());
-        eprintln!("  policy comes from mock/agent/config.toml [attribution].");
+        eprintln!("  policy comes from <mock>/agent/config.toml [attribution].");
         return ExitCode::FAILURE;
     }
     if warned > 0 {

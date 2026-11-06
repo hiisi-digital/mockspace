@@ -17,9 +17,7 @@ Three tiers; each governs the one below, in one direction only.
 
 ## The reproduction property
 
-- Nuke the code and lose nothing: the design says what the code was.
-- Nuke the design and lose little: an equivalent design can be written from the canon.
-- The canon is the only tier not reproducible from anything above it.
+- The canon is the only tier not reproducible from anything above it; code and design can be nuked and rewritten from the tier above.
 - A design is good enough when two implementers reading it independently produce working implementations of the same thing. A canon is good enough when two designers reading it independently produce designs yielding equivalent working units.
 
 ## The mutation order, at length
@@ -31,7 +29,6 @@ Three tiers; each governs the one below, in one direction only.
 - Adding a row nukes nothing, since nothing declares it yet. Adding a field nukes nothing: the trigger is invalidation, not editing. Changing what a field says, or removing one, invalidates the row's declared dependents.
 - A row is one aspect of the canon: one row is one thing. A row carrying two unrelated subjects drags unrelated designs into every nuke. Fix it by splitting the row, not refining the granularity below it.
 - `cargo mock --nuke` takes the source down; `--nuke=docs` takes the designs and the source under them. It names every file, asks (`--y` answers) and refuses an uncommitted tree.
-- A lower tier surviving a change above it is a claim about something that no longer exists.
 
 ## What this means for canon work
 
