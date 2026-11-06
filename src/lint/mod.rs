@@ -422,19 +422,8 @@ pub fn run_lints(
 
     crate::gate_report::record(&gate_findings(&info, &warnings, &errors));
 
-    let shown = (!fold::wants_all()).then_some(fold::SHOWN_PER_LINT);
-    if !info.is_empty() {
-        eprintln!("\n--- lint info ({}) ---", info.len());
-        for line in fold::fold(&info, shown) {
-            eprintln!("{line}");
-        }
-    }
-
-    if !warnings.is_empty() {
-        eprintln!("\n--- lint warnings ({}) ---", warnings.len());
-        for line in fold::fold(&warnings, shown) {
-            eprintln!("{line}");
-        }
+    for text in fold::sections(&info, &warnings, fold::wants_all()) {
+        eprintln!("{text}");
     }
 
     if !errors.is_empty() {

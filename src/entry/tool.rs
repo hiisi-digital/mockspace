@@ -326,8 +326,7 @@ pub(crate) fn run(
                 }
             },
             Err(why) => {
-                eprintln!("{name}: INCONCLUSIVE, so the run says nothing about the tree.");
-                eprintln!("  {why}");
+                eprintln!("{}", inconclusive_message(name, &why.to_string(), "tree"));
                 unobserved = true;
             },
         }
@@ -361,7 +360,7 @@ pub(crate) fn run(
         Outcome::Inconclusive {
             reason,
         } => {
-            eprintln!("{}", inconclusive_message(name, reason));
+            eprintln!("{}", inconclusive_message(name, reason, "corpus"));
             ExitCode::FAILURE
         },
         Outcome::Findings(findings) => {
@@ -438,9 +437,9 @@ fn examined_nothing_message(name: &str) -> String {
 }
 
 /// What an inconclusive run prints: the reason first, so a refusal reads as what it is and not as the
-/// tool failing, then the one line saying nothing was established.
-fn inconclusive_message(name: &str, reason: &str) -> String {
-    format!("{name}: {reason}\n  (INCONCLUSIVE: the run says nothing about the corpus.)")
+/// tool failing, then the one line saying nothing was established about `what` (the tree or the corpus).
+fn inconclusive_message(name: &str, reason: &str, what: &str) -> String {
+    format!("{name}: {reason}\n  (INCONCLUSIVE: the run says nothing about the {what}.)")
 }
 
 /// Whether to read standard input, given what the tool asked for and what

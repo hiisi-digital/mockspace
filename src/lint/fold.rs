@@ -20,7 +20,31 @@ pub const ALL_VAR: &str = "MOCKSPACE_LINT_WARNINGS";
 
 /// Whether the environment asks for every finding.
 pub fn wants_all() -> bool {
-    std::env::var(ALL_VAR).is_ok_and(|v| v == "all")
+        asks_for_all(std::env::var(ALL_VAR).ok().as_deref())
+}
+
+/// Whether a value of [`ALL_VAR`] asks for every finding; only `all` does.
+pub fn asks_for_all(value: Option<&str>) -> bool {
+    value == Some("all")
+}
+
+/// A heading and the folded findings under it, or nothing where there are none.
+pub fn section(title: &str, findings: &[LintError], shown: Option<usize>) -> Option<String> {
+    if findings.is_empty() {
+        return None;
+    }
+    let mut text = format!("\n--- {title} ({}) ---", findings.len());
+    for line in fold(findings, shown) {
+        text.push('\n');
+        text.push_str(&line);
+    }
+    Some(text)
+}
+
+/// The sections of lint info and lint warnings a run prints, folded unless `all`.
+pub fn sections(info: &[LintError], warnings: &[LintError], all: bool) -> Vec<String> {
+    let shown = (!all).then_some(SHOWN_PER_LINT);
+    [section("lint info", info, shown), section("lint warnings", warnings, shown)].into_iter().flatten().collect()
 }
 
 /// The lines to print for `findings`, in the order the lints first appear: each finding of a lint
@@ -78,6 +102,41 @@ mod tests {
         assert_eq!(out[2], format!("  [a] ... 4 more, {ALL_VAR}=all lists them"));
         assert_eq!(out[3], finding("b", 0).to_string());
         assert_eq!(out[4], finding("b", 1).to_string());
+    }
+
+    #[test]
+    fn a_run_prints_the_first_three_findings_of_a_lint_unless_all_is_asked() {
+        let out = sections(&[], &many("a", 4), false).join("\n");
+        assert!(out.contains("m2") && !out.contains("m3") && out.contains("1 more"), "{out}");
+        // The control: asking for all prints the fourth and no count.
+        let all = sections(&[], &many("a", 4), true).join("\n");
+        assert!(all.contains("m3") && !all.contains("more"), "{all}");
+    }
+
+    #[test]
+    fn only_all_asks_for_every_finding() {
+        assert!(asks_for_all(Some("all")));
+        assert!(!asks_for_all(None));
+        assert!(!asks_for_all(Some("")));
+        assert!(!asks_for_all(Some("1")));
+    }
+
+    #[test]
+    fn a_section_has_its_heading_with_the_full_count_and_the_folded_lines_under_it() {
+        let text = section("lint warnings", &many("a", 5), Some(2)).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[1], "--- lint warnings (5) ---");
+        assert_eq!(lines.len(), 1 + 1 + 2 + 1, "{text}");
+        assert!(lines[4].contains("3 more"), "{text}");
+        // The control: the same findings unfolded print every one and no count.
+        let all = section("lint warnings", &many("a", 5), None).unwrap();
+        assert_eq!(all.lines().count(), 1 + 1 + 5, "{all}");
+        assert!(!all.contains("more"));
+    }
+
+    #[test]
+    fn a_section_without_findings_prints_nothing() {
+        assert!(section("lint info", &[], Some(3)).is_none());
     }
 
     #[test]
