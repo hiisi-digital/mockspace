@@ -82,6 +82,19 @@ mod verbs {
     }
 
     #[test]
+    fn verify_passes_on_a_clean_instance_and_names_what_is_wrong_otherwise() {
+        let w = World::new();
+        let a = with_ref(&w, "a");
+        assert_eq!(run(&a, &["verify"]), ExitCode::FAILURE, "the control: nothing is instantiated yet");
+        std::fs::create_dir_all(a.mock_dir.join("research")).unwrap();
+        std::fs::write(a.mock_dir.join("research/note.md"), "findings\n").unwrap();
+        assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
+        assert_eq!(run(&a, &["verify"]), ExitCode::SUCCESS);
+        std::fs::write(a.mock_dir.join("research/note.md"), "changed\n").unwrap();
+        assert_eq!(run(&a, &["verify"]), ExitCode::FAILURE, "the control: a changed file is not verified");
+    }
+
+    #[test]
     fn a_namespace_nothing_declares_is_a_failure_and_none_declared_is_not() {
         let w = World::new();
         let cfg = with_ref(&w, "a");

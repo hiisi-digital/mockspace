@@ -126,7 +126,7 @@ impl DataRefDecl {
     }
 }
 
-/// `cargo mock data-refs <status|instantiate|commit> [namespace]`. Prints one line per ref it
+/// `cargo mock data-refs <status|verify|instantiate|commit> [namespace]`. Prints one line per ref it
 /// touched, and a refusal on stderr; exits non-zero when any ref could not be done.
 pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode {
     use std::process::ExitCode;
@@ -134,11 +134,11 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
     use mockspace_store::{Instance, Refuse, Store};
 
     let Some((verb, rest)) = args.split_first() else {
-        eprintln!("data-refs: status, instantiate or commit [namespace]");
+        eprintln!("data-refs: status, verify, instantiate or commit [namespace]");
         return ExitCode::FAILURE;
     };
-    if !matches!(*verb, "status" | "instantiate" | "commit") {
-        eprintln!("data-refs: `{verb}` is none of status, instantiate or commit");
+    if !matches!(*verb, "status" | "verify" | "instantiate" | "commit") {
+        eprintln!("data-refs: `{verb}` is none of status, verify, instantiate or commit");
         return ExitCode::FAILURE;
     }
     let wanted = rest.first().copied();
@@ -168,6 +168,20 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
                         base.as_deref().unwrap_or("none"),
                         if dirty { "changed" } else { "clean" }
                     ))
+                },
+                "verify" => {
+                    let tip = store.local_tip().map_err(|e| e.to_string())?;
+                    let base = inst.base().map_err(|e| e.to_string())?;
+                    let Some(base) = base else {
+                        return Err("has no instance, so `instantiate` it".into());
+                    };
+                    if inst.is_dirty().map_err(|e| e.to_string())? {
+                        return Err("has changes the ref does not, so `commit` them".into());
+                    }
+                    if tip.as_deref() != Some(base.as_str()) {
+                        return Err(format!("is at {base} and the ref is at {}", tip.as_deref().unwrap_or("none")));
+                    }
+                    Ok(format!("clean at {base}"))
                 },
                 "instantiate" => {
                     store.refresh().map_err(|e| e.to_string())?;
