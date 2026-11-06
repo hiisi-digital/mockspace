@@ -26,6 +26,7 @@ pub mod bootstrap;
 pub mod build_dir;
 pub mod config;
 pub mod custom_lints;
+pub mod data_refs;
 pub mod deny;
 pub mod gate_report;
 pub mod design_round;
