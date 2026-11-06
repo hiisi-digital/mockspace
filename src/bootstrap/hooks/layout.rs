@@ -250,3 +250,39 @@ MS_SHARED=("${{MS_CODE[@]}}" "mockspace.toml" "$MOCK_DIR/mockspace.toml")
         marker = sh_quote(&layout.nuke_marker),
     )
 }
+
+/// The shell both gating hooks share for saying nothing when green and one short report when red.
+///
+/// `ms_say` prints only under `MOCKSPACE_VERBOSE`. `ms_gate <gate> <cargo mock args>` captures
+/// everything `cargo mock` prints, and when it fails has `mock gate-report` print the verdict and
+/// one line per kind of error and write the log under the git directory. Progress lines never
+/// reach the terminal of a hook this way, whatever prints them.
+pub(crate) fn gate_shell() -> String {
+    r##"# Quiet by default: green prints nothing, red prints `blocked: <gate>` and a line per kind of
+# error. MOCKSPACE_VERBOSE=1 prints everything, as the hooks once always did.
+ms_verbose() {
+    [ -n "${MOCKSPACE_VERBOSE:-}" ] && [ "${MOCKSPACE_VERBOSE}" != "0" ]
+}
+ms_say() {
+    if ms_verbose; then echo "$@"; fi
+    return 0
+}
+ms_gate() {
+    local gate="$1" raw findings rc=0
+    shift
+    if ms_verbose; then
+        cargo mock "$@" 2>&1 || rc=$?
+        if [ "$rc" -ne 0 ]; then echo "blocked: $gate" >&2; fi
+        return "$rc"
+    fi
+    raw=$(mktemp)
+    findings=$(mktemp)
+    MOCKSPACE_GATE="$gate" MOCKSPACE_GATE_FINDINGS="$findings" cargo mock "$@" >"$raw" 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        cargo mock gate-report "$gate" "$raw" "$findings" >&2 || { cat "$raw" >&2; echo "blocked: $gate" >&2; }
+    fi
+    rm -f "$raw" "$findings"
+    return "$rc"
+}"##
+        .to_string()
+}

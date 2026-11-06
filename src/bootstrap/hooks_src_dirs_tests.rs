@@ -110,6 +110,7 @@ pub(super) fn run_full(hook_text: &str, root: &Path, stdin: &str) -> (String, Ve
         .env("PATH", path)
         .env("HOME", root)
         .env("MS_STUB_ARGS", &args_file)
+        .env("MOCKSPACE_VERBOSE", "1")
         .env_remove("XDG_CONFIG_HOME")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

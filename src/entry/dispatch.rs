@@ -299,6 +299,11 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         return crate::design_round::round_merge::run(&subcommand_args(&args, "merge-round-meta"));
     }
 
+    // A hook's red gate is reported by this, from files it captured: no project.
+    if first_positional(&args) == Some("gate-report") {
+        return crate::gate_report::run(&subcommand_args(&args, "gate-report"));
+    }
+
     // The test-history driver is the same kind of call: three temp files, no project.
     if first_positional(&args) == Some("merge-test-history") {
         return crate::suite::history_merge::run(&subcommand_args(&args, "merge-test-history"));

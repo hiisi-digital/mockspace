@@ -292,6 +292,12 @@ const COMMANDS: &[Cmd] = &[
                   nothing: the wiring is done by `cargo mock`.",
     },
     Cmd {
+        name:    "gate-report",
+        summary: "say what a red hook gate found, in a line per kind of error",
+        args:    &[],
+        help:    "Run by the generated git hooks when a gate was red: `gate-report <gate> <raw-output-file> <findings-file>`. Prints `blocked: <gate>`, a line per kind of error with its count, the number of warnings, and the log, and writes every finding (`<severity>\t<lint>\t<path>:<line>\t<message>` per line) and the raw output under `.git/mockspace/`, the last five of each gate with a `<gate>-latest.log` link. `MOCKSPACE_VERBOSE=1` makes a hook print its whole output instead.",
+    },
+    Cmd {
         name:    "merge-test-history",
         summary: "merge a member's test-history file, as git's merge driver",
         args:    &[],
