@@ -87,6 +87,8 @@ mod hooks_lint_packs_tests;
 #[cfg(test)]
 mod hooks_gate_quiet_tests;
 #[cfg(test)]
+mod hooks_kept_ours_refusal_tests;
+#[cfg(test)]
 mod lint_crates_tests;
 
 /// Marker in generated hooks for identification and versioning.

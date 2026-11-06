@@ -43,7 +43,7 @@ allow() {
 }
 
 deny() {
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$(_json_escape "$1")"
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$(_json_escape "${1//\\n/$'\n'}")"
     exit 0
 }
 
@@ -136,7 +136,7 @@ allow() {
 }
 
 deny() {
-    printf '{"permissionDecision":"deny","permissionDecisionReason":"%s"}\n' "$(_json_escape "$1")"
+    printf '{"permissionDecision":"deny","permissionDecisionReason":"%s"}\n' "$(_json_escape "${1//\\n/$'\n'}")"
     exit 0
 }
 

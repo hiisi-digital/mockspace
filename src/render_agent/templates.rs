@@ -479,7 +479,7 @@ Fires while a design round is open, and before opening a changelist in one.
     let design_round_body = substitute_builtin_vars(
         r#"# Design round conversation
 
-A design round is topic conversations, then a doc changelist, then a source changelist, then execution. No mockspace edit before the doc changelist exists. `cargo mock status` shows the round, its phase and what may be edited.
+A design round is topic conversations, then a doc changelist, then a source changelist, then execution. No mockspace edit before the doc changelist exists. `cargo mock check` reports the phase.
 
 ## Round id
 
@@ -513,14 +513,10 @@ A design round is topic conversations, then a doc changelist, then a source chan
 
 ## Rules
 
-- All conversation before any mockspace edit.
-- One question at a time. Always offer free text.
-- Record decisions in the topic file as they are made.
-- The doc changelist covers every topic of the round. The source changelist is written after the docs lock, against the actual doc state. Neither is skipped.
-- A topic file is a transcript and accretes: one file per subject, a later section appended when the talk returns to it. Never edit or delete what a committed topic records. Start a new file when the subject changes, not when a question is answered.
+- Record decisions in the topic file as they are made. The doc changelist covers every topic of the round.
 - Topic size: under about 300 words is a fragment, append it to the file it belongs to; over about 2000 words carries two subjects, split it.
+- A topic file is a transcript and accretes: one file per subject, a later section appended when the talk returns to it. Never edit or delete what a committed topic records. Start a new file when the subject changes, not when a question is answered.
 - No new topic after a changelist is committed. Deprecate the changelist (`cargo mock deprecate`) to return to TOPIC.
-- Doc and source changelists are living only in their own phase and frozen after `lock`.
 - Phase gates are global: lints read the whole working tree, staged, unstaged and untracked. Revert disallowed changes before committing.
 - No source change before the doc changelist is locked and the source changelist is written.
 - Deprecation replaces addendums. Revise with `cargo mock deprecate` (or `cargo mock unlock` for a locked pair). The new changelist carries a "Comparison to deprecated changelist" section; `deprecate` and `unlock` print the section it owes with the names to mention. A bare-title stub beside a locked changelist of its kind is retired by `deprecate` in any phase.
@@ -578,12 +574,7 @@ A bug fix, a wording change, or an implementation matching the existing mock ski
 | IMPL | `*_changelist.src.md` | no (SHAME ok) | yes | src CL (iterate) |
 | CLOSED | `*_changelist.src.lock.md` | no | no | no |
 
-1. Topic files in `design_rounds/`, approved (TOPIC).
-2. Doc changelist, commit (DOC). Apply doc template changes, commit.
-3. `cargo mock lock` (DRAFT). Source changelist, commit (IMPL). Apply source changes.
-4. `cargo mock lock` (CLOSED), `cargo mock close`.
-5. Revise a changelist with `cargo mock deprecate` (unlocked) or `cargo mock unlock` (locked); the new one carries "Comparison to deprecated changelist".
-6. Enforcement is global: staged, unstaged and untracked changes all count.
+Revise a changelist with `cargo mock deprecate` (unlocked) or `cargo mock unlock` (locked); the new one carries "Comparison to deprecated changelist". Enforcement is global: staged, unstaged and untracked changes all count.
 
 The `design-round` skill carries the conversation flow and file layout.
 
@@ -659,11 +650,7 @@ The `design-round` skill carries the conversation flow and file layout.
 
 ## When the mock is wrong
 
-1. Stop implementing.
-2. Topic file `design_rounds/{id}_topic.{name}.md`, approved.
-3. Doc changelist, doc fixes (DOC), `cargo mock lock`.
-4. Source changelist (DRAFT), source fixes (IMPL), `cargo mock lock`.
-5. `cargo mock`, then continue.
+Stop implementing and run a design round to fix the mock (`design-round` skill), then `cargo mock` and continue.
 
 ## Never
 
@@ -779,8 +766,13 @@ The `design-round` skill carries the conversation flow and file layout.
         skills.push(BuiltinSkill {
             dir_name: "sketching".to_string(),
             skill_name: "sketching".to_string(),
-            skill_description: "Use BEFORE running any feasibility probe: does it compile, does the trait solve, does this shape work, is this feature gate actually needed, what exactly does the compiler say. Covers sketches and spikes. Directs the probe into mock/research/sketches/ with a FINDINGS.md carrying a WORKS / FAILS / INCONCLUSIVE outcome, instead of a throwaway rustc run in a temp directory whose result nobody can re-run and whose toolchain was probably wrong.".to_string(),
-            body: include_str!("skills/sketching/SKILL.md").to_string(),
+            skill_description: "Use BEFORE running any feasibility probe: does it compile, does the trait solve, does this shape work, is this feature gate actually needed, what exactly does the compiler say. Covers sketches and spikes. Directs the probe into the mock directory's research/sketches/ with a FINDINGS.md carrying a WORKS / FAILS / INCONCLUSIVE outcome, instead of a throwaway rustc run in a temp directory whose result nobody can re-run and whose toolchain was probably wrong.".to_string(),
+            body: substitute_builtin_vars(
+                include_str!("skills/sketching/SKILL.md"),
+                &mock_rel,
+                project_name,
+                crate_prefix,
+            ),
             files: vec![],
         });
     }
@@ -788,8 +780,13 @@ The `design-round` skill carries the conversation flow and file layout.
         skills.push(BuiltinSkill {
             dir_name: "benchmarking".to_string(),
             skill_name: "benchmarking".to_string(),
-            skill_description: "Use BEFORE writing any timing loop or making any claim that one thing is faster, cheaper or smaller than another. Any number that feeds a decision comes from mock/benches/ under the mockspace bench framework: per-variant cdylib isolation, a shared realistic workload, calibrated repetition, and a committed CSV plus findings trail. Covers what to measure, how to keep the comparison honest, and what the deliverable is.".to_string(),
-            body: include_str!("skills/benchmarking/SKILL.md").to_string(),
+            skill_description: "Use BEFORE writing any timing loop or making any claim that one thing is faster, cheaper or smaller than another. Any number that feeds a decision comes from the mock directory's benches/ under the mockspace bench framework: per-variant cdylib isolation, a shared realistic workload, calibrated repetition, and a committed CSV plus findings trail. Covers what to measure, how to keep the comparison honest, and what the deliverable is.".to_string(),
+            body: substitute_builtin_vars(
+                include_str!("skills/benchmarking/SKILL.md"),
+                &mock_rel,
+                project_name,
+                crate_prefix,
+            ),
             files: vec![],
         });
     }
@@ -802,7 +799,12 @@ The `design-round` skill carries the conversation flow and file layout.
             dir_name: "design-talk".to_string(),
             skill_name: "design-talk".to_string(),
             skill_description: "Use when open design questions must be resolved before implementation begins (for example \"let's discuss the design\", \"talk it through with me first\", or resolving parked design decisions). Leads the conversation, consumes topics filed for this round from every ref before starting, writes one topic file per topic as each settles, and re-presents everything for one confirmation before any changelist opens.".to_string(),
-            body: include_str!("skills/design-talk/SKILL.md").to_string(),
+            body: substitute_builtin_vars(
+                include_str!("skills/design-talk/SKILL.md"),
+                &mock_rel,
+                project_name,
+                crate_prefix,
+            ),
             files: vec![
                 SkillFile {
                     rel_path:   "scripts/consume-strays".to_string(),

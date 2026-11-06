@@ -127,7 +127,7 @@ Those are the transitions. The subcommands that are not transitions:
 
 | Command | Effect |
 |---|---|
-| `cargo mock status` | The current round, its phase, and what may be edited right now |
+| `cargo mock status` | Whether the mockspace git hooks are active |
 | `cargo mock check` | Readiness report: git state, phase, build, tests, lints |
 | `cargo mock check-message` | Lint one commit message, pull request body or comment against the configured policy, and for a commit with its author and committer (`--author`, `--committer`) |
 | `cargo mock check-edit` | Ask one per-crate lint (`--lint`) whether a Rust file (`--file`) would be clean once an edit is made: stdin is the new text, or with `--replace <file>` the text that replaces the one in that file. Takes `--edits <file>`, a JSON list of replacements, for a multi-edit tool. Exits 0 clean, 1 with the lint's blocking findings, 2 when the request cannot be answered (an unknown lint or gate, a lint judging the whole crate, a relative `--file`). The generated `forbidden-imports` hook calls it |
@@ -173,7 +173,21 @@ Common flags:
 | `--y`               | Answer a `--nuke` in advance, for a second run and for a script. |
 | `--dir <path>`      | Override auto-discovered mock dir                            |
 
-The generated `pre-commit` hook runs `cargo mock --lint-only --commit` scoped to the crates it finds staged, where a crate is the directory directly under any directory the project declares in `src_dirs`. The generated `pre-push` hook runs `cargo mock --lint-only --strict`, scoped to the crates the push changed under the same directories. The scope narrows the per-crate lints only: every workspace lint, built-in or from a pack, reads every crate and reports what it finds, so a clash between a touched crate and an untouched one is found at the commit that makes it, and a finding the tree already carries stops the next commit as it stops the next push. A standing finding comes off the gate through the lint's `crates` binding under `[lints.<name>]`, never through the scope. A staged or pushed shared input is never bounded to the crates beside it, so the hook passes no `--scope`: every crate and every repo lint run. The shared inputs are a file under `<mock>/lints/`, a file under the directory of a `[lint-crates]` pack declared by `path` (a pack is code the run compiles, and a pack sitting under a source directory is not scoped as a crate), and a `mockspace.toml` at the repo root or in the mock directory. The one flag a shared input can still carry is `--doc-only`, and the pre-commit hook adds it only when nothing staged is source: no `.rs` file and no crate `Cargo.toml` or `Cargo.lock` under a source directory, no workspace manifest or lockfile, and no file of a project lint or a path pack. Anything else staged beside it leaves the flag off, and the engine checks the claim against the same layout. The pre-push hook passes `--strict` without `--doc-only` whenever a shared input is among the pushed changes. A file under `<mock>/registry/` is not a shared input: the repo lints read the registry and every run makes them, and a crate's lints are handed no registry, so a commit that stages registry rows beside a crate is scoped to that crate, and a commit or push of registry rows alone runs `--scope infra`, the repo lints and no crate's, and the push adds `--deps-unchanged`. The commit adds `--doc-only` there, as a staged registry row always carried it, and the engine checks that against the staged index; the push never carries it, since the engine checks it against whatever is staged at push time and not against the pushed commits, and the repo lints that read the registry are skipped by it. The pre-commit `cargo clippy --fix` runs only in the packages that own a staged `.rs` file. A crate's own `Cargo.toml` and `Cargo.lock` are source of that crate: they scope the commit to it with the source lints on, so a `[features]` or `[lints]` edit is linted. A staged or pushed `Cargo.toml` or `Cargo.lock` reaches the crates of its own workspace and no others: the nearest directory at or above a source directory, up to the mock directory, whose `Cargo.toml` has a `[workspace]` table (the mock directory when none does). A nested workspace under the mock directory, such as a console with its own lockfile, is scoped by its own manifest and lockfile and not by the mock workspace's. A push of nothing but deleted refs publishes no commit, so the pre-push hook prints `scope: none` and runs no lint; a deletion beside a ref that does publish a commit leaves the scope to that ref, and a push git feeds no ref line for, as it does for one already up to date, takes the full scope. The nuked-workspace shortcut on push applies only when every crate under the source directories carries the configured nuke marker, as the engine decides it. A green hook prints nothing. A red one prints `blocked: <gate>`, a line per lint or check with its count of errors, the number of warnings, and the path of a log, and warnings are counted, never listed. The log is `<gate>-latest.log` under `mockspace/` in the git directory of the worktree the hook ran in (`.git/mockspace/` in a plain clone, `<common git dir>/worktrees/<name>/mockspace/` in a linked worktree), one finding per line as `<severity>\t<lint>\t<path>:<line>\t<message>`, with the whole output beside it as `<gate>-latest.raw`, and the last five runs of each gate are kept. `MOCKSPACE_VERBOSE=1` prints the whole run on the terminal as the hooks once did. Outside a hook, a run prints the first three findings of each lint and one line counting the rest; `MOCKSPACE_LINT_WARNINGS=all` prints every finding. The hooks are regenerated by the next `cargo mock` run without `--lint-only`, which is when `src_dirs` changes reach them: the hooks themselves run only under `--lint-only`, which does not write hooks, so a commit that adds a source directory with source under it meets the old hook, and the engine refuses its `--scope infra` as omitting staged crates until `cargo mock` has been run once.
+The generated hooks lint as follows:
+
+- `pre-commit` runs `cargo mock --lint-only --commit`, scoped to the staged crates. `pre-push` runs `cargo mock --lint-only --strict`, scoped to the crates the push changed. A crate is the directory directly under any `src_dirs` entry.
+- The scope narrows the per-crate lints only. Every workspace lint, built-in or from a pack, reads every crate, so a clash between a touched and an untouched crate is found at the commit that makes it, and a standing finding stops the next commit as it stops the next push. Take a standing finding off the gate through the lint's `crates` binding under `[lints.<name>]`, never through the scope.
+- A shared input staged or pushed is never bounded to the crates beside it: the hook passes no `--scope`, and every crate and repo lint runs. Shared inputs are a file under `<mock>/lints/`, a file under the directory of a `[lint-crates]` pack declared by `path` (not scoped as a crate even under a source directory), and a `mockspace.toml` at the repo root or in the mock directory.
+- A shared input can still carry `--doc-only`. Pre-commit adds it only when nothing staged is source: no `.rs`, no crate `Cargo.toml` or `Cargo.lock` under a source directory, no workspace manifest or lockfile, no file of a project lint or a path pack. The engine checks the claim against the same layout. Pre-push passes `--strict` without `--doc-only` whenever a shared input is pushed.
+- A file under `<mock>/registry/` is not a shared input. Registry rows staged beside a crate scope the commit to that crate. A commit or push of registry rows alone runs `--scope infra` (repo lints, no crate's) and the push adds `--deps-unchanged`. The commit adds `--doc-only` there, checked against the staged index. The push never carries it, because the engine checks it against what is staged at push time and not against the pushed commits, and the repo lints that read the registry are skipped by it.
+- The pre-commit `cargo clippy --fix` runs only in the packages that own a staged `.rs` file.
+- A crate's own `Cargo.toml` and `Cargo.lock` are its source: they scope the commit to it with the source lints on. A staged or pushed `Cargo.toml` or `Cargo.lock` reaches only the crates of its own workspace: the nearest directory at or above a source directory, up to the mock directory, whose `Cargo.toml` has a `[workspace]` table (the mock directory when none does). A nested workspace under the mock directory, such as a console with its own lockfile, is scoped by its own manifest and lockfile.
+- A push of only deleted refs prints `scope: none` and runs no lint. A deletion beside a publishing ref leaves the scope to that ref. A push git feeds no ref line for (already up to date) takes the full scope.
+- The nuked-workspace shortcut on push applies only when every crate under the source directories carries the configured nuke marker, as the engine decides it.
+- A green hook prints nothing. A red one prints `blocked: <gate>`, a line per lint or check with its count of errors, the number of warnings (counted, never listed), and the log path.
+- The log is `<gate>-latest.log` under `mockspace/` in the git directory of the worktree the hook ran in (`.git/mockspace/` in a plain clone, `<common git dir>/worktrees/<name>/mockspace/` in a linked worktree), one finding per line as `<severity>\t<lint>\t<path>:<line>\t<message>`. The whole output is beside it as `<gate>-latest.raw`. The last five runs of each gate are kept.
+- `MOCKSPACE_VERBOSE=1` prints the whole run on the terminal. Outside a hook a run prints the first three findings of each lint and one line counting the rest; `MOCKSPACE_LINT_WARNINGS=all` prints every finding.
+- Hooks are regenerated by the next `cargo mock` run without `--lint-only`, which is when `src_dirs` changes reach them. A commit that adds a source directory with source under it meets the old hook, and the engine refuses its `--scope infra` as omitting staged crates until `cargo mock` has run once.
 
 This table (and the one above it) is not the exhaustive command reference; run `mock tools` for that, or `mock tools --long` for full usage and declared arguments per command. It never goes stale the way a hand-written list does, because it is computed from the same declarations the engine dispatches against.
 
@@ -300,187 +314,41 @@ changes with no push at all, and a push that stands the gate down does not see i
 
 ### Tests: `[test]`
 
-`cargo mock test` runs the workspace members under cargo-nextest where it is installed,
-and selects which to run rather than running them all:
+`cargo mock test` runs the workspace members under cargo-nextest where it is installed, and selects which to run rather than running them all.
 
-- **The bench tree runs when its inputs moved, or when asked.** Compiling every arm is
-  the most expensive thing the command does, so it is left out when its inputs match
-  the tree as it stood when the benches last passed, which is recorded under
-  `<mock>/target/`. The inputs are the files git tracks or would track under
-  `<mock>/benches/` (less `results/` and `history/`, which `mock bench run` writes,
-  build output, and a lockfile git does not track, which is the build's own; a committed
-  lockfile is an input, since it picks the framework commit the arms are built at), the
-  files of every local crate a bench manifest depends on by `path`, the support crates
-  included, the text of the arm manifests and the driver that `mock bench` generates for
-  a tree that has none, and the workspace manifest, lockfile, toolchain pin, and cargo
-  and nextest configuration every build reads. A tree that never passed counts as moved.
-  It is asked for with `--benches`, which holds whatever else does, and with `--full`
-  or `--no-cache`, which run every member whatever its record says, so that `--full
-  --no-cache` is the whole suite. `-p` names crates and so leaves it out, unless
-  `--benches` is given too. A run that leaves it out says so on its last line, a failed
-  run included.
-- **A member runs when its fingerprint moved since its suite last passed.** The
-  fingerprint is its own files (what git tracks or would track under its directory,
-  shaders and fixtures kept there included), every path outside it that its sources
-  name as a `../` string literal (an `include_str!` of a content file, a directory joined
-  to `CARGO_MANIFEST_DIR`), the shared inputs of every member compiled into its tests
-  (their libraries, never their `tests/`), the entries of the lockfile that the member
-  reaches through its dependencies (itself and everything below it, so a bump of one
-  edge reruns that edge's dependents only), and the workspace's manifest, toolchain pin
-  and cargo and nextest configuration, and the cargo config `mock test` generates from
-  `[test.opt_level]`. A change to a member's library reaches that member and everything
-  depending on it, and nothing else; a change to a workspace input, that table included,
-  reruns every member. A lockfile that does not parse moves every
-  member as it did before, and a member the lock does not hold moves with the whole file. What the lock cannot say is which cargo features the build
-  unifies across members, so a feature that one member's dependency turns on for
-  another's is seen only through the manifests, as it always was.
-- **Within a member that runs, an integration-test binary runs when its own inputs
-  moved.** `tests/<name>.rs` and `tests/<name>/main.rs` are each a binary, built from
-  their own files (the modules they declare, the files their string literals name inside
-  the member, a directory named whole, a `trybuild` glob cut at its first wildcard), what
-  their sources read from outside, the member's library and its dependencies. A binary
-  that passed at inputs that have not moved is left out and listed as `reuse`, so a
-  change confined to one `tests/<name>.rs` runs that binary, and a member that failed in
-  one binary reruns only that one. A binary that ran whole and failed in some tests is
-  kept with their names and the listing it had, and the next run at the same inputs and
-  the same listing runs those tests alone, listed as `rerun`; the rest passed in that
-  run and stand. Whole is judged against `nextest list`, never against the exit code: a
-  run that stopped at its first failure, or left a listed test out for any other reason,
-  settles no binary and no member it did not cover, and without a listing a run that
-  failed settles nothing. A run with a filter that started no test while the plan left tests
-  out ends in failure and counts what it left out, since a run that started nothing is
-  no pass; without a filter, or when the plan left nothing out, it is as before. The library's own tests, the binaries and the examples
-  move with the member's shared files. What cannot be placed widens rather than being
-  missed: a file under `tests/` that no binary claims, the manifest, the build script and
-  the library move every binary; a binary that reads the environment or `file!()`, declares
-  a module inside a macro or an inline module, or does not parse, is rebuilt on every file
-  any binary claims; a manifest naming a test outside `tests/` narrows nothing. The values
-  of environment variables are in no fingerprint, a path built at run time from pieces
-  none of which names it is not seen, and `--full` and `--no-cache` run every binary.
-- **A run builds the tests and not the examples.** Without a target flag of its own
-  (`--lib`, `--bins`, `--examples`, `--all-targets` and the rest), `mock test` passes
-  `--tests` to nextest and to its listing, so an example is neither built nor linked to
-  run none of its tests; an example declared with `test = true` is still a test. Checking that
-  the examples still build is a step of its own.
-- **The partitions of one run share a history flavour.** `--partition count:n/m` does not
-  change what is compiled, so it is not part of the flavour; a partition settles no
-  member, binary or failure, as any narrowed run does. The generated nextest config
-  names the heavy tests in several overrides, one binary and a bounded run of its tests
-  each, since nextest refuses one expression naming hundreds.
-- **A test is heavy when its last run took `heavy_after_secs` or more.** Heavy tests run
-  `heavy_threads` at a time in nextest's `@tool:mockspace:heavy` group, and a heavy test
-  that passed at its binary's current fingerprint is skipped as cached.
-- **Every test is killed after `timeout_secs`**, and each run ends with its slowest tests.
-- The members are built without debug info, and a crate gets symbols only where one is
-  needed to trace a problem. Debug info is the larger part of what a test build writes,
-  and a failing test needs it only in the crate it fails in. A member needs symbols when its tests failed
-  the last time they ran, or when the run names it with `--debug=<crate,...>` (which also
-  chooses the crate, as `-p` does, and runs it whether or not it passed), or with
-  `-p x --debug`. A bare `--debug` with no `-p` gives symbols to every member the run
-  builds, and `--no-debug` to none, a failed one included. A crate that needs symbols gets
-  `[test] debug` (`line-tables-only` by default, enough for a backtrace to name lines;
-  `"full"` or `2` for a debugger); every other crate, dependencies from a registry
-  included, gets none. The plan prints a `debug` line saying which crates got symbols and
-  why.
+Selection:
 
-  The record of what failed is `<mock>/target/mockspace-test-state/failed.json`, per
-  flavour, and is not part of the tracked `test-history/`: a failure belongs to one working
-  copy, and committed it would hand every other clone symbols for a crate that is red on
-  one machine. A target directory that is gone costs one run without symbols for a crate
-  that fails again. A `--plain` run reads it, and writes only to take off the members it passed whole.
+- The bench tree runs when its inputs moved, or when asked. Compiling every arm is the most expensive thing the command does, so the tree is left out when its inputs match the tree as it stood when the benches last passed (recorded under `<mock>/target/`; a tree that never passed counts as moved). The inputs are the files git tracks or would track under `<mock>/benches/` (less `results/` and `history/`, which `mock bench run` writes, build output, and an untracked lockfile; a committed lockfile is an input because it picks the framework commit the arms are built at), the files of every local crate a bench manifest depends on by `path` (support crates included), the text of the arm manifests and the driver `mock bench` generates for a tree that has none, and the workspace manifest, lockfile, toolchain pin, and cargo and nextest configuration. `--benches` asks for it and holds whatever else does; `--full` and `--no-cache` run every member whatever its record says, so `--full --no-cache` is the whole suite. `-p` names crates and leaves the tree out unless `--benches` is given too. A run that leaves it out says so on its last line, a failed run included.
+- A member runs when its fingerprint moved since its suite last passed. The fingerprint is its own files (what git tracks or would track under its directory, shaders and fixtures included), every path outside it that its sources name as a `../` string literal (an `include_str!` of a content file, a directory joined to `CARGO_MANIFEST_DIR`), the shared inputs of every member compiled into its tests (their libraries, never their `tests/`), the lockfile entries the member reaches through its dependencies (so a bump of one edge reruns that edge's dependents only), the workspace's manifest, toolchain pin and cargo and nextest configuration, and the cargo config `mock test` generates from `[test.opt_level]`. A change to a member's library reaches that member and its dependents only; a change to a workspace input, that table included, reruns every member. A lockfile that does not parse moves every member, and a member the lock does not hold moves with the whole file. Cargo features that one member's dependency turns on for another are seen only through the manifests.
+- Within a member that runs, an integration-test binary runs when its own inputs moved. `tests/<name>.rs` and `tests/<name>/main.rs` are each a binary, built from their own files (the modules they declare, the files their string literals name inside the member, a directory named whole, a `trybuild` glob cut at its first wildcard), what their sources read from outside, the member's library and its dependencies. A binary that passed at unmoved inputs is left out and listed as `reuse`, so a change confined to one `tests/<name>.rs` runs that binary, and a member that failed in one binary reruns only that one. A binary that ran whole and failed in some tests is kept with their names and the listing it had; the next run at the same inputs and listing runs those tests alone, listed as `rerun`, and the rest stand. Whole is judged against `nextest list`, never the exit code: a run that stopped at its first failure, or left a listed test out for any other reason, settles no binary and no member it did not cover, and without a listing a failed run settles nothing. A run with a filter that started no test while the plan left tests out ends in failure and counts what it left out; without a filter, or when the plan left nothing out, it does not. The library's own tests, the binaries and the examples move with the member's shared files. What cannot be placed widens: a file under `tests/` no binary claims, the manifest, the build script and the library move every binary; a binary that reads the environment or `file!()`, declares a module inside a macro or an inline module, or does not parse, is rebuilt on every file any binary claims; a manifest naming a test outside `tests/` narrows nothing. Environment variable values are in no fingerprint, a path built at run time from pieces none of which names it is not seen, and `--full` and `--no-cache` run every binary.
+- A run builds the tests and not the examples. Without a target flag of its own (`--lib`, `--bins`, `--examples`, `--all-targets` and the rest), `mock test` passes `--tests` to nextest and to its listing, so an example is neither built nor linked to run none of its tests; an example declared with `test = true` is still a test. Checking that the examples build is a step of its own.
+- The partitions of one run share a history flavour. `--partition count:n/m` does not change what is compiled, so it is not part of the flavour, and a partition settles no member, binary or failure, as any narrowed run does. The generated nextest config names the heavy tests in several overrides, one binary and a bounded run of its tests each, since nextest refuses one expression naming hundreds.
+- A test is heavy when its last run took `heavy_after_secs` or more. Heavy tests run `heavy_threads` at a time in nextest's `@tool:mockspace:heavy` group, and a heavy test that passed at its binary's current fingerprint is skipped as cached.
+- Every test is killed after `timeout_secs`, and each run ends with its slowest tests.
 
-  It reaches cargo as the same generated `--config` file the opt levels do, and no manifest
-  or cargo config is edited: a profile-wide `debug = 0` under `dev` and `test`; the same
-  for `"*"`, which is every dependency (a `"*"` in a manifest or a cargo config beats a
-  profile-wide setting, and this one beats theirs); a `debug` entry for each member and for
-  each package outside the workspace that a manifest or a cargo config names for itself,
-  lean for the ones that need nothing, since a name beats both a profile-wide setting
-  and a `"*"`; and the level for the members that need symbols. A `--config` on the command line beats the file, and a `--release`
-  or `--profile` run is the profile you chose, so only the crates that need symbols are
-  touched there. The environment has no spelling for one package
-  (`CARGO_PROFILE_<P>_PACKAGE_<NAME>_DEBUG` is read as nothing), which is why a file is
-  used. A cargo config file (`.cargo/config.toml` up the tree, or `$CARGO_HOME/config.toml`)
-  or a `CARGO_PROFILE_DEV_DEBUG` that sets debug info for every build is reported by name,
-  once for each file, and overridden for the run: cargo gives a `--config` file precedence
-  over a config file, the environment and the manifest alike, which is also why a helper
-  container's global `debug = "line-tables-only"` used to beat a manifest's `debug = 0`
-  without a word. `[test] lean = false` lets the manifest and those settings stand and
-  gives symbols only to the crates named.
+Debug info. Members are built without it, and a crate gets symbols only where one is needed to trace a problem:
 
-  What no profile setting reaches is rustflags: `-g` or `-C debuginfo=` above none in
-  `RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS`, `CARGO_BUILD_RUSTFLAGS` or a `rustflags` of
-  `[build]` or `[target.*]` in a cargo config (cargo takes one of those sources, and the
-  configs are read only where no variable is set) give every crate debug info. They are
-  reported by name, never overridden, and the plan line then stops saying every other
-  crate is built without debug info.
+- A member needs symbols when its tests failed the last time they ran, when the run names it with `--debug=<crate,...>` (which also chooses the crate, as `-p` does, and runs it whether or not it passed) or `-p x --debug`. A bare `--debug` with no `-p` gives symbols to every member the run builds; `--no-debug` gives none, a failed one included.
+- A crate that needs symbols gets `[test] debug` (`line-tables-only` by default, enough for a backtrace to name lines; `"full"` or `2` for a debugger). Every other crate, registry dependencies included, gets none. The plan prints a `debug` line saying which crates got symbols and why.
+- The record of what failed is `<mock>/target/mockspace-test-state/failed.json`, per flavour, and is not part of the tracked `test-history/`: a failure belongs to one working copy. A gone target directory costs one run without symbols for a crate that fails again. A `--plain` run reads it, and writes only to take off the members it passed whole.
+- It reaches cargo as the same generated `--config` file the opt levels use, and no manifest or cargo config is edited: a profile-wide `debug = 0` under `dev` and `test`; the same for `"*"` (every dependency; a `"*"` in a manifest or cargo config beats a profile-wide setting, and this one beats theirs); a `debug` entry for each member and each package outside the workspace that a manifest or cargo config names for itself (a name beats both a profile-wide setting and a `"*"`), lean for the ones that need nothing; and the level for the members that need symbols. A `--config` on the command line beats the file, and a `--release` or `--profile` run is the profile you chose, so only the crates that need symbols are touched there. The environment has no spelling for one package (`CARGO_PROFILE_<P>_PACKAGE_<NAME>_DEBUG` is read as nothing), which is why a file is used.
+- A cargo config file (`.cargo/config.toml` up the tree, or `$CARGO_HOME/config.toml`) or a `CARGO_PROFILE_DEV_DEBUG` that sets debug info for every build is reported by name, once per file, and overridden for the run, because cargo gives a `--config` file precedence over a config file, the environment and the manifest. `[test] lean = false` lets the manifest and those settings stand and gives symbols only to the crates named.
+- Rustflags are not reached by any profile setting: `-g` or `-C debuginfo=` above none in `RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS`, `CARGO_BUILD_RUSTFLAGS` or a `rustflags` of `[build]` or `[target.*]` in a cargo config (cargo takes one of those sources, and the configs are read only where no variable is set) give every crate debug info. They are reported by name, never overridden, and the plan line stops saying every other crate is built without debug info.
+- Building a crate with symbols compiles that crate and its dependents once, since a dependency's profile is part of a dependent's fingerprint; its dependencies and unrelated crates are not compiled again, and the lean build stays in the target directory, so going back compiles nothing. A run restricted to the crates that failed builds no dependents. None of this is a fingerprint input: what passed under one setting stands under the other. The first lean run after a manifest that asked for debug info compiles the members once more, and a `cargo build` over the same target directory keeps its own, so the directory holds both.
 
-  Building a crate with symbols compiles that crate and the crates that depend on it once,
-  since a dependency's profile is part of a dependent's fingerprint; its dependencies and
-  every crate that is neither are not compiled again, and the lean build stays in the
-  target directory beside the other, so going back compiles nothing. A run restricted to
-  the crates that failed builds no dependents. None of this is an input of a member's
-  fingerprint: a test passes or fails the same with or without symbols, so what passed
-  under one setting stands under the other. The first lean run after a manifest that asked
-  for debug info compiles the members once more, and a `cargo build` over the same target
-  directory keeps its own, so the directory holds both.
+Flags. `--full` runs every member asked for, every binary of it. `--no-cache` runs the cached heavy tests and the binaries it would leave out too. `--cheap` defers every heavy test that has passed before (a new one, or one that failed last time, still runs). `--full --no-cache` is the whole suite, for the end of a piece of work and after merging the trunk. `--plain` is `cargo test`, with the opt levels of `[test.opt_level]` and the debug info above applied the same way. Doc tests do not run under nextest, a known gap; `--plain` reaches them.
 
-`--full` runs every member asked for, every binary of it, `--no-cache` runs the cached
-heavy tests and the binaries it would leave out too, and
-`--cheap` defers every heavy test that has passed before (a new one, or one that failed
-last time, still runs). `--full --no-cache` is the whole suite, for the end of a piece of
-work and after merging the trunk; `--plain` is `cargo test` as before, with the opt
-levels of `[test.opt_level]` and the debug info above applied the same way. Doc tests do not
-run under nextest, a known gap: `--plain` is the way to them for now.
+The record is tracked: `<mock>/test-history/<flavour>/<member>.json`, committed with the work that produced it, so a fresh clone or container starts from the last green run. The fingerprints are digests of contents and repository-relative paths, so a pass recorded on one machine stands on another. Only tests near or over the heavy threshold are kept, with each test binary that passed and the fingerprint it passed at, and a file is rewritten only when what it says changed. A test or binary that no longer exists is dropped from the generated nextest config and pruned from the record on the next run that runs something, found by asking nextest what it lists (the build flags you passed, and none that only shape a run). Where that listing cannot be had, a failing build for one, the run says so and drops nothing, and a record naming a deleted binary can still stop nextest until the build is mended. A `--features` run keeps its own flavour directory. A run writes and removes only the files of the members it ran, in the flavour it ran in, plus those of members the workspace no longer has, so a run for one member leaves every other file as it was.
 
-The record is tracked: `<mock>/test-history/<flavour>/<member>.json`, committed with the
-work that produced it, so a fresh clone or a new container starts from the last green
-run rather than from nothing. The fingerprints are digests of contents and
-repository-relative paths, so a pass recorded on one machine stands on another. Only
-tests near or over the heavy threshold are kept, with each test binary that passed and the
-fingerprint it passed at, and a file is rewritten only when what
-it says changed, so a rerun of a settled suite leaves the tree clean. A test or binary
-that no longer exists is dropped from the generated nextest config and pruned from the
-record on the next run that runs something, found by asking nextest what it lists (the
-build flags you passed, and none that only shape a run). Where that listing cannot be
-had, a failing build for one, the run says so and drops nothing, and a record naming a
-deleted binary can still stop nextest until the build is mended. A `--features` run
-keeps its own flavour directory. A run writes and removes only the files of the members
-it ran, in the flavour it ran in, plus those of members the workspace no longer has, so
-a run for one member leaves every other file as it was, whatever it holds.
+Merging. `.gitattributes` sends `<mock>/test-history/**/*.json` to the `mockspace-test-history` merge driver (`cargo mock merge-test-history`), which `cargo mock` registers in the clone's git config (and, with `cargo mock register-drivers --global`, in the user's) beside the registry's, so two branches that both moved a member's file merge without a conflict.
 
-Two branches that both moved a member's file merge without a conflict: `.gitattributes`
-sends `<mock>/test-history/**/*.json` to the `mockspace-test-history` merge driver
-(`cargo mock merge-test-history`), which `cargo mock` registers in the clone's git config (and, with `cargo mock register-drivers --global`, in the user's) beside the
-registry's. A member's green record, and a test binary's recorded pass, stays where both
-sides hold the same one or only one side moved it from the base, and is dropped where
-both moved it to different values, because neither fingerprint is the merged tree's; the
-next run records it. The driver never picks between two greens that both moved.
-Per-test results and timings are unioned, and where both sides timed a test the later
-measurement is kept: the side that moved it, else the side that last changed the file later,
-else the longer timing. Two files of different versions, members or flavours, or one that
-is not a record, are refused with a message and the path stays conflicted.
+- A member's green record, and a test binary's recorded pass, stays where both sides hold the same one or only one side moved it from the base, and is dropped where both moved it to different values, because neither fingerprint is the merged tree's; the next run records it. The driver never picks between two greens that both moved.
+- Per-test results and timings are unioned; where both sides timed a test the later measurement is kept: the side that moved it, else the side that last changed the file later, else the longer timing.
+- Two files of different versions, members or flavours, or one that is not a record, are refused with a message and the path stays conflicted.
 
-The pre-commit hook runs `cargo mock check-test-history` for a commit that stages one of
-these files. A commit that nulls a member's green record while touching none of its
-inputs (its directory, the directories of the members compiled into its tests, the paths
-its sources read from outside, the workspace-wide files) is refused, naming the member:
-a run cut short, by a container restart or a full disk, leaves that. A merge commit whose
-nulled green is one the driver's rule drops is not refused.
+The pre-commit hook runs `cargo mock check-test-history` for a commit that stages one of these files. A commit that nulls a member's green record while touching none of its inputs (its directory, the directories of the members compiled into its tests, the paths its sources read from outside, the workspace-wide files) is refused, naming the member; a run cut short by a container restart or a full disk leaves that. A merge commit whose nulled green is one the driver's rule drops is not refused.
 
-The record can instead be kept on a git ref, which keeps it out of the tree and out of every
-commit. `[test.history]` declares it; the empty table keeps it on `refs/heads/mock/test-history`
-of `origin`, and `remote`, `namespace` and `form` (`"branch"` or `"ref"`) change where. A run
-reads the ref once when it starts and writes its records back as one commit when it ends, and a
-run that finds another writer got there first merges the files with the driver's rule above. A
-ref that cannot be fetched is an error that is said aloud: the run goes on with every member
-running and records nothing, and never takes the failure for an empty history. The write names
-only the members the run covered and those the workspace no longer has, so the record of any
-other member stands untouched. The commit hook does not see a ref, so the writer asks the question `check-test-history` asks of a
-commit: it refuses a write that removes a member's green record while the member's fingerprint is
-still the one the record was made at (a run cut short or a flaky test leaves that), and asks again of
-the winner's state when another run pushed first. The check of `check-test-history` covers a record
-kept in the tree only. Without the table nothing changes:
-the record stays in `<mock>/test-history` as above.
+The record can instead be kept on a git ref, out of the tree and every commit. `[test.history]` declares it; the empty table keeps it on `refs/heads/mock/test-history` of `origin`, and `remote`, `namespace` and `form` (`"branch"` or `"ref"`) change where. A run reads the ref once at its start and writes its records back as one commit at its end; when another writer got there first it merges the files with the driver's rule above. A ref that cannot be fetched is an error said aloud: the run goes on with every member running and records nothing, and never takes the failure for an empty history. The write names only the members the run covered and those the workspace no longer has. The commit hook does not see a ref, so the writer asks what `check-test-history` asks of a commit: it refuses a write that removes a member's green record while the member's fingerprint is still the one the record was made at (a run cut short or a flaky test leaves that), and asks again of the winner's state when another run pushed first. `check-test-history` itself covers a record kept in the tree only. Without the table the record stays in `<mock>/test-history`.
 
 ```toml
 [test]
