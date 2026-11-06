@@ -15,6 +15,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+mod fold;
 pub mod verdicts;
 
 #[cfg(test)]
@@ -419,18 +420,8 @@ pub fn run_lints(
         }
     }
 
-    if !info.is_empty() {
-        eprintln!("\n--- lint info ({}) ---", info.len());
-        for i in &info {
-            eprintln!("{i}");
-        }
-    }
-
-    if !warnings.is_empty() {
-        eprintln!("\n--- lint warnings ({}) ---", warnings.len());
-        for w in &warnings {
-            eprintln!("{w}");
-        }
+    for text in fold::sections(&info, &warnings, fold::wants_all()) {
+        eprintln!("{text}");
     }
 
     if !errors.is_empty() {

@@ -139,3 +139,17 @@ mod not_found_tests {
         assert_eq!(why_not_found(&pack, true), NotFound::NameMismatch);
     }
 }
+
+#[test]
+fn an_inconclusive_run_says_why_before_it_says_inconclusive() {
+    // The case that must fail: the reason used to follow the INCONCLUSIVE line, so a refused write read as the
+    // tool failing before it said what it had refused.
+    for what in ["corpus", "tree"] {
+        let msg = inconclusive_message("ticket-add", "--kind is empty", what);
+        let why = msg.find("--kind is empty").expect("the reason is printed");
+        let verdict = msg.find("INCONCLUSIVE").expect("the verdict is printed");
+        assert!(why < verdict, "{msg:?}");
+        assert!(msg.starts_with("ticket-add: "), "{msg:?}");
+        assert!(msg.contains(&format!("about the {what}.")), "{msg:?}");
+    }
+}
