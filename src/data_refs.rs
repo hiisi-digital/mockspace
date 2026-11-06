@@ -27,7 +27,8 @@ use crate::registry::RefDecl;
 #[cfg_attr(test, derive(serde::Serialize))]
 #[serde(default, deny_unknown_fields)]
 pub struct DataRefDecl {
-    /// The ref namespace, `refs/mock/<namespace>`. Required, and unique among the declarations.
+    /// The ref namespace: the ref is `refs/heads/mock/<namespace>` in the branch form and
+    /// `refs/mock/<namespace>` in the ref form. Required, and unique among the declarations.
     pub namespace: Option<String>,
     /// The directory under the mock directory the ref holds, relative to it. The root of the ref is
     /// this directory, so one ref holds one directory and writers of different ones never meet.
@@ -104,14 +105,14 @@ pub fn validate_against(decls: &[DataRefDecl], taken: &[String]) -> Result<(), V
                     why.push(format!("{at}: path `{p}` {bad}"));
                 } else {
                     let p = p.trim_matches('/');
-                    if let Some(own) = OWN_STORES.iter().find(|s| p == **s || p.starts_with(&format!("{s}/"))) {
+                    if let Some(own) = OWN_STORES.iter().find(|s| nested(p, s)) {
                         why.push(format!("{at}: path `{p}` is under `{own}`, which has a store of its own"));
                     }
                     for (j, o) in decls.iter().enumerate().take(i) {
                         let Some(other) = o.path.as_deref().map(|o| o.trim_matches('/')) else {
                             continue;
                         };
-                        if p == other || p.starts_with(&format!("{other}/")) || other.starts_with(&format!("{p}/")) {
+                        if nested(p, other) {
                             why.push(format!("{at}: path `{p}` overlaps `{other}` of [[data_ref]] #{}", j + 1));
                         }
                     }
@@ -121,6 +122,8 @@ pub fn validate_against(decls: &[DataRefDecl], taken: &[String]) -> Result<(), V
         if let Some(inst) = d.instance.as_deref() {
             if let Some(bad) = path_problem(inst) {
                 why.push(format!("{at}: instance `{inst}` {bad}"));
+            } else if let Some(own) = OWN_STORES.iter().find(|s| nested(inst.trim_matches('/'), s)) {
+                why.push(format!("{at}: instance `{inst}` is under `{own}`, which has a store of its own"));
             }
         }
         if d.namespace.as_deref().is_some_and(|n| !n.is_empty()) {
