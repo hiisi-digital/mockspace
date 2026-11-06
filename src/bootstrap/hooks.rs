@@ -245,14 +245,32 @@ if [ -n "$PUSH_REVS" ]; then
             printf '%s <%s>\x1e%s <%s>\x1e%s\0' "$an" "$ae" "$cn" "$ce" "$rest"
         done
     }
-    # `--no-walk=unsorted` keeps the order the revs were fed in; plain
-    # `--no-walk` would re-sort by commit date.
-    set -o pipefail
-    printf '%s\n' "$PUSH_REVS" \
-        | git log --no-walk=unsorted --stdin -z --format='%an%x00%ae%x00%cn%x00%ce%x00%h %s%x1f%B' \
-        | ms_frame_records \
-        | "$launcher" check-message --domain commit-message --gate push --batch || exit 1
-    set +o pipefail
+    # The scan runs captured, as a gate does: green prints nothing, red prints
+    # `blocked: pre-push` and a line per lint with its count, and the per-commit
+    # lines go to the gate log under the git directory. `MOCKSPACE_VERBOSE=1`
+    # prints them as they come.
+    ms_scan_messages() {
+        local raw findings rc=0
+        raw=$(mktemp)
+        findings=$(mktemp)
+        trap 'rm -f "$raw" "$findings"; trap - RETURN INT TERM' RETURN INT TERM
+        set -o pipefail
+        # `--no-walk=unsorted` keeps the order the revs were fed in; plain
+        # `--no-walk` would re-sort by commit date.
+        printf '%s\n' "$PUSH_REVS" \
+            | git log --no-walk=unsorted --stdin -z --format='%an%x00%ae%x00%cn%x00%ce%x00%h %s%x1f%B' \
+            | ms_frame_records \
+            | MOCKSPACE_GATE_FINDINGS="$findings" "$launcher" check-message --domain commit-message --gate push --batch \
+                >"$raw" 2>&1 || rc=$?
+        set +o pipefail
+        if [ "$rc" -eq 0 ]; then
+            if [ -n "${MOCKSPACE_VERBOSE:-}" ] && [ "${MOCKSPACE_VERBOSE}" != "0" ]; then cat "$raw" >&2; fi
+            return 0
+        fi
+        "$launcher" gate-report pre-push "$raw" "$findings" >&2 || { cat "$raw" >&2; echo "blocked: pre-push" >&2; }
+        return "$rc"
+    }
+    ms_scan_messages || exit 1
 fi
 "##
     .to_string()
@@ -317,6 +335,7 @@ ms_chain() {{
 pub(crate) fn gen_pre_commit(mock_rel: &str, layout: &HookLayout, user_hook: &Path) -> String {
     let chain = chain_user_hook(user_hook, false);
     let layout = src_layout_shell(layout);
+    let gate = gate_shell();
 
     format!(
         r##"#!/usr/bin/env bash
@@ -330,6 +349,8 @@ MOCK_DIR="{mock_rel}"
 
 {layout}
 
+{gate}
+
 # A merge concluding here stopped on something that was not a generated file,
 # since generated files merge without conflict, or was a squash, which stops
 # for nothing and leaves no MERGE_HEAD. Or the merge driver kept one side of a
@@ -340,10 +361,8 @@ MOCK_DIR="{mock_rel}"
 if [ -f "$(git rev-parse --git-path MERGE_HEAD 2>/dev/null)" ] \
     || [ -f "$(git rev-parse --git-path SQUASH_MSG 2>/dev/null)" ] \
     || ms_kept_live; then
-    echo "pre-commit: concluding a merge, regenerating the generated files..."
-    if ! cargo mock --generate-only --stage 2>&1; then
-        echo ""
-        echo "BLOCKED: the generated files could not be regenerated for this merge."
+    ms_say "pre-commit: concluding a merge, regenerating the generated files..."
+    if ! ms_gate pre-commit --generate-only --stage; then
         exit 1
     fi
     # the engine removes the record once it has checked what it staged, so one
@@ -383,7 +402,7 @@ fi
 
 [ -z "$STAGED" ] && ms_chain "$@"
 
-echo "pre-commit: mockspace changes detected, running validation..."
+ms_say "pre-commit: mockspace changes detected, running validation..."
 
 # Extract changed crate names from staged paths, under whichever source
 # directories the project declares.
@@ -418,7 +437,7 @@ if [ "$SHARED_STAGED" = "1" ]; then
     # No `--scope`: every crate and every repo lint runs. `--doc-only` still
     # holds when nothing under a source directory is staged source, and the
     # engine verifies the claim against the same layout.
-    echo "  shared inputs staged: full scope"
+    ms_say "  shared inputs staged: full scope"
     # A staged project lint or lint pack is code the run has to compile and run,
     # which `--doc-only` would skip, so it keeps the flag off.
     if [ -z "$STAGED_SRC" ] && [ -z "$WS_CRATES" ] && git diff --cached --quiet -- "${{MS_CODE[@]}}" 2>/dev/null; then
@@ -426,10 +445,10 @@ if [ "$SHARED_STAGED" = "1" ]; then
     fi
 elif [ -n "$CHANGED_CRATES" ]; then
     if [ -z "$STAGED_SRC" ] && [ -z "$WS_CRATES" ]; then
-        echo "  crates: $CHANGED_CRATES (doc-only)"
+        ms_say "  crates: $CHANGED_CRATES (doc-only)"
         ARGS+=(--scope "$CHANGED_CRATES" --doc-only)
     else
-        echo "  crates: $CHANGED_CRATES"
+        ms_say "  crates: $CHANGED_CRATES"
         ARGS+=(--scope "$CHANGED_CRATES")
     fi
 else
@@ -439,12 +458,12 @@ else
         # A registry row beside a file that reaches no crate keeps the full scope a staged registry row
         # always had: a workspace lint (the writing-style one) reads whatever sits beside the row, and
         # `--scope infra` parses no crates for it to start from.
-        echo "  registry rows beside other files: full scope"
+        ms_say "  registry rows beside other files: full scope"
         if [ -z "$STAGED_SRC" ] && [ -z "$WS_CRATES" ]; then
             ARGS+=(--doc-only)
         fi
     else
-        echo "  infrastructure-only (no crate files staged)"
+        ms_say "  infrastructure-only (no crate files staged)"
         ARGS+=(--scope infra)
         # Registry rows and nothing else under the mock directory: no source is staged, which is what
         # `--doc-only` claims, and the engine checks that claim against the staged index (`verify_doc_only`).
@@ -455,13 +474,11 @@ else
     fi
 fi
 
-if ! cargo mock "${{ARGS[@]}}" 2>&1; then
-    echo ""
-    echo "BLOCKED: mockspace validation failed."
+if ! ms_gate pre-commit "${{ARGS[@]}}"; then
     exit 1
 fi
 
-echo "pre-commit: validation passed."
+ms_say "pre-commit: validation passed."
 ms_chain "$@"
 "##
     )
@@ -470,6 +487,7 @@ ms_chain "$@"
 pub(crate) fn gen_pre_push(mock_rel: &str, layout: &HookLayout, user_hook: &Path) -> String {
     let chain = chain_user_hook(user_hook, true);
     let layout = src_layout_shell(layout);
+    let gate = gate_shell();
     let byline = message_prepush_scan_body();
 
     format!(
@@ -483,6 +501,8 @@ set -e
 MOCK_DIR="{mock_rel}"
 
 {layout}
+
+{gate}
 
 # Git feeds `<local-ref> <local-sha> <remote-ref> <remote-sha>` lines on
 # stdin. Capture once so both the byline scan and the crate-diff loop below
@@ -503,7 +523,7 @@ fi
 # regardless of install state). The commit-msg hook catches bylines at commit
 # time; this catches anything that reached the branch another way.
 {byline}
-echo "pre-push: running mockspace validation..."
+ms_say "pre-push: running mockspace validation..."
 
 # Compute changed crates between remote and local across every ref being
 # pushed. Git pre-push hooks receive `<local-ref> <local-sha> <remote-ref>
@@ -607,36 +627,34 @@ fi
 # with no crate changes looks like too, and the push ran the full project to delete a branch.
 # A deletion beside a ref that publishes a commit leaves the scope to that ref.
 if [ "$PUSH_REFS" -gt 0 ] && [ "$PUSH_REFS" -eq "$PUSH_DELETES" ]; then
-    echo "  scope: none (the push deletes refs and publishes no commit)"
-    echo "pre-push: validation passed."
+    ms_say "  scope: none (the push deletes refs and publishes no commit)"
+    ms_say "pre-push: validation passed."
     ms_chain "$@"
 fi
 
 if ms_nuked; then
-    echo "  nuked workspace: skipping source checks"
+    ms_say "  nuked workspace: skipping source checks"
     ARGS=(--lint-only --strict --doc-only)
 elif [ -z "$FULL_REASON" ] && [ -z "$CHANGED_CRATES" ] && [ -n "$PUSH_REPO_ONLY" ] && [ -z "$PUSH_NOT_REGISTRY" ]; then
     # No `--doc-only`: the engine skips every source-only lint under it, repo lints included, and the repo lints
     # that read the registry (a citation of a superseded row, a catalogue ignore naming a ticket) are source-only.
     # The flag is checked against whatever is staged when the push runs, not against the pushed commits, so it
     # would also vouch for nothing about them.
-    echo "  scope: repo lints only (the push changes nothing a crate's lints read)"
+    ms_say "  scope: repo lints only (the push changes nothing a crate's lints read)"
     ARGS=(--lint-only --strict --scope infra --deps-unchanged)
 elif [ -n "$FULL_REASON" ] || [ -z "$CHANGED_CRATES" ]; then
-    echo "  scope: full project (${{FULL_REASON:-no crate changes}})"
+    ms_say "  scope: full project (${{FULL_REASON:-no crate changes}})"
     ARGS=(--lint-only --strict)
 else
-    echo "  scope: $CHANGED_CRATES"
+    ms_say "  scope: $CHANGED_CRATES"
     ARGS=(--lint-only --strict --scope "$CHANGED_CRATES")
 fi
 
-if ! cargo mock "${{ARGS[@]}}" 2>&1; then
-    echo ""
-    echo "BLOCKED: mockspace validation failed."
+if ! ms_gate pre-push "${{ARGS[@]}}"; then
     exit 1
 fi
 
-echo "pre-push: validation passed."
+ms_say "pre-push: validation passed."
 ms_chain "$@"
 "##
     )
@@ -1424,6 +1442,7 @@ mod generated_pre_commit_tests {
             // home it is given, and this test is not about them
             .env("HOME", root)
             .env_remove("XDG_CONFIG_HOME")
+            .env("MOCKSPACE_VERBOSE", "1")
             .output()
             .expect("bash runs");
         format!(
@@ -1510,6 +1529,7 @@ mod generated_pre_commit_tests {
         let out = Command::new("bash")
             .arg(&hook)
             .current_dir(root)
+            .env("MOCKSPACE_VERBOSE", "1")
             .output()
             .expect("bash runs");
         let printed = format!(
@@ -1626,6 +1646,7 @@ mod generated_pre_commit_tests {
         let out = Command::new("bash")
             .arg(&hook)
             .current_dir(root)
+            .env("MOCKSPACE_VERBOSE", "1")
             .output()
             .expect("bash runs");
         let printed = format!(
@@ -1697,6 +1718,7 @@ mod generated_pre_commit_tests {
         let out = Command::new("bash")
             .arg(&hook)
             .current_dir(root)
+            .env("MOCKSPACE_VERBOSE", "1")
             .output()
             .expect("bash runs");
         let printed = format!(

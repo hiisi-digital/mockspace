@@ -20,7 +20,7 @@ pub const ALL_VAR: &str = "MOCKSPACE_LINT_WARNINGS";
 
 /// Whether the environment asks for every finding.
 pub fn wants_all() -> bool {
-    asks_for_all(std::env::var(ALL_VAR).ok().as_deref())
+        asks_for_all(std::env::var(ALL_VAR).ok().as_deref())
 }
 
 /// Whether a value of [`ALL_VAR`] asks for every finding; only `all` does.
@@ -41,13 +41,14 @@ pub fn section(title: &str, findings: &[LintError], shown: Option<usize>) -> Opt
     Some(text)
 }
 
-/// The lines to print for `findings`, in the order the lints first appear: each finding of a lint
-/// up to `shown`, then one line saying how many more it has. `shown` of `None` is every finding.
+/// The sections of lint info and lint warnings a run prints, folded unless `all`.
 pub fn sections(info: &[LintError], warnings: &[LintError], all: bool) -> Vec<String> {
     let shown = (!all).then_some(SHOWN_PER_LINT);
     [section("lint info", info, shown), section("lint warnings", warnings, shown)].into_iter().flatten().collect()
 }
 
+/// The lines to print for `findings`, in the order the lints first appear: each finding of a lint
+/// up to `shown`, then one line saying how many more it has. `shown` of `None` is every finding.
 pub fn fold(findings: &[LintError], shown: Option<usize>) -> Vec<String> {
     let mut order: Vec<&'static str> = Vec::new();
     for f in findings {
@@ -98,10 +99,9 @@ mod tests {
         let out = fold(&all, Some(2));
         // a: 2 shown + a count of 4; b: both, no count
         assert_eq!(out.len(), 2 + 1 + 2);
-        assert!(out[0].contains("m0") && out[1].contains("m1"), "{out:?}");
-        assert!(out[2].contains("[a]") && out[2].contains("4 more"), "{out:?}");
-        assert!(out[3].contains("m0") && out[3].contains("b"), "{out:?}");
-        assert!(out[4].contains("m1") && out[4].contains("b"), "{out:?}");
+        assert_eq!(out[2], format!("  [a] ... 4 more, {ALL_VAR}=all lists them"));
+        assert_eq!(out[3], finding("b", 0).to_string());
+        assert_eq!(out[4], finding("b", 1).to_string());
     }
 
     #[test]

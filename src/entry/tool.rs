@@ -418,12 +418,6 @@ fn read_message(name: &str, examined: usize) -> String {
     format!("{name}: read {examined}, nothing to report.")
 }
 
-/// What an inconclusive run prints: the reason first, so a refusal reads as what it is and not as the
-/// tool failing, then the one line saying nothing was established about `what` (the tree or the corpus).
-fn inconclusive_message(name: &str, reason: &str, what: &str) -> String {
-    format!("{name}: {reason}\n  (INCONCLUSIVE: the run says nothing about the {what}.)")
-}
-
 /// The message printed for a clean verdict over zero, alongside the
 /// [`ExitCode::SUCCESS`] this always returns with.
 ///
@@ -440,6 +434,12 @@ fn examined_nothing_message(name: &str) -> String {
          proves nothing about the corpus; check the tool's inputs if this is \
          unexpected."
     )
+}
+
+/// What an inconclusive run prints: the reason first, so a refusal reads as what it is and not as the
+/// tool failing, then the one line saying nothing was established about `what` (the tree or the corpus).
+fn inconclusive_message(name: &str, reason: &str, what: &str) -> String {
+    format!("{name}: {reason}\n  (INCONCLUSIVE: the run says nothing about the {what}.)")
 }
 
 /// Whether to read standard input, given what the tool asked for and what
