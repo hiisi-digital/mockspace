@@ -326,8 +326,7 @@ pub(crate) fn run(
                 }
             },
             Err(why) => {
-                eprintln!("{name}: INCONCLUSIVE, so the run says nothing about the tree.");
-                eprintln!("  {why}");
+                eprintln!("{}", inconclusive_message(name, &why.to_string(), "tree"));
                 unobserved = true;
             },
         }
@@ -361,8 +360,7 @@ pub(crate) fn run(
         Outcome::Inconclusive {
             reason,
         } => {
-            eprintln!("{name}: INCONCLUSIVE, so the run says nothing about the corpus.");
-            eprintln!("  {reason}");
+            eprintln!("{}", inconclusive_message(name, reason, "corpus"));
             ExitCode::FAILURE
         },
         Outcome::Findings(findings) => {
@@ -418,6 +416,12 @@ fn wrote_message(name: &str, wrote: &[String]) -> String {
 /// made; the count is the one thing the line knows to be true.
 fn read_message(name: &str, examined: usize) -> String {
     format!("{name}: read {examined}, nothing to report.")
+}
+
+/// What an inconclusive run prints: the reason first, so a refusal reads as what it is and not as the
+/// tool failing, then the one line saying nothing was established about `what` (the tree or the corpus).
+fn inconclusive_message(name: &str, reason: &str, what: &str) -> String {
+    format!("{name}: {reason}\n  (INCONCLUSIVE: the run says nothing about the {what}.)")
 }
 
 /// The message printed for a clean verdict over zero, alongside the
