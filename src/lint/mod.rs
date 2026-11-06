@@ -421,18 +421,14 @@ pub fn run_lints(
     }
 
     let shown = (!fold::wants_all()).then_some(fold::SHOWN_PER_LINT);
-    if !info.is_empty() {
-        eprintln!("\n--- lint info ({}) ---", info.len());
-        for line in fold::fold(&info, shown) {
-            eprintln!("{line}");
-        }
-    }
-
-    if !warnings.is_empty() {
-        eprintln!("\n--- lint warnings ({}) ---", warnings.len());
-        for line in fold::fold(&warnings, shown) {
-            eprintln!("{line}");
-        }
+    for text in [
+        fold::section("lint info", &info, shown),
+        fold::section("lint warnings", &warnings, shown),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        eprintln!("{text}");
     }
 
     if !errors.is_empty() {
