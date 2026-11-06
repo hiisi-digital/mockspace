@@ -365,3 +365,27 @@ fn the_reminder_is_said_once_per_session_and_again_for_another() {
     // the control: without it the silence could be a hook that never speaks
     assert!(said("two"), "another session hears it once too");
 }
+
+#[test]
+fn the_reminder_returns_after_an_hour_and_without_a_usable_session_id() {
+    let root = scratch();
+    let script = every_hook_for(&root, crate::render_agent::CLAUDE_HOOK_HELPERS)
+        .into_iter()
+        .find(|(n, _)| *n == "reminder")
+        .unwrap()
+        .1;
+    let said = |session: &str| {
+        let payload = bash_payload(&format!("cd {} && cargo mock status", root.display()))
+            .replace("\"session_id\":\"t\"", &format!("\"session_id\":\"{session}\""));
+        run(&root, &script, &payload).contains("MOCKSPACE: design round")
+    };
+    assert!(said("old"));
+    assert!(!said("old"), "the control: inside the hour it is silent");
+    let marker = root.join("mockspace-reminder/old");
+    let two_hours_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 3600);
+    std::fs::File::options().write(true).open(&marker).unwrap().set_modified(two_hours_ago).unwrap();
+    assert!(said("old"), "past the hour a session hears it again");
+    // an id the pattern rejects gets it on every call
+    assert!(said("a b") && said("a b"), "a rejected id is never remembered");
+    assert!(said("") && said(""), "no id is never remembered");
+}

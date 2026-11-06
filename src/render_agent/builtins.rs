@@ -553,12 +553,14 @@ if [[ "$IS_MOCKSPACE" != "true" ]]; then
     allow
 fi
 # The same line on every call is noise a session reads again each time, so it is said once per
-# session. A host that sends no session id gets it on every call, as before.
+# session, and again after an hour, which is also how a compacted session (it keeps its id) hears
+# it once more. A host that sends no session id gets it on every call, as before.
 SESSION_ID=$(echo "$__INPUT" | jq -r '.session_id // ""' 2>/dev/null || echo "")
 if [[ "$SESSION_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
     SAID_DIR="${{TMPDIR:-/tmp}}/mockspace-reminder"
     mkdir -p "$SAID_DIR" 2>/dev/null || true
-    if [[ -e "$SAID_DIR/$SESSION_ID" ]]; then
+    find "$SAID_DIR" -type f -mmin +1440 -delete 2>/dev/null || true
+    if [[ -n "$(find "$SAID_DIR/$SESSION_ID" -mmin -60 2>/dev/null)" ]]; then
         allow
     fi
     : > "$SAID_DIR/$SESSION_ID" 2>/dev/null || true
