@@ -70,6 +70,8 @@ mod message_scope_tests;
 #[cfg(test)]
 mod src_dirs_tests;
 #[cfg(test)]
+mod unsubstituted_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod write_guard_merge_tests;
