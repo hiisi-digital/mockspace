@@ -531,7 +531,7 @@ remote = "origin"        # optional
 form = "branch"          # optional: "branch" or "ref"
 ```
 
-A key the table does not read refuses the config, and so does a namespace declared twice or shared with a registry store or the test history, a `path` or `instance` that is, or lies inside or around, another's, and a `path` under `registry`, `design_rounds` or `test-history`, which have stores of their own. `cargo mock data-refs status|verify|instantiate|commit [namespace]` works the refs: `instantiate` fetches a ref into its directory, `commit` writes the directory's changes back (the first one makes the ref from the files), and a directory with no instance is an error in all of them but `instantiate`.
+A key the table does not read refuses the config, and so does a namespace declared twice or shared with a registry store or the test history, a `path` or `instance` that is, or lies inside or around, another's, and a `path` under `registry`, `design_rounds` or `test-history`, which have stores of their own. `cargo mock data-refs status|verify|instantiate|commit [namespace]` works the refs: `status` and `verify` read the ref as this clone last saw it and do not fetch, so run `instantiate` first to see a remote move; `instantiate` fetches a ref into its directory, `commit` writes the directory's changes back (the first one makes the ref from the files), and a directory with no instance is an error in all of them but `instantiate`.
 
 ### Lints
 

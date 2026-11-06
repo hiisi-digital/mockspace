@@ -444,3 +444,27 @@ fn seed_makes_the_first_commit_of_a_ref_from_the_files_of_a_directory_and_refuse
     let err = Instance::new(&b, &empty).unwrap().seed("x", &mockspace_store::Refuse).unwrap_err();
     assert!(err.to_string().contains("no files"), "{err}");
 }
+
+#[test]
+fn a_second_clone_with_its_own_files_cannot_seed_a_ref_another_clone_seeded() {
+    let w = World::new();
+    let a = store(&w, "a");
+    let dir_a = inst_dir(&w, "a", "research");
+    std::fs::create_dir_all(&dir_a).unwrap();
+    std::fs::write(dir_a.join("note.md"), "findings\n").unwrap();
+    let seeded_tip =
+        Instance::new(&a, &dir_a).unwrap().seed("data: research", &mockspace_store::Refuse).unwrap().commit.unwrap();
+
+    // b holds files of its own for the same ref and no record of an instance
+    let b = store(&w, "b");
+    let dir_b = inst_dir(&w, "b", "research");
+    std::fs::create_dir_all(&dir_b).unwrap();
+    std::fs::write(dir_b.join("other.md"), "mine\n").unwrap();
+    b.refresh().unwrap();
+    let err = Instance::new(&b, &dir_b).unwrap().seed("again", &mockspace_store::Refuse).unwrap_err();
+    assert!(err.to_string().contains("already has a tip"), "{err}");
+    // the control: without the fetch b sees no tip, so the refusal above is the tip branch and nothing else
+    let c = store(&w, "c");
+    assert_eq!(c.local_tip().unwrap(), None);
+    let _ = seeded_tip;
+}

@@ -73,7 +73,21 @@ fn two_refs_may_not_place_their_instances_over_each_other() {
     assert!(why.contains("instance") && why.contains("overlaps"), "{why}");
     // the control: an instance elsewhere is fine
     b.instance = Some("elsewhere".into());
-    assert_eq!(validate(&[decl("a", "research"), b]), Ok(()));
+    assert_eq!(validate(&[decl("a", "research"), b.clone()]), Ok(()));
+}
+
+#[test]
+fn an_instance_inside_a_store_of_its_own_is_refused() {
+    for p in ["registry", "design_rounds", "test-history/x"] {
+        let mut d = decl("a", "notes");
+        d.instance = Some(p.into());
+        let why = validate(&[d]).unwrap_err().join("\n");
+        assert!(why.contains("instance") && why.contains("has a store of its own"), "{p}: {why}");
+    }
+    // the control: a sibling that only shares a prefix is fine
+    let mut d = decl("a", "notes");
+    d.instance = Some("registry_old".into());
+    assert_eq!(validate(&[d]), Ok(()));
 }
 
 #[test]
