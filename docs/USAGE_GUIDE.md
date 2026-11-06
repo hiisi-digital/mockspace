@@ -532,6 +532,21 @@ form = "branch"          # optional: "branch" (refs/heads/mock/...) or "ref" (re
 
 A key the declaration does not read refuses the config, as it does in `[test.history]`, and `dir` is required here and refused there. The tree's copy of a mounted directory is ignored, and a row says it was declared where it would sit in the tree. Every `cargo mock` fetches a ref it reads and fails, rather than reading an empty registry, when it cannot. A write to a ref goes through one writer, which refuses a file that is not TOML or a row without an `id`, any finding of the registry checks that it would raise more often than before the write, and a row the generated schema refuses (`taplo` runs over a copy of the registry as it would stand, so `taplo` and the generated schemas must be present). When another writer moved the ref first, the registry merge driver settles it row by row, the checks run again on the result, and a row changed two ways on both sides is not merged. `cargo mock registry-append` writes through the same writer, and does not ask a delegate hook about a row kept on a ref, since a hook edits the tree. The writer reads rows and not documents, so a write that removes a row a generated document names is let through. The next generation run (`cargo mock`) reports the dangling reference; a commit concluding a merge and the post-merge and post-rewrite hooks run generation and report it too, a plain lint-only commit or push does not, and a write to a ref makes no commit.
 
+### Directories on a git ref
+
+A directory of the mock directory other than the registry can be kept on a git ref too, so its files move without a commit on any branch. Each is a `[[data_ref]]` table in `mockspace.toml`:
+
+```toml
+[[data_ref]]
+namespace = "research"   # the ref is refs/heads/mock/research
+path = "research"        # the directory under <mock> the ref holds; one ref holds one directory
+instance = "research"    # optional: where it is placed in the tree, default the same as path
+remote = "origin"        # optional
+form = "branch"          # optional: "branch" or "ref"
+```
+
+A key the table does not read refuses the config, and so does a namespace declared twice or shared with a registry store or the test history, a `path` or `instance` that is, or lies inside or around, another's, and a `path` under `registry`, `design_rounds` or `test-history`, which have stores of their own. `cargo mock data-refs status|verify|instantiate|commit [namespace]` works the refs: `status` and `verify` read the ref as this clone last saw it and do not fetch, so run `instantiate` first to see a remote move; `instantiate` fetches a ref into its directory, `commit` writes the directory's changes back (the first one makes the ref from the files), and a directory with no instance is an error in all of them but `instantiate`.
+
 ### Lints
 
 Per-lint severity per gate:

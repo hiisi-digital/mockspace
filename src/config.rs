@@ -128,6 +128,8 @@ pub struct Config {
     /// The `[[registry.store]]` declarations: directories of the registry kept on a git ref.
     /// Empty means the whole registry is the directory, as it is for every project today.
     pub registry_stores:        Vec<crate::registry::RefDecl>,
+    /// The `[[data_ref]]` declarations. Empty means every directory of the mock directory is in the tree.
+    pub data_refs:              Vec<crate::data_refs::DataRefDecl>,
     /// Whether to also emit a single document containing every deep dive.
     ///
     /// Off by default. Each deep dive already renders as a sibling of its
@@ -663,6 +665,10 @@ struct RawConfig {
     #[serde(default)]
     registry: Option<RawRegistry>,
 
+    /// Directories of the mock directory kept on a git ref. See `crate::data_refs`.
+    #[serde(default, rename = "data_ref")]
+    data_refs: Vec<crate::data_refs::DataRefDecl>,
+
     /// Opt in to the combined deep-dive document. See `Config::deep_dive_index`.
     #[serde(default)]
     deep_dive_index: Option<bool>,
@@ -953,6 +959,31 @@ impl Config {
             },
         };
 
+        // The namespaces the registry's stores and the test history already write, which a data ref may not share.
+        let taken: Vec<String> = raw
+            .registry
+            .iter()
+            .flat_map(|r| r.store.iter())
+            .map(|d| {
+                d.namespace
+                    .clone()
+                    .unwrap_or_else(|| format!("registry/{}", d.dir.as_deref().unwrap_or("").trim_matches('/')))
+            })
+            .chain(std::iter::once(
+                raw.test
+                    .as_ref()
+                    .and_then(|t| t.history_namespace())
+                    .unwrap_or_else(|| "test-history".to_string()),
+            ))
+            .collect();
+        if let Err(why) = crate::data_refs::validate_against(&raw.data_refs, &taken) {
+            panic!(
+                "mockspace.toml at {} declares `[[data_ref]]` wrongly, so nothing in it was read:\n  {}",
+                toml_path.display(),
+                why.join("\n  ")
+            );
+        }
+
         let project_name = raw.project_name.unwrap_or_else(|| "project".into());
         let crate_prefix = raw.crate_prefix.unwrap_or_else(|| project_name.clone());
 
@@ -1139,6 +1170,7 @@ impl Config {
             nuke_marker: DEFAULT_NUKE_MARKER.to_string(),
             registry_namespaces: crate::registry::with_builtins(&registry_decl.namespace),
             registry_stores: registry_decl.store,
+            data_refs: raw.data_refs.clone(),
             deep_dive_index: raw.deep_dive_index.unwrap_or(false),
             ordered_docs: raw.ordered_docs.unwrap_or(false),
             primary_docs: raw.primary_docs,
