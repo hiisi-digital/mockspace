@@ -389,3 +389,28 @@ fn the_reminder_returns_after_an_hour_and_without_a_usable_session_id() {
     assert!(said("a b") && said("a b"), "a rejected id is never remembered");
     assert!(said("") && said(""), "no id is never remembered");
 }
+
+#[test]
+fn a_deny_reason_written_with_backslash_n_carries_real_line_breaks() {
+    // The write guard writes its reasons with `\n` between the lines. The JSON must
+    // carry a line break there, not a backslash and an n the reader sees as text.
+    let root = scratch();
+    for helpers in [
+        crate::render_agent::CLAUDE_HOOK_HELPERS,
+        crate::render_agent::COPILOT_HOOK_HELPERS,
+    ] {
+        let script = format!(
+            "{}\ndeny \"BLOCKED: x.\\\\n\\\\nPhase: TOPIC.\"\n",
+            helpers.replace("{{REPO_ROOT}}", &root.display().to_string())
+        );
+        let out = run(&root, &script, "{}");
+        let v: serde_json::Value = serde_json::from_str(out.trim()).expect(&out);
+        let reason = v
+            .pointer("/hookSpecificOutput/permissionDecisionReason")
+            .or_else(|| v.get("permissionDecisionReason"))
+            .and_then(|r| r.as_str())
+            .expect(&out);
+        assert_eq!(reason, "BLOCKED: x.\n\nPhase: TOPIC.");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
