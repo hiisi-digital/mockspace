@@ -959,7 +959,24 @@ impl Config {
             },
         };
 
-        if let Err(why) = crate::data_refs::validate(&raw.data_refs) {
+        // The namespaces the registry's stores and the test history already write, which a data ref may not share.
+        let taken: Vec<String> = raw
+            .registry
+            .iter()
+            .flat_map(|r| r.store.iter())
+            .map(|d| {
+                d.namespace
+                    .clone()
+                    .unwrap_or_else(|| format!("registry/{}", d.dir.as_deref().unwrap_or("").trim_matches('/')))
+            })
+            .chain(std::iter::once(
+                raw.test
+                    .as_ref()
+                    .and_then(|t| t.history_namespace())
+                    .unwrap_or_else(|| "test-history".to_string()),
+            ))
+            .collect();
+        if let Err(why) = crate::data_refs::validate_against(&raw.data_refs, &taken) {
             panic!(
                 "mockspace.toml at {} declares `[[data_ref]]` wrongly, so nothing in it was read:\n  {}",
                 toml_path.display(),

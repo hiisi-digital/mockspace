@@ -210,6 +210,11 @@ pub(crate) enum RawOpt {
 }
 
 impl RawTest {
+    /// The ref namespace `[test.history]` names, where it names one.
+    pub(crate) fn history_namespace(&self) -> Option<String> {
+        self.history.as_ref().and_then(|h| h.namespace.clone())
+    }
+
     /// The settings, or what is wrong with the table.
     ///
     /// A value that cannot mean anything is refused rather than clamped: a

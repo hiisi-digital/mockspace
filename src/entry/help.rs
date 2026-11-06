@@ -229,6 +229,19 @@ const COMMANDS: &[Cmd] = &[
                   both sides.",
     },
     Cmd {
+        name:    "data-refs",
+        summary: "keep a directory of the mock directory on a git ref",
+        args:    &[],
+        help:    "Takes `status|verify|instantiate|commit [namespace]` over the `[[data_ref]]` \
+                  tables of mockspace.toml, each naming a ref namespace and the one directory \
+                  it holds. `status` prints the ref's tip, the instance's base and whether the \
+                  directory changed; `verify` fails unless the instance is clean at the tip; \
+                  `instantiate` fetches the ref into the directory; `commit` writes the \
+                  directory's changes to the ref (the first commit seeds it from the files). \
+                  A missing instance is an error in every verb but `instantiate`. With no \
+                  `[[data_ref]]` declared the command says so and succeeds.",
+    },
+    Cmd {
         name:    "registry-append",
         summary: "add one string to a list field of a registry row",
         args:    &[],

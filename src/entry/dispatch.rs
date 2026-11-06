@@ -57,9 +57,12 @@ fn is_recovery_command(args: &[String]) -> bool {
         "status",
         "migrate",
         "registry-append",
-        "data-refs",
     ];
-    args.iter().skip(1).any(|a| RECOVERY.contains(&a.as_str()))
+    // `data-refs commit` writes the ref and pushes it, so only the verbs that read or restore are recovery.
+    let reads_data_refs = args.iter().skip(1).position(|a| a == "data-refs").is_some_and(|at| {
+        args.get(at + 2).is_some_and(|verb| matches!(verb.as_str(), "status" | "verify" | "instantiate"))
+    });
+    reads_data_refs || args.iter().skip(1).any(|a| RECOVERY.contains(&a.as_str()))
 }
 
 /// Whether `subcmd` is both a builtin name and the name of a discovered tool,

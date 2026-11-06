@@ -17,8 +17,10 @@
 
 use std::path::{Component, Path};
 
-use mockspace_store::{RefPair, RefStore, RemoteForm};
+use mockspace_store::RefStore;
 use serde::Deserialize;
+
+use crate::registry::RefDecl;
 
 /// One `[[data_ref]]` of `mockspace.toml`.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -47,19 +49,32 @@ impl DataRefDecl {
 
     /// The store of this ref over the repository at `repo_root`.
     pub fn open(&self, repo_root: &Path) -> Result<RefStore, String> {
-        let form = match self.form.as_deref() {
-            None | Some("branch") => RemoteForm::Branch,
-            Some("ref") => RemoteForm::Ref,
-            Some(other) => return Err(format!("form `{other}` is neither `branch` nor `ref`")),
-        };
-        let pair = RefPair::for_namespace(self.namespace(), form).map_err(|e| e.to_string())?;
-        let remote = self.remote.clone().unwrap_or_else(|| "origin".into());
-        Ok(RefStore::new(repo_root, remote, pair))
+        RefDecl {
+            dir:       None,
+            namespace: self.namespace.clone(),
+            remote:    self.remote.clone(),
+            form:      self.form.clone(),
+        }
+        .open(repo_root, self.namespace())
     }
+}
+
+/// The first components of a path that belong to a store of their own and are never a data ref's.
+const OWN_STORES: [&str; 3] = ["registry", "design_rounds", "test-history"];
+
+/// Whether directories `a` and `b` (relative, trimmed of `/`) are the same or one holds the other.
+fn nested(a: &str, b: &str) -> bool {
+    a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
 }
 
 /// Every refusal of `decls` at once, so a config with several mistakes names them in one run.
 pub fn validate(decls: &[DataRefDecl]) -> Result<(), Vec<String>> {
+    validate_against(decls, &[])
+}
+
+/// [`validate`], and the namespaces `taken` by the registry's stores and the test history, which a
+/// data ref may not share since two writers on one ref would each commit over the other.
+pub fn validate_against(decls: &[DataRefDecl], taken: &[String]) -> Result<(), Vec<String>> {
     let mut why = Vec::new();
     for (i, d) in decls.iter().enumerate() {
         let at = format!("[[data_ref]] #{}", i + 1);
@@ -69,7 +84,18 @@ pub fn validate(decls: &[DataRefDecl]) -> Result<(), Vec<String>> {
                 if decls.iter().take(i).any(|o| o.namespace.as_deref() == Some(ns)) {
                     why.push(format!("{at}: the namespace `{ns}` is declared twice"));
                 }
+                if taken.iter().any(|t| t == ns) {
+                    why.push(format!("{at}: the namespace `{ns}` is a registry store's or the test history's"));
+                }
             },
+        }
+        let place = |d: &DataRefDecl| d.instance.as_deref().or(d.path.as_deref()).map(|p| p.trim_matches('/').to_string());
+        if let (Some(mine), true) = (place(d), d.instance.as_deref().is_none_or(|p| path_problem(p).is_none())) {
+            for (j, o) in decls.iter().enumerate().take(i) {
+                if place(o).is_some_and(|theirs| nested(&mine, &theirs)) {
+                    why.push(format!("{at}: its instance `{mine}` overlaps the instance of [[data_ref]] #{}", j + 1));
+                }
+            }
         }
         match d.path.as_deref() {
             None => why.push(format!("{at}: `path` is missing, so the ref holds nothing")),
@@ -78,6 +104,9 @@ pub fn validate(decls: &[DataRefDecl]) -> Result<(), Vec<String>> {
                     why.push(format!("{at}: path `{p}` {bad}"));
                 } else {
                     let p = p.trim_matches('/');
+                    if let Some(own) = OWN_STORES.iter().find(|s| p == **s || p.starts_with(&format!("{s}/"))) {
+                        why.push(format!("{at}: path `{p}` is under `{own}`, which has a store of its own"));
+                    }
                     for (j, o) in decls.iter().enumerate().take(i) {
                         let Some(other) = o.path.as_deref().map(|o| o.trim_matches('/')) else {
                             continue;
@@ -160,12 +189,13 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
             match *verb {
                 "status" => {
                     let tip = store.local_tip().map_err(|e| e.to_string())?;
-                    let base = inst.base().map_err(|e| e.to_string())?;
-                    let dirty = if base.is_some() { inst.is_dirty().map_err(|e| e.to_string())? } else { false };
+                    let Some(base) = inst.base().map_err(|e| e.to_string())? else {
+                        return Err("has no instance, so `instantiate` it".into());
+                    };
+                    let dirty = inst.is_dirty().map_err(|e| e.to_string())?;
                     Ok(format!(
-                        "tip {} base {} {}",
+                        "tip {} base {base} {}",
                         tip.as_deref().unwrap_or("none"),
-                        base.as_deref().unwrap_or("none"),
                         if dirty { "changed" } else { "clean" }
                     ))
                 },

@@ -238,12 +238,20 @@ impl<'a> Instance<'a> {
             let bytes = std::fs::read(self.dir.join(path)).map_err(|e| self.io("reading", e))?;
             edit = edit.put(path.clone(), bytes);
         }
+        // The exclusion goes first: it is the step that can fail on a read-only checkout, and once
+        // the ref has a tip a failure after it leaves a directory that neither `seed` (the ref has a
+        // tip) nor `apply` (no record) takes.
+        self.exclude()?;
         let applied = self.store.apply_from(None, &edit, message, hook)?;
         let Some(tip) = applied.commit.clone() else {
             return Err(self.fail("was seeded and the ref has no commit", Vec::new()));
         };
-        self.exclude()?;
-        self.record(&tip)?;
+        if let Err(e) = self.record(&tip) {
+            return Err(self.fail(
+                "made the ref (tip and cause follow) but could not record the directory as its instance; remove its files and instantiate it",
+                vec![tip, e.to_string()],
+            ));
+        }
         Ok(applied)
     }
 
