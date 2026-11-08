@@ -29,7 +29,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use super::build::{Built, Unit, keeps_env};
+use super::build::{Built, Unit, UnitKind, keeps_env};
 use super::identity::digest_bytes;
 
 /// How long before a build a source must have last changed for it to be trusted. Filesystems with
@@ -46,6 +46,9 @@ const UNSET: &str = "unset";
 pub(crate) struct Roots {
     named:    Vec<(String, PathBuf)>,
     absolute: Vec<PathBuf>,
+    /// For each procedural macro package of the tree whose dependencies are allowed, the crates of
+    /// the tree in its closure, by manifest directory.
+    macros:   std::collections::BTreeMap<PathBuf, Vec<PathBuf>>,
 }
 
 impl Roots {
@@ -59,6 +62,11 @@ impl Roots {
             }
         }
         self.named.push((label, path.to_path_buf()));
+    }
+
+    /// The procedural macros of the tree that may be held to their sources.
+    pub(crate) fn allow_macros(&mut self, macros: std::collections::BTreeMap<PathBuf, Vec<PathBuf>>) {
+        self.macros = macros;
     }
 
     /// A directory whose files are named by absolute path, because they are the same in every
@@ -229,9 +237,9 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
         .map(|d| d.canonicalize().unwrap_or_else(|_| d.to_path_buf()))
         .collect();
     // Code that runs while building and belongs to the tree writes files no dep-info lists.
-    // A procedural macro in the tree is held to its sources when none of them can read a file the
-    // dep-info does not list, so a repo with derive crates of its own still keeps its library.
-    if units.iter().any(|u| u.tree_code && !(u.proc_macro && reads_only_its_input(u))) {
+    // A procedural macro of the tree is held to its sources when `macro_purity` finds it to reach
+    // nothing else, so a repo with derive crates of its own still keeps its library.
+    if units.iter().any(|u| u.runs_in_tree() && !runs_only_what_its_sources_say(u, roots, gen_dir)) {
         return None;
     }
     let mut deps = Vec::new();
@@ -296,29 +304,19 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
     Some(deps)
 }
 
-/// Spellings through which a macro reaches a file, a variable or a process.
-const OUTSIDE_READS: [&str; 8] = [
-    "std::fs",
-    "fs::",
-    "File::",
-    "env::var",
-    "env!",
-    "include",
-    "Command",
-    "tracked_path",
-];
-
-/// Whether every source a procedural macro was built from is readable and none names a way of
-/// reaching outside its token input. Unreadable dep-info or source answers no.
-fn reads_only_its_input(unit: &Unit) -> bool {
-    let Some(info) = info_of_unit(unit).and_then(|p| std::fs::read_to_string(p).ok()) else {
+/// Whether a unit that runs in the tree may be held to its sources: a procedural macro whose
+/// dependencies and sources `macro_purity` finds to reach nothing but their token input. A build
+/// script never is.
+fn runs_only_what_its_sources_say(unit: &Unit, roots: &Roots, gen_dir: &Path) -> bool {
+    if unit.kind != UnitKind::ProcMacro {
+        return false;
+    }
+    let Some(closure) = unit.manifest.parent().and_then(|dir| roots.macros.get(dir)) else {
         return false;
     };
-    let sources = sources_of(&info);
-    !sources.is_empty()
-        && sources.iter().all(|s| {
-            std::fs::read_to_string(s).is_ok_and(|text| !OUTSIDE_READS.iter().any(|w| text.contains(w)))
-        })
+    info_of_unit(unit)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .is_some_and(|info| super::macro_purity::held(&info, gen_dir, closure))
 }
 
 /// The dep-info beside a library: cargo leaves `libname.so` and `libname.d` together. That copy
@@ -433,3 +431,7 @@ mod tests;
 #[cfg(test)]
 #[path = "depinfo_registry_tests.rs"]
 mod registry_tests;
+
+#[cfg(test)]
+#[path = "depinfo_macro_tests.rs"]
+mod macro_tests;

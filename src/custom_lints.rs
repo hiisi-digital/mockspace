@@ -60,6 +60,7 @@ pub(crate) mod store;
 mod build;
 mod built;
 mod depinfo;
+mod macro_purity;
 mod identity;
 mod collector;
 mod patch;

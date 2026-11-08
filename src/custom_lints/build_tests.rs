@@ -67,15 +67,15 @@ fn artifact(package_id: &str, kind: &str, fresh: bool) -> String {
 }
 
 #[test]
-fn a_unit_is_tree_code_when_it_runs_while_building_and_its_package_is_a_path() {
+fn a_unit_runs_in_the_tree_when_it_is_a_build_script_or_macro_and_its_package_is_a_path() {
     let unit = |id: &str, kind: &str| artifact_unit(&artifact(id, kind, true)).unwrap();
-    assert!(unit("path+file:///r/tools/t#t@0.0.0", "custom-build").tree_code);
-    assert!(unit("path+file:///r/tools/t#t@0.0.0", "proc-macro").tree_code);
-    assert!(unit("path+file:///r/tools/t#t@0.0.0", "proc-macro").proc_macro);
-    assert!(!unit("path+file:///r/tools/t#t@0.0.0", "custom-build").proc_macro);
-    assert!(unit("t 0.0.0 (path+file:///r/tools/t)", "custom-build").tree_code);
-    assert!(!unit("path+file:///r/tools/t#t@0.0.0", "lib").tree_code);
-    assert!(!unit("registry+https://github.com/rust-lang/crates.io-index#t@1.0.0", "custom-build").tree_code);
+    assert!(unit("path+file:///r/tools/t#t@0.0.0", "custom-build").runs_in_tree());
+    assert!(unit("path+file:///r/tools/t#t@0.0.0", "proc-macro").runs_in_tree());
+    assert!(unit("t 0.0.0 (path+file:///r/tools/t)", "custom-build").runs_in_tree());
+    assert!(!unit("path+file:///r/tools/t#t@0.0.0", "lib").runs_in_tree());
+    assert!(!unit("registry+https://github.com/rust-lang/crates.io-index#t@1.0.0", "custom-build").runs_in_tree());
+    assert_eq!(unit("path+file:///r/tools/t#t@0.0.0", "proc-macro").kind, UnitKind::ProcMacro);
+    assert_eq!(unit("path+file:///r/tools/t#t@0.0.0", "custom-build").kind, UnitKind::BuildScript);
     assert!(unit("registry+x#t@1.0.0", "lib").fresh);
     assert!(artifact_unit(r#"{"reason":"build-script-executed"}"#).is_none());
 }

@@ -82,16 +82,32 @@ pub(crate) fn keeps_env(name: &str) -> bool {
     KEPT_ENV.contains(&name) || KEPT_ENV_PREFIXES.iter().any(|p| name.starts_with(p))
 }
 
-/// One unit cargo reported: the files it made, whether it reused them, and whether it is code that
-/// runs while building and belongs to the tree (a build script or procedural macro of a path
-/// package), whose output no dep-info lists.
+/// What a unit is to the build: a library, a procedural macro or a build script. The last two run
+/// while building.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UnitKind {
+    Lib,
+    ProcMacro,
+    BuildScript,
+}
+
+/// One unit cargo reported: the files it made, whether it reused them, what it is and whether its
+/// package is a path of the tree. A build script or procedural macro of a path package runs code
+/// whose reads no dep-info lists, unless `macro_purity` shows a macro to read nothing of the kind.
 pub(crate) struct Unit {
-    pub files:     Vec<PathBuf>,
-    pub fresh:     bool,
-    pub tree_code: bool,
-    /// Whether the unit is a procedural macro. It is the one kind of tree code whose reads can be
-    /// checked against its own sources; a build script is arbitrary code and never is.
-    pub proc_macro: bool,
+    pub files:    Vec<PathBuf>,
+    pub fresh:    bool,
+    pub kind:     UnitKind,
+    pub in_tree:  bool,
+    /// The manifest of the unit's package, which is how the package is found in cargo metadata.
+    pub manifest: PathBuf,
+}
+
+impl Unit {
+    /// Code of the tree that runs while building.
+    pub(crate) fn runs_in_tree(&self) -> bool {
+        self.in_tree && self.kind != UnitKind::Lib
+    }
 }
 
 /// What a build made, and when it began.
@@ -221,16 +237,27 @@ fn artifact_unit(line: &str) -> Option<Unit> {
         .iter()
         .filter_map(|f| f.as_str().map(PathBuf::from))
         .collect();
-    let kinds = msg.get("target").and_then(|t| t.get("kind")).and_then(|k| k.as_array());
-    let proc_macro = kinds.is_some_and(|kinds| kinds.iter().any(|k| k == "proc-macro"));
-    let runs_while_building =
-        proc_macro || kinds.is_some_and(|kinds| kinds.iter().any(|k| k == "custom-build"));
+    let has = |name: &str| {
+        msg.get("target")
+            .and_then(|t| t.get("kind"))
+            .and_then(|k| k.as_array())
+            .is_some_and(|kinds| kinds.iter().any(|k| k == name))
+    };
+    let kind = if has("proc-macro") {
+        UnitKind::ProcMacro
+    } else if has("custom-build") {
+        UnitKind::BuildScript
+    } else {
+        UnitKind::Lib
+    };
     let in_tree = msg.get("package_id").and_then(|p| p.as_str()).is_some_and(|p| p.contains("path+"));
+    let manifest = msg.get("manifest_path").and_then(|m| m.as_str()).map(PathBuf::from).unwrap_or_default();
     Some(Unit {
         files,
         fresh: msg.get("fresh").and_then(|f| f.as_bool()).unwrap_or(false),
-        tree_code: runs_while_building && in_tree,
-        proc_macro,
+        kind,
+        in_tree,
+        manifest,
     })
 }
 

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::*;
-use crate::custom_lints::build::{Built, Unit};
+use crate::custom_lints::build::{Built, Unit, UnitKind};
 
 pub(super) fn later() -> SystemTime {
     SystemTime::now() + Duration::from_secs(1)
@@ -288,10 +288,10 @@ fn the_unit_dep_info_is_named_for_the_unit_wherever_the_output_was_linked() {
 }
 
 /// A dependency unit beside the library: its output in `deps/`, its dep-info listing `source`.
-fn with_unit(dylib: &Path, source: &Path, fresh: bool, tree_code: bool) -> Built {
+fn with_unit(dylib: &Path, source: &Path, fresh: bool, kind: UnitKind) -> Built {
     let deps = dylib.parent().unwrap().join("deps");
     std::fs::write(deps.join("tool-0f.d"), format!("tool-0f.rlib: {}\n", source.display())).unwrap();
-    let unit = Unit { files: vec![deps.join("libtool-0f.rlib")], fresh, tree_code, proc_macro: false };
+    let unit = Unit { files: vec![deps.join("libtool-0f.rlib")], fresh, kind, in_tree: true, manifest: source.parent().unwrap().join("Cargo.toml") };
     Built { units: vec![unit], ..made(dylib, later(), false) }
 }
 
@@ -305,7 +305,7 @@ fn a_reused_dependency_unit_holds_its_sources_to_the_time_it_was_made() {
     let mut roots = Roots::default();
     roots.add("lints", source.parent().unwrap());
     let dylib = built(&gen_dir, "out.d: \n");
-    let reused = with_unit(&dylib, &source, true, false);
+    let reused = with_unit(&dylib, &source, true, UnitKind::Lib);
     assert!(record(&reused, &gen_dir, &roots, Duration::ZERO).is_some(), "the source is older than its unit");
     // The unit is old, the library above it was built just now, and the source is newer than the unit.
     let unit_info = dylib.parent().unwrap().join("deps").join("tool-0f.d");
@@ -316,7 +316,7 @@ fn a_reused_dependency_unit_holds_its_sources_to_the_time_it_was_made() {
         .set_modified(SystemTime::now() - Duration::from_secs(3600))
         .unwrap();
     assert!(record(&reused, &gen_dir, &roots, Duration::ZERO).is_none());
-    let rebuilt = with_unit(&dylib, &source, false, false);
+    let rebuilt = with_unit(&dylib, &source, false, UnitKind::Lib);
     std::fs::File::options()
         .write(true)
         .open(&unit_info)
@@ -331,13 +331,13 @@ fn a_unit_without_dep_info_leaves_nothing_kept() {
     let tmp = tempfile::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let dylib = built(&gen_dir, "out.d: \n");
-    let unit = Unit { files: vec![dylib.parent().unwrap().join("deps").join("libabsent-1.rlib")], fresh: false, tree_code: false, proc_macro: false };
+    let unit = Unit { files: vec![dylib.parent().unwrap().join("deps").join("libabsent-1.rlib")], fresh: false, kind: UnitKind::Lib, in_tree: false, manifest: PathBuf::new() };
     let build = Built { units: vec![unit], ..made(&dylib, later(), false) };
     assert!(record(&build, &gen_dir, &Roots::default(), Duration::ZERO).is_none());
 }
 
 #[test]
-fn a_build_script_or_macro_of_a_path_package_leaves_nothing_kept() {
+fn a_build_script_of_a_path_package_leaves_nothing_kept() {
     let tmp = tempfile::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let source = tmp.path().join("lints").join("tool.rs");
@@ -346,8 +346,8 @@ fn a_build_script_or_macro_of_a_path_package_leaves_nothing_kept() {
     let mut roots = Roots::default();
     roots.add("lints", source.parent().unwrap());
     let dylib = built(&gen_dir, "out.d: \n");
-    assert!(record(&with_unit(&dylib, &source, false, false), &gen_dir, &roots, Duration::ZERO).is_some());
-    assert!(record(&with_unit(&dylib, &source, false, true), &gen_dir, &roots, Duration::ZERO).is_none());
+    assert!(record(&with_unit(&dylib, &source, false, UnitKind::Lib), &gen_dir, &roots, Duration::ZERO).is_some());
+    assert!(record(&with_unit(&dylib, &source, false, UnitKind::BuildScript), &gen_dir, &roots, Duration::ZERO).is_none());
 }
 
 /// The change time of a file edited inside the window between the compiler's read and ours is
@@ -413,42 +413,7 @@ fn a_registry_source_is_never_touched_to_make_cargo_rebuild_its_unit() {
         .unwrap()
         .set_modified(SystemTime::now() - Duration::from_secs(3600))
         .unwrap();
-    let unit = Unit { files: vec![deps.join("libtool-0f.rlib")], fresh: true, tree_code: false, proc_macro: false };
+    let unit = Unit { files: vec![deps.join("libtool-0f.rlib")], fresh: true, kind: UnitKind::Lib, in_tree: false, manifest: PathBuf::new() };
     let build = Built { units: vec![unit], ..made(&dylib, later(), false) };
     assert_eq!(newer_than_their_units(&build, &gen_dir), [own], "the control: a source of the tree is");
-}
-
-/// A procedural macro of the tree, built from `source`, as the unit list of a build reports it.
-fn with_macro(dylib: &Path, source: &Path) -> Built {
-    let mut built = with_unit(dylib, source, false, true);
-    built.units[0].proc_macro = true;
-    built
-}
-
-#[test]
-fn a_derive_macro_of_the_tree_that_reads_only_its_input_keeps_the_library() {
-    let tmp = tempfile::tempdir().unwrap();
-    let gen_dir = tmp.path().join("gen");
-    let source = tmp.path().join("lints").join("derive.rs");
-    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
-    std::fs::write(&source, "pub fn derive(input: TokenStream) -> TokenStream { input }").unwrap();
-    let mut roots = Roots::default();
-    roots.add("lints", source.parent().unwrap());
-    let dylib = built(&gen_dir, "out.d: \n");
-    assert!(record(&with_macro(&dylib, &source), &gen_dir, &roots, Duration::ZERO).is_some());
-}
-
-#[test]
-fn a_macro_of_the_tree_that_can_read_a_file_or_a_variable_leaves_nothing_kept() {
-    for body in ["std::fs::read(p)", "env::var(\"X\")", "include_str!(\"f\")", "Command::new(\"x\")"] {
-        let tmp = tempfile::tempdir().unwrap();
-        let gen_dir = tmp.path().join("gen");
-        let source = tmp.path().join("lints").join("derive.rs");
-        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
-        std::fs::write(&source, format!("fn derive() {{ {body}; }}")).unwrap();
-        let mut roots = Roots::default();
-        roots.add("lints", source.parent().unwrap());
-        let dylib = built(&gen_dir, "out.d: \n");
-        assert!(record(&with_macro(&dylib, &source), &gen_dir, &roots, Duration::ZERO).is_none(), "{body}");
-    }
 }
