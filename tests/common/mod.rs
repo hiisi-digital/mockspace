@@ -344,9 +344,9 @@ impl Repo {
     }
 }
 
-/// Runs `git` in `dir` with an identity and no signing, and panics when it fails.
-pub fn git_in_dir(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+/// Runs `git` in `dir` with an identity and no signing, and returns what it did.
+pub fn git_out_dir(dir: &Path, args: &[&str]) -> Output {
+    Command::new("git")
         .arg("-C")
         .arg(dir)
         .args([
@@ -359,7 +359,12 @@ pub fn git_in_dir(dir: &Path, args: &[&str]) -> String {
         ])
         .args(args)
         .output()
-        .unwrap();
+        .unwrap()
+}
+
+/// As `git_out_dir`, and panics when it fails.
+pub fn git_in_dir(dir: &Path, args: &[&str]) -> String {
+    let out = git_out_dir(dir, args);
     assert!(
         out.status.success(),
         "git {args:?}: {}{}",

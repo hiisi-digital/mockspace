@@ -92,11 +92,17 @@ fn editing_a_registry_row_leaves_docs_unchanged_after_regeneration() {
     r.git(&["add", "-A"]);
     r.git(&["commit", "-q", "--no-verify", "-m", "chore: add a registry"]);
 
-    write(&r.root.join("mock/registry/spike.toml"), &row("a different question"));
+    write(
+        &r.root.join("mock/registry/spike.toml"),
+        &row("a different question"),
+    );
     r.generate();
 
     let moved = r.git(&["status", "--porcelain", "--", "docs"]);
-    assert!(moved.is_empty(), "regeneration changed docs/ after a registry edit:\n{moved}");
+    assert!(
+        moved.is_empty(),
+        "regeneration changed docs/ after a registry edit:\n{moved}"
+    );
 }
 
 /// A page an earlier version wrote is retired by the sweep, so a consumer needs no hand
@@ -127,9 +133,16 @@ fn a_template_reads_a_registry_value() {
         "The question: {{ spike::first_one::question }}\n",
     );
     r.generate();
-    assert!(r.doc().contains("The question: a\n"), "the value was not read:\n{}", r.doc());
+    assert!(
+        r.doc().contains("The question: a\n"),
+        "the value was not read:\n{}",
+        r.doc()
+    );
 
-    write(&r.root.join("mock/registry/spike.toml"), &row("a different question"));
+    write(
+        &r.root.join("mock/registry/spike.toml"),
+        &row("a different question"),
+    );
     r.generate();
     assert!(
         r.doc().contains("The question: a different question\n"),
@@ -146,8 +159,14 @@ fn a_template_prints_a_namespace_as_a_table() {
     r.generate();
     let doc = r.doc();
     assert!(doc.contains("| id | question |"), "no table header:\n{doc}");
-    assert!(doc.contains("first_one"), "the row is missing from the table:\n{doc}");
-    assert!(doc.contains("| a |"), "the row's value is missing from the table:\n{doc}");
+    assert!(
+        doc.contains("first_one"),
+        "the row is missing from the table:\n{doc}"
+    );
+    assert!(
+        doc.contains("| a |"),
+        "the row's value is missing from the table:\n{doc}"
+    );
 }
 
 /// A template reading a row that does not exist is reported, and generation goes on. A plain
@@ -166,7 +185,10 @@ fn a_template_reading_a_missing_row_warns_on_a_plain_generation() {
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "a plain run is not blocked by a reference:\n{stderr}");
+    assert!(
+        out.status.success(),
+        "a plain run is not blocked by a reference:\n{stderr}"
+    );
     assert!(
         stderr.contains("warning [dangling-reference]") && stderr.contains("ALPHA.md"),
         "the reference was not reported against its document:\n{stderr}"
@@ -189,8 +211,14 @@ fn a_template_reading_a_missing_row_fails_the_commit_staging_it() {
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "a staged template citing nothing passed:\n{stderr}");
-    assert!(stderr.contains("ERROR [dangling-reference]"), "the failure was not named:\n{stderr}");
+    assert!(
+        !out.status.success(),
+        "a staged template citing nothing passed:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("ERROR [dangling-reference]"),
+        "the failure was not named:\n{stderr}"
+    );
 }
 
 /// A query for a namespace prints its rows as a table on stdout.
@@ -199,14 +227,24 @@ fn a_query_prints_a_namespace_as_a_table() {
     let r = with_registry();
     let out = query(&r, "spike");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "the query failed:\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "the query failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let header = stdout.lines().next().unwrap_or("");
     assert!(
         header.starts_with("id") && header.contains("question"),
         "no table header:\n{stdout}"
     );
-    assert!(stdout.contains("first_one"), "the row is missing:\n{stdout}");
-    assert!(stdout.contains("1 rows in spike"), "no row count:\n{stdout}");
+    assert!(
+        stdout.contains("first_one"),
+        "the row is missing:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("1 rows in spike"),
+        "no row count:\n{stdout}"
+    );
 }
 
 /// The case that must fail: a query that names no namespace prints no table and fails.
@@ -215,8 +253,14 @@ fn a_query_for_nothing_prints_no_table() {
     let r = with_registry();
     let out = query(&r, "nosuch");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(!out.status.success(), "a query for a missing namespace succeeded:\n{stdout}");
-    assert!(!stdout.contains("rows in"), "a table was printed for nothing:\n{stdout}");
+    assert!(
+        !out.status.success(),
+        "a query for a missing namespace succeeded:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("rows in"),
+        "a table was printed for nothing:\n{stdout}"
+    );
 }
 
 fn generate_output(r: &Repo) -> std::process::Output {
@@ -235,7 +279,31 @@ fn a_template_printing_a_missing_namespace_fails_generation() {
     write(&r.root.join("mock/ALPHA.md.tmpl"), "{{ reg::nosuch }}\n");
     let out = generate_output(&r);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "a table of nothing generated cleanly:\n{stderr}");
+    assert!(
+        !out.status.success(),
+        "a table of nothing generated cleanly:\n{stderr}"
+    );
+}
+
+/// A reference whose root is no declared namespace is not a reference to a row: it is a defect of
+/// the document, and it fails a plain run where a missing row only warns.
+#[test]
+fn a_template_reference_to_an_undeclared_root_fails_a_plain_generation() {
+    let r = with_registry();
+    write(
+        &r.root.join("mock/ALPHA.md.tmpl"),
+        "The question: {{ nosuchroot::thing::question }}\n",
+    );
+    let out = generate_output(&r);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a reference to an undeclared root passed:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("ERROR [dangling-reference]"),
+        "the failure was not named:\n{stderr}"
+    );
 }
 
 /// Takes the machine's git environment out of this process before `main`.

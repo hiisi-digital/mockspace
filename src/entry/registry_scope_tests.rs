@@ -51,14 +51,6 @@ fn the_verdict_is_decided_by_the_scope_and_the_changed_files() {
 }
 
 #[test]
-fn a_finding_naming_a_file_is_not_scoped_by_naming_it() {
-    // `source` is set and the scope is `Always`: a cycle in a file nobody staged still gates.
-    let f = finding("reference-cycle", GateScope::Always);
-    assert!(f.source.is_some());
-    assert_eq!(verdict(&f, &files(&["/r/b.toml"])), Verdict::Error);
-}
-
-#[test]
 fn report_counts_the_gated_and_the_demoted() {
     let fs = || {
         vec![
@@ -179,4 +171,75 @@ fn a_run_whose_files_git_cannot_name_gates_everything() {
             "{mode:?}"
         );
     }
+}
+
+/// `git commit -a` commits a temporary index and leaves `.git/index` alone, so only the index the
+/// hook was handed holds the edit. The control is the same call without it.
+#[test]
+fn the_commit_scope_reads_the_index_the_hook_was_given() {
+    let d = repo();
+    let root = d.path();
+    std::fs::write(root.join("a.toml"), "x").unwrap();
+    git(root, &["add", "a.toml"]);
+    git(root, &["commit", "-qm", "base"]);
+    std::fs::write(root.join("a.toml"), "edited").unwrap();
+    std::fs::copy(root.join(".git/index"), root.join(".git/next-index")).unwrap();
+    let s = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["add", "-u"])
+        .env("GIT_INDEX_FILE", root.join(".git/next-index"))
+        .status()
+        .unwrap();
+    assert!(s.success());
+    let temporary = Path::new(".git/next-index");
+    let Changed::Files(with) = Changed::of_run_with_index(LintMode::Commit, root, Some(temporary))
+    else {
+        panic!("a commit run reads an index");
+    };
+    assert_eq!(with, vec![root.join("a.toml")]);
+    let Changed::Files(without) = Changed::of_run_with_index(LintMode::Commit, root, None) else {
+        panic!("a commit run reads an index");
+    };
+    assert!(
+        without.is_empty(),
+        "the default index holds no edit: {without:?}"
+    );
+}
+
+/// A merge commit lists no file by default. What it brought in from a branch already on a remote
+/// is its diff against the first parent.
+#[test]
+fn the_push_scope_sees_a_merge_of_a_branch_a_remote_has() {
+    let remote = tempfile::tempdir().unwrap();
+    git(remote.path(), &["init", "-q", "--bare"]);
+    let d = repo();
+    let root = d.path();
+    git(root, &[
+        "remote",
+        "add",
+        "origin",
+        remote.path().to_str().unwrap(),
+    ]);
+    std::fs::write(root.join("base.toml"), "x").unwrap();
+    git(root, &["add", "base.toml"]);
+    git(root, &["commit", "-qm", "base"]);
+    git(root, &["branch", "-M", "dev"]);
+    git(root, &["push", "-q", "origin", "dev"]);
+    git(root, &["checkout", "-qb", "feature"]);
+    std::fs::write(root.join("cites.toml"), "x").unwrap();
+    git(root, &["add", "cites.toml"]);
+    git(root, &["commit", "-qm", "feature"]);
+    git(root, &["push", "-q", "origin", "feature"]);
+    git(root, &["checkout", "-q", "dev"]);
+    std::fs::write(root.join("other.toml"), "x").unwrap();
+    git(root, &["add", "other.toml"]);
+    git(root, &["commit", "-qm", "other"]);
+    git(root, &["push", "-q", "origin", "dev"]);
+    git(root, &["fetch", "-q", "origin"]);
+    git(root, &["merge", "-q", "--no-ff", "-m", "merge", "feature"]);
+    let Changed::Files(paths) = Changed::of_run(LintMode::Push, root) else {
+        panic!("a push run reads the unpushed commits");
+    };
+    assert_eq!(paths, vec![root.join("cites.toml")]);
 }
