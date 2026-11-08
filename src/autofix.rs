@@ -52,7 +52,10 @@ pub fn run(repo_root: &Path, auto_fmt: bool, auto_clippy_fix: bool) -> Vec<Strin
         return actions;
     }
 
-    let staged = git_lines(repo_root, &["diff", "--cached", "--name-only"]);
+    let staged = authored(
+        git_lines(repo_root, &["diff", "--cached", "--name-only"]),
+        &taken_from_the_merged_side(repo_root),
+    );
     if staged.is_empty() {
         return actions;
     }
@@ -183,7 +186,10 @@ fn changed_package_dirs(
     // Only a Rust file is something `clippy --fix` can change. A registry row, a document
     // or a manifest walks up to the workspace root all the same, and that sent the fixer
     // over every crate of it for a commit with no Rust in it.
-    for rel_file in staged.iter().filter(|p| p.extension().is_some_and(|e| e == "rs")) {
+    for rel_file in staged
+        .iter()
+        .filter(|p| p.extension().is_some_and(|e| e == "rs"))
+    {
         let abs = repo_root.join(rel_file);
         if let Some(dir) = package_dir_of(&abs, repo_root, &has_manifest) {
             dirs.insert(dir);
@@ -387,6 +393,40 @@ fn restage(repo_root: &Path, files: &[PathBuf]) -> usize {
 
 /// Run a git command in `repo_root` and return stdout as trimmed, non-empty,
 /// path lines.
+/// The staged files a merge in progress took whole from the side it brings in
+/// (`MERGE_HEAD`), empty outside a merge. A file staged as `HEAD` has it is not
+/// staged at all, so between the two every file taken whole from a parent is
+/// named. Such a file is that parent's commit: reformatting it makes the merge
+/// commit author a change nobody wrote, which a phase gate judging a merge by
+/// what it adds beyond its parents then refuses.
+fn taken_from_the_merged_side(repo_root: &Path) -> BTreeSet<PathBuf> {
+    if git_lines(repo_root, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_empty() {
+        return BTreeSet::new();
+    }
+    let staged = git_lines(repo_root, &["diff", "--cached", "--name-only"]);
+    let differs: BTreeSet<PathBuf> = git_lines(repo_root, &[
+        "diff",
+        "--cached",
+        "--name-only",
+        "MERGE_HEAD",
+    ])
+    .into_iter()
+    .collect();
+    staged
+        .into_iter()
+        .filter(|p| !differs.contains(p))
+        .collect()
+}
+
+/// The staged files the fixers may touch: every one but those a merge took
+/// whole from a parent.
+fn authored(staged: Vec<PathBuf>, from_a_parent: &BTreeSet<PathBuf>) -> Vec<PathBuf> {
+    staged
+        .into_iter()
+        .filter(|p| !from_a_parent.contains(p))
+        .collect()
+}
+
 fn git_lines(repo_root: &Path, args: &[&str]) -> Vec<PathBuf> {
     let out = Command::new("git")
         .args(args)
@@ -697,6 +737,59 @@ mod tests {
     /// A directory of this test's own, removed and remade so a rerun starts
     /// clean. Under the crate's target directory rather than the system
     /// temporary one, so nothing outside the build tree is written.
+    fn git(dir: &Path, args: &[&str]) {
+        let ok = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.hooksPath=/dev/null"])
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(
+            ok.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&ok.stderr)
+        );
+    }
+
+    /// A landing merge staged the trunk's own file, written by somebody else and
+    /// not in rustfmt's shape; the fixer reformatted it, the merge then added a
+    /// change neither parent carried, and the phase gate refused the landing as
+    /// an authored source edit outside a changelist (kaski, 6 and 8 November).
+    /// Mutation: `authored` returning `staged` whole, so the trunk's file is
+    /// rewritten. The control: a file the merge resolved is still formatted.
+    #[test]
+    fn a_merge_leaves_a_file_it_took_whole_from_the_merged_side_as_that_side_wrote_it() {
+        let dir = tmp("merge_takes_a_side");
+        let ugly = "fn  f( ) { }\n";
+        git(&dir, &["init", "-q", "-b", "trunk"]);
+        write(&dir, "theirs.rs", "fn f() {}\n");
+        write(&dir, "both.rs", "fn g() {}\n");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-qm", "base"]);
+        git(&dir, &["checkout", "-qb", "side"]);
+        write(&dir, "theirs.rs", ugly);
+        write(&dir, "both.rs", "fn g() {}\nfn  h( ) { }\n");
+        git(&dir, &["commit", "-qam", "side"]);
+        git(&dir, &["checkout", "-q", "trunk"]);
+        write(&dir, "both.rs", "fn  e( ) { }\nfn g() {}\n");
+        git(&dir, &["commit", "-qam", "trunk"]);
+        git(&dir, &["merge", "-q", "--no-commit", "--no-ff", "side"]);
+
+        let _ = run(&dir, true, false);
+
+        assert_eq!(
+            std::fs::read_to_string(dir.join("theirs.rs")).unwrap(),
+            ugly
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("both.rs")).unwrap(),
+            "fn e() {}\nfn g() {}\nfn h() {}\n",
+            "the file the merge resolved is still formatted"
+        );
+    }
+
     fn tmp(name: &str) -> PathBuf {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("target/tmp/autofix")
