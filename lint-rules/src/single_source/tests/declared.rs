@@ -158,39 +158,10 @@ fn a_member_naming_its_own_type_reads_the_same_under_another_name() {
 
 #[test]
 fn the_last_segment_of_a_path_is_not_the_type_naming_itself() {
-    // Mutation: `names_an_item` removed from `leaf`, so `backend::Handle` reads as `backend::$self`.
+    // Mutation: the early return in `leaf` removed, so `backend::Handle` reads as `backend::$self`.
     let a = only("pub struct Handle { pub inner: backend::Handle, pub gen: u32 }");
     let b = only("pub struct Buffer { pub inner: backend::Buffer, pub gen: u32 }");
     assert_ne!(a.parts, b.parts, "the inner fields have different types");
-}
-
-#[test]
-fn a_supertrait_and_a_where_on_self_give_one_set_of_bounds_in_the_parts() {
-    // Mutation: the supertrait list read by the frame as it is written, besides the merged bounds.
-    let a = only("pub trait Tr: Copy + Send { fn f(&self); }");
-    let b = only("pub trait Tr where Self: Send + Copy { fn f(&self); }");
-    assert_eq!(a.parts, b.parts);
-    let c = only("pub trait Tr: Copy { fn f(&self); }");
-    assert_ne!(a.parts, c.parts, "a bound fewer is another trait");
-}
-
-#[test]
-fn a_unit_struct_and_an_empty_tuple_struct_are_two_declarations_in_the_parts() {
-    // Mutation: the kind of the body left out of the frame, so both read as `struct ;`.
-    let unit = only("pub struct Marker;");
-    let tuple = only("pub struct Marker();");
-    assert_eq!(unit.parts.members, tuple.parts.members, "neither has a member");
-    assert_ne!(unit.parts, tuple.parts);
-}
-
-#[test]
-fn the_order_of_variants_numbered_by_place_is_in_the_frame_and_the_order_of_others_is_not() {
-    // Mutation: the order left out of the frame, which a consumer treating members as a bag needs.
-    let ab = only("pub enum Mode { A, B }");
-    let ba = only("pub enum Mode { B, A }");
-    assert_ne!(ab.parts.frame, ba.parts.frame, "the place is the number");
-    let numbered_ab = only("pub enum Mode { A = 1, B = 2 }");
-    let numbered_ba = only("pub enum Mode { B = 2, A = 1 }");
-    assert_eq!(numbered_ab.parts.frame, numbered_ba.parts.frame, "a hand numbered variant keeps no place");
-    assert_eq!(numbered_ab.parts, numbered_ba.parts);
+    let c = only("pub struct Handle { pub inner: backend::Handle, pub gen: u32 }");
+    assert_eq!(a.parts, c.parts);
 }

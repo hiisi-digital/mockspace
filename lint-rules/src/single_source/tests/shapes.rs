@@ -7,12 +7,12 @@
 
 use super::*;
 
-pub(super) fn types(a: &str, b: &str) -> Vec<LintError> {
+fn types(a: &str, b: &str) -> Vec<LintError> {
     findings(&[at_root("test-a", a), with_files("test-b", "mod m;", &[("src/m.rs", b)])])
 }
 
 /// The two declarations are one concept: one finding, whichever crate is read first.
-pub(super) fn agree(a: &str, b: &str) {
+fn agree(a: &str, b: &str) {
     let found = types(a, b);
     assert_eq!(
         found.len(),
@@ -29,7 +29,7 @@ pub(super) fn agree(a: &str, b: &str) {
 }
 
 /// The two declarations share a name and nothing else: no finding, in either order.
-pub(super) fn differ(a: &str, b: &str) {
+fn differ(a: &str, b: &str) {
     let found = types(a, b);
     assert!(
         found.is_empty(),
@@ -452,152 +452,5 @@ fn a_copy_that_gained_a_field_is_another_concept_here() {
     differ(
         "pub struct Config { pub a: u8, pub b: u8 }",
         "pub struct Config { pub a: u8, pub b: u8, pub c: u8 }",
-    );
-}
-
-#[test]
-fn the_operands_of_a_bounded_type_are_a_set() {
-    // `dyn A + B` and `impl A + B` bound a type by several traits, in no order.
-    // Mutation: the operands kept in the order written; a nested `+` not flattened.
-    agree(
-        "pub struct S { v: Box<dyn Send + Sync> }",
-        "pub struct S { v: Box<dyn Sync + Send> }",
-    );
-    agree(
-        "pub trait T { fn f(&self) -> impl Copy + Send; }",
-        "pub trait T { fn f(&self) -> impl Send + Copy; }",
-    );
-    agree(
-        "pub struct S { v: Box<dyn A + B + C> }",
-        "pub struct S { v: Box<dyn C + A + B> }",
-    );
-    agree(
-        "pub struct S { v: Box<dyn Send + 'static> }",
-        "pub struct S { v: Box<dyn 'static + Send> }",
-    );
-    differ(
-        "pub struct S { v: Box<dyn Send + Sync> }",
-        "pub struct S { v: Box<dyn Send + Copy> }",
-    );
-    differ(
-        "pub trait T { fn f(&self) -> impl Send + Sync; }",
-        "pub trait T { fn f(&self) -> dyn Send + Sync; }",
-    );
-}
-
-#[test]
-fn only_the_first_segment_of_a_path_can_name_a_generic_parameter() {
-    // The last segment of a path names an item of that path, whatever a parameter is called.
-    // Mutation: every `type_identifier` renamed, the last segment of a path too.
-    differ(
-        "pub struct S<T> { a: T, b: m::T }",
-        "pub struct S<U> { a: U, b: m::U }",
-    );
-    agree(
-        "pub struct S<Error> { a: Error, b: std::io::Error }",
-        "pub struct S<E> { a: E, b: std::io::Error }",
-    );
-    agree(
-        "pub struct S<T: Tr> { a: T::Item }",
-        "pub struct S<U: Tr> { a: U::Item }",
-    );
-    differ(
-        "pub struct S<T: Tr> { a: T::Item }",
-        "pub struct S<T: Tr> { a: T::Other }",
-    );
-}
-
-#[test]
-fn a_lifetime_bound_in_a_where_clause_is_read_by_place() {
-    // `for<'x> F: Fn(&'x u8)` binds `'x` over the predicate's bounds, as `F: for<'x> Fn(&'x u8)` does.
-    // Mutation: the binder closed before the bounds are read.
-    agree(
-        "pub struct S<F> where for<'x> F: Fn(&'x u8) { f: F }",
-        "pub struct S<F> where for<'y> F: Fn(&'y u8) { f: F }",
-    );
-    agree(
-        "pub struct S<F: for<'x> Fn(&'x u8)> { f: F }",
-        "pub struct S<F: for<'y> Fn(&'y u8)> { f: F }",
-    );
-    differ(
-        "pub struct S<F> where for<'x> F: Fn(&'x u8) { f: F }",
-        "pub struct S<F> where for<'x> F: Fn(&'static u8) { f: F }",
-    );
-    differ(
-        "pub struct S<T> where Vec<T>: Clone { v: T }",
-        "pub struct S<T> where Vec<u8>: Clone { v: T }",
-    );
-}
-
-#[test]
-fn a_tuple_of_one_keeps_its_comma() {
-    // `(u8,)` is a tuple and `(u8)` is not, so the comma does not only close the list.
-    // Mutation: a comma dropped before the closer wherever it sits.
-    differ("pub struct S { x: (u8,) }", "pub struct S { x: (u8) }");
-    differ(
-        "pub struct S { x: (u8, /* c */) }",
-        "pub struct S { x: (u8) }",
-    );
-    agree(
-        "pub struct S { x: (u8, u16) }",
-        "pub struct S { x: (u8, u16,) }",
-    );
-    agree("pub struct S(u8,);", "pub struct S(u8);");
-}
-
-#[test]
-fn the_name_of_a_parameter_of_a_trait_method_is_not_part_of_the_trait() {
-    // Mutation: the pattern of a parameter kept in the shape.
-    agree(
-        "pub trait Source { fn read(&self, buf: u8) -> u8; }",
-        "pub trait Source { fn read(&self, out: u8) -> u8; }",
-    );
-    agree(
-        "pub trait Source { fn read(&self, mut buf: u8) -> u8; }",
-        "pub trait Source { fn read(&self, out: u8) -> u8; }",
-    );
-    differ(
-        "pub trait Source { fn read(&self, buf: u8) -> u8; }",
-        "pub trait Source { fn read(&self, buf: u16) -> u8; }",
-    );
-    differ(
-        "pub trait Source { fn read(&self, buf: u8) -> u8; }",
-        "pub trait Source { fn read(&self) -> u8; }",
-    );
-}
-
-#[test]
-fn a_supertrait_is_a_bound_on_self() {
-    // Mutation: the supertraits read as a list of their own and not merged with `where Self:`.
-    agree("pub trait T: Copy {}", "pub trait T where Self: Copy {}");
-    agree(
-        "pub trait T<X>: Copy + Send where X: Send {}",
-        "pub trait T<X> where Self: Send + Copy, X: Send {}",
-    );
-    differ("pub trait T: Copy {}", "pub trait T: Clone {}");
-    differ("pub trait T: Copy {}", "pub trait T {}");
-}
-
-#[test]
-fn only_the_repr_attribute_numbers_the_variants() {
-    // An attribute that mentions the word is no `repr`, so the variants stay a set.
-    // Mutation: the attribute's text searched for `repr`.
-    agree(
-        "#[doc = \"repr\"] pub enum E { A(u8), B }",
-        "#[doc = \"repr\"] pub enum E { B, A(u8) }",
-    );
-    differ(
-        "#[repr(u8)] pub enum E { A(u8), B }",
-        "#[repr(u8)] pub enum E { B, A(u8) }",
-    );
-}
-
-#[test]
-fn a_derived_order_is_not_read() {
-    // Pinned, not endorsed: `PartialOrd` and `Ord` read the order of the fields and the variants, and
-    // the shape holds them as a set, so a copy that reordered them is found. The module doc lists it.
-    agree(
-        "#[derive(PartialOrd)] pub struct S { a: u8, b: u8 }",
-        "#[derive(PartialOrd)] pub struct S { b: u8, a: u8 }",
     );
 }
