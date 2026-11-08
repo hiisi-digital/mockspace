@@ -186,10 +186,7 @@ fn changed_package_dirs(
     // Only a Rust file is something `clippy --fix` can change. A registry row, a document
     // or a manifest walks up to the workspace root all the same, and that sent the fixer
     // over every crate of it for a commit with no Rust in it.
-    for rel_file in staged
-        .iter()
-        .filter(|p| p.extension().is_some_and(|e| e == "rs"))
-    {
+    for rel_file in staged.iter().filter(|p| p.extension().is_some_and(|e| e == "rs")) {
         let abs = repo_root.join(rel_file);
         if let Some(dir) = package_dir_of(&abs, repo_root, &has_manifest) {
             dirs.insert(dir);
@@ -391,42 +388,38 @@ fn restage(repo_root: &Path, files: &[PathBuf]) -> usize {
     n
 }
 
-/// Run a git command in `repo_root` and return stdout as trimmed, non-empty,
-/// path lines.
-/// The staged files a merge in progress took whole from the side it brings in
-/// (`MERGE_HEAD`), empty outside a merge. A file staged as `HEAD` has it is not
-/// staged at all, so between the two every file taken whole from a parent is
-/// named. Such a file is that parent's commit: reformatting it makes the merge
-/// commit author a change nobody wrote, which a phase gate judging a merge by
-/// what it adds beyond its parents then refuses.
+/// The staged files a merge in progress took whole from one of the sides it
+/// brings in, every line of `MERGE_HEAD` (an octopus names several), empty
+/// outside a merge. A file staged as `HEAD` has it is not staged at all, so
+/// between them every file taken whole from a parent is named. Such a file is
+/// that parent's commit: reformatting it makes the merge commit author a change
+/// nobody wrote, which a phase gate judging a merge by what it adds beyond its
+/// parents then refuses.
 fn taken_from_the_merged_side(repo_root: &Path) -> BTreeSet<PathBuf> {
-    if git_lines(repo_root, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_empty() {
+    let Some(file) = git_lines(repo_root, &["rev-parse", "--git-path", "MERGE_HEAD"]).pop() else {
         return BTreeSet::new();
-    }
+    };
+    let Ok(heads) = std::fs::read_to_string(repo_root.join(file)) else {
+        return BTreeSet::new();
+    };
     let staged = git_lines(repo_root, &["diff", "--cached", "--name-only"]);
-    let differs: BTreeSet<PathBuf> = git_lines(repo_root, &[
-        "diff",
-        "--cached",
-        "--name-only",
-        "MERGE_HEAD",
-    ])
-    .into_iter()
-    .collect();
-    staged
-        .into_iter()
-        .filter(|p| !differs.contains(p))
-        .collect()
+    let mut taken = BTreeSet::new();
+    for head in heads.lines().map(str::trim).filter(|h| !h.is_empty()) {
+        let differs: BTreeSet<PathBuf> =
+            git_lines(repo_root, &["diff", "--cached", "--name-only", head]).into_iter().collect();
+        taken.extend(staged.iter().filter(|p| !differs.contains(*p)).cloned());
+    }
+    taken
 }
 
 /// The staged files the fixers may touch: every one but those a merge took
 /// whole from a parent.
 fn authored(staged: Vec<PathBuf>, from_a_parent: &BTreeSet<PathBuf>) -> Vec<PathBuf> {
-    staged
-        .into_iter()
-        .filter(|p| !from_a_parent.contains(p))
-        .collect()
+    staged.into_iter().filter(|p| !from_a_parent.contains(p)).collect()
 }
 
+/// Run a git command in `repo_root` and return stdout as trimmed, non-empty,
+/// path lines.
 fn git_lines(repo_root: &Path, args: &[&str]) -> Vec<PathBuf> {
     let out = Command::new("git")
         .args(args)
@@ -788,6 +781,33 @@ mod tests {
             "fn e() {}\nfn g() {}\nfn h() {}\n",
             "the file the merge resolved is still formatted"
         );
+    }
+
+    /// An octopus names each side it brings in on a line of `MERGE_HEAD`, and a
+    /// file taken whole from the second is that side's as much as one from the
+    /// first. Mutation: only the first line read (`rev-parse MERGE_HEAD`).
+    #[test]
+    fn an_octopus_leaves_a_file_taken_whole_from_any_side_it_brings_in() {
+        let dir = tmp("octopus_takes_a_side");
+        let ugly = "fn  f( ) { }\n";
+        git(&dir, &["init", "-q", "-b", "trunk"]);
+        write(&dir, "one.rs", "fn a() {}\n");
+        write(&dir, "two.rs", "fn b() {}\n");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-qm", "base"]);
+        git(&dir, &["checkout", "-qb", "first"]);
+        write(&dir, "one.rs", "fn a() {}\nfn c() {}\n");
+        git(&dir, &["commit", "-qam", "first"]);
+        git(&dir, &["checkout", "-q", "trunk"]);
+        git(&dir, &["checkout", "-qb", "second"]);
+        write(&dir, "two.rs", ugly);
+        git(&dir, &["commit", "-qam", "second"]);
+        git(&dir, &["checkout", "-q", "trunk"]);
+        git(&dir, &["merge", "-q", "--no-commit", "first", "second"]);
+
+        let _ = run(&dir, true, false);
+
+        assert_eq!(std::fs::read_to_string(dir.join("two.rs")).unwrap(), ugly);
     }
 
     fn tmp(name: &str) -> PathBuf {
