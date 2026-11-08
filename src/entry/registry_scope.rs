@@ -5,41 +5,66 @@
 
 //! Which registry findings gate a run: the one function that decides it.
 //!
-//! A check gates only on a commit that changes what it reads. A finding about a data row
-//! carries the file the row lives in (`RegistryFinding::source`), so it blocks only the commit
-//! that stages that file; on any other run, and on a commit that leaves the file alone, it is
-//! reported as a warning. A fresh clone with large files absent, or a row retired while source
-//! still cites it, then does not stop unrelated commits, and the error arrives with the commit
-//! that next touches the file.
+//! A reference to a row (a row citing a retired or absent row, a template citing one) gates only
+//! the run that changes the file holding the citation. The commit gate changes the staged files,
+//! the push gate the files of the commits not yet on any remote, and any other run changes
+//! nothing, so there the finding is a warning. A row can then be retired while source still cites
+//! it, and the error arrives with the commit that next touches the citing file.
 //!
-//! A finding with no `source` is about the declarations (schema, namespace collisions, unknown
-//! field types, duplicate identifiers) and not about one data row, so it gates as it always did.
+//! The scope is a property of the finding, set where it is made (`RegistryFinding::gate`), and
+//! nothing is inferred from whether it names a file. Every other finding (duplicate identifiers,
+//! cycles, provenance, declarations, values) is `GateScope::Always` and gates every run.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::LintMode;
-use crate::registry::RegistryFinding;
+use crate::registry::{GateScope, RegistryFinding};
 
 /// What the run knows about the files it is judging.
+#[derive(Debug)]
 pub(crate) enum Changed {
-    /// Not the commit gate. No file is being committed, so no row finding gates.
+    /// Neither the commit nor the push gate. No change is being judged, so no row reference gates.
     NotCommit,
-    /// The commit gate, with the files the commit stages, as absolute paths.
-    Staged(Vec<PathBuf>),
-    /// The commit gate, and git could not say what is staged. A check that could not run is not a
-    /// check that passed, so every finding gates.
+    /// The files the run changes, as absolute paths: staged for a commit, in the unpushed commits
+    /// for a push.
+    Files(Vec<PathBuf>),
+    /// A commit or push run, and git could not say what changes. A check that could not run is
+    /// not a check that passed, so every finding gates.
     Unknown,
 }
 
 impl Changed {
-    /// The scope of a run: the staged files for the commit gate, nothing otherwise.
+    /// The scope of a run.
     pub(crate) fn of_run(mode: LintMode, repo_root: &Path) -> Self {
-        if mode != LintMode::Commit {
-            return Self::NotCommit;
-        }
-        match staged_paths(repo_root) {
-            Some(paths) => Self::Staged(paths),
+        let paths = match mode {
+            LintMode::Commit => {
+                git_paths(repo_root, &[
+                    "diff",
+                    "--cached",
+                    "--name-only",
+                    "-z",
+                    "--no-renames",
+                    "--relative",
+                ])
+            },
+            LintMode::Push => {
+                git_paths(repo_root, &[
+                    "log",
+                    "--name-only",
+                    "--format=",
+                    "-z",
+                    "--no-renames",
+                    "--relative",
+                    "HEAD",
+                    "--not",
+                    "--remotes",
+                ])
+            },
+            LintMode::Build => return Self::NotCommit,
+        };
+        match paths {
+            Some(paths) => Self::Files(paths),
             None => Self::Unknown,
         }
     }
@@ -52,38 +77,40 @@ pub(crate) enum Verdict {
     Warning,
 }
 
-/// The only place the severity of a registry finding is decided, shared by the plain run and the
-/// commit gate.
+/// The only place the severity of a registry finding is decided, shared by the plain run, the
+/// commit gate and the push gate.
 pub(crate) fn verdict(f: &RegistryFinding, changed: &Changed) -> Verdict {
-    let Some(source) = &f.source else {
+    let GateScope::WhenChanged(file) = &f.gate else {
         return Verdict::Error;
     };
     match changed {
         Changed::NotCommit => Verdict::Warning,
         Changed::Unknown => Verdict::Error,
-        Changed::Staged(paths) if paths.iter().any(|p| p == source) => Verdict::Error,
-        Changed::Staged(_) => Verdict::Warning,
+        Changed::Files(paths) if paths.iter().any(|p| p == file) => Verdict::Error,
+        Changed::Files(_) => Verdict::Warning,
     }
 }
 
-/// The files the index changes against `HEAD`, absolute. `None` when git cannot say.
-fn staged_paths(repo_root: &Path) -> Option<Vec<PathBuf>> {
+/// The files a git listing names, absolute. `None` when git cannot say.
+fn git_paths(repo_root: &Path, args: &[&str]) -> Option<Vec<PathBuf>> {
     let out = Command::new("git")
         .arg("-C")
         .arg(repo_root)
-        .args(["diff", "--cached", "--name-only", "-z", "--no-renames", "--relative"])
+        .args(args)
         .output()
         .ok()?;
     if !out.status.success() {
         return None;
     }
-    Some(
-        String::from_utf8_lossy(&out.stdout)
-            .split('\0')
-            .filter(|p| !p.is_empty())
-            .map(|p| repo_root.join(p))
-            .collect(),
-    )
+    let mut paths: Vec<PathBuf> = String::from_utf8_lossy(&out.stdout)
+        .split('\0')
+        .map(|p| p.trim_matches('\n'))
+        .filter(|p| !p.is_empty())
+        .map(|p| repo_root.join(p))
+        .collect();
+    paths.sort();
+    paths.dedup();
+    Some(paths)
 }
 
 /// Prints each finding at the level its verdict gives and returns `(gated, demoted)`.

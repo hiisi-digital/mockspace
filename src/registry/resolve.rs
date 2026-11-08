@@ -927,6 +927,7 @@ fn resolve_row(
                 cycle.join(" -> ")
             ),
             source: reg.get(id).map(|r| r.source.clone()),
+            gate:   GateScope::Always,
         });
         return;
     }

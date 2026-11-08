@@ -58,6 +58,7 @@ pub fn validate_provenance(
                         row.qualified()
                     ),
                     source: Some(row.source.clone()),
+                    gate:   GateScope::Always,
                 });
                     continue;
                 };
@@ -72,6 +73,7 @@ pub fn validate_provenance(
                         p.root
                     ),
                     source: Some(row.source.clone()),
+                    gate:   GateScope::Always,
                 });
                     continue;
                 };
@@ -87,6 +89,7 @@ pub fn validate_provenance(
                                 p.root
                             ),
                             source:  Some(row.source.clone()),
+                            gate:    GateScope::Always,
                         });
                         continue;
                     },
@@ -100,6 +103,7 @@ pub fn validate_provenance(
                             names.join(", ")
                         ),
                         source: Some(row.source.clone()),
+                        gate:   GateScope::Always,
                     });
                         continue;
                     },
@@ -114,6 +118,7 @@ pub fn validate_provenance(
                         p.root
                     ),
                     source: Some(row.source.clone()),
+                    gate:   GateScope::Always,
                 });
                 }
                 match resolve_anchor(&target, &p.anchor) {
@@ -139,6 +144,7 @@ pub fn validate_provenance(
                             ),
                         },
                         source: Some(row.source.clone()),
+                        gate:   GateScope::Always,
                     });
                     },
                 }
@@ -155,7 +161,24 @@ pub struct RegistryFinding {
     /// than for the registry as a whole.
     pub kind:    &'static str,
     pub message: String,
+    /// Where to print it from: the file the finding is about, when it has one. Says nothing about
+    /// whether the finding gates; `gate` does.
     pub source:  Option<PathBuf>,
+    /// Which runs the finding blocks, set where the finding is made.
+    pub gate:    GateScope,
+}
+
+/// Which runs a registry finding blocks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GateScope {
+    /// Every run blocks on it. The default for anything about the registry itself: duplicate
+    /// identifiers, cycles, provenance, declarations, values.
+    Always,
+    /// A reference to a row. Only a run whose changed files include this one (the file that holds
+    /// the reference) blocks; any other run reports it as a warning, so a row can be retired
+    /// before every citation of it is gone, and the error arrives with the next change to the
+    /// citing file.
+    WhenChanged(PathBuf),
 }
 
 /// The finding kinds this validation produces, for per-kind severity config.
@@ -354,6 +377,7 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
                      It is discarded silently."
                 ),
                 source:  None,
+                gate:    GateScope::Always,
             });
         }
     }
@@ -370,6 +394,7 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
                          discarded silently; the only key `[ref]` carries is `roots`."
                     ),
                     source:  None,
+                    gate:    GateScope::Always,
                 });
             }
         }
@@ -404,6 +429,7 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
                              of these lands here and has no effect at all."
                         ),
                         source:  None,
+                        gate:    GateScope::Always,
                     });
                 }
             }
@@ -434,6 +460,7 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
                          it, or fix the spelling if it is a typo."
                     ),
                     source:  None,
+                    gate:    GateScope::Always,
                 });
             }
         }
@@ -452,6 +479,7 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
                                  mockspace does not read. It is discarded silently."
                             ),
                             source:  None,
+                            gate:    GateScope::Always,
                         });
                     }
                 }
@@ -477,6 +505,7 @@ pub fn validate(namespaces: &[RegistryNamespace], reg: &Registry) -> Vec<Registr
                     .join(", ")
             ),
             source: sources.first().cloned(),
+            gate:   GateScope::Always,
         });
     }
     out
@@ -709,6 +738,7 @@ pub fn namespace_root_collisions(
                     ns.key
                 ),
                 source: None,
+                gate:   GateScope::Always,
             });
         }
     }
@@ -722,6 +752,7 @@ pub fn namespace_root_collisions(
                     ns.key, ns.key
                 ),
                 source: None,
+                gate:   GateScope::Always,
             });
         }
         // The reserved words are the other occupants of slot zero, and they
@@ -736,6 +767,7 @@ pub fn namespace_root_collisions(
                     ns.key
                 ),
                 source: None,
+                gate:   GateScope::Always,
             });
         }
     }
@@ -778,6 +810,7 @@ fn unquoted_times(namespaces: &[RegistryNamespace], reg: &Registry) -> Vec<Regis
                 u.row, u.field, u.text, u.field, field.r#type, u.field, u.text
             ),
             source:  Some(u.source.clone()),
+            gate:    GateScope::Always,
         });
     }
     out
