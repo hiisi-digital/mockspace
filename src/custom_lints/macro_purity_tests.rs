@@ -17,7 +17,7 @@ fn a_derive_that_names_only_pure_modules_and_its_own_dependencies_is_pure() {
 #[test]
 fn a_path_into_a_module_that_reaches_outside_the_program_is_refused_wherever_it_stands() {
     for module in ["fs", "env", "path", "io", "process", "net", "os", "thread", "time", "ffi", "sync", "alloc_error"] {
-        for root in ["std", "core", "alloc"] {
+        for root in ["std", "core", "alloc", "r#std", "r#core"] {
             if module == "alloc" {
                 continue;
             }
@@ -75,8 +75,29 @@ fn a_refused_path_inside_the_arguments_of_a_macro_that_is_not_a_quoting_one_is_r
 
 #[test]
 fn the_body_of_a_quoting_macro_is_generated_code_and_not_read() {
-    assert!(source_is_pure("fn g() { let _ = quote! { std::fs::read(\"x\") }; let _ = parse_quote!(std::env::var(a)); }"));
+    for name in ["quote", "::quote::quote", "quote::quote", "quote::quote_spanned", "syn::parse_quote", "::syn::parse_quote", "syn::parse_quote_spanned", "quote_spanned", "parse_quote", "parse_quote_spanned"] {
+        assert!(source_is_pure(&format!("fn g() {{ let _ = {name}! {{ std::fs::read(\"x\") }}; }}")), "{name}");
+    }
     assert!(refused("fn g() { let _ = std::fs::read(\"x\"); let _ = quote! { 1 }; }"));
+}
+
+#[test]
+fn a_macro_that_only_has_the_name_of_a_quoting_one_is_not_exempt() {
+    for source in [
+        "macro_rules! quote { ($($t:tt)*) => { $($t)* } } fn f() -> String { quote!(std::fs::read_to_string(\"/x\").unwrap()) }",
+        "macro_rules! parse_quote { ($($t:tt)*) => { $($t)* } }",
+        "macro_rules! quote_spanned { () => {} }",
+        "fn f() { helper::quote!(std::fs::read_to_string(\"/x\")); }",
+        "fn f() { other::syn::parse_quote!(std::fs::read(\"x\")); }",
+        "use helper::quote; fn f() { quote!(std::fs::read(\"x\")); }",
+        "use helper::make as quote;",
+        "use quote::quote as parse_quote;",
+        "use syn::{parse_quote, other as quote_spanned};",
+        "use other::parse_quote;",
+    ] {
+        assert!(refused(source), "{source}");
+    }
+    assert!(source_is_pure("use quote::quote; use syn::{parse_quote, parse_quote_spanned}; use quote::quote_spanned;"));
 }
 
 #[test]
@@ -178,22 +199,19 @@ fn info(sources: &[&Path]) -> String {
 fn a_macro_is_held_when_its_sources_and_those_of_the_crates_of_the_tree_it_uses_are_pure() {
     let tmp = tempfile::tempdir().unwrap();
     let own = written(&tmp.path().join("derive"), "lib.rs", "pub fn f() {}");
-    let helper = tmp.path().join("helper");
-    written(&helper.join("src"), "lib.rs", "pub fn h() {}");
-    assert!(held(&info(&[&own]), tmp.path(), &[helper]));
+    let helper = written(&tmp.path().join("helper").join("src"), "lib.rs", "pub fn h() {}");
+    assert!(held(&info(&[&own]), tmp.path(), &[info(&[&helper])]));
 }
 
 #[test]
 fn a_macro_is_not_held_when_a_crate_of_the_tree_it_uses_can_read_a_file() {
     let tmp = tempfile::tempdir().unwrap();
     let own = written(&tmp.path().join("derive"), "lib.rs", "pub fn f() {}");
-    let helper = tmp.path().join("helper");
-    written(&helper.join("src"), "lib.rs", "pub fn h() {}");
-    written(&helper.join("src").join("deep"), "io.rs", "fn r() { std::fs::read(\"Cargo.toml\"); }");
-    assert!(!held(&info(&[&own]), tmp.path(), &[helper]));
+    let helper = written(&tmp.path().join("helper").join("src"), "lib.rs", "pub fn h() {}");
+    let deep = written(&tmp.path().join("helper").join("src").join("deep"), "io.rs", "fn r() { std::fs::read(\"Cargo.toml\"); }");
+    assert!(!held(&info(&[&own]), tmp.path(), &[info(&[&helper, &deep])]));
 }
 
-#[test]
 fn a_macro_is_not_held_without_sources_or_with_one_it_cannot_read() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(!held("derive.d:\n", tmp.path(), &[]), "an empty source list");
@@ -201,7 +219,8 @@ fn a_macro_is_not_held_without_sources_or_with_one_it_cannot_read() {
     let gone = tmp.path().join("gone.rs");
     assert!(!held(&info(&[&gone]), tmp.path(), &[]), "a source that is not there");
     let own = written(tmp.path(), "lib.rs", "pub fn f() {}");
-    assert!(!held(&info(&[&own]), tmp.path(), &[tmp.path().join("no-such-crate")]), "a crate of the tree that is not there");
+    assert!(!held(&info(&[&own]), tmp.path(), &[info(&[&tmp.path().join("no-such-crate.rs")])]), "a source of a crate of the tree that is not there");
+    assert!(!held(&info(&[&own]), tmp.path(), &["lib0.rlib:\n".to_string()]), "a crate of the tree that lists no source");
 }
 
 #[test]
@@ -211,4 +230,29 @@ fn a_relative_source_is_read_against_the_directory_the_build_ran_in() {
     assert!(held("derive.d: rel/lib.rs\n", tmp.path(), &[]));
     written(&tmp.path().join("bad"), "lib.rs", "fn f() { std::env::var(\"X\"); }");
     assert!(!held("derive.d: bad/lib.rs\n", tmp.path(), &[]));
+}
+
+#[test]
+fn a_raw_identifier_for_a_root_or_a_module_does_not_hide_it() {
+    for source in [
+        "fn f() -> usize { r#std::fs::read_to_string(\"/x\").unwrap().len() }",
+        "use r#std::env as e; fn g() -> bool { e::var_os(\"HOME\").is_some() }",
+        "use r#core::*;",
+        "use std::r#fs;",
+        "fn f() { std::r#env::var(\"X\"); }",
+        "fn f() { dbg!(r#std::fs::read(\"x\")); }",
+        "fn f() { dbg!(std::r#fs::read(\"x\")); }",
+    ] {
+        assert!(refused(source), "{source}");
+    }
+    assert!(source_is_pure("use std::r#vec::Vec; fn f() -> r#std::string::String { r#std::string::String::new() }"));
+}
+
+#[test]
+fn a_registry_other_than_the_crates_io_index_is_not_the_allowlisted_crate() {
+    let sparse = "sparse+https://index.crates.io/";
+    assert!(macro_closures(&metadata(serde_json::Value::Null, "quote", sparse)).contains_key(Path::new("/r/derive")));
+    for other in ["registry+https://evil.invalid/index", "sparse+https://evil.invalid/", "registry+https://github.com/rust-lang/crates.io-index-evil"] {
+        assert!(!macro_closures(&metadata(serde_json::Value::Null, "quote", other)).contains_key(Path::new("/r/derive")), "{other}");
+    }
 }

@@ -67,7 +67,7 @@ fn identity_in(cache: &Path, mock: &Path) -> String {
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_same_sources_in_two_trees_are_one_identity() {
     let tmp = tempfile::tempdir().unwrap();
     let cache = tmp.path().join("cache");
@@ -79,7 +79,7 @@ fn the_same_sources_in_two_trees_are_one_identity() {
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_changed_lint_source_is_another_identity() {
     let tmp = tempfile::tempdir().unwrap();
     let cache = tmp.path().join("cache");
@@ -128,7 +128,7 @@ fn name_in(cache: &Path, mock: &Path) -> String {
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_lint_edited_during_the_build_is_not_kept_under_the_old_content() {
     let tmp = tempfile::tempdir().unwrap();
     let cache = tmp.path().join("cache");
@@ -152,7 +152,7 @@ fn a_lint_edited_during_the_build_is_not_kept_under_the_old_content() {
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_file_a_lint_includes_is_part_of_what_was_built() {
     let tmp = tempfile::tempdir().unwrap();
     let cache = tmp.path().join("cache");
@@ -169,7 +169,7 @@ fn a_file_a_lint_includes_is_part_of_what_was_built() {
 static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_build_does_not_read_the_profile_from_the_environment() {
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = tempfile::tempdir().unwrap();
@@ -209,7 +209,7 @@ fn names_in_two_trees(tag: &str, lint_src: &str, setup: impl Fn(&Path, &str), wh
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_file_beside_the_lints_is_read_from_the_asking_tree() {
     let got = names_in_two_trees(
         "identity-beside",
@@ -222,7 +222,7 @@ fn a_file_beside_the_lints_is_read_from_the_asking_tree() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_file_behind_a_link_in_the_lints_is_read_from_the_asking_tree() {
     let got = names_in_two_trees(
         "identity-link",
@@ -238,7 +238,7 @@ fn a_file_behind_a_link_in_the_lints_is_read_from_the_asking_tree() {
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_variable_the_build_still_gets_is_checked_when_the_lint_reads_it() {
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = tempfile::tempdir().unwrap();
@@ -277,7 +277,7 @@ fn probe_tool(mock: &Path, body: &str) {
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_variable_a_dependency_reads_is_checked() {
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = tempfile::tempdir().unwrap();
@@ -293,7 +293,7 @@ fn a_variable_a_dependency_reads_is_checked() {
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_tool_manifest_dir_names_the_asking_tree() {
     let got = names_in_two_trees(
         "review-manifest-dir",
@@ -306,7 +306,7 @@ fn a_tool_manifest_dir_names_the_asking_tree() {
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_source_set_back_in_time_is_built_not_reused_by_cargo() {
     let tmp = tempfile::tempdir().unwrap();
     let cache = tmp.path().join("cache");
@@ -324,7 +324,7 @@ fn a_source_set_back_in_time_is_built_not_reused_by_cargo() {
 
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_tool_source_set_back_in_time_is_not_kept_as_the_new_content() {
     let tmp = tempfile::tempdir().unwrap();
     let cache = tmp.path().join("cache");
@@ -346,7 +346,7 @@ fn a_tool_source_set_back_in_time_is_not_kept_as_the_new_content() {
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_lint_file_macro_reads_the_same_in_every_tree_and_names_none() {
     let got = names_in_two_trees("r3-file-macro", &lint_named_by("file!()"), |_, _| {}, ["", ""]);
     assert_eq!(got[0], got[1]);
@@ -354,7 +354,7 @@ fn a_lint_file_macro_reads_the_same_in_every_tree_and_names_none() {
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_tool_build_script_manifest_dir_names_the_asking_tree() {
     let got = names_in_two_trees(
         "r3-build-script",
@@ -398,7 +398,7 @@ impl Drop for ConfigGuard {
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_cargo_config_that_appears_during_the_build_is_not_kept_under_the_old_key() {
     let tmp = tempfile::tempdir().unwrap();
     let cache = tmp.path().join("cache");
@@ -428,7 +428,7 @@ fn a_cargo_config_that_appears_during_the_build_is_not_kept_under_the_old_key() 
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_build_does_not_read_rustflags_from_the_environment() {
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = tempfile::tempdir().unwrap();
@@ -448,7 +448,7 @@ fn the_build_does_not_read_rustflags_from_the_environment() {
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_second_tree_of_the_same_sources_loads_the_kept_library_and_builds_nothing() {
     let tmp = tempfile::tempdir().unwrap();
     let cache = tmp.path().join("cache");

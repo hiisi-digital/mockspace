@@ -66,7 +66,7 @@ fn kept_after_build(mock: &Path, cache: &Path) -> usize {
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_library_of_a_pack_with_a_pure_derive_crate_of_the_tree_is_kept() {
     let tmp = tempfile::tempdir().unwrap();
     let mock = tree(tmp.path(), "", PURE);
@@ -74,7 +74,7 @@ fn the_library_of_a_pack_with_a_pure_derive_crate_of_the_tree_is_kept() {
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_library_of_a_pack_whose_derive_crate_depends_outside_the_allowlist_is_not_kept() {
     let tmp = tempfile::tempdir().unwrap();
     let mock = tree(tmp.path(), "serde_json = \"1\"", PURE);
@@ -82,7 +82,7 @@ fn the_library_of_a_pack_whose_derive_crate_depends_outside_the_allowlist_is_not
 }
 
 #[test]
-#[ignore = "runs cargo build; run with --include-ignored"]
+#[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_library_of_a_pack_whose_derive_crate_can_read_a_file_is_not_kept() {
     let tmp = tempfile::tempdir().unwrap();
     let source = format!("{PURE}fn read() {{ let _ = std::fs::read(\"Cargo.toml\"); }}\n");

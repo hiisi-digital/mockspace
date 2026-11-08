@@ -8,12 +8,17 @@
 //! A macro runs while the build runs, and a dep-info lists the files of the crate that holds it and
 //! nothing the macro read. The store loads a library only where every input is what it was built
 //! from, so a macro that could read a file, a variable or a process the dep-info does not list
-//! leaves nothing kept. A macro that can reach nothing but its token input is held by its sources.
+//! leaves nothing kept. A macro that can read no file, variable or process is held by its sources.
+//! It can still learn the path of the file it expands in (`proc_macro2::Span::local_file`), which the
+//! library may then carry; that is the open FIXME(3f67a1d5a1d0) at `build.rs`, the same class as a
+//! tool's own `file!()`.
 //!
 //! Two things must both hold. The macro's normal-dependency closure is within [`DEPENDENCIES`]
 //! (a crate of the tree in it is held to the next rule as well), and every source of the macro and
-//! of each crate of the tree in that closure names no path of `std`, `core` or `alloc` outside
-//! [`PURE_MODULES`], no foreign block and no assembly. A glob import of the roots, an import of a
+//! of each crate of the tree in that closure, as the dep-info of its library unit lists them (so a file
+//! reached by `include!` or `#[path]` is among them), names no path of `std`, `core` or `alloc` outside
+//! [`PURE_MODULES`], no foreign block and no assembly, and nothing but `quote` and `syn` supplies the
+//! name of a quoting macro whose body is left unread. A glob import of the roots, an import of a
 //! refused module under any alias, and a source that does not parse are all refusals.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,6 +28,9 @@ use tree_sitter::{Node, Parser};
 
 /// The only crates a macro may depend on, besides the compiler's own `proc_macro` and the sysroot.
 const DEPENDENCIES: [&str; 4] = ["proc-macro2", "quote", "syn", "unicode-ident"];
+
+/// The sources cargo names the crates.io index by, as the git index and the sparse one.
+const CRATES_IO: [&str; 2] = ["registry+https://github.com/rust-lang/crates.io-index", "sparse+https://index.crates.io/"];
 
 /// The roots of the standard library a path may start from.
 const ROOTS: [&str; 3] = ["std", "core", "alloc"];
@@ -97,7 +105,7 @@ pub(crate) fn macro_closures(json: &serde_json::Value) -> BTreeMap<PathBuf, Vec<
                     },
                     Some(source) => {
                         let name = text(pkg, "name").unwrap_or_default();
-                        within &= source.starts_with("registry+") && DEPENDENCIES.contains(&name.as_str());
+                        within &= CRATES_IO.contains(&source.as_str()) && DEPENDENCIES.contains(&name.as_str());
                     },
                 }
                 todo.push(dep_id);
@@ -111,36 +119,19 @@ pub(crate) fn macro_closures(json: &serde_json::Value) -> BTreeMap<PathBuf, Vec<
     out
 }
 
-/// Whether a macro whose dep-info is `info`, with the closure of the tree's crates `closure`, can
-/// be held to its sources. Relative sources are read against `gen_dir`, as the build ran there.
-pub(crate) fn held(info: &str, gen_dir: &Path, closure: &[PathBuf]) -> bool {
-    let sources = super::depinfo::sources_of(info);
-    if sources.is_empty() {
-        return false;
-    }
-    let own = sources.iter().map(|s| if s.is_absolute() { s.clone() } else { gen_dir.join(s) });
-    own.chain(closure.iter().flat_map(|dir| rust_files(dir)))
-        .all(|file| std::fs::read_to_string(&file).is_ok_and(|text| source_is_pure(&text)))
-}
-
-/// Every `.rs` file under `dir`, except a `target` directory. A directory that cannot be read
-/// yields the path itself, which then cannot be read as a source either.
-fn rust_files(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return vec![dir.to_path_buf()];
-    };
-    let mut out = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if path.file_name().is_some_and(|n| n != "target") {
-                out.extend(rust_files(&path));
-            }
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push(path);
-        }
-    }
-    out
+/// Whether a macro whose dep-info is `info`, using crates of the tree whose library dep-infos are
+/// `closure`, can be held to its sources. Each dep-info lists the files its unit was compiled from,
+/// so a file reached by `include!` or `#[path]` is among them. Relative sources are read against
+/// `gen_dir`, as the build ran there. A dep-info that lists nothing is no answer.
+pub(crate) fn held(info: &str, gen_dir: &Path, closure: &[String]) -> bool {
+    std::iter::once(info).chain(closure.iter().map(String::as_str)).all(|info| {
+        let sources = super::depinfo::sources_of(info);
+        !sources.is_empty()
+            && sources.iter().all(|s| {
+                let file = if s.is_absolute() { s.clone() } else { gen_dir.join(s) };
+                std::fs::read_to_string(&file).is_ok_and(|text| source_is_pure(&text))
+            })
+    })
 }
 
 /// Whether the standard library path whose segments are `segments` is one of the pure ones.
@@ -155,7 +146,12 @@ fn path_is_pure(segments: &[&str]) -> bool {
 /// The segments of a path as written, without whitespace and a leading `::`.
 fn segments_of(text: &str) -> Vec<String> {
     let squeezed: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-    squeezed.split("::").filter(|s| !s.is_empty()).map(str::to_string).collect()
+    squeezed.split("::").filter(|s| !s.is_empty()).map(|s| plain(s).to_string()).collect()
+}
+
+/// An identifier without the `r#` that makes a keyword or any name raw, which rustc reads as the same name.
+fn plain(ident: &str) -> &str {
+    ident.strip_prefix("r#").unwrap_or(ident)
 }
 
 fn refs(v: &[String]) -> Vec<&str> {
@@ -167,7 +163,10 @@ fn use_is_pure(node: Node, src: &[u8], prefix: &[String]) -> bool {
     let text = |n: Node| n.utf8_text(src).unwrap_or("").to_string();
     let with = |tail: Vec<String>| [prefix, tail.as_slice()].concat();
     match node.kind() {
-        "use_as_clause" => node.child_by_field_name("path").is_some_and(|p| use_is_pure(p, src, prefix)),
+        "use_as_clause" => {
+            let alias = node.child_by_field_name("alias").map(&text).unwrap_or_default();
+            !QUOTING.contains(&plain(&alias)) && node.child_by_field_name("path").is_some_and(|p| use_is_pure(p, src, prefix))
+        },
         "use_wildcard" => {
             let body = text(node);
             let path = body.trim_end().trim_end_matches('*').trim_end_matches(':');
@@ -192,8 +191,30 @@ fn use_is_pure(node: Node, src: &[u8], prefix: &[String]) -> bool {
             if all.last().is_some_and(|l| l == "self") {
                 all.pop();
             }
-            path_is_pure(&refs(&all))
+            path_is_pure(&refs(&all)) && imports_a_quoting_name_only_from_its_crate(&all)
         },
+    }
+}
+
+/// Whether a path that ends in the name of a quoting macro is that macro of `quote` or `syn`, so no
+/// import puts another macro under the name the quoting exemption is given by.
+fn imports_a_quoting_name_only_from_its_crate(all: &[String]) -> bool {
+    match all.split_last() {
+        Some((last, head)) if QUOTING.contains(&last.as_str()) => {
+            matches!(head, [c] if c == "quote" || c == "syn")
+        },
+        _ => true,
+    }
+}
+
+/// Whether the path of a macro invocation is one of the quoting macros of `quote` and `syn`, as
+/// written bare (imported, and `use` refuses an import of the name from elsewhere) or by the path of
+/// its crate, with or without a leading `::`.
+fn is_quoting_path(segments: &[String]) -> bool {
+    match segments {
+        [name] => QUOTING.contains(&name.as_str()),
+        [c, name] => (c == "quote" || c == "syn") && QUOTING.contains(&name.as_str()) && imports_a_quoting_name_only_from_its_crate(segments),
+        _ => false,
     }
 }
 
@@ -203,9 +224,9 @@ fn tokens_are_pure(node: Node, src: &[u8]) -> bool {
     let mut leaves = Vec::new();
     collect_leaves(node, src, &mut leaves);
     for (i, leaf) in leaves.iter().enumerate() {
-        if ROOTS.contains(leaf) {
+        if ROOTS.contains(&plain(leaf)) {
             let module = (leaves.get(i + 1) == Some(&"::")).then(|| leaves.get(i + 2)).flatten();
-            if !module.is_some_and(|m| PURE_MODULES.contains(m)) {
+            if !module.is_some_and(|m| PURE_MODULES.contains(&plain(m))) {
                 return false;
             }
         }
@@ -237,13 +258,20 @@ fn node_is_pure(node: Node, src: &[u8]) -> bool {
         },
         "macro_invocation" => {
             let name = node.child_by_field_name("macro").map(&text).unwrap_or_default();
-            let last = segments_of(&name).pop().unwrap_or_default();
+            let segments = segments_of(&name);
+            let last = segments.last().cloned().unwrap_or_default();
             if ASSEMBLY.contains(&last.as_str()) {
                 return false;
             }
-            if QUOTING.contains(&last.as_str()) {
+            if is_quoting_path(&segments) {
                 // The name itself may be a refused path; the body is generated code.
                 return node.child_by_field_name("macro").is_none_or(|m| node_is_pure(m, src));
+            }
+        },
+        "macro_definition" => {
+            let name = node.child_by_field_name("name").map(&text).unwrap_or_default();
+            if QUOTING.contains(&plain(&name)) {
+                return false;
             }
         },
         "token_tree" => {
