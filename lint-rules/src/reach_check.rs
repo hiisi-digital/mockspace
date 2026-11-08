@@ -218,8 +218,8 @@ pub fn workspace_lint(
 }
 
 /// Holds a repo lint declaring [`Reach::Paths`] to its globs. `tree` is the repository the lint
-/// reads, as `(path, text)`, and `scratch` an empty directory the caller owns, which the check
-/// writes the tree into once per arm.
+/// reads, as `(path, text)`, `crates` the crate names it has (what a lint attributes a file by) and
+/// `scratch` an empty directory the caller owns, which the check writes the tree into once per arm.
 ///
 /// Every file of the tree that no glob matches is changed, then removed, and a file is added
 /// beside them; the findings must be those of the reference run each time. A tree with no file
@@ -230,7 +230,12 @@ pub fn workspace_lint(
 /// # Errors
 ///
 /// A description of the first file outside the globs whose movement changed the findings.
-pub fn repo_lint(lint: &dyn RepoLint, tree: &[(&str, &str)], scratch: &Path) -> Result<usize, String> {
+pub fn repo_lint(
+    lint: &dyn RepoLint,
+    tree: &[(&str, &str)],
+    crates: &[&str],
+    scratch: &Path,
+) -> Result<usize, String> {
     let Reach::Paths(globs) = lint.reach() else {
         return Ok(0);
     };
@@ -246,11 +251,11 @@ pub fn repo_lint(lint: &dyn RepoLint, tree: &[(&str, &str)], scratch: &Path) -> 
             std::fs::create_dir_all(path.parent().unwrap_or(&root)).expect("a scratch directory");
             std::fs::write(path, t).expect("a scratch file");
         }
-        let (crates, registry) = (std::collections::BTreeSet::new(), crate::RegistryView::default());
+        let (all_crates, registry) = (crates.iter().map(|c| (*c).to_string()).collect(), crate::RegistryView::default());
         let ctx = crate::RepoContext {
             mock_dir:    &root,
             repo_root:   &root,
-            all_crates:  &crates,
+            all_crates:  &all_crates,
             src_dirs:    &[],
             invocation:  None,
             canon_paths: &[],

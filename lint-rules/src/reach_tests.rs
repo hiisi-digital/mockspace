@@ -392,7 +392,7 @@ const PATHS_TREE: &[(&str, &str)] = &[("content/a.toml", "broken\n"), ("notes/b.
 #[test]
 fn a_paths_lint_reading_a_file_outside_its_globs_fails_the_check() {
     let dir = tempfile::tempdir().unwrap();
-    let err = repo_lint(&ReadsPastItsPaths, &[("content/a.toml", "fine\n"), ("notes/b.txt", "fine\n")], dir.path())
+    let err = repo_lint(&ReadsPastItsPaths, &[("content/a.toml", "fine\n"), ("notes/b.txt", "fine\n")], &[], dir.path())
         .unwrap_err();
     assert!(err.contains("which no glob matches"), "{err}");
 }
@@ -400,14 +400,14 @@ fn a_paths_lint_reading_a_file_outside_its_globs_fails_the_check() {
 #[test]
 fn a_paths_lint_reading_only_its_globs_passes_and_found_something() {
     let dir = tempfile::tempdir().unwrap();
-    let seen = repo_lint(&ReadsOnlyItsPaths, PATHS_TREE, dir.path()).unwrap();
+    let seen = repo_lint(&ReadsOnlyItsPaths, PATHS_TREE, &[], dir.path()).unwrap();
     assert!(seen > 0, "the control: the lint found its finding, so the pass is not vacuous");
 }
 
 #[test]
 fn a_repo_lint_declaring_another_reach_is_not_this_checks() {
     let dir = tempfile::tempdir().unwrap();
-    assert_eq!(repo_lint(&Undeclared, &[], dir.path()), Ok(0));
+    assert_eq!(repo_lint(&Undeclared, &[], &[], dir.path()), Ok(0));
 }
 
 /// Declares nothing.
