@@ -130,6 +130,7 @@ fn a_tool_crate_loads_and_dispatches_across_the_cdylib() {
         args:       &args,
         stdin:      None,
         registry:   &Default::default(),
+        index:      &mockspace::NoIndex,
     };
     let report = tool.run(&ctx);
     assert_eq!(
@@ -312,5 +313,50 @@ mockspace::lint_pack! {
 mod ambient;
 
 /// Keeps the generated lint crate inside the test's own directory.
+/// The index is a trait object handed across the dlopen boundary, which is the one thing about it
+/// the unit tests cannot reach: a vtable built in the engine and called from the tool's library.
+const ASKS_THE_INDEX: &str = r#"fn purpose(&self) -> Purpose { Purpose::Check(NotALint::NoFailingCase) }
+    fn run(&self, ctx: &ToolContext<'_>) -> ToolReport {
+        let q = mockspace::IndexQuery { text: "zeppelin", expand: &[], limit: 3, today: 20000 };
+        let r = ctx.index.search(&q);
+        let first = r.hits.first().map_or("none".to_string(), |h| format!("{}:{}", h.path, h.class.label()));
+        ToolReport::reported(format!("hits={} first={first} indexed={}", r.hits.len(), r.indexed), 1)
+    }"#;
+
+#[test]
+#[ignore = "runs cargo build; run with --ignored"]
+fn a_tool_asks_the_engines_index_across_the_cdylib() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mock = project(tmp.path());
+    write_tool(&mock.join("tools"), "ask", "probe-ask", "ask", ASKS_THE_INDEX);
+    let loaded = load(&mock);
+
+    let mut idx = mockspace::index::Index::in_memory().unwrap();
+    fs::create_dir_all(tmp.path().join("notes")).unwrap();
+    fs::write(tmp.path().join("notes/a.md"), "# Zeppelin\n\nthe zeppelin holds hydrogen\n").unwrap();
+    idx.refresh(&[mockspace::index::Source {
+        dir:   tmp.path().join("notes"),
+        shown: "research".into(),
+        class: mockspace::DocClass::Research,
+        about: None,
+    }])
+    .unwrap();
+
+    let crates = std::collections::BTreeSet::new();
+    let dirs: Vec<std::path::PathBuf> = Vec::new();
+    let ctx = mockspace::tool::ToolContext {
+        mock_dir:   &mock,
+        repo_root:  tmp.path(),
+        all_crates: &crates,
+        src_dirs:   &dirs,
+        args:       &[],
+        stdin:      None,
+        registry:   &Default::default(),
+        index:      &idx,
+    };
+    let out = loaded.pack.tools[0].run(&ctx).output;
+    assert_eq!(out, "hits=1 first=research/a.md:research indexed=1", "{out}");
+}
+
 #[path = "common/lint_cache.rs"]
 mod lint_cache;

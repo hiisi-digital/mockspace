@@ -203,6 +203,10 @@ pub struct ToolContext<'a> {
     /// subject is already taken, reads the same rows `mock query` resolves
     /// against. Empty where the project declares no registry.
     pub registry:   &'a crate::RegistryView,
+    /// The repository's index of its documents, kept by the engine in the user cache and
+    /// refreshed before the tool runs. A tool asks it for ranked, dated, classed hits instead of
+    /// reading the tree itself. [`crate::NoIndex`] where there is nothing to read.
+    pub index:      &'a dyn crate::RepoIndex,
 }
 
 /// What a tool returns.

@@ -236,7 +236,9 @@ pub(crate) fn run(
         },
     };
     let view = crate::registry::build_view(&registry, &cfg.registry_namespaces);
+    let index = crate::index::engine::for_run(&cfg);
     let ctx = ToolContext {
+        index: &index,
         mock_dir: &cfg.mock_dir,
         repo_root: &cfg.repo_root,
         all_crates: &all_crate_names,

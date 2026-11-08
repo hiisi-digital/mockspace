@@ -196,6 +196,7 @@ fn changelog_run() -> ToolReport {
         args:       &[],
         stdin:      None,
         registry:   &Default::default(),
+        index:      &crate::NoIndex,
     };
     Changelog.run(&ctx)
 }

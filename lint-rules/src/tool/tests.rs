@@ -21,6 +21,7 @@ fn ctx<'a>(
         args,
         stdin: None,
         registry,
+        index: &crate::NoIndex,
     }
 }
 

@@ -80,6 +80,12 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # the digests `mock test` keys its selection and its cache on, kept across runs,
 # so a hash whose output is fixed rather than std's, which may change with rustc
 sha2 = "0.10"
+# The repository index (`src/index`): full-text search with BM25 ranking, kept in the user cache.
+# `bundled` compiles SQLite with FTS5 in, so the engine needs no system library and every machine
+# ranks with the same engine version. Licences: `rusqlite` and `libsqlite3-sys` are MIT, the
+# bundled SQLite is public domain, and its build dependencies `cc`, `pkg-config` and `vcpkg` are
+# MIT or Apache-2.0, all on the allow list in `deny.toml`.
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = "3"

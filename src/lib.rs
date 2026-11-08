@@ -34,6 +34,7 @@ pub mod document;
 pub mod dylib_check;
 mod entry;
 pub mod graph;
+pub mod index;
 pub mod lint;
 pub mod lint_catalogue;
 pub mod model;
@@ -93,6 +94,10 @@ pub use mockspace_lint_rules::tool;
 pub use mockspace_lint_rules::{
     AgentMode,
     CrateLint,
+    DocClass,
+    IndexHit,
+    IndexQuery,
+    IndexReport,
     Invocation,
     Level,
     Lint,
@@ -104,7 +109,9 @@ pub use mockspace_lint_rules::{
     MessageContext,
     MessageDomain,
     MessageLint,
+    NoIndex,
     RepoContext,
+    RepoIndex,
     RepoLint,
     Severity,
     WorkspaceLint,

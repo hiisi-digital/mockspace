@@ -41,6 +41,8 @@
 pub mod canon_not_while_panel_open;
 pub mod registry_view;
 pub use registry_view::{RegistryView, RowFields};
+pub mod repo_index;
+pub use repo_index::{DocClass, IndexHit, IndexQuery, IndexReport, NoIndex, RepoIndex};
 mod actionable_errors;
 mod changelist_doc_gate;
 pub mod changelist_helpers;

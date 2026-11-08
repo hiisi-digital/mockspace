@@ -272,6 +272,14 @@ pub struct Config {
     /// one) would be a guess this crate has no standing to make.
     pub canon_paths: Vec<String>,
 
+    /// Places a human's captured words may be, each a path read from the repository root and from
+    /// every directory above it, so a layout where the captures sit in a workspace around the
+    /// repository and one where they sit in a sibling clone are both a path here. The first that
+    /// exists is indexed as the human class, and only the captures naming `project_name` are kept.
+    /// The environment variable `MOCKSPACE_CAPTURES` names a directory and wins over these.
+    /// Empty means the repository declares no captures, and the index says so in every report.
+    pub index_captures: Vec<String>,
+
     /// How many seats a panel may mint before `mock panel seat` refuses
     /// until a consolidation is recorded. See `crate::panel` for the whole
     /// mechanism this gates.
@@ -649,6 +657,10 @@ struct RawConfig {
     /// `Config::canon_paths`.
     #[serde(default)]
     canon_paths: Vec<String>,
+
+    /// Where a human's captured words are kept. See `Config::index_captures`.
+    #[serde(default)]
+    index_captures: Vec<String>,
 
     /// How many seats a panel mints before a consolidation is required.
     /// Absent means the built-in default; see `crate::panel::DEFAULT_CONSOLIDATE_EVERY`.
@@ -1227,6 +1239,7 @@ impl Config {
             crate_grouping: raw.crate_grouping.unwrap_or_default(),
             primitive_introductions: raw.primitive_introductions.unwrap_or_default(),
             canon_paths: raw.canon_paths,
+            index_captures: raw.index_captures,
             panel_consolidate_every: raw
                 .panel_consolidate_every
                 .unwrap_or(crate::panel::DEFAULT_CONSOLIDATE_EVERY),
