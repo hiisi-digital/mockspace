@@ -16,11 +16,15 @@
 //! untracked and changed.
 //!
 //! Dropping `GIT_INDEX_FILE` means a `git commit -a` temporary index is not
-//! consulted. For *detection* that changes nothing, since the gates scan
+//! consulted by a child git. For *detection* that changes nothing, since the gates scan
 //! staged, unstaged and untracked state alike. For *content* it can: a file
 //! staged and then further modified reads as its index blob while a `commit -a`
 //! in flight would commit the worktree blob. The case is catalogued in the
 //! changelist-required lint, at `staged_or_worktree`.
+//!
+//! The value is kept, though, as `hook_index_file`, for the one question that needs the index
+//! git is committing: which files the commit changes. Under `git commit -a` or
+//! `git commit <path>` that is a temporary index, and `.git/index` does not hold the edit.
 //!
 //! This also strips a `GIT_DIR`/`GIT_WORK_TREE` pair a user exported on purpose,
 //! the bare dotfiles-repo pattern. Running the engine inside such an environment
@@ -30,6 +34,15 @@
 //! processes, two entries, and neither can reach the other's: sharing one list
 //! would mean the engine depending on the launcher's crate, which is a
 //! dependency in the wrong direction for the sake of seven strings.
+
+/// The `GIT_INDEX_FILE` the process was started with, as `sanitize_git_env` found it. Relative to
+/// the directory git ran the hook in, which is the top of the work tree.
+static HOOK_INDEX: std::sync::OnceLock<Option<std::ffi::OsString>> = std::sync::OnceLock::new();
+
+/// The index file git handed this process, when it was started by a hook that has one.
+pub fn hook_index_file() -> Option<&'static std::ffi::OsStr> {
+    HOOK_INDEX.get()?.as_deref()
+}
 
 /// The variables that say *where the repository is*. Everything else git
 /// exports, and the authoring identity in particular, is left alone.
@@ -56,6 +69,8 @@ pub const GIT_REPO_ENV: &[&str] = &[
 /// thread reads it, including indirectly through `Command::spawn` or any libc
 /// function that walks `environ`, is undefined behaviour.
 pub unsafe fn sanitize_git_env() {
+    // Kept before it is dropped, once: a second call would find it already gone.
+    HOOK_INDEX.get_or_init(|| std::env::var_os("GIT_INDEX_FILE").filter(|v| !v.is_empty()));
     for var in GIT_REPO_ENV {
         // SAFETY: the caller guarantees no other thread exists yet.
         unsafe { std::env::remove_var(var) };

@@ -35,31 +35,51 @@ pub(crate) enum Changed {
 }
 
 impl Changed {
-    /// The scope of a run.
+    /// The scope of a run, for the index the hook that started it was given.
     pub(crate) fn of_run(mode: LintMode, repo_root: &Path) -> Self {
+        Self::of_run_with_index(
+            mode,
+            repo_root,
+            super::env::hook_index_file().map(Path::new),
+        )
+    }
+
+    /// The scope of a run. `index` is the `GIT_INDEX_FILE` of the hook: under `git commit -a` or
+    /// `git commit <path>` git commits a temporary index and leaves `.git/index` as it was, so the
+    /// commit's files are only in the one it hands the hook. A relative one is relative to the top
+    /// of the work tree.
+    pub(crate) fn of_run_with_index(
+        mode: LintMode,
+        repo_root: &Path,
+        index: Option<&Path>,
+    ) -> Self {
         let paths = match mode {
             LintMode::Commit => {
-                git_paths(repo_root, &[
-                    "diff",
-                    "--cached",
-                    "--name-only",
-                    "-z",
-                    "--no-renames",
-                    "--relative",
-                ])
+                git_paths(
+                    repo_root,
+                    &["diff", "--cached", "--name-only", "-z", "--no-renames", "--relative"],
+                    index.map(|i| repo_root.join(i)),
+                )
             },
+            // A merge commit lists no file unless asked, so the first parent's diff is asked for:
+            // what the merge brought in.
             LintMode::Push => {
-                git_paths(repo_root, &[
-                    "log",
-                    "--name-only",
-                    "--format=",
-                    "-z",
-                    "--no-renames",
-                    "--relative",
-                    "HEAD",
-                    "--not",
-                    "--remotes",
-                ])
+                git_paths(
+                    repo_root,
+                    &[
+                        "log",
+                        "--name-only",
+                        "--format=",
+                        "-z",
+                        "--no-renames",
+                        "--relative",
+                        "--diff-merges=first-parent",
+                        "HEAD",
+                        "--not",
+                        "--remotes",
+                    ],
+                    None,
+                )
             },
             LintMode::Build => return Self::NotCommit,
         };
@@ -92,13 +112,13 @@ pub(crate) fn verdict(f: &RegistryFinding, changed: &Changed) -> Verdict {
 }
 
 /// The files a git listing names, absolute. `None` when git cannot say.
-fn git_paths(repo_root: &Path, args: &[&str]) -> Option<Vec<PathBuf>> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(args)
-        .output()
-        .ok()?;
+fn git_paths(repo_root: &Path, args: &[&str], index: Option<PathBuf>) -> Option<Vec<PathBuf>> {
+    let mut git = Command::new("git");
+    git.arg("-C").arg(repo_root).args(args);
+    if let Some(index) = index {
+        git.env("GIT_INDEX_FILE", index);
+    }
+    let out = git.output().ok()?;
     if !out.status.success() {
         return None;
     }
