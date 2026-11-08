@@ -340,6 +340,7 @@ pub(crate) fn collect_inputs(tree: &Tree) -> Option<(Inputs, Roots)> {
     let json: serde_json::Value = serde_json::from_slice(&meta).ok()?;
     let members = members_from_metadata(&json, tree.generated_manifest).ok()?;
     let mut roots = path_roots(&json, tree.generated_manifest);
+    roots.allow_macros(super::macro_purity::macro_closures(&json));
     roots.add("repo", tree.repo_root);
     roots.add("lints", tree.lints_dir);
     roots.allow_absolute(tree.cargo_home);
@@ -373,3 +374,7 @@ mod tests;
 #[cfg(test)]
 #[path = "identity_e2e_tests.rs"]
 mod e2e;
+
+#[cfg(test)]
+#[path = "macro_purity_e2e_tests.rs"]
+mod macro_e2e;
