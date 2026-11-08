@@ -164,7 +164,7 @@ pub fn crate_lint(lint: &dyn CrateLint, corpus: &[(&str, &str)], roots: &Roots) 
                 ));
             }
         },
-        Reach::Workspace | Reach::Repository => {},
+        Reach::Workspace | Reach::Paths(_) | Reach::Repository => {},
     }
     Ok(seen)
 }

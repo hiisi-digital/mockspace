@@ -16,10 +16,14 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod fold;
+pub(crate) mod touched;
 pub mod verdicts;
 
 #[cfg(test)]
 mod scope_tests;
+
+#[cfg(test)]
+mod reads_tests;
 
 use mockspace_lint_rules::{
     self,
@@ -31,6 +35,7 @@ use mockspace_lint_rules::{
     LintMode,
     LintPack,
     RepoContext,
+    Touched,
     collect_crate_sources,
     timing,
 };
@@ -281,6 +286,9 @@ pub fn run_lints(
     primitive_introductions: &std::collections::BTreeMap<String, Vec<String>>,
     pack: &LintPack,
 ) -> usize {
+    // What the commit changes, for the lints declaring the paths they read (see `touched`).
+    let touched_files = touched::of_run(mode, mock_dir.parent().unwrap_or(mock_dir), mock_dir);
+    let touched = touched_files.as_deref().map_or(Touched::Everything, Touched::Files);
     // A duplicated lint name is a configuration error, not a linting result:
     // every finding would double and `[lints.<name>]` would be ambiguous
     // between the registrations. Error and guide before running anything,
@@ -404,6 +412,7 @@ pub fn run_lints(
         doc_only,
         overrides,
         &pack.repo_lints,
+        &touched,
     ));
 
     // Partition by effective severity
