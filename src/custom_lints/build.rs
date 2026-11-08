@@ -89,6 +89,9 @@ pub(crate) struct Unit {
     pub files:     Vec<PathBuf>,
     pub fresh:     bool,
     pub tree_code: bool,
+    /// Whether the unit is a procedural macro. It is the one kind of tree code whose reads can be
+    /// checked against its own sources; a build script is arbitrary code and never is.
+    pub proc_macro: bool,
 }
 
 /// What a build made, and when it began.
@@ -218,16 +221,16 @@ fn artifact_unit(line: &str) -> Option<Unit> {
         .iter()
         .filter_map(|f| f.as_str().map(PathBuf::from))
         .collect();
-    let runs_while_building = msg
-        .get("target")
-        .and_then(|t| t.get("kind"))
-        .and_then(|k| k.as_array())
-        .is_some_and(|kinds| kinds.iter().any(|k| k == "custom-build" || k == "proc-macro"));
+    let kinds = msg.get("target").and_then(|t| t.get("kind")).and_then(|k| k.as_array());
+    let proc_macro = kinds.is_some_and(|kinds| kinds.iter().any(|k| k == "proc-macro"));
+    let runs_while_building =
+        proc_macro || kinds.is_some_and(|kinds| kinds.iter().any(|k| k == "custom-build"));
     let in_tree = msg.get("package_id").and_then(|p| p.as_str()).is_some_and(|p| p.contains("path+"));
     Some(Unit {
         files,
         fresh: msg.get("fresh").and_then(|f| f.as_bool()).unwrap_or(false),
         tree_code: runs_while_building && in_tree,
+        proc_macro,
     })
 }
 

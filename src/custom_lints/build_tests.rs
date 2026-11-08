@@ -71,6 +71,8 @@ fn a_unit_is_tree_code_when_it_runs_while_building_and_its_package_is_a_path() {
     let unit = |id: &str, kind: &str| artifact_unit(&artifact(id, kind, true)).unwrap();
     assert!(unit("path+file:///r/tools/t#t@0.0.0", "custom-build").tree_code);
     assert!(unit("path+file:///r/tools/t#t@0.0.0", "proc-macro").tree_code);
+    assert!(unit("path+file:///r/tools/t#t@0.0.0", "proc-macro").proc_macro);
+    assert!(!unit("path+file:///r/tools/t#t@0.0.0", "custom-build").proc_macro);
     assert!(unit("t 0.0.0 (path+file:///r/tools/t)", "custom-build").tree_code);
     assert!(!unit("path+file:///r/tools/t#t@0.0.0", "lib").tree_code);
     assert!(!unit("registry+https://github.com/rust-lang/crates.io-index#t@1.0.0", "custom-build").tree_code);

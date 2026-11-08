@@ -291,7 +291,7 @@ fn the_unit_dep_info_is_named_for_the_unit_wherever_the_output_was_linked() {
 fn with_unit(dylib: &Path, source: &Path, fresh: bool, tree_code: bool) -> Built {
     let deps = dylib.parent().unwrap().join("deps");
     std::fs::write(deps.join("tool-0f.d"), format!("tool-0f.rlib: {}\n", source.display())).unwrap();
-    let unit = Unit { files: vec![deps.join("libtool-0f.rlib")], fresh, tree_code };
+    let unit = Unit { files: vec![deps.join("libtool-0f.rlib")], fresh, tree_code, proc_macro: false };
     Built { units: vec![unit], ..made(dylib, later(), false) }
 }
 
@@ -331,7 +331,7 @@ fn a_unit_without_dep_info_leaves_nothing_kept() {
     let tmp = tempfile::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let dylib = built(&gen_dir, "out.d: \n");
-    let unit = Unit { files: vec![dylib.parent().unwrap().join("deps").join("libabsent-1.rlib")], fresh: false, tree_code: false };
+    let unit = Unit { files: vec![dylib.parent().unwrap().join("deps").join("libabsent-1.rlib")], fresh: false, tree_code: false, proc_macro: false };
     let build = Built { units: vec![unit], ..made(&dylib, later(), false) };
     assert!(record(&build, &gen_dir, &Roots::default(), Duration::ZERO).is_none());
 }
@@ -413,7 +413,42 @@ fn a_registry_source_is_never_touched_to_make_cargo_rebuild_its_unit() {
         .unwrap()
         .set_modified(SystemTime::now() - Duration::from_secs(3600))
         .unwrap();
-    let unit = Unit { files: vec![deps.join("libtool-0f.rlib")], fresh: true, tree_code: false };
+    let unit = Unit { files: vec![deps.join("libtool-0f.rlib")], fresh: true, tree_code: false, proc_macro: false };
     let build = Built { units: vec![unit], ..made(&dylib, later(), false) };
     assert_eq!(newer_than_their_units(&build, &gen_dir), [own], "the control: a source of the tree is");
+}
+
+/// A procedural macro of the tree, built from `source`, as the unit list of a build reports it.
+fn with_macro(dylib: &Path, source: &Path) -> Built {
+    let mut built = with_unit(dylib, source, false, true);
+    built.units[0].proc_macro = true;
+    built
+}
+
+#[test]
+fn a_derive_macro_of_the_tree_that_reads_only_its_input_keeps_the_library() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gen_dir = tmp.path().join("gen");
+    let source = tmp.path().join("lints").join("derive.rs");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, "pub fn derive(input: TokenStream) -> TokenStream { input }").unwrap();
+    let mut roots = Roots::default();
+    roots.add("lints", source.parent().unwrap());
+    let dylib = built(&gen_dir, "out.d: \n");
+    assert!(record(&with_macro(&dylib, &source), &gen_dir, &roots, Duration::ZERO).is_some());
+}
+
+#[test]
+fn a_macro_of_the_tree_that_can_read_a_file_or_a_variable_leaves_nothing_kept() {
+    for body in ["std::fs::read(p)", "env::var(\"X\")", "include_str!(\"f\")", "Command::new(\"x\")"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let gen_dir = tmp.path().join("gen");
+        let source = tmp.path().join("lints").join("derive.rs");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, format!("fn derive() {{ {body}; }}")).unwrap();
+        let mut roots = Roots::default();
+        roots.add("lints", source.parent().unwrap());
+        let dylib = built(&gen_dir, "out.d: \n");
+        assert!(record(&with_macro(&dylib, &source), &gen_dir, &roots, Duration::ZERO).is_none(), "{body}");
+    }
 }

@@ -229,7 +229,9 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
         .map(|d| d.canonicalize().unwrap_or_else(|_| d.to_path_buf()))
         .collect();
     // Code that runs while building and belongs to the tree writes files no dep-info lists.
-    if units.iter().any(|u| u.tree_code) {
+    // A procedural macro in the tree is held to its sources when none of them can read a file the
+    // dep-info does not list, so a repo with derive crates of its own still keeps its library.
+    if units.iter().any(|u| u.tree_code && !(u.proc_macro && reads_only_its_input(u))) {
         return None;
     }
     let mut deps = Vec::new();
@@ -292,6 +294,31 @@ pub(crate) fn record(built: &Built, gen_dir: &Path, roots: &Roots, margin: Durat
     deps.sort_by(|a, b| a.name.cmp(&b.name));
     deps.dedup();
     Some(deps)
+}
+
+/// Spellings through which a macro reaches a file, a variable or a process.
+const OUTSIDE_READS: [&str; 8] = [
+    "std::fs",
+    "fs::",
+    "File::",
+    "env::var",
+    "env!",
+    "include",
+    "Command",
+    "tracked_path",
+];
+
+/// Whether every source a procedural macro was built from is readable and none names a way of
+/// reaching outside its token input. Unreadable dep-info or source answers no.
+fn reads_only_its_input(unit: &Unit) -> bool {
+    let Some(info) = info_of_unit(unit).and_then(|p| std::fs::read_to_string(p).ok()) else {
+        return false;
+    };
+    let sources = sources_of(&info);
+    !sources.is_empty()
+        && sources.iter().all(|s| {
+            std::fs::read_to_string(s).is_ok_and(|text| !OUTSIDE_READS.iter().any(|w| text.contains(w)))
+        })
 }
 
 /// The dep-info beside a library: cargo leaves `libname.so` and `libname.d` together. That copy
