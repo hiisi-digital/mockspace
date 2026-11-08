@@ -49,8 +49,11 @@ An item of three or more is a file citation into a root, checked as in
 [Addressing a citation](#addressing-a-citation). The two cannot be mistaken for
 each other, and each is held to its own rule: a link naming no row is
 `unknown-row-reference`, and one whose slug is not a slug is
-`malformed-row-reference`. Both gate only the commit that stages the file the
-row lives in, and are warnings on a plain run or a commit leaving it alone.
+`malformed-row-reference`. Only the first is scoped: a link naming no row gates the
+commit or push that changes the file holding the link, and is a warning on a plain
+run or one that leaves that file alone, so a row can be retired before every
+citation of it is gone. A template citing a row is scoped the same way, to the
+template. A slug that is not a slug, and every other finding, gates every run.
 
 **A field per target namespace (`bevy`, `ikiuni`, `canon`) is wrong.** It turns
 the schema into a list of places a relation may be written, lets one relation be
