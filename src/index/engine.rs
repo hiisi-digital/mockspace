@@ -72,23 +72,29 @@ pub fn sources_for(cfg: &Config) -> Vec<Source> {
     out
 }
 
-/// The file each row was declared in, relative to the repository root, so a tool can ask when the
-/// canon that holds a row last changed. A source outside the root is shown as it is.
+/// The file each canon row was declared in, relative to the repository root, so a tool can ask when
+/// the canon that holds a row last changed. Only a file the repository declares as canon in
+/// `canon_paths` counts: a ticket or a note changes daily and says nothing settled. A source
+/// outside the root is shown as it is.
 #[must_use]
 pub fn row_sources(
     reg: &crate::registry::Registry,
     repo_root: &Path,
+    canon_paths: &[String],
 ) -> std::collections::BTreeMap<String, String> {
     reg.rows
         .iter()
-        .map(|(q, row)| {
+        .filter_map(|(q, row)| {
             let shown = row
                 .source
                 .strip_prefix(repo_root)
                 .unwrap_or(&row.source)
                 .to_string_lossy()
                 .replace('\\', "/");
-            (q.clone(), shown)
+            canon_paths
+                .iter()
+                .any(|g| mockspace_lint_rules::glob_match_anchored(g, &shown))
+                .then(|| (q.clone(), shown))
         })
         .collect()
 }

@@ -236,7 +236,7 @@ pub(crate) fn run(
         },
     };
     let view = crate::registry::build_view(&registry, &cfg.registry_namespaces)
-        .with_sources(crate::index::engine::row_sources(&registry, &cfg.repo_root));
+        .with_sources(crate::index::engine::row_sources(&registry, &cfg.repo_root, &cfg.canon_paths));
     let index = crate::index::engine::for_run(&cfg);
     let ctx = ToolContext {
         index: &index,

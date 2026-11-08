@@ -19,10 +19,35 @@ fn a_row_s_source_is_shown_from_the_repository_root() {
         };
         reg.rows.insert(row.qualified(), row);
     }
-    let got = row_sources(&reg, root);
+    let canon = ["mock/registry/tenet/*.toml".to_string(), "/elsewhere/*.toml".to_string()];
+    let got = row_sources(&reg, root, &canon);
     assert_eq!(got["tenet::a"], "mock/registry/tenet/workflow.toml");
     // THE CONTROL: a source outside the root is shown whole, not cut to something that looks inside.
     assert_eq!(got["tenet::b"], "/elsewhere/outside.toml");
+}
+
+#[test]
+fn only_a_file_the_repository_declares_canon_gives_its_rows_a_source() {
+    let root = Path::new("/work/repo");
+    let mut reg = Registry::default();
+    for (slug, ns, file) in [
+        ("a", "tenet", "/work/repo/mock/registry/tenet/workflow.toml"),
+        ("t", "ticket", "/work/repo/mock/registry/ticket/items/t.toml"),
+    ] {
+        let row = RegistryRow {
+            slug:      slug.into(),
+            namespace: ns.into(),
+            source:    file.into(),
+            fields:    Default::default(),
+        };
+        reg.rows.insert(row.qualified(), row);
+    }
+    let canon = ["mock/registry/tenet/*.toml".to_string()];
+    let got = row_sources(&reg, root, &canon);
+    assert!(got.contains_key("tenet::a"));
+    // THE CONTROL: a ticket changes daily and says nothing settled, so it has no canon source.
+    assert!(!got.contains_key("ticket::t"));
+    assert!(row_sources(&reg, root, &[]).is_empty(), "no declared canon, no canon sources");
 }
 
 fn mk(root: &Path, rel: &str) {
