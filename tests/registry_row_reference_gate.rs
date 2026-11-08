@@ -34,7 +34,7 @@ fn write(path: &Path, content: &str) {
 /// memberless because that is the shape the cargo gate forgives, so a fixture
 /// fails for the reason under test rather than for a missing workspace.
 fn fixture(root: &Path, config: &str, rows: &str) {
-    fs::create_dir_all(root.join(".git")).unwrap();
+    common::git_init(root);
     let mock = root.join("mock");
     write(
         &mock.join("Cargo.toml"),
@@ -121,8 +121,11 @@ fn a_registry_whose_row_references_resolve_passes() {
     );
 }
 
+/// A reference to a row that no row declares gates the commit that stages its file, and is a
+/// warning on a plain run, which changes nothing.
 #[test]
-fn a_slug_naming_no_row_fails_the_command() {
+fn a_slug_naming_no_row_warns_on_a_plain_run() {
+    assert!(taplo_present(), "taplo absent: a plain run exits 0 only when the schema check ran");
     let tmp = tempfile::tempdir().unwrap();
     fixture(
         tmp.path(),
@@ -130,9 +133,32 @@ fn a_slug_naming_no_row_fails_the_command() {
         &GOOD_ROWS.replace("slot = \"display\"", "slot = \"nosuch\""),
     );
     let out = run(tmp.path());
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("warning [unknown-row-reference]"),
+        "the reference was not reported: {}",
+        stderr(&out)
+    );
+}
+
+/// The case that must fail: the same registry, with the citing file staged.
+#[test]
+fn a_slug_naming_no_row_fails_the_commit_staging_its_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    fixture(
+        tmp.path(),
+        TWO_NAMESPACES,
+        &GOOD_ROWS.replace("slot = \"display\"", "slot = \"nosuch\""),
+    );
+    common::git_in_dir(tmp.path(), &["add", "-A"]);
+    let out = common::mockspace()
+        .current_dir(tmp.path().join("mock"))
+        .args(["--lint-only", "--commit", "--scope", "infra"])
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert!(
-        stderr(&out).contains("unknown-row-reference"),
+        stderr(&out).contains("ERROR [unknown-row-reference]"),
         "the run failed, but not for this reason: {}",
         stderr(&out)
     );

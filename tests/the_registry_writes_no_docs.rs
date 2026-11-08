@@ -150,10 +150,10 @@ fn a_template_prints_a_namespace_as_a_table() {
     assert!(doc.contains("| a |"), "the row's value is missing from the table:\n{doc}");
 }
 
-/// The case that must fail: a template reading a row that does not exist is reported and
-/// stops generation, rather than printing something that looks checked.
+/// A template reading a row that does not exist is reported, and generation goes on. A plain
+/// run changes no file, so the report is a warning and the run succeeds.
 #[test]
-fn a_template_reading_a_missing_row_fails_generation() {
+fn a_template_reading_a_missing_row_warns_on_a_plain_generation() {
     let r = with_registry();
     write(
         &r.root.join("mock/ALPHA.md.tmpl"),
@@ -166,8 +166,31 @@ fn a_template_reading_a_missing_row_fails_generation() {
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "a reference to nothing generated cleanly:\n{stderr}");
-    assert!(stderr.contains("dangling-reference"), "the failure was not named:\n{stderr}");
+    assert!(out.status.success(), "a plain run is not blocked by a reference:\n{stderr}");
+    assert!(
+        stderr.contains("warning [dangling-reference]") && stderr.contains("ALPHA.md"),
+        "the reference was not reported against its document:\n{stderr}"
+    );
+}
+
+/// The case that must fail: the same template, staged, with the commit's own generation run.
+#[test]
+fn a_template_reading_a_missing_row_fails_the_commit_staging_it() {
+    let r = with_registry();
+    write(
+        &r.root.join("mock/ALPHA.md.tmpl"),
+        "The question: {{ spike::nosuch::question }}\n",
+    );
+    r.git(&["add", "-A"]);
+    let out = r
+        .cmd(common::BIN)
+        .current_dir(r.root.join("mock"))
+        .args(["--generate-only", "--commit"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a staged template citing nothing passed:\n{stderr}");
+    assert!(stderr.contains("ERROR [dangling-reference]"), "the failure was not named:\n{stderr}");
 }
 
 /// A query for a namespace prints its rows as a table on stdout.
