@@ -262,11 +262,11 @@ fn agent_gate_hook_self_heals_then_blocks() {
 fn gate_intact_in(clone: &std::path::Path) -> bool {
     let hook = builtin_mockspace_gate();
     let start = hook.find("_gate_intact() {").expect("the check is defined");
-    let end = hook[start..].find("\n}\n").expect("the check ends") + start + 3;
+    let end = hook[start ..].find("\n}\n").expect("the check ends") + start + 3;
     let script = format!(
         "root='{}'\nvalidator=\"$root/mock/target/hooks/pre-commit\"\n{}\n_gate_intact\n",
         clone.display(),
-        &hook[start..end]
+        &hook[start .. end]
     );
     std::process::Command::new("bash")
         .args(["-c", &script])
@@ -1084,7 +1084,18 @@ fn the_catalogues_rule_carries_the_lints_the_repository_set_as_well_as_the_tools
         "and the lint half, which the old key's name did not cover:\n{}",
         rule.body
     );
-    let row = |name: &str| rule.body.lines().any(|l| l.starts_with(&format!("    {name} ")));
+    // A lint's own name among the lines under the group heading, whole: a prefix of another
+    // name is not it.
+    let row = |name: &str| {
+        rule.body
+            .split("LINTS SET HERE")
+            .nth(1)
+            .is_some_and(|lints| {
+                lints
+                    .split(|c: char| c == ',' || c == ':' || c.is_whitespace())
+                    .any(|w| w == name)
+            })
+    };
     // A lint's own row, not the group heading: a heading is emitted whether or
     // not anything is under it.
     assert!(
@@ -1116,9 +1127,16 @@ fn a_lint_the_repository_turned_off_is_not_in_the_catalogues_rule() {
         .base
         .insert(name.to_string(), mockspace_lint_rules::Severity::OFF);
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
-    let rule = builtins.rules.iter().find(|r| r.name == "catalogues").unwrap();
+    let rule = builtins
+        .rules
+        .iter()
+        .find(|r| r.name == "catalogues")
+        .unwrap();
     assert!(
-        !rule.body.lines().any(|l| l.starts_with(&format!("    {name} "))),
+        !rule
+            .body
+            .lines()
+            .any(|l| l.starts_with(&format!("    {name} "))),
         "{}",
         rule.body
     );
@@ -1132,10 +1150,22 @@ fn a_lint_the_repository_turned_off_is_not_in_the_catalogues_rule() {
 fn the_catalogues_rule_for_a_repository_that_set_nothing_is_a_pointer() {
     let cfg = crate::config::Config::from_dir(&skill_fixture(None));
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
-    let rule = builtins.rules.iter().find(|r| r.name == "catalogues").unwrap();
+    let rule = builtins
+        .rules
+        .iter()
+        .find(|r| r.name == "catalogues")
+        .unwrap();
     let size = rule.body.len();
-    assert!(size < 1_500, "{size} bytes for a repository that set nothing:\n{}", rule.body);
-    assert!(size > 300, "{size} bytes: the pointer to the two commands is missing:\n{}", rule.body);
+    assert!(
+        size < 1_500,
+        "{size} bytes for a repository that set nothing:\n{}",
+        rule.body
+    );
+    assert!(
+        size > 300,
+        "{size} bytes: the pointer to the two commands is missing:\n{}",
+        rule.body
+    );
 }
 
 #[test]
