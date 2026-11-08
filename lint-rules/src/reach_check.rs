@@ -26,13 +26,15 @@
 //!   workspace's crate names are held fixed, because they are part of the crate's key
 //!   ([`crate::verdict::crate_digest`]) and a crate lint may read them.
 //! - **Workspace**: the directory behind `workspace_root`.
+//! - **Paths** (a repo lint, [`repo_lint`]): every file of the tree that no declared glob matches,
+//!   changed, then removed, then a file added beside them.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::testkit::LintFixture;
 use crate::verdict::encode;
-use crate::{CrateLint, CrateSourceFile, LintContext, LintError, Reach, WorkspaceLint};
+use crate::{CrateLint, CrateSourceFile, LintContext, LintError, Reach, RepoLint, WorkspaceLint};
 
 /// Two directories a lint could be made to read through `workspace_root`: one with content a lint
 /// might look for, one without. The findings must not depend on which.
@@ -164,7 +166,7 @@ pub fn crate_lint(lint: &dyn CrateLint, corpus: &[(&str, &str)], roots: &Roots) 
                 ));
             }
         },
-        Reach::Workspace | Reach::Paths(_) | Reach::Repository => {},
+        Reach::Workspace | Reach::Paths(_) | Reach::Repository => {},| Reach::Paths(_) | Reach::Repository => {},
     }
     Ok(seen)
 }
@@ -213,4 +215,73 @@ pub fn workspace_lint(
             b.len(),
         ))
     }
+}
+
+/// Holds a repo lint declaring [`Reach::Paths`] to its globs. `tree` is the repository the lint
+/// reads, as `(path, text)`, and `scratch` an empty directory the caller owns, which the check
+/// writes the tree into once per arm.
+///
+/// Every file of the tree that no glob matches is changed, then removed, and a file is added
+/// beside them; the findings must be those of the reference run each time. A tree with no file
+/// outside the globs is given one, since there would be nothing to move. On success, the number of
+/// findings of the reference run, which a caller asserts is above zero, as for [`crate_lint`].
+/// `Ok(0)` for a lint declaring any other reach.
+///
+/// # Errors
+///
+/// A description of the first file outside the globs whose movement changed the findings.
+pub fn repo_lint(lint: &dyn RepoLint, tree: &[(&str, &str)], scratch: &Path) -> Result<usize, String> {
+    let Reach::Paths(globs) = lint.reach() else {
+        return Ok(0);
+    };
+    let outside = |p: &str| !globs.iter().any(|g| crate::glob_match_anchored(g, p));
+    let mut files: Vec<(String, String)> = tree.iter().map(|(p, t)| ((*p).to_string(), (*t).to_string())).collect();
+    if !files.iter().any(|(p, _)| outside(p)) {
+        files.push(("zz-outside.txt".to_string(), "outside\n".to_string()));
+    }
+    let arm = |n: usize, files: &[(String, String)]| -> Vec<LintError> {
+        let root = scratch.join(format!("arm{n}"));
+        for (p, t) in files {
+            let path = root.join(p);
+            std::fs::create_dir_all(path.parent().unwrap_or(&root)).expect("a scratch directory");
+            std::fs::write(path, t).expect("a scratch file");
+        }
+        let (crates, registry) = (std::collections::BTreeSet::new(), crate::RegistryView::default());
+        let ctx = crate::RepoContext {
+            mock_dir:    &root,
+            repo_root:   &root,
+            all_crates:  &crates,
+            src_dirs:    &[],
+            invocation:  None,
+            canon_paths: &[],
+            open_panels: &[],
+            registry:    &registry,
+            verdicts:    None,
+        };
+        lint.check_repo(&ctx)
+    };
+    let reference = arm(0, &files);
+    let mut n = 1;
+    for (i, (path, _)) in files.iter().enumerate().filter(|(_, (p, _))| outside(p)) {
+        let mut changed = files.clone();
+        changed[i].1.push_str("\nbroken changed todo\n");
+        let mut removed = files.clone();
+        removed.remove(i);
+        let mut added = files.clone();
+        added.push((format!("{path}.added"), "broken added\n".to_string()));
+        for (what, variant) in [("changed", changed), ("removed", removed), ("added beside", added)] {
+            let moved = arm(n, &variant);
+            n += 1;
+            if !same(&reference, &moved) {
+                return Err(format!(
+                    "`{}` declares `Reach::Paths`, but its findings changed when `{path}`, which no \
+                     glob matches, was {what}: {} against {}. It reads past its globs; widen them",
+                    lint.name(),
+                    reference.len(),
+                    moved.len(),
+                ));
+            }
+        }
+    }
+    Ok(reference.len())
 }

@@ -146,7 +146,7 @@ fn lint_crate_key(
 /// What names the repo across worktrees and clones: its `origin` url with the
 /// scheme, user and `.git` taken off, else the git directory every worktree of
 /// the clone shares, else the path.
-fn repo_identity(repo_root: &Path) -> String {
+pub(crate) fn repo_identity(repo_root: &Path) -> String {
     if let Some(url) = git_line(repo_root, &["config", "--get", "remote.origin.url"]) {
         return format!("remote:{}", normalise_remote(&url));
     }

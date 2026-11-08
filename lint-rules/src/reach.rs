@@ -8,7 +8,11 @@
 //! A gate run that repeats work is repeating a verdict whose inputs did not move. To skip it the
 //! engine has to know the inputs, and only the lint knows them, so the lint says. The declaration
 //! is a promise about reading: **a lint declaring a reach reads nothing outside it**, and the
-//! engine keys the lint's saved verdict on exactly what the reach names.
+//! engine acts on exactly what the reach names, in one of two ways. [`Reach::File`], [`Reach::Crate`]
+//! and [`Reach::Workspace`] key the lint's saved verdict on the content they cover, so the lint is
+//! replayed when none of it moved. [`Reach::Paths`] is for a repo lint and names repository files
+//! instead: it is never saved, and the commit and push gates do not run it when the commit or the
+//! unpushed commits change none of its globs (`lint::touched`).
 //!
 //! **Declaring none is declaring the widest.** [`Lint::reach`](crate::Lint::reach) defaults to
 //! [`Reach::Repository`], which the engine never caches, so a lint written without knowing this
@@ -16,7 +20,9 @@
 //! choice, and [`reach_check`](crate::reach_check) samples the promise: a lint that reads outside
 //! what it declared gives different findings when only that outside input moves, and the check
 //! fails. A sample is not a proof, which is why a lint that finds nothing on its corpus fails the
-//! built-in test instead of passing it.
+//! built-in test instead of passing it. For `Paths` the check is
+//! [`reach_check::repo_lint`](crate::reach_check::repo_lint), which changes, removes and adds files
+//! no glob matches.
 
 /// How far a lint reads, from one file to the whole repository.
 ///
@@ -149,5 +155,6 @@ mod tests {
         assert!(Reach::Crate.is_cacheable());
         assert!(Reach::Workspace.is_cacheable());
         assert!(!Reach::Repository.is_cacheable(), "the default must never be saved");
+        assert!(!Reach::Paths(&["a/**"]).is_cacheable(), "a path reach is skipped, never replayed");
     }
 }

@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use crate::reach_check::{DESIGN_ENTRY, Roots, crate_lint, workspace_lint};
+use crate::reach_check::{DESIGN_ENTRY, Roots, crate_lint, repo_lint, workspace_lint};
 use crate::{
     CrateLint, Lint, LintContext, LintError, Reach, WorkspaceLint, all_lints,
     all_workspace_lints,
@@ -324,3 +324,103 @@ define_behavior! {
 
 /// A crate root that defines a `define_*` macro and never generates a `Registrable` from it.
 const STACK_LIB: &str = "macro_rules! define_widget { () => {}; }\n";
+
+/// Declares `content/**` and reports whenever any file in the repository says `broken`.
+struct ReadsPastItsPaths;
+
+impl Lint for ReadsPastItsPaths {
+    fn name(&self) -> &'static str {
+        "reads-past-its-paths"
+    }
+
+    fn reach(&self) -> Reach {
+        Reach::Paths(&["content/**"])
+    }
+}
+
+impl crate::RepoLint for ReadsPastItsPaths {
+    fn check_repo(&self, ctx: &crate::RepoContext) -> Vec<LintError> {
+        let broken = walk(ctx.repo_root).iter().any(|f| std::fs::read_to_string(f).is_ok_and(|t| t.contains("broken")));
+        if broken {
+            vec![LintError::error("alpha".to_string(), 0, "reads-past-its-paths", "broken".to_string())]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+/// Reports when a file under `content/` says `broken`, which is inside what it declares.
+struct ReadsOnlyItsPaths;
+
+impl Lint for ReadsOnlyItsPaths {
+    fn name(&self) -> &'static str {
+        "reads-only-its-paths"
+    }
+
+    fn reach(&self) -> Reach {
+        Reach::Paths(&["content/**"])
+    }
+}
+
+impl crate::RepoLint for ReadsOnlyItsPaths {
+    fn check_repo(&self, ctx: &crate::RepoContext) -> Vec<LintError> {
+        let broken = walk(&ctx.repo_root.join("content")).iter().any(|f| std::fs::read_to_string(f).is_ok_and(|t| t.contains("broken")));
+        if broken {
+            vec![LintError::error("alpha".to_string(), 0, "reads-only-its-paths", "broken".to_string())]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else { return out };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out.extend(walk(&p));
+        } else {
+            out.push(p);
+        }
+    }
+    out
+}
+
+const PATHS_TREE: &[(&str, &str)] = &[("content/a.toml", "broken\n"), ("notes/b.txt", "fine\n")];
+
+#[test]
+fn a_paths_lint_reading_a_file_outside_its_globs_fails_the_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let err = repo_lint(&ReadsPastItsPaths, &[("content/a.toml", "fine\n"), ("notes/b.txt", "fine\n")], dir.path())
+        .unwrap_err();
+    assert!(err.contains("which no glob matches"), "{err}");
+}
+
+#[test]
+fn a_paths_lint_reading_only_its_globs_passes_and_found_something() {
+    let dir = tempfile::tempdir().unwrap();
+    let seen = repo_lint(&ReadsOnlyItsPaths, PATHS_TREE, dir.path()).unwrap();
+    assert!(seen > 0, "the control: the lint found its finding, so the pass is not vacuous");
+}
+
+#[test]
+fn a_repo_lint_declaring_another_reach_is_not_this_checks() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(repo_lint(&Undeclared, &[], dir.path()), Ok(0));
+}
+
+/// Declares nothing.
+struct Undeclared;
+
+impl Lint for Undeclared {
+    fn name(&self) -> &'static str {
+        "undeclared"
+    }
+}
+
+impl crate::RepoLint for Undeclared {
+    fn check_repo(&self, _ctx: &crate::RepoContext) -> Vec<LintError> {
+        Vec::new()
+    }
+}

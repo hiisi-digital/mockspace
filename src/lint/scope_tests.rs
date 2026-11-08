@@ -50,6 +50,7 @@ fn run(cfg: &Config, mode: LintMode, scope: Option<&[&str]>, doc_only: bool) -> 
         &crates,
         &cfg.src_dirs,
         &cfg.mock_dir,
+        &cfg.repo_root,
         mode,
         scope.as_deref(),
         doc_only,

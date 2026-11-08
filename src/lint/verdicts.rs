@@ -78,6 +78,19 @@ impl DiskVerdicts {
         Some(store)
     }
 
+    /// The directory the store keeps its entries in.
+    #[must_use]
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// A digest naming this engine and the packs loaded with it, and nothing else: what moves
+    /// when the lint set does, a branch-pinned pack re-resolved included.
+    #[must_use]
+    pub fn lint_set_key(&self) -> String {
+        self.digest(&[b"lint-set"])
+    }
+
     fn path_of(&self, key: &str) -> PathBuf {
         self.dir.join(&key[.. 2]).join(&key[2 ..])
     }
