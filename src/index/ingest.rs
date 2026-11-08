@@ -65,6 +65,20 @@ impl Index {
     /// When the store cannot be written. A file that cannot be read is counted in the caveats and
     /// is not an error.
     pub fn refresh(&mut self, sources: &[Source]) -> Result<Refreshed, IndexError> {
+        self.refresh_dated(sources, None)
+    }
+
+    /// As [`Self::refresh`], and a document whose name carries no date is dated by the commit that
+    /// added it in the git repository at `git_root`, where one is given and its history is whole.
+    ///
+    /// # Errors
+    /// When the store cannot be written.
+    pub fn refresh_dated(
+        &mut self,
+        sources: &[Source],
+        git_root: Option<&std::path::Path>,
+    ) -> Result<Refreshed, IndexError> {
+        self.git_root = git_root.map(std::path::Path::to_path_buf);
         let walked = walk(sources);
         let mut known: BTreeMap<String, Known> = BTreeMap::new();
         {
@@ -128,8 +142,9 @@ impl Index {
             let day = stamp::day_from_path(&f.shown);
             let sketch = if held { Vec::new() } else { shingle::sketch(&raw) };
             tx.execute(
-                "INSERT INTO doc (path, file, class, size, mtime, hash, day, words, sketch, held)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO doc
+                     (path, file, class, size, mtime, hash, day, words, sketch, held, gitdone)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     f.shown,
                     f.file.to_string_lossy(),
@@ -141,6 +156,7 @@ impl Index {
                     i64::try_from(words).unwrap_or(i64::MAX),
                     shingle::to_bytes(&sketch),
                     i64::from(held),
+                    i64::from(day.is_some()),
                 ],
             )?;
             if held {
@@ -163,8 +179,52 @@ impl Index {
         }
         tx.commit()?;
 
-        self.caveats = caveats(sources, &walked.missing, &walked.skipped, unreadable, &self.held());
+        let mut notes = caveats(sources, &walked.missing, &walked.skipped, unreadable, &self.held());
+        notes.extend(self.date_by_git()?);
+        self.caveats = notes;
         Ok(done)
+    }
+
+    /// Date the documents whose names carry no stamp by the commit that added each, in one pass
+    /// over the history. A caveat is returned where that could not be done.
+    fn date_by_git(&mut self) -> Result<Option<String>, IndexError> {
+        let Some(root) = self.git_root.clone() else {
+            return Ok(None);
+        };
+        let pending: Vec<(i64, String)> = {
+            let mut q = self.conn.prepare(
+                "SELECT id, file FROM doc WHERE day IS NULL AND gitdone = 0 AND held = 0",
+            )?;
+            let rows = q.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+            rows.flatten().collect()
+        };
+        if pending.is_empty() {
+            return Ok(None);
+        }
+        if super::gitdays::is_shallow(&root) {
+            return Ok(Some(format!(
+                "{} documents carry no date in their names and the history is shallow, so they \
+                 have none",
+                pending.len()
+            )));
+        }
+        let first = super::gitdays::first_days(&root);
+        let root_canon = root.canonicalize().unwrap_or_else(|_| root.clone());
+        let tx = self.conn.transaction()?;
+        for (id, file) in &pending {
+            let p = std::path::Path::new(file);
+            let rel = p
+                .strip_prefix(&root)
+                .or_else(|_| p.strip_prefix(&root_canon))
+                .ok()
+                .map(|r| r.to_string_lossy().replace('\\', "/"));
+            if let Some(d) = rel.as_ref().and_then(|r| first.get(r)) {
+                tx.execute("UPDATE doc SET day = ?1 WHERE id = ?2", params![d, id])?;
+            }
+            tx.execute("UPDATE doc SET gitdone = 1 WHERE id = ?1", [id])?;
+        }
+        tx.commit()?;
+        Ok(None)
     }
 
     fn held(&self) -> BTreeMap<String, usize> {

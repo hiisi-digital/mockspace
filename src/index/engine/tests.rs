@@ -1,6 +1,29 @@
 use std::path::Path;
 
-use super::captures_dir;
+use super::{captures_dir, row_sources};
+use crate::registry::{Registry, RegistryRow};
+
+#[test]
+fn a_row_s_source_is_shown_from_the_repository_root() {
+    let root = Path::new("/work/repo");
+    let mut reg = Registry::default();
+    for (slug, file) in [
+        ("a", "/work/repo/mock/registry/tenet/workflow.toml"),
+        ("b", "/elsewhere/outside.toml"),
+    ] {
+        let row = RegistryRow {
+            slug:      slug.into(),
+            namespace: "tenet".into(),
+            source:    file.into(),
+            fields:    Default::default(),
+        };
+        reg.rows.insert(row.qualified(), row);
+    }
+    let got = row_sources(&reg, root);
+    assert_eq!(got["tenet::a"], "mock/registry/tenet/workflow.toml");
+    // THE CONTROL: a source outside the root is shown whole, not cut to something that looks inside.
+    assert_eq!(got["tenet::b"], "/elsewhere/outside.toml");
+}
 
 fn mk(root: &Path, rel: &str) {
     std::fs::create_dir_all(root.join(rel)).unwrap();

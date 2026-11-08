@@ -12,6 +12,7 @@
 //! schema, so it holds nothing that is not on disk.
 
 pub mod engine;
+pub mod gitdays;
 mod ingest;
 mod search;
 pub mod shingle;
@@ -28,13 +29,15 @@ pub use walk::Source;
 
 /// Bumped whenever the tables change shape. An index of another version is dropped and rebuilt,
 /// never migrated: it is a cache.
-const SCHEMA: i64 = 1;
+const SCHEMA: i64 = 2;
 
 /// The index of one repository.
 pub struct Index {
-    conn:    Connection,
+    conn:     Connection,
     /// What the last refresh could not read, one sentence each, shown by every search.
-    caveats: Vec<String>,
+    caveats:  Vec<String>,
+    /// The repository git is asked about, where a refresh was given one.
+    git_root: Option<PathBuf>,
 }
 
 /// Why an index could not be opened.
@@ -126,7 +129,8 @@ impl Index {
                      id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, file TEXT NOT NULL,
                      class TEXT NOT NULL, size INTEGER NOT NULL, mtime INTEGER NOT NULL,
                      hash TEXT NOT NULL, day INTEGER, words INTEGER NOT NULL,
-                     sketch BLOB NOT NULL, held INTEGER NOT NULL DEFAULT 0
+                     sketch BLOB NOT NULL, held INTEGER NOT NULL DEFAULT 0,
+                     gitdone INTEGER NOT NULL DEFAULT 0
                  );
                  CREATE VIRTUAL TABLE doc_fts USING fts5(
                      heads, body, tokenize = 'porter unicode61'
@@ -137,6 +141,7 @@ impl Index {
         Ok(Self {
             conn,
             caveats: Vec::new(),
+            git_root: None,
         })
     }
 
@@ -167,5 +172,7 @@ impl Index {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_git;
 #[cfg(test)]
 mod tests_line;

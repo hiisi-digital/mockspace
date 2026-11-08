@@ -31,9 +31,26 @@ pub struct RegistryView {
     rows:         BTreeMap<String, RowFields>,
     by_namespace: BTreeMap<String, Vec<String>>,
     referrers:    BTreeMap<String, Vec<String>>,
+    sources:      BTreeMap<String, String>,
 }
 
 impl RegistryView {
+    /// This view with the file each row was declared in, relative to the repository root.
+    ///
+    /// Kept apart from [`Self::new`] so a view built by hand, in a test, needs no files. A row
+    /// with no entry has no known source, and [`Self::source_of`] says so.
+    #[must_use]
+    pub fn with_sources(mut self, sources: BTreeMap<String, String>) -> Self {
+        self.sources = sources;
+        self
+    }
+
+    /// The file a row was declared in, relative to the repository root. `None` for a row whose
+    /// source is not known, which is what a view built by hand has for all of them.
+    pub fn source_of(&self, qualified: &str) -> Option<&str> {
+        self.sources.get(qualified).map(String::as_str)
+    }
+
     /// Build from rows and reverse edges the engine has already computed.
     ///
     /// `rows` is keyed `namespace::slug`, and `referrers` maps a row to the rows
@@ -58,6 +75,7 @@ impl RegistryView {
             rows,
             by_namespace,
             referrers,
+            sources: BTreeMap::new(),
         }
     }
 
@@ -142,6 +160,19 @@ mod tests {
         assert_eq!(v.rows_in("slot"), ["slot::audio", "slot::display"]);
         assert_eq!(v.rows_in("answer"), ["answer::niri"]);
         assert_eq!(v.namespaces().collect::<Vec<_>>(), ["answer", "slot"]);
+    }
+
+    #[test]
+    fn a_row_knows_its_file_only_when_it_was_told() {
+        let v = view();
+        assert_eq!(v.source_of("slot::display"), None, "a hand-built view knows no files");
+        let told = v.with_sources(
+            [("slot::display".to_string(), "mock/registry/slot.toml".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        assert_eq!(told.source_of("slot::display"), Some("mock/registry/slot.toml"));
+        assert_eq!(told.source_of("slot::audio"), None, "and only the rows it was told");
     }
 
     /// The control: a namespace nothing declares answers empty rather than

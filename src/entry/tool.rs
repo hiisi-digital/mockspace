@@ -235,7 +235,8 @@ pub(crate) fn run(
             return ExitCode::FAILURE;
         },
     };
-    let view = crate::registry::build_view(&registry, &cfg.registry_namespaces);
+    let view = crate::registry::build_view(&registry, &cfg.registry_namespaces)
+        .with_sources(crate::index::engine::row_sources(&registry, &cfg.repo_root));
     let index = crate::index::engine::for_run(&cfg);
     let ctx = ToolContext {
         index: &index,

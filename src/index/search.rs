@@ -304,4 +304,9 @@ impl RepoIndex for Index {
     fn doc_frequency(&self, word: &str) -> usize {
         self.matches(word)
     }
+
+    fn changed_day(&self, repo_path: &str) -> Option<i64> {
+        let root = self.git_root.as_deref()?;
+        super::gitdays::last_day(root, repo_path)
+    }
 }

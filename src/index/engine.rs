@@ -72,6 +72,27 @@ pub fn sources_for(cfg: &Config) -> Vec<Source> {
     out
 }
 
+/// The file each row was declared in, relative to the repository root, so a tool can ask when the
+/// canon that holds a row last changed. A source outside the root is shown as it is.
+#[must_use]
+pub fn row_sources(
+    reg: &crate::registry::Registry,
+    repo_root: &Path,
+) -> std::collections::BTreeMap<String, String> {
+    reg.rows
+        .iter()
+        .map(|(q, row)| {
+            let shown = row
+                .source
+                .strip_prefix(repo_root)
+                .unwrap_or(&row.source)
+                .to_string_lossy()
+                .replace('\\', "/");
+            (q.clone(), shown)
+        })
+        .collect()
+}
+
 /// What a tool is handed when the index could not be built: it says why, to everything.
 struct Unavailable(String);
 
@@ -93,6 +114,7 @@ impl RepoIndex for Unavailable {
 pub struct ForRun {
     sources: Vec<Source>,
     file:    Option<PathBuf>,
+    root:    PathBuf,
     built:   std::cell::OnceCell<Box<dyn RepoIndex>>,
 }
 
@@ -103,7 +125,8 @@ pub fn for_run(cfg: &Config) -> ForRun {
     ForRun {
         sources: sources_for(cfg),
         file:    cache_root().map(|c| index_path(&c, &cfg.repo_root)),
-        built:   std::cell::OnceCell::new(),
+        root:    cfg.repo_root.clone(),
+        built:  std::cell::OnceCell::new(),
     }
 }
 
@@ -119,7 +142,7 @@ impl ForRun {
                     Ok(i) => i,
                     Err(e) => return Box::new(Unavailable(e.to_string())),
                 };
-                match idx.refresh(&self.sources) {
+                match idx.refresh_dated(&self.sources, Some(&self.root)) {
                     Ok(_) => Box::new(idx),
                     Err(e) => Box::new(Unavailable(e.to_string())),
                 }
@@ -135,6 +158,10 @@ impl RepoIndex for ForRun {
 
     fn doc_frequency(&self, word: &str) -> usize {
         self.get().doc_frequency(word)
+    }
+
+    fn changed_day(&self, repo_path: &str) -> Option<i64> {
+        self.get().changed_day(repo_path)
     }
 }
 

@@ -110,6 +110,13 @@ pub trait RepoIndex {
 
     /// How many documents carry a word, by its stem. Zero for a word no document has.
     fn doc_frequency(&self, word: &str) -> usize;
+
+    /// The day, since 1970-01-01, of the last commit that touched a path relative to the repository
+    /// root, so a hit can be marked as older than the canon's last word on its subject. `None`
+    /// where git has no commit for it or the index has no repository to ask.
+    fn changed_day(&self, _repo_path: &str) -> Option<i64> {
+        None
+    }
 }
 
 /// The index of a context that has none, such as a tool's unit test or a repository with nothing to
