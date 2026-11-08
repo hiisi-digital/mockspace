@@ -1521,7 +1521,10 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     //
     // The rule is the one the code already applies when it chooses which word
     // to print: what is reported as ERROR blocks, what is reported as a warning
-    // does not. Nothing here reclassifies a finding.
+    // does not. The one reclassification is `registry_scope::verdict`: a finding
+    // that is a reference to a row (`GateScope::WhenChanged`) is a warning on a
+    // run that does not change the file holding the reference, and an error on
+    // one that does. Every other finding is an error on every run.
     let mut registry_errors = 0usize;
 
     // Printed and counted by one function, shared with the commit gate.
@@ -1588,26 +1591,68 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             .iter()
             .map(|(_, v)| v.iter().filter(|e| is_reference(e)).count())
             .sum();
-        registry_errors += refs_unresolved;
 
         if !unresolved.is_empty() {
             let total: usize = unresolved.iter().map(|(_, v)| v.len()).sum();
-            // An error, not a warning, and on the design's own rung: dangling
-            // reference and duplicate identifier are both errors "because both
-            // mean the registry is lying". Gating duplicates while warning about
-            // this left half the sentence enforced, and the summary line below
-            // claimed both.
+            // A dangling reference is an error on the design's own rung ("both mean the
+            // registry is lying"), but a reference to a row gates the run that changes the
+            // citing file, like a row citing a missing row (`registry_scope`). The citing file
+            // is the template the document is generated from; a computed document has none and
+            // the finding gates every run.
             //
-            // Reported at the output rather than per render path, because
-            // several paths generate documents and two of them silently did not
-            // resolve references at all.
-            if refs_unresolved > 0 {
-                eprintln!(
-                    "  ERROR [dangling-reference]: {refs_unresolved} reference(s) resolved to \
-                     nothing and were rendered literally. A reference that resolves to nothing is \
-                     worse than prose, because it looks checked."
-                );
+            // Reported at the output rather than per render path, because several paths
+            // generate documents and two of them silently did not resolve references at all.
+            let changed = registry_scope::Changed::of_run(mode, &cfg.repo_root);
+            let mut findings = Vec::new();
+            // Only a reference into a declared namespace is a reference to a row. One naming
+            // anything else (an undeclared namespace, a crate, a malformed root) is a defect of
+            // the document itself and gates every run.
+            let is_row_ref = |e: &str| {
+                let root = e.trim_matches(|c: char| c == '{' || c == '}').trim();
+                root.split("::").next().is_some_and(|r| {
+                    cfg.registry_namespaces.iter().any(|ns| ns.key == r)
+                })
+            };
+            for (file, found) in &unresolved {
+                let template = plan.iter().find_map(|p| match &p.source {
+                    document::Source::Template(path) if p.id.file_name(&cfg) == *file => {
+                        Some(path.clone())
+                    },
+                    _ => None,
+                });
+                let refs: Vec<&str> =
+                    found.iter().filter(|e| is_reference(e)).map(String::as_str).collect();
+                for (to_rows, group) in [
+                    (true, refs.iter().copied().filter(|e| is_row_ref(e)).collect::<Vec<_>>()),
+                    (false, refs.iter().copied().filter(|e| !is_row_ref(e)).collect::<Vec<_>>()),
+                ] {
+                    if group.is_empty() {
+                        continue;
+                    }
+                    let mut shown = group.clone();
+                    shown.sort_unstable();
+                    shown.dedup();
+                    shown.truncate(4);
+                    let gate = match (&template, to_rows) {
+                        (Some(t), true) => registry::GateScope::WhenChanged(t.clone()),
+                        _ => registry::GateScope::Always,
+                    };
+                    findings.push(registry::RegistryFinding {
+                        kind: "dangling-reference",
+                        message: format!(
+                            "{file}: {} reference(s) resolved to nothing and were rendered \
+                             literally ({}). A reference that resolves to nothing is worse than \
+                             prose, because it looks checked.",
+                            group.len(),
+                            shown.join(", ")
+                        ),
+                        source: template.clone(),
+                        gate,
+                    });
+                }
             }
+            let (gated, _) = registry_scope::report(findings, &changed);
+            registry_errors += gated;
             if total > refs_unresolved {
                 eprintln!(
                     "  warning: {} placeholder(s) rendered literally in {} document(s). Not \
@@ -1615,13 +1660,6 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     total - refs_unresolved,
                     unresolved.len()
                 );
-            }
-            for (file, found) in &unresolved {
-                let mut shown: Vec<&str> = found.iter().map(String::as_str).collect();
-                shown.sort_unstable();
-                shown.dedup();
-                shown.truncate(4);
-                eprintln!("    {file}: {}", shown.join(", "));
             }
         }
     }
@@ -2129,6 +2167,13 @@ fn registry_gate(
         return 0;
     }
     let mut errors = 0usize;
+    // A finding blocks unless its own `gate` says otherwise. Only a reference to a row is scoped
+    // (`GateScope::WhenChanged`): it blocks the run that changes the file holding the citation and
+    // is a warning elsewhere. Everything else, duplicate identifiers, cycles, provenance,
+    // declarations, values, blocks every run. `registry_scope::report` is the one place that
+    // decides it.
+    let changed = registry_scope::Changed::of_run(mode, &cfg.repo_root);
+    let mut demoted = 0usize;
     eprintln!("--- registry ---");
     let schemas =
         registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
@@ -2140,28 +2185,21 @@ fn registry_gate(
         registry.rows.len(),
         registry.by_namespace.len()
     );
-    for f in cycles {
-        errors += 1;
-        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-    }
-    for f in registry::validate_provenance(
+    let mut settle = |findings: Vec<registry::RegistryFinding>| {
+        let (gated, warned) = registry_scope::report(findings, &changed);
+        errors += gated;
+        demoted += warned;
+    };
+    settle(cycles.to_vec());
+    settle(registry::validate_provenance(
         &cfg.repo_root,
         &cfg.registry_roots,
         &cfg.frozen_roots,
         registry,
         &cfg.registry_namespaces,
-    ) {
-        errors += 1;
-        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-    }
-    for f in registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots) {
-        errors += 1;
-        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-    }
-    for f in registry::validate(&cfg.registry_namespaces, registry) {
-        errors += 1;
-        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-    }
+    ));
+    settle(registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots));
+    settle(registry::validate(&cfg.registry_namespaces, registry));
     // The declarations, then the data. There is no gate between them:
     // `row_reference_fields` already skips a field whose type names no
     // namespace, so an unknown type suppresses its own field's rows and
@@ -2176,13 +2214,15 @@ fn registry_gate(
         .chain(registry::value_field_targets(&cfg.registry_namespaces))
         .chain(registry::misplaced_bounds(&cfg.registry_namespaces))
         .chain(registry::unfit_values(&cfg.registry_namespaces));
-    for f in declarations.chain(registry::validate_row_references(
-        registry,
-        &cfg.registry_namespaces,
-    )) {
-        errors += 1;
-        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-    }
+    settle(
+        declarations
+            .chain(registry::validate_row_references(
+                registry,
+                &cfg.registry_namespaces,
+            ))
+            .collect(),
+    );
+    drop(settle);
     // A warning by default, and the choice is deliberate under the rule
     // stated above: what prints ERROR blocks, and an inert key does not stop
     // the registry from being correct. It stops the author from knowing their
@@ -2274,6 +2314,12 @@ fn registry_gate(
                 );
             }
         },
+    }
+    if demoted > 0 {
+        eprintln!(
+            "  {demoted} finding(s) reported as warnings: no changed file carries them. They \
+             gate the commit that next changes the file they are in."
+        );
     }
     errors
 }

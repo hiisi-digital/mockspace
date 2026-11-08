@@ -47,6 +47,7 @@ pub fn misplaced_bounds(namespaces: &[RegistryNamespace]) -> Vec<RegistryFinding
                         ns.key, f.name
                     ),
                     source:  None,
+                    gate:    GateScope::Always,
                 });
             }
         }
@@ -104,6 +105,7 @@ pub fn unfit_values(namespaces: &[RegistryNamespace]) -> Vec<RegistryFinding> {
                             ns.key, f.r#type, f.name
                         ),
                         source:  None,
+                        gate:    GateScope::Always,
                     });
                 }
             }

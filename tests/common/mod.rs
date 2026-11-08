@@ -343,3 +343,39 @@ impl Repo {
         c.args(args).output().unwrap()
     }
 }
+
+/// Runs `git` in `dir` with an identity and no signing, and returns what it did.
+pub fn git_out_dir(dir: &Path, args: &[&str]) -> Output {
+    Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+/// As `git_out_dir`, and panics when it fails.
+pub fn git_in_dir(dir: &Path, args: &[&str]) -> String {
+    let out = git_out_dir(dir, args);
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+/// A real repository at `root`, so a run that asks git what is staged or unpushed gets an answer.
+pub fn git_init(root: &Path) {
+    fs::create_dir_all(root).unwrap();
+    git_in_dir(root, &["init", "-q", "-b", "dev"]);
+}

@@ -44,6 +44,9 @@ mod escape_hatch_move_tests;
 pub(crate) use dispatch::*;
 mod nuke;
 pub(crate) use nuke::*;
+pub(crate) mod registry_scope;
+#[cfg(test)]
+mod registry_scope_tests;
 mod panel;
 mod subcmd;
 mod test;

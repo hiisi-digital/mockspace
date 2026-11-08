@@ -49,7 +49,7 @@ enum Lie {
 }
 
 fn fixture(root: &Path, lie: &Lie) {
-    fs::create_dir_all(root.join(".git")).unwrap();
+    common::git_init(root);
     let mock = root.join("mock");
     write(
         &mock.join("Cargo.toml"),
@@ -95,6 +95,8 @@ description = "The spike this one continues, as a row reference."
             "[[spike]]\nid = \"first_one\"\nquestion = \"the same slug again\"\n",
         );
     }
+    // staged, as a commit gate sees it
+    common::git_in_dir(root, &["add", "-A"]);
 }
 
 /// The commit gate, spelled exactly as the generated pre-commit hook spells it.

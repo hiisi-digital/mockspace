@@ -97,6 +97,7 @@ pub fn unknown_field_types(namespaces: &[RegistryNamespace]) -> Vec<RegistryFind
                     SCALAR_TYPES.join(", ")
                 ),
                 source:  None,
+                gate:    GateScope::Always,
             });
         }
     }
@@ -120,6 +121,7 @@ pub fn namespace_type_collisions(namespaces: &[RegistryNamespace]) -> Vec<Regist
                 ns.key
             ),
             source:  None,
+            gate:    GateScope::Always,
         })
         .collect()
 }
@@ -154,6 +156,7 @@ pub fn value_field_targets(namespaces: &[RegistryNamespace]) -> Vec<RegistryFind
                     ns.key, f.name
                 ),
                 source:  None,
+                gate:    GateScope::Always,
             });
         }
     }
@@ -236,6 +239,7 @@ fn malformed_slug(row: &RegistryRow, field: &str, item: &str, hint: String) -> R
             row.qualified()
         ),
         source:  Some(row.source.clone()),
+        gate:    GateScope::Always,
     }
 }
 
@@ -261,6 +265,7 @@ fn dangling(
             row.qualified()
         ),
         source:  Some(row.source.clone()),
+        gate:    GateScope::WhenChanged(row.source.clone()),
     })
 }
 

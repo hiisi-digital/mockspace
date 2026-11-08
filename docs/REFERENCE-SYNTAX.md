@@ -55,8 +55,8 @@ merging, renaming or moving a file changes nothing a reader, a check or a
 rendered document sees, except `pathof`, whose answer is that file. A namespace
 lists its rows by key path rather than by the order of the files holding them,
 and a grouped table orders its groups by the group value, with rows that have
-no group value last under a heading of their own. The same key path in two files is an error naming both, and a file
-and line in a report is only a place to look.
+no group value last under a heading of their own. The same key path in two files is an
+error naming both, and a file and line in a report is only a place to look.
 
 ## Roots
 
@@ -222,7 +222,12 @@ related = ["slot::display", "ruling::wayland_first", "research::notes::niri::#ti
 
 The first segment of a link is checked against the declared namespaces, and a slug
 naming no row is reported as `unknown-row-reference`, a slug that is not a slug as
-`malformed-row-reference`. A root cannot carry the name of a namespace
+`malformed-row-reference`. Only the first is scoped: it gates the commit or push that
+changes the file holding the link, and is a warning on a plain run or one that leaves
+that file alone, so a row can be retired before every citation of it is gone. A
+template citing a row is scoped the same way, to the template. A slug that is not a
+slug, and every other finding, gates every run. A root cannot carry the name of a
+namespace
 (`namespace-root-collision`), so a two-segment item is a link exactly when it names
 one. In a table cell a link gives the row's slug as plain text, as any reference to
 a row does.
