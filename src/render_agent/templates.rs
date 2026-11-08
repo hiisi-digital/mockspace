@@ -147,11 +147,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
         ns_doc.push_str(&format!(
             "- `{}::<slug>`: {}{}{}{}\n",
             ns.key,
-            ns.description
-                .clone()
-                .unwrap_or_else(|| ns.title())
-                .trim_end_matches('.')
-                .to_string(),
+            short_sentence(&ns.description.clone().unwrap_or_else(|| ns.title())),
             value,
             relation_note,
             internal_note
@@ -453,9 +449,9 @@ Fires while a design round is open, and before opening a changelist in one.
     // why a snapshot rather than only the instruction to run the commands.
     if cfg.agent.catalogues {
         rules.push(BuiltinRule {
-            name: "catalogues".to_string(),
+            name:     "catalogues".to_string(),
             apply_to: vec!["**".to_string()],
-            body: super::catalogue::body(cfg, pack),
+            body:     super::catalogue::body(cfg, pack),
         });
     }
 
@@ -1251,5 +1247,39 @@ mod canon_location_is_derived {
             !skill.contains("typed rows in `mock/registry/`"),
             "and does not name a directory the project never mentioned: {skill}"
         );
+    }
+}
+
+/// The first sentence of `text`, cut at 80 characters on a word, so a generated rule names
+/// what a namespace is without carrying its whole definition; `cargo mock` has the rest.
+fn short_sentence(text: &str) -> String {
+    let first = text
+        .split(". ")
+        .next()
+        .unwrap_or(text)
+        .trim_end_matches('.');
+    if first.chars().count() <= 80 {
+        return first.to_string();
+    }
+    let cut: String = first.chars().take(80).collect();
+    let cut = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
+    format!("{cut}...")
+}
+
+#[cfg(test)]
+mod short_sentence_tests {
+    use super::short_sentence;
+
+    #[test]
+    fn a_description_is_cut_to_its_first_sentence_and_to_eighty_characters() {
+        assert_eq!(
+            short_sentence("A short one. And a second sentence."),
+            "A short one"
+        );
+        let long = "word ".repeat(40);
+        let cut = short_sentence(&long);
+        assert!(cut.chars().count() <= 83, "{cut}");
+        assert!(cut.ends_with("..."), "{cut}");
+        assert!(!cut.contains("wor..."), "cut on a word: {cut}");
     }
 }
