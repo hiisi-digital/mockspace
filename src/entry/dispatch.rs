@@ -2129,6 +2129,12 @@ fn registry_gate(
         return 0;
     }
     let mut errors = 0usize;
+    // Findings about a data row carry the file the row lives in and gate only the commit that
+    // stages that file; everything else is reported. `report` is the one place that decides it.
+    // Findings with no `source` are about the declarations (schema, namespace collisions, unknown
+    // field types, duplicate identifiers) and gate as before.
+    let changed = registry_scope::Changed::of_run(mode, &cfg.repo_root);
+    let mut demoted = 0usize;
     eprintln!("--- registry ---");
     let schemas =
         registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
@@ -2140,28 +2146,21 @@ fn registry_gate(
         registry.rows.len(),
         registry.by_namespace.len()
     );
-    for f in cycles {
-        errors += 1;
-        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-    }
-    for f in registry::validate_provenance(
+    let mut settle = |findings: Vec<registry::RegistryFinding>| {
+        let (gated, warned) = registry_scope::report(findings, &changed);
+        errors += gated;
+        demoted += warned;
+    };
+    settle(cycles.to_vec());
+    settle(registry::validate_provenance(
         &cfg.repo_root,
         &cfg.registry_roots,
         &cfg.frozen_roots,
         registry,
         &cfg.registry_namespaces,
-    ) {
-        errors += 1;
-        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-    }
-    for f in registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots) {
-        errors += 1;
-        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-    }
-    for f in registry::validate(&cfg.registry_namespaces, registry) {
-        errors += 1;
-        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-    }
+    ));
+    settle(registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots));
+    settle(registry::validate(&cfg.registry_namespaces, registry));
     // The declarations, then the data. There is no gate between them:
     // `row_reference_fields` already skips a field whose type names no
     // namespace, so an unknown type suppresses its own field's rows and
@@ -2176,13 +2175,15 @@ fn registry_gate(
         .chain(registry::value_field_targets(&cfg.registry_namespaces))
         .chain(registry::misplaced_bounds(&cfg.registry_namespaces))
         .chain(registry::unfit_values(&cfg.registry_namespaces));
-    for f in declarations.chain(registry::validate_row_references(
-        registry,
-        &cfg.registry_namespaces,
-    )) {
-        errors += 1;
-        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-    }
+    settle(
+        declarations
+            .chain(registry::validate_row_references(
+                registry,
+                &cfg.registry_namespaces,
+            ))
+            .collect(),
+    );
+    drop(settle);
     // A warning by default, and the choice is deliberate under the rule
     // stated above: what prints ERROR blocks, and an inert key does not stop
     // the registry from being correct. It stops the author from knowing their
@@ -2274,6 +2275,12 @@ fn registry_gate(
                 );
             }
         },
+    }
+    if demoted > 0 {
+        eprintln!(
+            "  {demoted} finding(s) reported as warnings: no changed file carries them. They \
+             gate the commit that next changes the file they are in."
+        );
     }
     errors
 }

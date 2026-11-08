@@ -222,7 +222,8 @@ related = ["slot::display", "ruling::wayland_first", "research::notes::niri::#ti
 
 The first segment of a link is checked against the declared namespaces, and a slug
 naming no row is reported as `unknown-row-reference`, a slug that is not a slug as
-`malformed-row-reference`. A root cannot carry the name of a namespace
+`malformed-row-reference`. Each gates only the commit that stages the file the row
+lives in, and is a warning on a plain run or a commit that leaves that file alone. A root cannot carry the name of a namespace
 (`namespace-root-collision`), so a two-segment item is a link exactly when it names
 one. In a table cell a link gives the row's slug as plain text, as any reference to
 a row does.

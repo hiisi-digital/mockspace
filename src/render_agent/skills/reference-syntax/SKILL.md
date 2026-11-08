@@ -49,7 +49,8 @@ An item of three or more is a file citation into a root, checked as in
 [Addressing a citation](#addressing-a-citation). The two cannot be mistaken for
 each other, and each is held to its own rule: a link naming no row is
 `unknown-row-reference`, and one whose slug is not a slug is
-`malformed-row-reference`.
+`malformed-row-reference`. Both gate only the commit that stages the file the
+row lives in, and are warnings on a plain run or a commit leaving it alone.
 
 **A field per target namespace (`bevy`, `ikiuni`, `canon`) is wrong.** It turns
 the schema into a list of places a relation may be written, lets one relation be
