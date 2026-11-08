@@ -1084,9 +1084,18 @@ fn the_catalogues_rule_carries_the_lints_the_repository_set_as_well_as_the_tools
         "and the lint half, which the old key's name did not cover:\n{}",
         rule.body
     );
-    let row = |name: &str| rule.body.lines().any(|l| l.starts_with(&format!("    {name} ")));
-    // A lint's own row, not the group heading: a heading is emitted whether or
-    // not anything is under it.
+    // A lint's own name among the lines under the group heading, whole: a prefix of another
+    // name is not it.
+    let row = |name: &str| {
+        rule.body
+            .split("LINTS SET HERE")
+            .nth(1)
+            .is_some_and(|lints| {
+                lints
+                    .split(|c: char| c == ',' || c == ':' || c.is_whitespace())
+                    .any(|w| w == name)
+            })
+    };
     assert!(
         row(set),
         "a lint the repository set has to be listed, and `{set}` is one:\n{}",
@@ -1104,24 +1113,31 @@ fn the_catalogues_rule_carries_the_lints_the_repository_set_as_well_as_the_tools
     );
 }
 
-/// A lint the repository set to off is not a row: it checks nothing here.
+/// A lint the repository set to off is not named: it checks nothing here. A sibling set to
+/// error is the control, since a rule listing no lint at all would pass the absence alone.
 #[test]
 fn a_lint_the_repository_turned_off_is_not_in_the_catalogues_rule() {
     let mut cfg = crate::config::Config::from_dir(&skill_fixture(None));
-    let name = mockspace_lint_rules::all_lints()
+    let all = mockspace_lint_rules::all_lints();
+    let off = all
         .first()
         .expect("the engine ships at least one crate lint")
         .name();
+    let on = all.get(1).expect("and a second one").name();
     cfg.lint_overrides
         .base
-        .insert(name.to_string(), mockspace_lint_rules::Severity::OFF);
-    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
+        .insert(off.to_string(), mockspace_lint_rules::Severity::OFF);
+    cfg.lint_overrides
+        .base
+        .insert(on.to_string(), mockspace_lint_rules::Severity::HARD_ERROR);
+    let builtins = generate_builtin_templates(&cfg, &pack_with_stub_tool());
     let rule = builtins.rules.iter().find(|r| r.name == "catalogues").unwrap();
-    assert!(
-        !rule.body.lines().any(|l| l.starts_with(&format!("    {name} "))),
-        "{}",
-        rule.body
-    );
+    let set_here = rule.body.split("LINTS SET HERE").nth(1).expect("the group heading");
+    let names: Vec<&str> = set_here
+        .split(|c: char| c == ',' || c == ':' || c.is_whitespace())
+        .collect();
+    assert!(names.contains(&on), "the control `{on}` is named:\n{}", rule.body);
+    assert!(!names.contains(&off), "`{off}` is off:\n{}", rule.body);
 }
 
 /// What a repository that set nothing pays. The rule loads on the first file read
