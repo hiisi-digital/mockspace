@@ -123,6 +123,35 @@ fn the_design_round_that_holds_the_answer_outranks_five_copies_of_a_long_survey(
 }
 
 #[test]
+fn the_document_that_says_the_words_together_outranks_one_that_scatters_them() {
+    let t = tempfile::tempdir().unwrap();
+    filler(t.path(), 40);
+    // The same words in both, equal counts and similar length: one says them as a phrase, the
+    // other spreads them across unrelated sentences.
+    // Long, so length normalisation counts against it.
+    let padding = "rivers and roads and bridges and mills and villages ".repeat(40);
+    put(
+        t.path(),
+        "research/202610010000_together/n.md",
+        &format!("the saturation curve of the air is what holds the water. {padding}\n"),
+    );
+    // More of each word than the phrase has, each far from the others.
+    let apart: String = (0 .. 3)
+        .map(|i| {
+            format!(
+                "the air was cold on day {i}. rivers and roads are covered elsewhere in this note \
+                 and nothing about water belongs to the sentence. a saturation of colour is \
+                 discussed with no reference to anything above. the curve of the road bends to \
+                 the sea past the village and the mill by the old bridge.\n"
+            )
+        })
+        .collect();
+    put(t.path(), "research/202610020000_apart/n.md", &apart);
+    let r = built(t.path()).search(&ask("air saturation curve", 5));
+    assert!(r.hits[0].path.contains("together"), "{:?}", r.hits.iter().map(|h| &h.path).collect::<Vec<_>>());
+}
+
+#[test]
 fn a_hit_carries_its_date_its_age_and_the_line_to_open() {
     let t = tempfile::tempdir().unwrap();
     the_air_tree(t.path());

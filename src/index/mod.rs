@@ -167,3 +167,5 @@ impl Index {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_line;

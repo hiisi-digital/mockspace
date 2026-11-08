@@ -30,6 +30,16 @@ const HEADING: f64 = 3.0;
 /// What an expansion word is worth against a word of the question itself.
 const EXPANDED: f64 = 0.5;
 
+/// How many of the question's words, the rarest, must sit together for the proximity pass.
+const NEAR_TERMS: usize = 4;
+
+/// How many words apart they may sit.
+const NEAR_WINDOW: usize = 12;
+
+/// What saying the words together is worth over saying them anywhere, as a multiple of the
+/// ordinary score added on top of it.
+const NEARNESS: f64 = 1.5;
+
 /// The content words of a text, in order, without repeats.
 #[must_use]
 pub fn terms_of(text: &str) -> Vec<String> {
@@ -53,6 +63,22 @@ struct Cand {
     score: f64,
 }
 
+/// A pass's candidates with scores as a fraction of the pass's best, times `weight`.
+///
+/// BM25 is not comparable between passes: a proximity match is one phrase in a long document and
+/// scores low beside a count of words in a short one, though it is the stronger evidence. Each
+/// pass is measured against its own best and then weighed, so what a pass means is a choice made
+/// here and not an accident of document length.
+fn normalised(mut cands: Vec<Cand>, weight: f64) -> Vec<Cand> {
+    let best = cands.iter().map(|c| c.score).fold(0.0_f64, f64::max);
+    if best > 0.0 {
+        for c in &mut cands {
+            c.score = c.score / best * weight;
+        }
+    }
+    cands
+}
+
 impl Index {
     fn ranked(&self, terms: &[String], weight: f64) -> Vec<Cand> {
         if terms.is_empty() {
@@ -68,12 +94,50 @@ impl Index {
         let Ok(rows) = q.query_map([match_expr(terms)], |r| {
             Ok(Cand {
                 id:    r.get(0)?,
-                score: r.get::<_, f64>(1)? * weight,
+                score: r.get::<_, f64>(1)?,
             })
         }) else {
             return Vec::new();
         };
-        rows.flatten().collect()
+        normalised(rows.flatten().collect(), weight)
+    }
+
+    /// Documents that say the question's words close together, weighed by BM25 over that match.
+    ///
+    /// Counts reward a document for repeating words and say nothing of whether they were said as
+    /// one thought. The rarest few words of the question, required within a short window of one
+    /// another, is what separates a document about the subject from one that happens to contain
+    /// its vocabulary.
+    fn near(&self, terms: &[String]) -> Vec<Cand> {
+        let mut by_rarity: Vec<(usize, &String)> = terms.iter().map(|t| (self.matches(t), t)).collect();
+        by_rarity.retain(|(n, _)| *n > 0);
+        by_rarity.sort();
+        let chosen: Vec<String> = by_rarity.into_iter().take(NEAR_TERMS).map(|(_, t)| t.clone()).collect();
+        if chosen.len() < 2 {
+            return Vec::new();
+        }
+        let phrase = chosen
+            .iter()
+            .map(|t| format!("\"{}\"", t.replace('"', "")))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let sql = format!(
+            "SELECT rowid, -bm25(doc_fts, {HEADING}, 1.0) FROM doc_fts \
+             WHERE doc_fts MATCH 'NEAR({}, {NEAR_WINDOW})' ORDER BY 2 DESC LIMIT {CANDIDATES}",
+            phrase.replace('\'', "")
+        );
+        let Ok(mut q) = self.conn.prepare(&sql) else {
+            return Vec::new();
+        };
+        let Ok(rows) = q.query_map([], |r| {
+            Ok(Cand {
+                id:    r.get(0)?,
+                score: r.get::<_, f64>(1)?,
+            })
+        }) else {
+            return Vec::new();
+        };
+        normalised(rows.flatten().collect(), NEARNESS)
     }
 
     fn matches(&self, word: &str) -> usize {
@@ -99,8 +163,18 @@ impl Index {
         let mut best = (0usize, 0usize, String::new());
         for (i, line) in text.lines().enumerate() {
             let low = line.to_lowercase();
-            let mut n = stems.iter().filter(|s| low.contains(s.as_str())).count();
-            if line.trim_start().starts_with('#') {
+            // Distinct question words the line starts a word with, so `air` is not found in
+            // `chair` and a line saying three different words beats one repeating a single word.
+            let here: Vec<&str> = low
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .collect();
+            let mut n = stems
+                .iter()
+                .filter(|s| here.iter().any(|w| w.starts_with(s.as_str())))
+                .count();
+            // A heading naming the subject is the better line to open, but only a heading that
+            // names some of it.
+            if n > 0 && line.trim_start().starts_with('#') {
                 n += 1;
             }
             if n > best.0 {
@@ -126,7 +200,12 @@ impl RepoIndex for Index {
             .collect();
 
         let mut scores: std::collections::BTreeMap<i64, f64> = std::collections::BTreeMap::new();
-        for c in self.ranked(&own, 1.0).into_iter().chain(self.ranked(&extra, EXPANDED)) {
+        for c in self
+            .ranked(&own, 1.0)
+            .into_iter()
+            .chain(self.ranked(&extra, EXPANDED))
+            .chain(self.near(&own))
+        {
             *scores.entry(c.id).or_default() += c.score;
         }
 
