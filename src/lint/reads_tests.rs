@@ -105,14 +105,21 @@ fn repo(top: &Path, mock_rel: &str) -> Config {
 
 /// The blocking count of a run in `mode` with both lints in a pack named `identity`.
 fn run(cfg: &Config, mode: LintMode, identity: &str) -> usize {
+    run_with(cfg, mode, identity, vec![Box::new(ReadsContent), Box::new(DeclaresNothing)])
+}
+
+/// [`run`] with the lints given, over a verdict store of the test's own, beside its repository.
+fn run_with(cfg: &Config, mode: LintMode, identity: &str, lints: Vec<Box<dyn RepoLint>>) -> usize {
     let crates = crate::parse::discover_crates_in(&cfg.src_dirs, &cfg.crate_prefix);
-    let mut pack = LintPack {
-        repo_lints: vec![Box::new(ReadsContent), Box::new(DeclaresNothing)],
-        ..LintPack::default()
-    };
+    let mut pack = LintPack { repo_lints: lints, ..LintPack::default() };
     pack.identity = identity.to_string();
+    let store = cfg.repo_root.parent().unwrap().join("store");
+    crate::lint::verdicts::test_base::with(store, || lint_run(cfg, mode, &crates, &pack))
+}
+
+fn lint_run(cfg: &Config, mode: LintMode, crates: &crate::model::CrateMap, pack: &LintPack) -> usize {
     crate::lint::run_lints(
-        &crates,
+        crates,
         &cfg.src_dirs,
         &cfg.mock_dir,
         &cfg.repo_root,
@@ -127,7 +134,7 @@ fn run(cfg: &Config, mode: LintMode, identity: &str) -> usize {
         &[],
         &[],
         &cfg.primitive_introductions,
-        &pack,
+        pack,
     )
 }
 
@@ -204,7 +211,8 @@ fn a_blocked_full_run_does_not_keep_the_key_so_the_retry_is_full_too() {
 fn a_push_skips_the_lint_until_a_commit_it_carries_touches_what_it_reads() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = repo(tmp.path(), "mock");
-    warm(&cfg);
+    // A key kept by a commit run is not the push gate's, so the push gate has its own clean run.
+    assert_eq!(run(&cfg, LintMode::Push, "v1"), 0, "the base is clean");
     write(&cfg.repo_root, "content/a.toml", "broken\n");
     commit(&cfg, "notes/b.txt", "fine too\n");
     assert_eq!(run(&cfg, LintMode::Push, "v1"), 0, "the only unpushed commit reads nothing of content");
@@ -228,4 +236,106 @@ fn a_mock_directory_nested_below_the_root_still_meets_the_files_of_the_whole_rep
     warm(&cfg);
     stage(&cfg, "content/a.toml", "broken\n");
     assert_eq!(run(&cfg, LintMode::Commit, "v1"), 1, "the root is the project's, not the mock directory's parent");
+}
+
+/// Reads `content/**` and blocks only at the push gate.
+struct PushOnly;
+
+impl Lint for PushOnly {
+    fn name(&self) -> &'static str {
+        "push-only"
+    }
+
+    fn reach(&self) -> Reach {
+        Reach::Paths(&["content/**"])
+    }
+}
+
+impl RepoLint for PushOnly {
+    fn check_repo(&self, ctx: &RepoContext) -> Vec<LintError> {
+        if !says_broken(ctx, "content/a.toml") {
+            return Vec::new();
+        }
+        let sev = mockspace_lint_rules::Severity::PUSH_GATE;
+        vec![LintError::with_severity("alpha".to_string(), 0, "push-only", "broken".to_string(), sev)]
+    }
+}
+
+fn run_push_only(cfg: &Config, mode: LintMode) -> usize {
+    run_with(cfg, mode, "p1", vec![Box::new(PushOnly)])
+}
+
+#[test]
+fn a_commit_runs_clean_key_is_not_trusted_by_the_push_gate() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo(tmp.path(), "mock");
+    // Content already broken on the remote, from before the lint existed.
+    write(&cfg.repo_root, "content/a.toml", "broken\n");
+    git(&cfg.repo_root, &["commit", "-qam", "chore: content"]);
+    git(&cfg.repo_root, &["push", "-q", "origin", "dev"]);
+    stage(&cfg, "notes/b.txt", "fine too\n");
+    assert_eq!(run_push_only(&cfg, LintMode::Commit), 0, "the commit gate only warns, and keeps its key");
+    git(&cfg.repo_root, &["commit", "-q", "-m", "chore: change"]);
+    assert_eq!(run_push_only(&cfg, LintMode::Push), 1, "the push gate must still block");
+}
+
+#[test]
+fn a_push_with_no_key_kept_blocks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo(tmp.path(), "mock");
+    write(&cfg.repo_root, "content/a.toml", "broken\n");
+    git(&cfg.repo_root, &["commit", "-qam", "chore: content"]);
+    git(&cfg.repo_root, &["push", "-q", "origin", "dev"]);
+    commit(&cfg, "notes/b.txt", "fine too\n");
+    assert_eq!(run_push_only(&cfg, LintMode::Push), 1, "the control");
+}
+
+#[test]
+fn a_sibling_worktrees_clean_run_does_not_settle_the_key_for_a_tree_it_never_saw() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo(tmp.path(), "mock");
+    warm(&cfg);
+    let b_root = tmp.path().join("b");
+    git(&cfg.repo_root, &["worktree", "add", "-q", "-b", "feat", b_root.to_str().unwrap()]);
+    let mut b = cfg.clone();
+    b.mock_dir = b_root.join("mock");
+    b.src_dirs = vec![b.mock_dir.join("crates")];
+    b.repo_root = b_root.clone();
+    write(&b_root, "content/a.toml", "broken\n");
+    git(&b_root, &["commit", "-qam", "chore: content"]);
+    // The pack moves, and the first worktree settles the new set over its own clean tree.
+    stage(&cfg, "notes/b.txt", "fine too\n");
+    assert_eq!(run(&cfg, LintMode::Commit, "v2"), 0);
+    // The second worktree has never been judged under it.
+    stage(&b, "notes/b.txt", "other\n");
+    assert_eq!(run_with_store(&cfg, &b, "v2"), 1, "the new lint set was never run over this tree");
+}
+
+/// A run over `b` whose store is the first worktree's, as the machine's one store is shared.
+fn run_with_store(shared: &Config, b: &Config, identity: &str) -> usize {
+    let crates = crate::parse::discover_crates_in(&b.src_dirs, &b.crate_prefix);
+    let mut pack = LintPack {
+        repo_lints: vec![Box::new(ReadsContent), Box::new(DeclaresNothing)],
+        ..LintPack::default()
+    };
+    pack.identity = identity.to_string();
+    let store = shared.repo_root.parent().unwrap().join("store");
+    crate::lint::verdicts::test_base::with(store, || lint_run(b, LintMode::Commit, &crates, &pack))
+}
+
+#[test]
+fn a_branch_switch_to_a_tree_that_does_not_descend_from_the_covered_one_is_full() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = repo(tmp.path(), "mock");
+    git(&cfg.repo_root, &["checkout", "-q", "-b", "b"]);
+    commit(&cfg, "content/a.toml", "broken\n");
+    git(&cfg.repo_root, &["checkout", "-q", "-b", "a", "dev"]);
+    commit(&cfg, "notes/b.txt", "a\n");
+    warm(&cfg);
+    stage(&cfg, "notes/b.txt", "a again\n");
+    assert_eq!(run(&cfg, LintMode::Commit, "v1"), 0, "the control: on the branch the key covered");
+    git(&cfg.repo_root, &["commit", "-q", "-m", "chore: a again"]);
+    git(&cfg.repo_root, &["checkout", "-q", "b"]);
+    stage(&cfg, "notes/b.txt", "b\n");
+    assert_eq!(run(&cfg, LintMode::Commit, "v1"), 1, "`b` does not descend from the commit the key covered");
 }

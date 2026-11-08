@@ -12,29 +12,71 @@
 //!
 //! - the run is a plain one, or git could not list what changes (`Changed::Unknown`);
 //! - a changed file is part of the lint set: `mockspace.toml` anywhere, the mock directory's
-//!   `lints/` and `tools/`, and the manifest, lockfile, toolchain pin and cargo config of the mock
-//!   directory and of the repository root;
-//! - the lint set moved without a file changing. A pack pinned to a branch is re-resolved hourly, so
-//!   a new or stricter lint can arrive with no tracked file touched. The key of the engine and
-//!   packs (`DiskVerdicts::lint_set_key`) is kept per repository after every full run that found
-//!   nothing blocking, and a run finding another key is full. A run that found something leaves
-//!   the key as it was, so the retry is full again.
+//!   `lints/` and `tools/`, and the toolchain pin and cargo config of the mock directory and of the
+//!   repository root, and the mock directory's manifest and lockfile;
+//! - the lint set moved without a file changing, or this tree was never judged under it. A pack
+//!   pinned to a branch is re-resolved hourly, so a new or stricter lint can arrive with no tracked
+//!   file touched. After a clean full run the key of the engine and packs
+//!   (`DiskVerdicts::lint_set_key`) is kept with the `HEAD` commit it covered, for **this worktree**
+//!   (its canonical root) and **this mode** (a commit run sees a push-gate finding only as a warning,
+//!   so its clean run says nothing to the push gate). A later run narrows only when the key is the
+//!   same and the kept commit is `HEAD` or an ancestor of it; another key, another worktree, a
+//!   branch switch to a tree that does not descend from it, or no key kept, runs everything. A run
+//!   that found something blocking keeps nothing, so the retry is full again.
 //!
 //! The notion of what changed is `registry_scope::Changed`, the one the row reference gate uses.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use mockspace_lint_rules::{LintMode, Touched};
 
 use super::verdicts::DiskVerdicts;
 use crate::entry::registry_scope::Changed;
 
+/// Where the key of the last clean full run is kept, and what this run would keep.
+pub(crate) struct Marker {
+    pub(crate) path: PathBuf,
+    pub(crate) key:  String,
+    /// The `HEAD` commit of this run, or `None` where there is none.
+    pub(crate) head: Option<String>,
+    pub(crate) root: PathBuf,
+}
+
 /// What one run changes, and what it keeps once it has run.
 pub(crate) struct Plan {
     /// The repository-relative files changed, or `None` where every lint runs.
     files:  Option<Vec<String>>,
-    /// Where the lint set key of the last full run is kept, and the key of this run.
-    marker: Option<(PathBuf, String)>,
+    marker: Option<Marker>,
+}
+
+fn git_line(root: &Path, args: &[&str]) -> Option<String> {
+    let out = Command::new("git").arg("-C").arg(root).args(args).output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+impl Marker {
+    /// The marker of a run in `mode` over the worktree at `repo_root`.
+    fn of(mode: LintMode, repo_root: &Path, v: &DiskVerdicts) -> Self {
+        let root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
+        let tag = crate::pack_pin::fnv1a(root.to_string_lossy().as_bytes());
+        let mode = format!("{mode:?}").to_lowercase();
+        Self {
+            path: v.dir().join("last-full-run").join(format!("{tag:016x}-{mode}")),
+            key:  v.lint_set_key(),
+            head: git_line(&root, &["rev-parse", "--verify", "HEAD"]),
+            root,
+        }
+    }
+
+    /// Whether the key kept covers this run: the same key, over `HEAD` or something it descends from.
+    fn covers(&self, kept_ancestor: &dyn Fn(&str) -> bool) -> bool {
+        let Some(head) = &self.head else { return false };
+        let Ok(text) = std::fs::read_to_string(&self.path) else { return false };
+        let mut lines = text.lines();
+        let (Some(key), Some(kept)) = (lines.next(), lines.next()) else { return false };
+        key == self.key && (kept == head || kept_ancestor(kept))
+    }
 }
 
 impl Plan {
@@ -49,19 +91,29 @@ impl Plan {
             LintMode::Build => None,
             _ => reduce(&Changed::of_run(mode, repo_root), repo_root, mock_dir),
         };
-        let marker = verdicts.map(|v| {
-            let tag = crate::pack_pin::fnv1a(crate::custom_lints::store::repo_identity(repo_root).as_bytes());
-            (v.dir().join("last-full-run").join(format!("{tag:016x}")), v.lint_set_key())
-        });
-        Self::decide(files, marker)
+        let marker = verdicts.map(|v| Marker::of(mode, repo_root, v));
+        let root = marker.as_ref().map(|m| m.root.clone());
+        let ancestor = |kept: &str| {
+            root.as_ref().is_some_and(|root| {
+                Command::new("git")
+                    .arg("-C")
+                    .arg(root)
+                    .args(["merge-base", "--is-ancestor", kept, "HEAD"])
+                    .status()
+                    .is_ok_and(|s| s.success())
+            })
+        };
+        Self::decide(files, marker, &ancestor)
     }
 
-    /// The plan for `files` and a marker, a moved or missing key making it full.
-    pub(crate) fn decide(files: Option<Vec<String>>, marker: Option<(PathBuf, String)>) -> Self {
-        let moved = marker
-            .as_ref()
-            .is_none_or(|(path, key)| std::fs::read_to_string(path).ok().as_deref() != Some(key));
-        Self { files: if moved { None } else { files }, marker }
+    /// The plan for `files` and a marker, a key that does not cover the run making it full.
+    pub(crate) fn decide(
+        files: Option<Vec<String>>,
+        marker: Option<Marker>,
+        kept_ancestor: &dyn Fn(&str) -> bool,
+    ) -> Self {
+        let covered = marker.as_ref().is_some_and(|m| m.covers(kept_ancestor));
+        Self { files: if covered { files } else { None }, marker }
     }
 
     /// The scope the repo lints are handed.
@@ -69,18 +121,19 @@ impl Plan {
         self.files.as_deref().map_or(Touched::Everything, Touched::Files)
     }
 
-    /// Keep the lint set key once a full run found nothing blocking. A doc-only run skips the
-    /// source lints, so it was not full.
+    /// Keep the key once a full run found nothing blocking. A doc-only run skips the source lints,
+    /// so it was not full.
     pub(crate) fn settle(&self, blocking: usize, doc_only: bool) {
         if self.files.is_some() || blocking > 0 || doc_only {
             return;
         }
-        if let Some((path, key)) = &self.marker {
-            if let Some(dir) = path.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            let _ = std::fs::write(path, key);
+        let Some(m) = &self.marker else { return };
+        let Some(head) = &m.head else { return };
+        if let Some(dir) = m.path.parent() {
+            let _ = std::fs::create_dir_all(dir);
         }
+        // The root is on the last line so the sweep can tell a worktree that is gone.
+        let _ = std::fs::write(&m.path, format!("{}\n{head}\n{}\n", m.key, m.root.display()));
     }
 }
 

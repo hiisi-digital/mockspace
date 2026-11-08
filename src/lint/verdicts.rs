@@ -52,6 +52,11 @@ impl DiskVerdicts {
     /// `pack_identity` is empty when no pack is loaded.
     #[must_use]
     pub fn open(pack_identity: &str) -> Option<Self> {
+        // A test gives the thread its own store, whatever the environment says.
+        #[cfg(test)]
+        if let Some(base) = test_base::get() {
+            return Self::open_in(&base, pack_identity);
+        }
         if std::env::var_os(OFF).is_some_and(|v| !v.is_empty() && v != "0") {
             return None;
         }
@@ -91,6 +96,26 @@ impl DiskVerdicts {
         self.digest(&[b"lint-set"])
     }
 
+    /// The kept keys of last full runs (see `lint::touched`): one file per worktree and mode, which
+    /// goes when nothing has read it in [`STALE_AFTER`], when the worktree it names is gone, and when
+    /// it is in no shape this version writes.
+    fn sweep_last_full_runs(&self) {
+        let Ok(entries) = fs::read_dir(self.dir.join("last-full-run")) else { return };
+        for entry in entries.flatten() {
+            let stale = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > STALE_AFTER);
+            let kept = fs::read_to_string(entry.path()).unwrap_or_default();
+            let worktree = kept.lines().nth(2).map(Path::new);
+            if stale || !worktree.is_some_and(Path::exists) {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+
     fn path_of(&self, key: &str) -> PathBuf {
         self.dir.join(&key[.. 2]).join(&key[2 ..])
     }
@@ -107,6 +132,7 @@ impl DiskVerdicts {
             return;
         }
         let _ = fs::write(&marker, b"");
+        self.sweep_last_full_runs();
         let Ok(shards) = fs::read_dir(&self.dir) else { return };
         // Only what this store wrote: a two-hex shard directory, and in it an entry named by the
         // rest of a key or one of its own half-written temporaries. The directory may be one the
@@ -229,6 +255,29 @@ fn base_dir() -> Option<PathBuf> {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The store a test thread was given.
+#[cfg(test)]
+pub(crate) mod test_base {
+    use std::cell::RefCell;
+    use std::path::PathBuf;
+
+    thread_local! {
+        static BASE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn get() -> Option<PathBuf> {
+        BASE.with(|b| b.borrow().clone())
+    }
+
+    /// Runs `f` with this thread's store at `base`.
+    pub(crate) fn with<R>(base: PathBuf, f: impl FnOnce() -> R) -> R {
+        BASE.with(|b| *b.borrow_mut() = Some(base));
+        let out = f();
+        BASE.with(|b| *b.borrow_mut() = None);
+        out
+    }
 }
 
 #[cfg(test)]

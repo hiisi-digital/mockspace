@@ -58,10 +58,11 @@ pub enum Reach {
 /// Paths are relative to the repository root and `/`-separated.
 #[derive(Debug, Clone, Copy)]
 pub enum Touched<'a> {
-    /// The run is judged whole: a plain run, a push, a commit git could not list, or a commit
-    /// that changed the lint set. Every lint runs.
+    /// The run is judged whole: a plain run, a commit or push git could not list, one that changed
+    /// the lint set, or one run under a lint set no clean full run of this tree has covered. Every
+    /// lint runs.
     Everything,
-    /// The files the commit changes, and nothing else changed.
+    /// The files the commit changes, or the commits a push carries, and nothing else changed.
     Files(&'a [String]),
 }
 
