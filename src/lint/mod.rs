@@ -16,8 +16,11 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod fold;
+pub(crate) mod touched;
 pub mod verdicts;
 
+#[cfg(test)]
+mod reads_tests;
 #[cfg(test)]
 mod scope_tests;
 
@@ -263,6 +266,7 @@ pub fn run_lints(
     // `crates_dir.parent()`, which only held while there was one root directly
     // under the mock dir, and silently produced a different root otherwise.
     mock_dir: &Path,
+    repo_root: &Path,
     mode: LintMode,
     scope: Option<&[String]>,
     doc_only: bool,
@@ -317,6 +321,7 @@ pub fn run_lints(
         verdicts::DiskVerdicts::open(&pack.identity)
     });
     let saved = verdicts.as_ref().map(|v| v as &dyn mockspace_lint_rules::verdict::VerdictCache);
+    let plan = touched::Plan::of_run(mode, repo_root, mock_dir, verdicts.as_ref());
 
     let mut parsed: Vec<ParsedCrate> = Vec::new();
 
@@ -390,7 +395,7 @@ pub fn run_lints(
     // crate, which made them silently inert in exactly that case.
     let repo_ctx = RepoContext {
         mock_dir: workspace_root,
-        repo_root: workspace_root.parent().unwrap_or(workspace_root),
+        repo_root,
         all_crates: &env.all_crates,
         src_dirs,
         invocation: None,
@@ -404,6 +409,7 @@ pub fn run_lints(
         doc_only,
         overrides,
         &pack.repo_lints,
+        &plan.touched(),
     ));
 
     // Partition by effective severity
@@ -437,7 +443,7 @@ pub fn run_lints(
     if timing::enabled() {
         eprintln!("\n{}", timing::report());
     }
-
+    plan.settle(errors.len(), doc_only);
     // Only errors block; info and warnings are informational
     errors.len()
 }

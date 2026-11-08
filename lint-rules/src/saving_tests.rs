@@ -474,7 +474,7 @@ fn a_repo_lints_configuration_is_part_of_what_it_remembers() {
     let run = |cfg: &LintConfig| {
         with_repo_context(Some(&store), |ctx| {
             let extra: Vec<Box<dyn crate::RepoLint>> = vec![Box::new(Tunable { runs: Arc::clone(&runs) })];
-            crate::check_repo_with_extra(ctx, false, Some(cfg), &extra)
+            crate::check_repo_with_extra(ctx, false, Some(cfg), &extra, &crate::Touched::Everything)
         })
     };
     run(&params("3"));

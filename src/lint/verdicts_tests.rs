@@ -103,3 +103,22 @@ fn the_sweep_leaves_alone_what_the_store_did_not_write() {
     assert!(dir.path().join("notes/keep.txt").exists(), "a file outside a shard directory is not ours");
     assert!(dir.path().join("ab/keep.txt").exists(), "a file in a shard that is not a key is not ours");
 }
+
+#[test]
+fn the_sweep_removes_a_kept_key_of_a_gone_worktree_or_an_old_shape_and_keeps_a_live_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path(), "");
+    let kept = s.dir.join("last-full-run");
+    fs::create_dir_all(&kept).unwrap();
+    let live = dir.path().join("worktree");
+    fs::create_dir_all(&live).unwrap();
+    fs::write(kept.join("live"), format!("key\nhead\n{}\n", live.display())).unwrap();
+    fs::write(kept.join("gone"), "key\nhead\n/no/such/worktree\n").unwrap();
+    fs::write(kept.join("old-shape"), "key\n").unwrap();
+    fs::remove_file(s.dir.join(".swept")).unwrap();
+
+    let _ = store(dir.path(), "");
+    assert!(kept.join("live").exists(), "a worktree that exists keeps its key");
+    assert!(!kept.join("gone").exists(), "a worktree that is gone does not");
+    assert!(!kept.join("old-shape").exists(), "a file in no shape this version writes does not");
+}

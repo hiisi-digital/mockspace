@@ -207,6 +207,7 @@ fn gate_verdict(cfg: &Config, krate: &str, file: &Path, text: &str) -> usize {
         &crates,
         &cfg.src_dirs,
         &cfg.mock_dir,
+        &cfg.repo_root,
         mockspace_lint_rules::LintMode::Commit,
         Some(&[krate.to_string()]),
         false,

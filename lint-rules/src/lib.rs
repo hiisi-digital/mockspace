@@ -100,10 +100,12 @@ pub mod reach_check;
 #[cfg(test)]
 mod reach_tests;
 #[cfg(test)]
+mod reads_tests;
+#[cfg(test)]
 mod saving_tests;
 pub mod verdict;
 
-pub use reach::Reach;
+pub use reach::{Reach, Touched};
 pub mod testkit;
 pub mod the_mock_toolchain_matches_the_root;
 pub mod tool;
@@ -2226,7 +2228,7 @@ pub fn check_repo(
     doc_only: bool,
     overrides: Option<&LintConfig>,
 ) -> Vec<LintError> {
-    check_repo_with_extra(ctx, doc_only, overrides, &[])
+    check_repo_with_extra(ctx, doc_only, overrides, &[], &Touched::Everything)
 }
 
 /// Decide whether a lint runs, and apply the configured severity overrides to
@@ -2427,11 +2429,15 @@ pub fn check_message_with_extra(
 ///
 /// Takes no crates, by design. These lints inspect repository state, so they
 /// must keep working in a repo whose crate list is empty.
+///
+/// `touched` is what the run changes: a lint declaring [`Reach::Paths`] runs only when it meets
+/// them, every other lint always runs.
 pub fn check_repo_with_extra(
     ctx: &RepoContext,
     doc_only: bool,
     overrides: Option<&LintConfig>,
     extra_lints: &[Box<dyn RepoLint>],
+    touched: &Touched,
 ) -> Vec<LintError> {
     let mut lints = all_repo_lints();
     configure_all(
@@ -2442,6 +2448,10 @@ pub fn check_repo_with_extra(
     let built_in = lints.iter().map(|l| (verdict::Origin::BuiltIn, l.as_ref()));
     let packed = extra_lints.iter().map(|l| (verdict::Origin::Pack, l.as_ref()));
     for (origin, lint) in built_in.chain(packed) {
+        // A lint declaring the paths it reads is not run by a commit touching none of them.
+        if !lint.reach().runs_for(touched) {
+            continue;
+        }
         // What the lint was configured with is part of every verdict it saves. It lives in the
         // lint and not in the context, so the store each lint is handed carries it.
         let salted = ctx.verdicts.map(|inner| verdict::Salted {
@@ -2941,7 +2951,7 @@ mod repo_lint_tests {
         };
 
         let extra: Vec<Box<dyn RepoLint>> = vec![Box::new(AlwaysReports)];
-        let errors = check_repo_with_extra(&ctx, false, None, &extra);
+        let errors = check_repo_with_extra(&ctx, false, None, &extra, &Touched::Everything);
         let _ = std::fs::remove_dir_all(&tmp);
 
         assert_eq!(
@@ -3058,7 +3068,7 @@ mod repo_lint_tests {
             verdicts:    None,
         };
         let extra: Vec<Box<dyn RepoLint>> = vec![lint];
-        let errors = check_repo_with_extra(&ctx, false, cfg, &extra);
+        let errors = check_repo_with_extra(&ctx, false, cfg, &extra, &Touched::Everything);
         let _ = std::fs::remove_dir_all(&tmp);
         errors
     }
