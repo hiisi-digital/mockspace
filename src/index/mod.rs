@@ -176,3 +176,5 @@ mod tests;
 mod tests_git;
 #[cfg(test)]
 mod tests_line;
+#[cfg(test)]
+mod tests_phrase;

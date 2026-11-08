@@ -42,7 +42,7 @@ fn source(root: &Path) -> Vec<Source> {
 }
 
 fn ask(idx: &Index, today: i64) -> Vec<(String, Option<i64>)> {
-    let q = IndexQuery { text: "saturation curve", expand: &[], limit: 5, today };
+    let q = IndexQuery { text: "saturation curve", expand: &[], phrase: false, limit: 5, today };
     idx.search(&q).hits.into_iter().map(|h| (h.path, h.day)).collect()
 }
 
@@ -110,7 +110,7 @@ fn a_shallow_clone_is_not_dated_and_says_so() {
     );
     let mut idx = Index::in_memory().unwrap();
     idx.refresh_dated(&source(&dest), Some(&dest)).unwrap();
-    let q = IndexQuery { text: "saturation curve", expand: &[], limit: 5, today: 0 };
+    let q = IndexQuery { text: "saturation curve", expand: &[], phrase: false, limit: 5, today: 0 };
     let r = idx.search(&q);
     assert_eq!(r.hits[0].day, None);
     assert!(r.caveats.iter().any(|c| c.contains("shallow")), "{:?}", r.caveats);

@@ -317,7 +317,7 @@ mod ambient;
 /// the unit tests cannot reach: a vtable built in the engine and called from the tool's library.
 const ASKS_THE_INDEX: &str = r#"fn purpose(&self) -> Purpose { Purpose::Check(NotALint::NoFailingCase) }
     fn run(&self, ctx: &ToolContext<'_>) -> ToolReport {
-        let q = mockspace::IndexQuery { text: "zeppelin", expand: &[], limit: 3, today: 20000 };
+        let q = mockspace::IndexQuery { text: "zeppelin", expand: &[], phrase: false, limit: 3, today: 20000 };
         let r = ctx.index.search(&q);
         let first = r.hits.first().map_or("none".to_string(), |h| format!("{}:{}", h.path, h.class.label()));
         ToolReport::reported(format!("hits={} first={first} indexed={}", r.hits.len(), r.indexed), 1)

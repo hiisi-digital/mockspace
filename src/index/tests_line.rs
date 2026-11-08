@@ -22,7 +22,7 @@ fn one(root: &Path, body: &str) -> Index {
 }
 
 fn line_of(idx: &Index, q: &str) -> usize {
-    idx.search(&IndexQuery { text: q, expand: &[], limit: 1, today: 0 }).hits[0].line
+    idx.search(&IndexQuery { text: q, expand: &[], phrase: false, limit: 1, today: 0 }).hits[0].line
 }
 
 #[test]

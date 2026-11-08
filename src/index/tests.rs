@@ -90,6 +90,7 @@ fn ask<'a>(text: &'a str, limit: usize) -> IndexQuery<'a> {
     IndexQuery {
         text,
         expand: &[],
+        phrase: false,
         limit,
         today: today(),
     }
@@ -255,7 +256,7 @@ fn expansion_words_find_what_the_question_did_not_use() {
     assert!(idx.search(&ask("two surfaces data store", 3)).hits.is_empty());
 
     let expand = ["broker".to_string()];
-    let q = IndexQuery { text: "two surfaces data store", expand: &expand, limit: 3, today: today() };
+    let q = IndexQuery { text: "two surfaces data store", expand: &expand, phrase: false, limit: 3, today: today() };
     assert_eq!(idx.search(&q).hits[0].path, "research/NOTES.md");
 }
 

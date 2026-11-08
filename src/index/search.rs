@@ -140,6 +140,31 @@ impl Index {
         normalised(rows.flatten().collect(), NEARNESS)
     }
 
+    /// Documents that hold every word of `text` side by side in the order written.
+    fn phrased(&self, text: &str) -> Vec<Cand> {
+        let words: Vec<String> = shingle::words(text).collect();
+        if words.is_empty() {
+            return Vec::new();
+        }
+        let expr = format!("\"{}\"", words.join(" ").replace('"', ""));
+        let sql = format!(
+            "SELECT rowid, -bm25(doc_fts, {HEADING}, 1.0) FROM doc_fts WHERE doc_fts MATCH ?1 \
+             ORDER BY 2 DESC LIMIT {CANDIDATES}"
+        );
+        let Ok(mut q) = self.conn.prepare(&sql) else {
+            return Vec::new();
+        };
+        let Ok(rows) = q.query_map([expr], |r| {
+            Ok(Cand {
+                id:    r.get(0)?,
+                score: r.get::<_, f64>(1)?,
+            })
+        }) else {
+            return Vec::new();
+        };
+        normalised(rows.flatten().collect(), 1.0)
+    }
+
     fn matches(&self, word: &str) -> usize {
         self.conn
             .query_row(
@@ -200,12 +225,16 @@ impl RepoIndex for Index {
             .collect();
 
         let mut scores: std::collections::BTreeMap<i64, f64> = std::collections::BTreeMap::new();
-        for c in self
-            .ranked(&own, 1.0)
-            .into_iter()
-            .chain(self.ranked(&extra, EXPANDED))
-            .chain(self.near(&own))
-        {
+        let cands = if query.phrase {
+            self.phrased(query.text)
+        } else {
+            self.ranked(&own, 1.0)
+                .into_iter()
+                .chain(self.ranked(&extra, EXPANDED))
+                .chain(self.near(&own))
+                .collect()
+        };
+        for c in cands {
             *scores.entry(c.id).or_default() += c.score;
         }
 

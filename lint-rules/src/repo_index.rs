@@ -62,6 +62,9 @@ pub struct IndexQuery<'a> {
     pub text:   &'a str,
     /// Words to ask in as well, such as the keywords of the rows that carry the question.
     pub expand: &'a [String],
+    /// Match the words only as one phrase, in the order written and side by side, with no expansion
+    /// and no match on some of them. For asking whether a passage was ever written.
+    pub phrase: bool,
     /// How many distinct hits to return. Copies of one passage fold into a hit and do not count.
     pub limit:  usize,
     /// Today, as days since 1970-01-01, so an age is computed the same way in a test and a run.
