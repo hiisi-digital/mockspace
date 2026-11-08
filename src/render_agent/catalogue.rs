@@ -15,12 +15,13 @@
 use mockspace_lint_rules::LintPack;
 
 use crate::config::Config;
+
 /// The rule body for `cfg` against the loaded `pack`.
 ///
-/// Names only: a project tool's usage and summary, and a lint's reach and source column,
-/// are what `mock tools` and `mock lints` print on demand, and the rule is read again for
-/// every worktree path a session touches. A tool is named, a lint is named under the
-/// severity it runs at, and the rest is one command away.
+/// Names only: a project tool's usage and summary, and a lint's reach and source column, are
+/// what `mock tools` and `mock lints` print on demand, and the rule is read again for every
+/// worktree path a session touches. A tool is named, a lint is named under the severity it
+/// runs at, and the rest is one command away.
 pub(crate) fn body(cfg: &Config, pack: &LintPack) -> String {
     use std::fmt::Write as _;
     let tools = crate::tool_catalogue::enumerate(pack);
@@ -31,7 +32,6 @@ pub(crate) fn body(cfg: &Config, pack: &LintPack) -> String {
         .collect();
     let lints = crate::lint_catalogue::enumerate(pack, &cfg.lint_overrides);
     let absent = crate::lint_catalogue::configured_but_absent(pack, &cfg.lint_overrides);
-    let mut set_here = String::new();
     let set: Vec<&crate::lint_catalogue::Listing> = lints
         .iter()
         .filter(|l| l.is_configured() && l.runs())
@@ -39,6 +39,7 @@ pub(crate) fn body(cfg: &Config, pack: &LintPack) -> String {
     let mut labels: Vec<&'static str> = set.iter().map(|l| l.effective().label()).collect();
     labels.sort_unstable();
     labels.dedup();
+    let mut set_here = String::new();
     for label in labels {
         let names: Vec<&str> = set
             .iter()

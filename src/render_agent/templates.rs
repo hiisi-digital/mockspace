@@ -449,9 +449,9 @@ Fires while a design round is open, and before opening a changelist in one.
     // why a snapshot rather than only the instruction to run the commands.
     if cfg.agent.catalogues {
         rules.push(BuiltinRule {
-            name:     "catalogues".to_string(),
+            name: "catalogues".to_string(),
             apply_to: vec!["**".to_string()],
-            body:     super::catalogue::body(cfg, pack),
+            body: super::catalogue::body(cfg, pack),
         });
     }
 
@@ -858,6 +858,71 @@ Stop implementing and run a design round to fix the mock (`design-round` skill),
 // Main entry point
 // ---------------------------------------------------------------------------
 
+/// Words whose period does not end a sentence.
+const ABBREVIATIONS: &[&str] = &["e.g", "i.e", "etc", "vs", "cf"];
+
+/// The first sentence of `text` on one line, at most 80 characters, so a generated rule names
+/// what a namespace is without carrying its whole definition; `cargo mock` has the rest.
+///
+/// Whitespace, newlines included, folds to single spaces. A sentence ends at `.`, `?` or `!`
+/// before a space or the end, outside a backtick span and not after an abbreviation. A cut
+/// falls on a word and never inside a backtick span: it backs up before the span, or where the
+/// first word alone is longer than the limit, keeps that word whole.
+fn short_sentence(text: &str) -> String {
+    const LIMIT: usize = 80;
+    let folded = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let chars: Vec<char> = folded.chars().collect();
+    let mut ticks = 0usize;
+    let mut end = chars.len();
+    for (i, c) in chars.iter().enumerate() {
+        if *c == '`' {
+            ticks += 1;
+        }
+        let stops = matches!(c, '.' | '?' | '!') && chars.get(i + 1).is_none_or(|n| *n == ' ');
+        if !stops || ticks % 2 == 1 {
+            continue;
+        }
+        let word: String = chars[.. i]
+            .iter()
+            .rev()
+            .take_while(|w| **w != ' ')
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if *c == '.' && ABBREVIATIONS.contains(&word.to_lowercase().as_str()) {
+            continue;
+        }
+        end = if *c == '.' { i } else { i + 1 };
+        break;
+    }
+    let sentence = &chars[.. end];
+    if sentence.len() <= LIMIT {
+        return sentence.iter().collect();
+    }
+    let first_space = sentence
+        .iter()
+        .position(|c| *c == ' ')
+        .unwrap_or(sentence.len());
+    let last_space = sentence[.. LIMIT].iter().rposition(|c| *c == ' ');
+    let mut cut = if sentence[LIMIT] == ' ' { LIMIT } else { last_space.unwrap_or(first_space) };
+    if sentence[.. cut].iter().filter(|c| **c == '`').count() % 2 == 1 {
+        let open = sentence[.. cut]
+            .iter()
+            .rposition(|c| *c == '`')
+            .unwrap_or(0);
+        // a span opening the sentence is kept whole, since there is nothing before it to keep
+        let close = sentence
+            .iter()
+            .skip(1)
+            .position(|c| *c == '`')
+            .map_or(sentence.len(), |p| p + 2);
+        cut = if open == 0 { close } else { open };
+    }
+    let head: String = sentence[.. cut].iter().collect();
+    format!("{}...", head.trim_end_matches([' ', ',', ';', ':']))
+}
+
 #[cfg(test)]
 mod canon_location_is_derived {
     //! The canon rule reads where the canon is, rather than asserting it.
@@ -1250,36 +1315,79 @@ mod canon_location_is_derived {
     }
 }
 
-/// The first sentence of `text`, cut at 80 characters on a word, so a generated rule names
-/// what a namespace is without carrying its whole definition; `cargo mock` has the rest.
-fn short_sentence(text: &str) -> String {
-    let first = text
-        .split(". ")
-        .next()
-        .unwrap_or(text)
-        .trim_end_matches('.');
-    if first.chars().count() <= 80 {
-        return first.to_string();
-    }
-    let cut: String = first.chars().take(80).collect();
-    let cut = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
-    format!("{cut}...")
-}
-
 #[cfg(test)]
 mod short_sentence_tests {
     use super::short_sentence;
 
     #[test]
-    fn a_description_is_cut_to_its_first_sentence_and_to_eighty_characters() {
+    fn a_sentence_ends_at_a_period_a_question_or_an_exclamation() {
         assert_eq!(
             short_sentence("A short one. And a second sentence."),
             "A short one"
         );
-        let long = "word ".repeat(40);
-        let cut = short_sentence(&long);
-        assert!(cut.chars().count() <= 83, "{cut}");
-        assert!(cut.ends_with("..."), "{cut}");
-        assert!(!cut.contains("wor..."), "cut on a word: {cut}");
+        assert_eq!(short_sentence("Trailing period."), "Trailing period");
+        assert_eq!(
+            short_sentence("Is it the one? Yes it is."),
+            "Is it the one?"
+        );
+        assert_eq!(short_sentence("Stop! Then go."), "Stop!");
+    }
+
+    #[test]
+    fn an_abbreviation_does_not_end_the_sentence() {
+        assert_eq!(
+            short_sentence("Uses e.g. a thing. Second."),
+            "Uses e.g. a thing"
+        );
+        assert_eq!(
+            short_sentence("Rows, i.e. slugs, and so on. Next."),
+            "Rows, i.e. slugs, and so on"
+        );
+    }
+
+    #[test]
+    fn newlines_fold_to_spaces_so_the_bullet_stays_one_line() {
+        let out = short_sentence("first line\nsecond   line\n\nthird");
+        assert_eq!(out, "first line second line third");
+    }
+
+    #[test]
+    fn a_period_inside_a_backtick_span_does_not_end_the_sentence() {
+        assert_eq!(
+            short_sentence("See `a. b` here. Next one."),
+            "See `a. b` here"
+        );
+    }
+
+    #[test]
+    fn a_cut_never_leaves_a_backtick_span_open() {
+        let text = format!(
+            "{}`aaa bbb ccc ddd` and the rest of it goes on",
+            "x ".repeat(38)
+        );
+        let out = short_sentence(&text);
+        assert_eq!(out.matches('`').count() % 2, 0, "{out}");
+        assert!(out.ends_with("x..."), "{out}");
+        assert!(!out.contains("aaa"), "{out}");
+    }
+
+    #[test]
+    fn a_cut_falls_on_a_word_and_within_the_limit_plus_the_ellipsis() {
+        let out = short_sentence(&"word ".repeat(40));
+        assert_eq!(out.chars().count(), 79 + 3, "{out}");
+        assert!(out.ends_with("word..."), "{out}");
+    }
+
+    #[test]
+    fn a_word_ending_exactly_on_the_limit_is_kept() {
+        let text = format!("{} {} tail", "w".repeat(40), "z".repeat(39));
+        let out = short_sentence(&text);
+        assert!(out.ends_with(&format!("{}...", "z".repeat(39))), "{out}");
+    }
+
+    #[test]
+    fn a_single_token_over_the_limit_is_kept_whole() {
+        let out = short_sentence(&format!("{} tail", "a".repeat(100)));
+        assert_eq!(out, format!("{}...", "a".repeat(100)));
     }
 }

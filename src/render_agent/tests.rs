@@ -262,11 +262,11 @@ fn agent_gate_hook_self_heals_then_blocks() {
 fn gate_intact_in(clone: &std::path::Path) -> bool {
     let hook = builtin_mockspace_gate();
     let start = hook.find("_gate_intact() {").expect("the check is defined");
-    let end = hook[start ..].find("\n}\n").expect("the check ends") + start + 3;
+    let end = hook[start..].find("\n}\n").expect("the check ends") + start + 3;
     let script = format!(
         "root='{}'\nvalidator=\"$root/mock/target/hooks/pre-commit\"\n{}\n_gate_intact\n",
         clone.display(),
-        &hook[start .. end]
+        &hook[start..end]
     );
     std::process::Command::new("bash")
         .args(["-c", &script])
@@ -1096,8 +1096,6 @@ fn the_catalogues_rule_carries_the_lints_the_repository_set_as_well_as_the_tools
                     .any(|w| w == name)
             })
     };
-    // A lint's own row, not the group heading: a heading is emitted whether or
-    // not anything is under it.
     assert!(
         row(set),
         "a lint the repository set has to be listed, and `{set}` is one:\n{}",
@@ -1115,31 +1113,31 @@ fn the_catalogues_rule_carries_the_lints_the_repository_set_as_well_as_the_tools
     );
 }
 
-/// A lint the repository set to off is not a row: it checks nothing here.
+/// A lint the repository set to off is not named: it checks nothing here. A sibling set to
+/// error is the control, since a rule listing no lint at all would pass the absence alone.
 #[test]
 fn a_lint_the_repository_turned_off_is_not_in_the_catalogues_rule() {
     let mut cfg = crate::config::Config::from_dir(&skill_fixture(None));
-    let name = mockspace_lint_rules::all_lints()
+    let all = mockspace_lint_rules::all_lints();
+    let off = all
         .first()
         .expect("the engine ships at least one crate lint")
         .name();
+    let on = all.get(1).expect("and a second one").name();
     cfg.lint_overrides
         .base
-        .insert(name.to_string(), mockspace_lint_rules::Severity::OFF);
-    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
-    let rule = builtins
-        .rules
-        .iter()
-        .find(|r| r.name == "catalogues")
-        .unwrap();
-    assert!(
-        !rule
-            .body
-            .lines()
-            .any(|l| l.starts_with(&format!("    {name} "))),
-        "{}",
-        rule.body
-    );
+        .insert(off.to_string(), mockspace_lint_rules::Severity::OFF);
+    cfg.lint_overrides
+        .base
+        .insert(on.to_string(), mockspace_lint_rules::Severity::HARD_ERROR);
+    let builtins = generate_builtin_templates(&cfg, &pack_with_stub_tool());
+    let rule = builtins.rules.iter().find(|r| r.name == "catalogues").unwrap();
+    let set_here = rule.body.split("LINTS SET HERE").nth(1).expect("the group heading");
+    let names: Vec<&str> = set_here
+        .split(|c: char| c == ',' || c == ':' || c.is_whitespace())
+        .collect();
+    assert!(names.contains(&on), "the control `{on}` is named:\n{}", rule.body);
+    assert!(!names.contains(&off), "`{off}` is off:\n{}", rule.body);
 }
 
 /// What a repository that set nothing pays. The rule loads on the first file read
@@ -1150,22 +1148,10 @@ fn a_lint_the_repository_turned_off_is_not_in_the_catalogues_rule() {
 fn the_catalogues_rule_for_a_repository_that_set_nothing_is_a_pointer() {
     let cfg = crate::config::Config::from_dir(&skill_fixture(None));
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
-    let rule = builtins
-        .rules
-        .iter()
-        .find(|r| r.name == "catalogues")
-        .unwrap();
+    let rule = builtins.rules.iter().find(|r| r.name == "catalogues").unwrap();
     let size = rule.body.len();
-    assert!(
-        size < 1_500,
-        "{size} bytes for a repository that set nothing:\n{}",
-        rule.body
-    );
-    assert!(
-        size > 300,
-        "{size} bytes: the pointer to the two commands is missing:\n{}",
-        rule.body
-    );
+    assert!(size < 1_500, "{size} bytes for a repository that set nothing:\n{}", rule.body);
+    assert!(size > 300, "{size} bytes: the pointer to the two commands is missing:\n{}", rule.body);
 }
 
 #[test]
