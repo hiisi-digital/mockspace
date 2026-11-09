@@ -65,6 +65,7 @@ mod identity;
 mod collector;
 mod patch;
 mod registry;
+mod seed;
 use collector::gen_collect_lib;
 use patch::{cargo_home, ensure_lint_rules_checkout, extract_between, is_git_rev_dep, patch_section};
 
@@ -224,6 +225,7 @@ fn build_and_load(
         lint_rules_dep,
         cfg,
     )?;
+    seed::follow_consumer_lock(&gen_dir, &cfg.mock_dir.join("Cargo.lock"))?;
     store::record_owner(&gen_dir, &cfg.mock_dir, scope)?;
     store::touch_used(&gen_dir)?;
     #[cfg(test)]
