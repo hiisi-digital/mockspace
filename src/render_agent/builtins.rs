@@ -347,24 +347,31 @@ if [[ -n "$FILE_PATH" ]] && git -C "$REPO_ROOT" rev-parse -q --verify MERGE_HEAD
     fi
 fi
 # --- Removing a file git does not track passes whatever the phase ---
-# Such a removal only returns the tree to its committed state, which is what a lint asks of a stray file. Only a plain `rm` (or `rm -f`) passes, and only when it carries no shell syntax and every path exists as a file that its own repository does not track; a tracked path, a glob, a directory, a missing path and every other command keep the phase rule.
+# Such a removal only returns the tree to its committed state, which is what a lint asks of a stray file. Only a plain `rm` (or `rm -f`) passes, and only when it carries no shell syntax and every path is an existing file that its own repository does not track and HEAD does not hold; a tracked path, a glob, a directory, a missing path and every other command keep the phase rule.
 __RM_META='\073\046\174\074\076\044\140\052\077\133\135\050\051\173\175\042\047\134\176\012'
 if [[ -z "$FILE_PATH" ]] && [[ "$(printf '%s' "$COMMAND" | tr -d "$__RM_META")" == "$COMMAND" ]]; then
     read -ra __RM_WORDS <<< "$COMMAND"
     if [[ "${{__RM_WORDS[0]:-}}" == "rm" ]]; then
+        __RM_CWD=$(echo "$__INPUT" | jq -r ".cwd // \"\"" 2>/dev/null || echo "")
+        [[ -n "$__RM_CWD" ]] || __RM_CWD=$(pwd)
         __RM_ALL_UNTRACKED=true
         __RM_COUNT=0
         for __w in "${{__RM_WORDS[@]:1}}"; do
             [[ "$__w" == "-f" ]] && continue
             [[ "$__w" == -* ]] && __RM_ALL_UNTRACKED=false && break
             __RM_COUNT=$((__RM_COUNT + 1))
-            [[ -f "$__w" && ! -d "$__w" ]] || {{ __RM_ALL_UNTRACKED=false; break; }}
-            __RM_TOP=$(git -C "$(dirname "$__w")" rev-parse --show-toplevel 2>/dev/null || echo "")
-            __RM_ABS=$(cd "$(dirname "$__w")" 2>/dev/null && pwd -P)/$(basename "$__w")
-            __RM_TOP=$(cd "$__RM_TOP" 2>/dev/null && pwd -P || echo "")
+            # A relative path is read against the cwd the payload names, the one the command runs in.
+            [[ "$__w" == /* ]] || __w="$__RM_CWD/$__w"
+            [[ -f "$__w" ]] || {{ __RM_ALL_UNTRACKED=false; break; }}
+            __RM_DIR=$(cd "$(dirname "$__w")" 2>/dev/null && pwd -P) || {{ __RM_ALL_UNTRACKED=false; break; }}
+            __RM_TOP=$(git -C "$__RM_DIR" rev-parse --show-toplevel 2>/dev/null || echo "")
             if [[ -z "$__RM_TOP" ]]; then __RM_ALL_UNTRACKED=false; break; fi
-            case "$__RM_ABS" in "$__RM_TOP"/*) ;; *) __RM_ALL_UNTRACKED=false; break ;; esac
-            if git -C "$__RM_TOP" ls-files --error-unmatch -- "$__RM_ABS" >/dev/null 2>&1; then
+            __RM_TOP=$(cd "$__RM_TOP" 2>/dev/null && pwd -P || echo "")
+            __RM_REL=${{__RM_DIR#"$__RM_TOP"}}/$(basename "$__w")
+            __RM_REL=${{__RM_REL#/}}
+            # Positive evidence only: git lists the path as untracked, and HEAD does not hold it. A failing query proves nothing.
+            __RM_OTHERS=$(git -C "$__RM_TOP" ls-files --others -z -- ":(literal)$__RM_REL" 2>/dev/null | tr '\0' '\n')
+            if [[ "$__RM_OTHERS" != "$__RM_REL" ]] || git -C "$__RM_TOP" cat-file -e "HEAD:$__RM_REL" 2>/dev/null; then
                 __RM_ALL_UNTRACKED=false
                 break
             fi

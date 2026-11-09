@@ -578,6 +578,7 @@ The `design-round` skill carries the conversation flow and file layout.
 
 - Gated: per-crate `*.md.tmpl` under {src_dirs} (DOC phase) and `*.rs` that declares something (IMPL phase).
 - Not gated: root `{mock_dir}/*.md.tmpl` (DESIGN, PRINCIPLES, WORKFLOW and others), `Cargo.toml`, and a `.rs` file carrying only module docs and inner attributes. A `.rs` file is gated the moment it declares anything.
+- A plain `rm` (or `rm -f`) of an existing file git does not track and HEAD does not hold passes in any phase, since it only returns the tree to its committed state. A tracked path, a glob, a directory, a missing path, `mv` and every other writing command keep the phase rule.
 
 ## Edit
 
