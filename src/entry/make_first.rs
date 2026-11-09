@@ -14,7 +14,15 @@
 //! act. A write that is a pattern or names an argument cannot be told ignored from the declaration, so it also
 //! keeps its maker out.
 
+use std::path::Path;
+use std::process::{Command, ExitCode};
 use std::time::SystemTime;
+
+use mockspace_lint_rules::LintPack;
+use mockspace_lint_rules::path_filter::glob_match_anchored;
+use mockspace_lint_rules::tool::Purpose;
+
+use crate::config::Config;
 
 /// Whether a maker declaring `writes` is run ahead of the checks: it declares some, each is a fixed path, and git
 /// ignores every one of them.
@@ -38,15 +46,6 @@ pub(crate) fn stale(products: &[Option<SystemTime>], inputs: &[SystemTime]) -> b
     inputs.iter().any(|i| *i > oldest)
 }
 
-use std::path::Path;
-use std::process::{Command, ExitCode};
-
-use mockspace_lint_rules::LintPack;
-use mockspace_lint_rules::path_filter::glob_match_anchored;
-use mockspace_lint_rules::tool::Purpose;
-
-use crate::config::Config;
-
 /// Whether git ignores `path` in the tree at `root`. A failure to ask is "not ignored", which keeps the maker out.
 fn git_ignores(root: &Path, path: &str) -> bool {
     Command::new("git")
@@ -63,7 +62,8 @@ fn modified(root: &Path, path: &str) -> Option<SystemTime> {
         .ok()
 }
 
-/// The modification times of the files in the tree matching any of `patterns`, tracked or not and ignored or not.
+/// The modification times of the files in the tree matching any of `patterns`: tracked files, and untracked ones git
+/// does not ignore.
 fn input_times(root: &Path, patterns: &[&str]) -> Vec<SystemTime> {
     if patterns.is_empty() {
         return Vec::new();
