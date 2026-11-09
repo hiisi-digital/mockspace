@@ -77,6 +77,8 @@ mod tests;
 mod write_guard_merge_tests;
 #[cfg(test)]
 mod write_guard_phase_tests;
+#[cfg(test)]
+mod write_guard_untracked_tests;
 
 /// Generate agent rules, skills, hooks, and settings from templates in agent/ directory.
 ///
