@@ -66,14 +66,14 @@ pub(crate) fn macro_closures(json: &serde_json::Value) -> BTreeMap<PathBuf, Vec<
     let text = |v: &serde_json::Value, k: &str| v.get(k).and_then(|s| s.as_str()).map(str::to_string);
     let package = |id: &str| packages.iter().find(|p| p.get("id").and_then(|i| i.as_str()) == Some(id));
     let dir_of = |p: &serde_json::Value| text(p, "manifest_path").and_then(|m| Path::new(&m).parent().map(Path::to_path_buf));
+    let is_macro_package = |p: &serde_json::Value| {
+        p.get("targets").and_then(|t| t.as_array()).is_some_and(|ts| {
+            ts.iter().any(|t| t.get("kind").and_then(|k| k.as_array()).is_some_and(|k| k.iter().any(|k| k == "proc-macro")))
+        })
+    };
     for root in packages {
         let in_tree = root.get("source").is_none_or(|s| s.is_null());
-        let is_macro = root
-            .get("targets")
-            .and_then(|t| t.as_array())
-            .is_some_and(|ts| ts.iter().any(|t| {
-                t.get("kind").and_then(|k| k.as_array()).is_some_and(|k| k.iter().any(|k| k == "proc-macro"))
-            }));
+        let is_macro = is_macro_package(root);
         let (Some(root_id), Some(root_dir), true) = (text(root, "id"), dir_of(root), in_tree && is_macro) else {
             continue;
         };
@@ -101,6 +101,8 @@ pub(crate) fn macro_closures(json: &serde_json::Value) -> BTreeMap<PathBuf, Vec<
                 };
                 match text(pkg, "source") {
                     None => {
+                        // A macro in the closure has no library unit to scan and can build tokens from text.
+                        within &= !is_macro_package(pkg);
                         closure.extend(dir_of(pkg));
                     },
                     Some(source) => {

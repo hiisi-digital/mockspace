@@ -21,6 +21,18 @@ fn macro_build_with(
     beside: &[UnitKind],
     libs: &[(PathBuf, Option<String>)],
 ) -> bool {
+    macro_build_kinded(info, source, allowed, beside, libs, UnitKind::Lib)
+}
+
+/// [`macro_build_with`] with the units of the crates of the tree being of `lib_kind`.
+fn macro_build_kinded(
+    info: Option<&str>,
+    source: Option<&str>,
+    allowed: Option<Vec<PathBuf>>,
+    beside: &[UnitKind],
+    libs: &[(PathBuf, Option<String>)],
+    lib_kind: UnitKind,
+) -> bool {
     let tmp = tempfile::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let crate_dir = tmp.path().join("derive");
@@ -63,7 +75,7 @@ fn macro_build_with(
         units.push(Unit {
             files: vec![deps.join(format!("liblib{n}-1.rlib"))],
             fresh: false,
-            kind: UnitKind::Lib,
+            kind: lib_kind,
             in_tree: true,
             manifest: dir.join("Cargo.toml"),
         });
@@ -157,4 +169,12 @@ fn a_crate_of_the_tree_in_the_closure_with_no_library_dep_info_leaves_nothing_ke
     assert!(!macro_build_with(Some(LISTED), Some(PURE), Some(vec![dir]), &[], &[]), "no unit at all");
     let empty = helper(tmp.path(), &[("src/lib.rs", "pub fn h() {}")], &[]);
     assert!(!macro_build_with(Some(LISTED), Some(PURE), Some(vec![empty.0.clone()]), &[], &[empty]), "no source listed");
+}
+
+#[test]
+fn a_crate_of_the_tree_in_the_closure_that_is_only_a_proc_macro_unit_leaves_nothing_kept() {
+    let tmp = tempfile::tempdir().unwrap();
+    let crate_ = helper(tmp.path(), &[("src/lib.rs", "pub fn h() {}")], &["src/lib.rs"]);
+    let kept = macro_build_kinded(Some(LISTED), Some(PURE), Some(vec![crate_.0.clone()]), &[], &[crate_], UnitKind::ProcMacro);
+    assert!(!kept);
 }
