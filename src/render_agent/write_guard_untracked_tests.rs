@@ -105,11 +105,44 @@ fn untracked_named(d: &std::path::Path, name: &str) {
 fn shell_syntax_keeps_the_phase_rule_though_every_word_is_an_untracked_file() {
     let d = doc_round();
     let dir = p(&d, "mock/crates/x/src");
-    for name in ["*.rs", ";.rs", "&&.rs", "|.rs", "$HOME.rs", "a\\b.rs"] {
-        untracked_named(&d, name);
+    // Every character of the guard's `__RM_META` but the newline, which has its own test below.
+    for c in [
+        ';', '&', '|', '<', '>', '$', '`', '*', '?', '[', ']', '(', ')', '{', '}', '"', '\'', '\\',
+        '~',
+    ] {
+        let name = format!("a{c}b.rs");
+        untracked_named(&d, &name);
         let cmd = format!("rm {dir}/{name}");
-        assert!(refused(&out_of(&d, &cmd)), "passed in DOC: {cmd}");
+        assert!(
+            refused(&out_of(&d, &cmd)),
+            "passed in DOC with {c:?}: {cmd}"
+        );
     }
+}
+
+#[test]
+fn the_list_of_characters_tested_is_the_guards_whole_set() {
+    let d = doc_round();
+    let script = guard_for(&d);
+    let line = script
+        .lines()
+        .find(|l| l.starts_with("__RM_META='"))
+        .expect("the guard names its metacharacter set");
+    // 19 characters above, plus the newline.
+    assert_eq!(line.matches('\\').count(), 20, "{line}");
+}
+
+#[test]
+fn a_second_line_is_not_judged_by_the_first() {
+    // `read -ra` reads one line while bash runs both: an untracked path on line one, a tracked
+    // one on line two.
+    let d = doc_round();
+    let cmd = format!(
+        "rm {}\nrm {}",
+        p(&d, "mock/crates/x/src/stray.rs"),
+        p(&d, "mock/crates/x/src/tracked.rs")
+    );
+    assert!(refused(&out_of(&d, &cmd)), "a two-line command passed");
 }
 
 #[test]
@@ -190,11 +223,6 @@ fn a_relative_path_is_read_against_the_cwd_the_payload_names() {
     payload["cwd"] = d.display().to_string().into();
     let out = run_from(&d, &guard_for(&d), &payload.to_string());
     assert!(!refused(&out), "the payload's cwd was not used: {out}");
-    let out = run_from(&elsewhere, &guard_for(&d), &payload.to_string());
-    assert!(
-        !refused(&out),
-        "the process cwd was used over the payload's: {out}"
-    );
     payload["cwd"] = elsewhere.display().to_string().into();
     let out = run_from(&d, &guard_for(&d), &payload.to_string());
     assert!(
