@@ -43,6 +43,7 @@ A merge commit is judged by what it adds beyond its parents, per staged file.
 - Time is capped per comparison; a file where one comparison passes the cap is reported by name and gated as authored. No merge base (unrelated histories, shallow clone): the repeat bound cannot be computed, the file is gated as authored with a message; a file taken whole from one parent or reproduced by git's merge still passes.
 - The panel-canon gate takes the same merge filter: canon staged by a merge is judged by what it adds, and only canon paths are tested. An octopus is covered by the line tests, not the three-way reproduction.
 - The editor's write guard follows the same reading during a merge: a Write or Edit to a path git lists as unmerged (whole path, never a directory holding one) passes in any phase. Every other path stays gated, and so does every Bash command that writes. A path stops being open once its resolution is staged. Check with `git ls-files -u`.
+- The guard also lets a plain `rm` (or `rm -f`) through in any phase when it carries no shell syntax and every path is an existing file git does not track. That only returns the tree to its committed state. A tracked path, a glob, a directory, a missing path, `mv` and every other writing command keep the phase rule.
 
 ## A registry directory kept on a ref
 
