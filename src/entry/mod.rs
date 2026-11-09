@@ -36,6 +36,7 @@ pub(crate) mod escape_hatch;
 mod graph_picture;
 pub(crate) mod help;
 mod help_for;
+mod make_first;
 mod message;
 #[cfg(test)]
 mod message_identity_tests;

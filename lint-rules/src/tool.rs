@@ -279,6 +279,15 @@ pub trait Tool {
     /// returns [`Outcome::Inconclusive`]. See [`Purpose::Make`].
     fn purpose(&self) -> Purpose;
 
+    /// The files, as anchored patterns relative to the repository root, whose change makes a maker's products stale.
+    ///
+    /// Read only for a [`Purpose::Make`] whose every write is a fixed path git ignores: such a maker is run ahead of
+    /// `mock test` and the lints when a product is missing or an input is newer than the oldest product. Empty
+    /// means the products are current while they exist.
+    fn inputs(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// Declared arguments, in the order they are expected.
     fn args(&self) -> &[ArgSpec] {
         &[]
