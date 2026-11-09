@@ -30,6 +30,18 @@ fn dep_spec() -> String {
 const TOOLS: &str = r#"use mockspace::LintError;
 use mockspace::tool::{ArgRoot, ArgSpec, NotALint, Outcome, Purpose, Tool, ToolContext, ToolReport};
 
+pub struct Ahead;
+impl Tool for Ahead {
+    fn name(&self) -> &'static str { "ahead" }
+    fn description(&self) -> &'static str { "write what git ignores" }
+    fn purpose(&self) -> Purpose { Purpose::Make { writes: &["built/out.txt"], roots: &[] } }
+    fn run(&self, ctx: &ToolContext<'_>) -> ToolReport {
+        std::fs::create_dir_all(ctx.repo_root.join("built")).unwrap();
+        std::fs::write(ctx.repo_root.join("built/out.txt"), "made\n").unwrap();
+        ToolReport::reported("", 1)
+    }
+}
+
 pub struct Gen;
 impl Tool for Gen {
     fn name(&self) -> &'static str { "gen" }
@@ -123,7 +135,7 @@ impl Tool for Bake {
 }
 
 mockspace::lint_pack! {
-    tools: [Gen, Bare, Dodge, Liar, Bake],
+    tools: [Gen, Bare, Dodge, Liar, Bake, Ahead],
 }
 "#;
 
@@ -181,7 +193,7 @@ fn files(root: &Path) -> std::path::PathBuf {
         "[workspace]\nmembers = []\nresolver = \"2\"\n",
     )
     .unwrap();
-    fs::write(root.join(".gitignore"), "target/\nCargo.lock\n").unwrap();
+    fs::write(root.join(".gitignore"), "target/\nCargo.lock\nbuilt/\n").unwrap();
     mock
 }
 
@@ -389,3 +401,24 @@ mod ambient;
 /// Keeps the generated lint crate inside the test's own directory.
 #[path = "common/lint_cache.rs"]
 mod lint_cache;
+
+/// The case that must fail: a maker whose product git ignores is run by the launcher ahead of the checks when the
+/// product is missing, and not again while it is there. Deleting the call in `entry::dispatch` fails here.
+#[test]
+#[ignore = "runs cargo build; run with --ignored"]
+fn a_maker_of_an_ignored_product_runs_before_the_checks_when_it_is_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mock = fixture(tmp.path());
+    let product = mock.parent().unwrap().join("built/out.txt");
+    assert!(!product.exists());
+
+    let first = text(&engine(&mock, &[]).stderr);
+    assert!(
+        first.contains("`ahead` writes what is not committed, running it before the checks"),
+        "{first}"
+    );
+    assert!(product.exists(), "{first}");
+
+    let second = text(&engine(&mock, &[]).stderr);
+    assert!(!second.contains("running it before the checks"), "{second}");
+}

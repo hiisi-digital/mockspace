@@ -844,6 +844,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             },
             "test" => {
                 let test_args = subcommand_args(&args, "test");
+                if let Err(code) = super::make_first::run(&cfg, pack) {
+                    return code;
+                }
                 return super::test::run(&cfg, &test_args);
             },
             "panel" => {
@@ -970,6 +973,11 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         for action in crate::autofix::run(&cfg.repo_root, cfg.auto_fmt, cfg.auto_clippy_fix) {
             eprintln!("--- autofix: {action} ---");
         }
+    }
+
+    // A maker whose products git ignores runs before the lints that read them, when a product is missing or stale.
+    if let Err(code) = make_first::run(&cfg, pack) {
+        return code;
     }
 
     // --scope restricts linting to specific crates
