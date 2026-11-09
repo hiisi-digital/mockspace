@@ -256,3 +256,11 @@ fn a_registry_other_than_the_crates_io_index_is_not_the_allowlisted_crate() {
         assert!(!macro_closures(&metadata(serde_json::Value::Null, "quote", other)).contains_key(Path::new("/r/derive")), "{other}");
     }
 }
+
+#[test]
+fn a_proc_macro_crate_of_the_tree_in_the_closure_leaves_the_macro_with_no_entry() {
+    let mut json = metadata(serde_json::Value::Null, "quote", REGISTRY);
+    let helper = json["packages"].as_array_mut().unwrap().iter_mut().find(|p| p["name"] == "helper").unwrap();
+    helper["targets"] = serde_json::json!([{"kind": ["proc-macro"]}]);
+    assert!(!macro_closures(&json).contains_key(Path::new("/r/derive")));
+}

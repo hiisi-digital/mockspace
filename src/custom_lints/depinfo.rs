@@ -318,6 +318,7 @@ fn runs_only_what_its_sources_say(unit: &Unit, units: &[Unit], roots: &Roots, ge
     // Every library unit of each crate of the tree in the closure must have a readable dep-info.
     let mut closure_infos = Vec::new();
     for dir in closure {
+        // Not the only guard: `macro_closures` already refuses a proc-macro crate in a closure.
         let of_crate: Vec<&Unit> =
             units.iter().filter(|u| u.kind == UnitKind::Lib && u.manifest.parent() == Some(dir.as_path())).collect();
         if of_crate.is_empty() {
