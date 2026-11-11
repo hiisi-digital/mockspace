@@ -94,6 +94,29 @@ pub fn item(old: &str, ctx: &Ctx<'_>) -> Outcome {
     expr(old, ctx)
 }
 
+/// A preset shorthand of `extends` in `mockspace.toml`: `<host>::<name>`, each folded into the
+/// standard's character set, so the hyphen of `stack-lints::no-heap` becomes the underscore.
+#[must_use]
+pub fn preset_shorthand(old: &str) -> Outcome {
+    let s = old.trim();
+    let parts: Vec<&str> = s.split("::").map(str::trim).collect();
+    if parts.len() != 2 {
+        return Outcome::Left("a preset is a host and a name, `<host>::<name>`".to_string());
+    }
+    let mut folded = Vec::new();
+    for p in &parts {
+        match refpath::fold(p) {
+            Some(n) => folded.push(n),
+            None => {
+                return Outcome::Left(format!(
+                    "`{p}` has no name under the standard (it opens on a digit or holds a character outside a-z, 0-9, _ and -)"
+                ));
+            },
+        }
+    }
+    same_or(old, folded.join("::"))
+}
+
 fn expr(old: &str, ctx: &Ctx<'_>) -> Outcome {
     let s = old.trim();
     if s.is_empty() {

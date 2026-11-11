@@ -11,6 +11,8 @@ publish = false
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+# The one parser of a hierarchical reference path; private, so spelled over ssh.
+letkajenkka = { git = "ssh://git@github.com/orgrinrt/letkajenkka.git", branch = "dev" }
 
 [dev-dependencies]
 tempfile = "3"

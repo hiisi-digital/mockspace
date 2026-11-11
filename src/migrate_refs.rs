@@ -6,8 +6,9 @@
 //! `cargo mock migrate references-to-letkajenkka`: the files of a repository that hold a
 //! reference, read and rewritten.
 //!
-//! The templates are every `*.md.tmpl` of the repository, and the data is every `*.toml` under the
-//! registry directory of the mock directory. Which spelling is old and what it becomes is the
+//! The templates are every `*.md.tmpl` of the repository, and the data is every file of the registry as
+//! the loader reads it (the directory of the mock directory and every directory kept on a ref), and
+//! the preset shorthands are the `extends` of the `[lints.<name>]` tables of `mockspace.toml`. Which spelling is old and what it becomes is the
 //! registry crate's `legacy_refs`; this reads the files, finds where a reference stands in each
 //! and hands back the text it would write.
 
@@ -21,8 +22,18 @@ use toml_edit::{ImDocument, Item, Value};
 
 use crate::config::Config;
 
-/// The lines a run prints, and the files it writes as `(path from the repository root, text)`.
-pub(crate) fn plan(cfg: &Config) -> Result<(Vec<String>, Vec<(String, String)>), Vec<String>> {
+/// What a run would do: the lines it prints and the files it writes.
+pub(crate) struct Planned {
+    pub lines:    Vec<String>,
+    /// `(path from the repository root, text)` for each file of the tree.
+    pub writes:   Vec<(String, String)>,
+    /// `(path under the registry root, text)` for each registry file kept on a ref, which is written by
+    /// the registry's own writer and not as a file.
+    pub on_refs:  Vec<(String, String)>,
+}
+
+/// The lines a run prints, and the files it writes.
+pub(crate) fn plan(cfg: &Config) -> Result<Planned, Vec<String>> {
     let namespaces: BTreeSet<&str> = cfg.registry_namespaces.iter().map(|n| n.key.as_str()).collect();
     let ref_fields = mockspace_registry::reference_fields(&cfg.registry_namespaces);
     let ctx = Ctx {
@@ -30,15 +41,22 @@ pub(crate) fn plan(cfg: &Config) -> Result<(Vec<String>, Vec<(String, String)>),
         roots:      &cfg.registry_roots,
         namespaces: &namespaces,
     };
-    let (mut lines, mut writes, mut why) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut lines, mut writes, mut on_refs, mut why) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let report = |rel: &str, found: &[Found], lines: &mut Vec<String>| {
+        for f in found {
+            lines.push(match &f.outcome {
+                Outcome::Rewritten(new) => format!("rewrite {rel}: {} -> {new}", f.old.trim()),
+                Outcome::Left(why) => format!("left {rel}: {} ({why})", f.old.trim()),
+                Outcome::Same => continue,
+            });
+        }
+    };
+    let rel_of = |p: &Path| p.strip_prefix(&cfg.repo_root).unwrap_or(p).to_string_lossy().replace('\\', "/");
 
     let mut templates = Vec::new();
     walk(&cfg.repo_root, &mut |p| p.to_string_lossy().ends_with(".md.tmpl"), &mut templates);
-    let mut data = Vec::new();
-    walk(&cfg.mock_dir.join("registry"), &mut |p| p.extension().is_some_and(|e| e == "toml"), &mut data);
-
-    for path in templates.iter().chain(&data) {
-        let rel = path.strip_prefix(&cfg.repo_root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+    for path in &templates {
+        let rel = rel_of(path);
         let text = match fs::read_to_string(path) {
             Ok(t) => t,
             Err(e) => {
@@ -46,29 +64,67 @@ pub(crate) fn plan(cfg: &Config) -> Result<(Vec<String>, Vec<(String, String)>),
                 continue;
             },
         };
-        let (new, found) = if path.extension().is_some_and(|e| e == "toml") {
-            match in_toml(&text, &ref_fields, &ctx) {
-                Ok(done) => done,
-                Err(e) => {
-                    why.push(format!("migrate: {rel} is not read as TOML, so nothing in it is touched: {e}"));
-                    continue;
-                },
-            }
-        } else {
-            let found = legacy_refs::in_text(&text, &ctx);
-            (legacy_refs::apply(&text, &found), found)
-        };
-        for f in &found {
-            lines.push(match &f.outcome {
-                Outcome::Rewritten(new) => format!("rewrite {rel}: {} -> {new}", f.old.trim()),
-                Outcome::Left(why) => format!("left {rel}: {} ({why})", f.old.trim()),
-                Outcome::Same => continue,
-            });
-        }
+        let found = legacy_refs::in_text(&text, &ctx);
+        let new = legacy_refs::apply(&text, &found);
+        report(&rel, &found, &mut lines);
         if new != text {
             writes.push((rel, new));
         }
     }
+
+    // The registry as the loader reads it: the directory of the tree and every directory kept on a ref.
+    let stores = mockspace_registry::RegistryStores::from_decls(&cfg.mock_dir, &cfg.repo_root, &cfg.registry_stores)
+        .and_then(|s| s.refresh().map(|()| s));
+    match stores.and_then(|s| s.files().map(|f| (s, f))) {
+        Err(e) => why.push(format!("migrate: the registry could not be read: {e}")),
+        Ok((stores, files)) => {
+            let mounts: Vec<String> =
+                cfg.registry_stores.iter().filter_map(|d| d.dir.as_deref()).map(|d| d.trim_matches('/').to_string()).collect();
+            for file in files {
+                let on_ref = mounts.iter().any(|m| file == *m || file.starts_with(&format!("{m}/")));
+                let rel = if on_ref {
+                    format!("{} (on its ref)", rel_of(&stores.source_of(&file)))
+                } else {
+                    rel_of(&stores.source_of(&file))
+                };
+                let text = match stores.read(&file) {
+                    Ok(Some(b)) => String::from_utf8_lossy(&b).into_owned(),
+                    Ok(None) => continue,
+                    Err(e) => {
+                        why.push(format!("migrate: reading {rel}: {e}"));
+                        continue;
+                    },
+                };
+                match in_toml(&text, &ref_fields, &ctx) {
+                    Err(e) => {
+                        why.push(format!("migrate: {rel} is not read as TOML, so nothing in it is touched: {e}"));
+                    },
+                    Ok((new, found)) => {
+                        report(&rel, &found, &mut lines);
+                        if new != text {
+                            if on_ref { on_refs.push((file, new)) } else { writes.push((rel_of(&stores.source_of(&file)), new)) }
+                        }
+                    },
+                }
+            }
+        },
+    }
+
+    // The preset shorthands of `mockspace.toml`.
+    let rel = rel_of(&cfg.config_path);
+    match fs::read_to_string(&cfg.config_path) {
+        Err(e) => why.push(format!("migrate: reading {rel}: {e}")),
+        Ok(text) => match in_config(&text) {
+            Err(e) => why.push(format!("migrate: {rel} is not read as TOML, so nothing in it is touched: {e}")),
+            Ok((new, found)) => {
+                report(&rel, &found, &mut lines);
+                if new != text {
+                    writes.push((rel, new));
+                }
+            },
+        },
+    }
+
     if !why.is_empty() {
         return Err(why);
     }
@@ -76,9 +132,56 @@ pub(crate) fn plan(cfg: &Config) -> Result<(Vec<String>, Vec<(String, String)>),
         lines.push("no reference is in the spelling before the standard, so there is nothing to rewrite".to_string());
     } else {
         let left = lines.iter().filter(|l| l.starts_with("left ")).count();
-        lines.push(format!("{} file(s) rewritten, {left} reference(s) left as written and named above", writes.len()));
+        lines.push(format!(
+            "{} file(s) rewritten{}, {left} reference(s) left as written and named above",
+            writes.len() + on_refs.len(),
+            if on_refs.is_empty() { String::new() } else { format!(" ({} of them on a registry ref)", on_refs.len()) }
+        ));
     }
-    Ok((lines, writes))
+    Ok(Planned {
+        lines,
+        writes,
+        on_refs,
+    })
+}
+
+/// The text of `mockspace.toml` with each `extends` of a `[lints.<name>]` written as the standard
+/// spells a preset, edited by span so the rest of the file stays as written.
+fn in_config(text: &str) -> Result<(String, Vec<Found>), String> {
+    let doc = ImDocument::parse(text.to_string()).map_err(|e| e.to_string())?;
+    let (mut edits, mut found) = (Vec::new(), Vec::new());
+    if let Some(lints) = doc.get("lints").and_then(Item::as_table) {
+        for (_, lint) in lints.iter() {
+            let Some(Value::String(s)) = lint.get("extends").and_then(Item::as_value) else {
+                continue;
+            };
+            let (Some(span), old) = (s.span(), s.value()) else { continue };
+            let mut outcome = legacy_refs::preset_shorthand(old);
+            let raw = &text[span.clone()];
+            if let Outcome::Rewritten(new) = &outcome {
+                let quote = &raw[.. 1];
+                if raw.len() == old.len() + 2 && raw[1 .. raw.len() - 1] == *old && (quote == "\"" || quote == "'") {
+                    edits.push((span, format!("{quote}{new}{quote}")));
+                } else {
+                    outcome = Outcome::Left("it is written with escapes the rewrite does not read".to_string());
+                }
+            }
+            if outcome != Outcome::Same {
+                found.push(Found {
+                    token: old.clone(),
+                    old: old.clone(),
+                    outcome,
+                });
+            }
+        }
+    }
+    edits.sort_by_key(|(s, _): &(Range<usize>, String)| s.start);
+    let mut out = text.to_string();
+    for (span, new) in edits.into_iter().rev() {
+        out.replace_range(span, &new);
+    }
+    ImDocument::parse(out.clone()).map_err(|e| format!("the rewrite would not read as TOML: {e}"))?;
+    Ok((out, found))
 }
 
 /// Every file under `dir` the filter takes, in path order, leaving out what is not the repository's

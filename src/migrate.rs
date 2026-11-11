@@ -47,8 +47,8 @@ pub const MIGRATIONS: &[Migration] = &[
         name:    "references-to-letkajenkka",
         summary: "none: rewrites every reference of the spelling before the letkajenkka standard (uppercase and file \
                   extensions in a name, `::#heading`, spaces beside a separator) in the `*.md.tmpl` files and the \
-                  registry data to the new spelling, where that reaches the same file and line, and names each \
-                  reference it leaves",
+                  registry data (on a registry ref too) to the new spelling, and folds the preset shorthands of `extends` \
+                  in `mockspace.toml`, where that reaches the same file and line, and names each reference it leaves",
         plan:    plan_references,
     },
 ];
@@ -76,6 +76,9 @@ enum Step {
     Adopt(DataRefDecl),
     /// Append `text` to the config file.
     AppendConfig(String),
+    /// Write these registry files (path under the registry root, text), kept on a ref, through the
+    /// registry's own writer, one write for each ref they are held by.
+    WriteRegistry(Vec<(String, String)>),
     /// Take these paths (from the repository root) out of the index, leaving the files.
     Untrack(Vec<String>),
     /// Rename a file, both paths from the repository root.
@@ -196,6 +199,30 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
             path,
             text,
         } => std::fs::write(cfg.repo_root.join(path), text).map_err(|e| format!("writing {path}: {e}")),
+        Step::WriteRegistry(files) => {
+            mockspace_registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
+            let stores =
+                mockspace_registry::RegistryStores::from_decls(&cfg.mock_dir, &cfg.repo_root, &cfg.registry_stores)
+                    .map_err(|e| e.to_string())?;
+            let writer = mockspace_registry::RegistryWriter::new(cfg, &stores);
+            let mut groups: std::collections::BTreeMap<String, Vec<(String, Option<Vec<u8>>)>> = Default::default();
+            for (rel, text) in files {
+                let dir = cfg
+                    .registry_stores
+                    .iter()
+                    .filter_map(|d| d.dir.as_deref())
+                    .map(|d| d.trim_matches('/'))
+                    .find(|d| rel == d || rel.starts_with(&format!("{d}/")))
+                    .ok_or_else(|| format!("{rel} is held by no registry ref"))?;
+                groups.entry(dir.to_string()).or_default().push((rel.clone(), Some(text.clone().into_bytes())));
+            }
+            for (dir, changes) in groups {
+                writer
+                    .write(&changes, "chore: rewrite references to the letkajenkka spelling")
+                    .map_err(|e| format!("the registry ref of `{dir}`: {e}"))?;
+            }
+            Ok(())
+        },
     }
 }
 
@@ -452,8 +479,11 @@ fn plan_round_filenames(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String>
 
 fn plan_references(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String>> {
     flags(args, &[])?;
-    let (lines, writes) = crate::migrate_refs::plan(cfg)?;
-    let steps = writes.into_iter().map(|(path, text)| Step::Write { path, text }).collect();
+    let crate::migrate_refs::Planned { lines, writes, on_refs } = crate::migrate_refs::plan(cfg)?;
+    let mut steps: Vec<Step> = writes.into_iter().map(|(path, text)| Step::Write { path, text }).collect();
+    if !on_refs.is_empty() {
+        steps.push(Step::WriteRegistry(on_refs));
+    }
     Ok(Plan {
         lines,
         steps,

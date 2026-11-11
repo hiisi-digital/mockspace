@@ -156,3 +156,19 @@ fn a_text_has_each_placeholder_rewritten_outside_a_fence_with_its_spacing_kept()
     );
     assert!(in_text(&apply(text, &found), &ctx).iter().all(|f| matches!(f.outcome, Outcome::Left(_))));
 }
+
+#[test]
+fn a_preset_shorthand_is_folded_into_the_standards_names() {
+    let said = |s: &str| preset_shorthand(s);
+    assert_eq!(said("stack-lints::no-heap"), Outcome::Rewritten("stack_lints::no_heap".into()));
+    assert_eq!(said("mockspace::No-Bare-Numeric"), Outcome::Rewritten("mockspace::no_bare_numeric".into()));
+    assert_eq!(said("mockspace::no_bare_numeric"), Outcome::Same);
+}
+
+#[test]
+fn a_preset_shorthand_that_is_not_a_host_and_a_name_is_left_and_says_why() {
+    for bad in ["no-heap", "a::b::c", "stack-lints::9lives", "::x", "x::"] {
+        let Outcome::Left(why) = preset_shorthand(bad) else { panic!("{bad}") };
+        assert!(!why.is_empty(), "{bad}");
+    }
+}

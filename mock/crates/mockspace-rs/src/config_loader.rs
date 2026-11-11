@@ -1762,7 +1762,7 @@ mod tests {
 
         fn insert(mut self, host: &str, preset: PresetFile) -> Self {
             self.presets
-                .insert((host.to_string(), preset.name.clone()), preset);
+                .insert((host.to_string(), mockspace_config::fold_name(&preset.name).unwrap()), preset);
             self
         }
     }
@@ -2059,7 +2059,7 @@ mod tests {
 
     #[test]
     fn synthesise_extends_to_first_party_preset_produces_lint() {
-        // A consumer references `mockspace::regex-probe` for a lint
+        // A consumer references `mockspace::regex_probe` for a lint
         // name (`probe-lint`) that is NOT in the auto-registered
         // catalog. The synthesis path resolves the preset, looks up
         // `content-regex` in PRIMITIVE_DESCRIPTORS, and constructs an
@@ -2080,7 +2080,7 @@ finding_kind = "todo"
             ),
         );
         let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
-        let user_block: toml::Table = "extends = \"mockspace::regex-probe\"\n".parse().unwrap();
+        let user_block: toml::Table = "extends = \"mockspace::regex_probe\"\n".parse().unwrap();
         user_lints.insert("probe-lint".to_string(), user_block);
         let user_toml = LintsTomlFile {
             lints:    user_lints,
@@ -2140,7 +2140,7 @@ finding_kind = "todo"
     fn synthesise_extends_to_unknown_preset_emits_config_error() {
         let source = InMemorySource::new();
         let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
-        let user_block: toml::Table = "extends = \"mockspace::not-shipped\"\n".parse().unwrap();
+        let user_block: toml::Table = "extends = \"mockspace::not_shipped\"\n".parse().unwrap();
         user_lints.insert("probe-lint".to_string(), user_block);
         let user_toml = LintsTomlFile {
             lints:    user_lints,
@@ -2174,7 +2174,7 @@ finding_kind = "todo"
                 preset_with_primitive(
                     "regex-probe",
                     "content-regex",
-                    Some("mockspace::token-probe"),
+                    Some("mockspace::token_probe"),
                     r#"
 [[patterns]]
 regex = "BAR"
@@ -2184,7 +2184,7 @@ finding_kind = "bar"
                 ),
             );
         let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
-        let user_block: toml::Table = "extends = \"mockspace::regex-probe\"\n".parse().unwrap();
+        let user_block: toml::Table = "extends = \"mockspace::regex_probe\"\n".parse().unwrap();
         user_lints.insert("probe-lint".to_string(), user_block);
         let user_toml = LintsTomlFile {
             lints:    user_lints,

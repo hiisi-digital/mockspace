@@ -48,8 +48,12 @@ struct Repo {
 }
 
 fn repo() -> Repo {
+    repo_with("")
+}
+
+fn repo_with(extra_config: &str) -> Repo {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("mockspace.toml"), CONFIG).unwrap();
+    std::fs::write(dir.path().join("mockspace.toml"), format!("{CONFIG}{extra_config}")).unwrap();
     let cfg = Config::from_dir(dir.path());
     let put = |p: PathBuf, text: &str| {
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -185,4 +189,83 @@ fn a_registry_file_that_is_not_toml_stops_the_plan_and_is_named() {
     std::fs::write(r.cfg.mock_dir.join("registry/broken.toml"), "id = = =\n").unwrap();
     let why = plan_of(&r.cfg, &[NAME]).unwrap_err().join("\n");
     assert!(why.contains("broken.toml"), "{why}");
+}
+
+const LINTS: &str = "\n[lints.a]\nextends = \"stack-lints::no-heap\" # kept comment\n\n[lints.b]\nextends = 'Mockspace::No-Bare-Numeric'\n\n[lints.c]\nextends = \"stack-lints::9lives\"\n\n[lints.d]\nextends = \"mockspace::already_folded\"\n";
+
+// Mutation: a migration that reads only templates and registry data leaves the config spelling alone.
+#[test]
+fn the_preset_shorthands_of_the_config_are_rewritten_and_the_one_that_cannot_be_is_left_and_named() {
+    let r = repo_with(LINTS);
+    assert_eq!(run(&r.cfg, &[NAME]), ExitCode::SUCCESS);
+    let config = read(&r.cfg, "mockspace.toml");
+    assert!(config.contains("extends = \"stack_lints::no_heap\" # kept comment"), "{config}");
+    assert!(config.contains("extends = 'mockspace::no_bare_numeric'"), "{config}");
+    assert!(config.contains("extends = \"stack-lints::9lives\""), "{config}");
+    assert!(config.contains("extends = \"mockspace::already_folded\""), "{config}");
+    assert!(config.starts_with(CONFIG), "the rest of the file is as written");
+    let said = plan_of(&r.cfg, &[NAME]).unwrap().lines.join("\n");
+    assert!(said.contains("left mockspace.toml: stack-lints::9lives"), "{said}");
+    assert!(!said.contains("rewrite mockspace.toml"), "a second run rewrites nothing: {said}");
+}
+
+// Mutation: ignoring `--dry-run` writes the config.
+#[test]
+fn a_dry_run_names_the_config_rewrites_and_leaves_the_config_as_written() {
+    let r = repo_with(LINTS);
+    let before = read(&r.cfg, "mockspace.toml");
+    let said = plan_of(&r.cfg, &[NAME]).unwrap().lines.join("\n");
+    assert!(said.contains("rewrite mockspace.toml: stack-lints::no-heap -> stack_lints::no_heap"), "{said}");
+    assert!(said.contains("rewrite mockspace.toml: Mockspace::No-Bare-Numeric -> mockspace::no_bare_numeric"), "{said}");
+    assert_eq!(run(&r.cfg, &[NAME, "--dry-run"]), ExitCode::SUCCESS);
+    assert_eq!(read(&r.cfg, "mockspace.toml"), before);
+}
+
+#[test]
+fn a_config_that_does_not_read_as_toml_after_the_rewrite_is_never_written() {
+    let r = repo_with("\n[lints.a]\nextends = \"stack\\u002dlints::no-heap\"\n");
+    assert_eq!(run(&r.cfg, &[NAME]), ExitCode::SUCCESS);
+    let config = read(&r.cfg, "mockspace.toml");
+    assert!(config.contains("extends = \"stack\\u002dlints::no-heap\""), "an escape inside the token is left: {config}");
+}
+
+const ROW_ON_A_REF: &str = "[[ruling]]\nid = \"first\"\ntitle = \"First\"\nprovenance = \"seed::DESIGN::#the-four-lanes, ruling::first\"\n";
+
+// A registry kept on a ref is read and written through the registry's own stores, and its file is
+// never written into the tree.
+#[test]
+fn a_registry_held_on_a_data_ref_is_rewritten_on_the_ref_and_not_in_the_tree() {
+    let remote = mockspace_store::test_support::Remote::new();
+    let root = remote.clone_dir("p");
+    let config = format!("{CONFIG}\n[[registry.store]]\ndir = \"ruling\"\n");
+    std::fs::write(root.join("mockspace.toml"), config).unwrap();
+    std::fs::create_dir_all(root.join("corpus")).unwrap();
+    std::fs::write(root.join("corpus/DESIGN.md"), "# Design\n\n## The four lanes\n\ntext\n").unwrap();
+    let cfg = Config::from_dir(&root);
+    mockspace_registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
+    // The old spelling is refused by the writer, so the ref is made by hand, as a repository written
+    // before the standard would have it.
+    let seeder = remote.clone_dir("seeder");
+    let git = |args: &[&str]| mockspace_store::test_support::git(&seeder, args);
+    git(&["checkout", "-q", "--orphan", "seed"]);
+    std::fs::write(seeder.join("first.toml"), ROW_ON_A_REF).unwrap();
+    git(&["add", "first.toml"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed"]);
+    git(&["push", "-q", "origin", "seed:refs/heads/mock/registry/ruling"]);
+    assert!(!cfg.mock_dir.join("registry/ruling/first.toml").exists());
+
+    let said = plan_of(&cfg, &[NAME]).unwrap().lines.join("\n");
+    assert!(said.contains("(on its ref): seed::DESIGN::#the-four-lanes -> seed::design::the_four_lanes"), "{said}");
+    assert_eq!(run(&cfg, &[NAME, "--dry-run"]), ExitCode::SUCCESS);
+    let held = |remote: &mockspace_store::test_support::Remote| {
+        remote.file("refs/heads/mock/registry/ruling", "first.toml").unwrap()
+    };
+    assert!(held(&remote).contains("seed::DESIGN::#the-four-lanes"), "a dry run writes no ref");
+
+    assert_eq!(run(&cfg, &[NAME]), ExitCode::SUCCESS);
+    let after = held(&remote);
+    assert!(after.contains("seed::design::the_four_lanes"), "{after}");
+    assert!(!cfg.mock_dir.join("registry/ruling/first.toml").exists(), "nothing is written into the tree");
+    let again = plan_of(&cfg, &[NAME]).unwrap();
+    assert!(again.lines.iter().all(|l| !l.starts_with("rewrite ")), "{:?}", again.lines);
 }

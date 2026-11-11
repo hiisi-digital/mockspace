@@ -613,12 +613,12 @@ fn lint_config_accepts_extends_shorthand() {
 version = "1.0"
 
 [lints.my-no-heap]
-extends = "stack-lints::no-heap"
+extends = "stack_lints::no_heap"
 commit = "error"
 "#;
     let cfg = parse_mockspace_toml_str(toml).unwrap();
     let lint = &cfg.lints["my-no-heap"];
-    assert_eq!(lint.extends.as_deref(), Some("stack-lints::no-heap"));
+    assert_eq!(lint.extends.as_deref(), Some("stack_lints::no_heap"));
     assert_eq!(lint.commit, Some(mockspace_config::Severity::Error));
 }
 
@@ -631,7 +631,7 @@ schema_version = "1.0"
 name = "no-heap"
 primitive = "forbidden_imports"
 description = "Forbid alloc::* and std::vec usage in no-heap codebases."
-extends = "mockspace::no-alloc"
+extends = "mockspace::no_alloc"
 
 [config]
 forbidden = ["alloc::*", "std::vec::*"]
@@ -653,7 +653,7 @@ exempt_paths = ["**/tests/**"]
         preset.description.as_deref(),
         Some("Forbid alloc::* and std::vec usage in no-heap codebases.")
     );
-    assert_eq!(preset.extends.as_deref(), Some("mockspace::no-alloc"));
+    assert_eq!(preset.extends.as_deref(), Some("mockspace::no_alloc"));
     assert!(preset.config.contains_key("forbidden"));
     assert!(preset.config.contains_key("reason"));
     assert_eq!(preset.severity.commit, Some(Severity::Warn));
@@ -708,7 +708,7 @@ fn preset_file_rejects_unknown_field() {
 schema_version = "1.0"
 name = "no-heap"
 primitive = "forbidden_imports"
-extens = "mockspace::no-alloc"
+extens = "mockspace::no_alloc"
 "#;
     let result: Result<PresetFile, _> = toml::from_str(toml);
     assert!(result.is_err(), "expected typo to be rejected");

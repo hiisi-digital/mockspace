@@ -70,44 +70,46 @@ impl fmt::Display for PresetRef {
 
 /// Parse the `<host>::<name>` preset shorthand.
 ///
-/// Both `host` and `name` are required and non-empty. Whitespace is not
-/// trimmed; consumers should pass clean strings. The separator is the
-/// two-character literal `::` (matching the existing identifier-path
-/// separator used across the v2 spec).
+/// The text is a letkajenkka path of exactly two names, `host` and `name`, read by that crate:
+/// lowercase letters, digits and `_`, no padding, no hyphen. The names are held as written, in the
+/// standard's spelling, and a source folds its own names to compare (`no_heap` reaches `no-heap`).
 ///
 /// First-party presets use the literal host name `mockspace`; the loader
 /// expands `mockspace::<name>` to `mock://@/export/lint-preset/<name>`
 /// (the embedded preset tree) downstream of this parse.
 pub fn parse_preset_shorthand(input: &str) -> Result<PresetRef, PresetResolveError> {
-    let trimmed = input.trim();
-    let (host, name) = trimmed.split_once("::").ok_or_else(|| {
+    let malformed = |reason: String| {
         PresetResolveError::MalformedShorthand {
-            input:  input.to_string(),
-            reason: "missing `::` separator".to_string(),
+            input: input.to_string(),
+            reason,
         }
+    };
+    let query = letkajenkka::Query::parse(input).map_err(|e| {
+        malformed(format!(
+            "{e}; a preset is written `<host>::<name>` under the letkajenkka standard, lowercase letters, digits \
+             and `_` with no hyphen, and `cargo mock migrate references-to-letkajenkka` rewrites a config written \
+             in the spelling before it"
+        ))
     })?;
-    if host.is_empty() {
-        return Err(PresetResolveError::MalformedShorthand {
-            input:  input.to_string(),
-            reason: "empty host before `::`".to_string(),
-        });
+    let names: Option<Vec<&str>> = query.path().and_then(|path| {
+        path.steps()
+            .map(|s| match (s.selector, s.constraints.is_empty()) {
+                (letkajenkka::Selector::Ident(n), true) => Some(n),
+                _ => None,
+            })
+            .collect()
+    });
+    match names.as_deref() {
+        Some(&[host, name]) => {
+            Ok(PresetRef {
+                host: host.to_string(),
+                name: name.to_string(),
+            })
+        },
+        Some(other) if other.len() == 1 => Err(malformed("a preset names a host and a name".to_string())),
+        Some(_) => Err(malformed("shorthand contains more than one `::` separator".to_string())),
+        None => Err(malformed("a preset is a path of two names, with no set, wildcard or constraint".to_string())),
     }
-    if name.is_empty() {
-        return Err(PresetResolveError::MalformedShorthand {
-            input:  input.to_string(),
-            reason: "empty preset name after `::`".to_string(),
-        });
-    }
-    if name.contains("::") {
-        return Err(PresetResolveError::MalformedShorthand {
-            input:  input.to_string(),
-            reason: "shorthand contains more than one `::` separator".to_string(),
-        });
-    }
-    Ok(PresetRef {
-        host: host.to_string(),
-        name: name.to_string(),
-    })
 }
 
 /// Lookup interface the resolver calls into to fetch preset files.
@@ -301,7 +303,7 @@ mod tests {
 
         fn insert(mut self, host: &str, preset: PresetFile) -> Self {
             self.files
-                .insert(format!("{host}::{}", preset.name), preset);
+                .insert(format!("{host}::{}", crate::fold_name(&preset.name).unwrap()), preset);
             self
         }
     }
@@ -324,86 +326,65 @@ mod tests {
 
     #[test]
     fn shorthand_parses_host_and_name() {
-        let r = parse_preset_shorthand("stack-lints::no-heap").unwrap();
-        assert_eq!(r.host, "stack-lints");
-        assert_eq!(r.name, "no-heap");
+        let r = parse_preset_shorthand("stack_lints::no_heap").unwrap();
+        assert_eq!(r.host, "stack_lints");
+        assert_eq!(r.name, "no_heap");
     }
 
     #[test]
     fn shorthand_display_renders_host_name_pair() {
         // The `shorthand()` / `Display` round-trip is part of the public
         // surface and used in `Display` for several error variants.
-        let r = parse_preset_shorthand("stack-lints::no-heap").unwrap();
-        assert_eq!(r.shorthand(), "stack-lints::no-heap");
-        assert_eq!(format!("{r}"), "stack-lints::no-heap");
+        let r = parse_preset_shorthand("stack_lints::no_heap").unwrap();
+        assert_eq!(r.shorthand(), "stack_lints::no_heap");
+        assert_eq!(format!("{r}"), "stack_lints::no_heap");
     }
 
     #[test]
     fn shorthand_parses_first_party_mockspace_host() {
-        let r = parse_preset_shorthand("mockspace::no-bare-numeric").unwrap();
+        let r = parse_preset_shorthand("mockspace::no_bare_numeric").unwrap();
         assert_eq!(r.host, "mockspace");
-        assert_eq!(r.name, "no-bare-numeric");
+        assert_eq!(r.name, "no_bare_numeric");
     }
 
     #[test]
-    fn shorthand_trims_surrounding_whitespace() {
-        // Internal whitespace is rejected (split_once will leave it in);
-        // surrounding trim mirrors how a TOML reader hands us the value.
-        // Asserting both `host` and `name` confirms the trim does not
-        // bleed across the `::` separator.
-        let r = parse_preset_shorthand("  stack-lints::no-heap  ").unwrap();
-        assert_eq!(r.host, "stack-lints");
-        assert_eq!(r.name, "no-heap");
+    fn shorthand_refuses_the_spelling_before_the_standard_naming_the_migration() {
+        // Mutation: the reader before the standard split on `::` and trimmed, so each of these was
+        // accepted; the hyphens and the padding are what the standard refuses.
+        for old in ["stack-lints::no-heap", "mockspace::no_bare_numeric", "  stack_lints::no_heap  ", "Stack::no_heap"] {
+            let err = parse_preset_shorthand(old).unwrap_err();
+            assert!(
+                matches!(&err, PresetResolveError::MalformedShorthand { reason, .. } if reason.contains("references-to-letkajenkka")),
+                "{old}: {err:?}"
+            );
+        }
     }
 
     #[test]
-    fn shorthand_rejects_missing_separator() {
-        let err = parse_preset_shorthand("no-heap").unwrap_err();
-        assert!(matches!(
-            err,
-            PresetResolveError::MalformedShorthand { ref reason, .. }
-                if reason.contains("missing")
-        ));
-    }
-
     #[test]
-    fn shorthand_rejects_empty_host() {
-        let err = parse_preset_shorthand("::no-heap").unwrap_err();
-        assert!(matches!(
-            err,
-            PresetResolveError::MalformedShorthand { ref reason, .. }
-                if reason.contains("empty host")
-        ));
-    }
-
-    #[test]
-    fn shorthand_rejects_empty_name() {
-        let err = parse_preset_shorthand("stack-lints::").unwrap_err();
-        assert!(matches!(
-            err,
-            PresetResolveError::MalformedShorthand { ref reason, .. }
-                if reason.contains("empty preset name")
-        ));
-    }
-
-    #[test]
-    fn shorthand_rejects_triple_colon() {
-        // `stack::lints::no-heap` would split into host=`stack`,
-        // name=`lints::no-heap`. Invalid because name carries `::`.
-        let err = parse_preset_shorthand("stack::lints::no-heap").unwrap_err();
-        assert!(matches!(
-            err,
-            PresetResolveError::MalformedShorthand { ref reason, .. }
-                if reason.contains("more than one")
-        ));
+    fn shorthand_rejects_missing_separator_empty_parts_and_extra_separators() {
+        for (text, part) in [
+            ("no_heap", "host and a name"),
+            ("::no_heap", "empty_step"),
+            ("stack_lints::", "empty_step"),
+            ("stack::lints::no_heap", "more than one"),
+            ("stack_lints::{a, b}", "two names"),
+            ("stack_lints::*", "two names"),
+        ] {
+            let err = parse_preset_shorthand(text).unwrap_err();
+            assert!(
+                matches!(&err, PresetResolveError::MalformedShorthand { reason, .. } if reason.contains(part)),
+                "{text}: {err:?}"
+            );
+        }
     }
 
     // ---- resolve_preset_chain ----
 
     #[test]
     fn resolves_single_preset_with_no_extends() {
-        let source = MockSource::new().insert("stack-lints", preset("no-heap", None));
-        let start = parse_preset_shorthand("stack-lints::no-heap").unwrap();
+        let source = MockSource::new().insert("stack_lints", preset("no-heap", None));
+        let start = parse_preset_shorthand("stack_lints::no_heap").unwrap();
         let chain = resolve_preset_chain(&start, &source).unwrap();
         assert_eq!(chain.len(), 1);
         assert_eq!(chain[0].name, "no-heap");
@@ -414,10 +395,10 @@ mod tests {
         let source = MockSource::new()
             .insert("mockspace", preset("no-bare-numeric", None))
             .insert(
-                "stack-lints",
-                preset("no-heap", Some("mockspace::no-bare-numeric")),
+                "stack_lints",
+                preset("no-heap", Some("mockspace::no_bare_numeric")),
             );
-        let start = parse_preset_shorthand("stack-lints::no-heap").unwrap();
+        let start = parse_preset_shorthand("stack_lints::no_heap").unwrap();
         let chain = resolve_preset_chain(&start, &source).unwrap();
         assert_eq!(chain.len(), 2);
         // Innermost first: no-bare-numeric is the deepest, then no-heap.
@@ -442,19 +423,19 @@ mod tests {
     #[test]
     fn missing_start_returns_not_found() {
         let source = MockSource::new();
-        let start = parse_preset_shorthand("stack-lints::no-heap").unwrap();
+        let start = parse_preset_shorthand("stack_lints::no_heap").unwrap();
         let err = resolve_preset_chain(&start, &source).unwrap_err();
         assert!(matches!(
             err,
-            PresetResolveError::NotFound { ref host, .. } if host == "stack-lints"
+            PresetResolveError::NotFound { ref host, .. } if host == "stack_lints"
         ));
     }
 
     #[test]
     fn missing_extends_target_returns_not_found() {
         let source =
-            MockSource::new().insert("stack-lints", preset("no-heap", Some("absent::base")));
-        let start = parse_preset_shorthand("stack-lints::no-heap").unwrap();
+            MockSource::new().insert("stack_lints", preset("no-heap", Some("absent::base")));
+        let start = parse_preset_shorthand("stack_lints::no_heap").unwrap();
         let err = resolve_preset_chain(&start, &source).unwrap_err();
         assert!(matches!(
             err,
@@ -514,15 +495,15 @@ mod tests {
 
     #[test]
     fn malformed_extends_target_returns_malformed_extends_with_parent() {
-        let source = MockSource::new().insert("stack-lints", preset("no-heap", Some("garbage")));
-        let start = parse_preset_shorthand("stack-lints::no-heap").unwrap();
+        let source = MockSource::new().insert("stack_lints", preset("no-heap", Some("garbage")));
+        let start = parse_preset_shorthand("stack_lints::no_heap").unwrap();
         let err = resolve_preset_chain(&start, &source).unwrap_err();
         match err {
             PresetResolveError::MalformedExtends {
                 parent,
                 source,
             } => {
-                assert_eq!(parent.shorthand(), "stack-lints::no-heap");
+                assert_eq!(parent.shorthand(), "stack_lints::no_heap");
                 assert!(matches!(
                     *source,
                     PresetResolveError::MalformedShorthand { .. }
@@ -536,8 +517,8 @@ mod tests {
     fn malformed_extends_display_shows_parent_context() {
         let err = PresetResolveError::MalformedExtends {
             parent: PresetRef {
-                host: "stack-lints".to_string(),
-                name: "no-heap".to_string(),
+                host: "stack_lints".to_string(),
+                name: "no_heap".to_string(),
             },
             source: Box::new(PresetResolveError::MalformedShorthand {
                 input:  "garbage".to_string(),
@@ -545,7 +526,7 @@ mod tests {
             }),
         };
         let msg = format!("{err}");
-        assert!(msg.contains("stack-lints::no-heap"));
+        assert!(msg.contains("stack_lints::no_heap"));
         assert!(msg.contains("while resolving extends"));
         assert!(msg.contains("garbage"));
         // Diagnostic readability: the parent context phrase must
@@ -567,25 +548,25 @@ mod tests {
     fn cycle_error_display_lists_full_path() {
         let err = PresetResolveError::Cycle {
             path: vec![
-                "stack-lints::no-heap".to_string(),
-                "mockspace::no-bare-numeric".to_string(),
-                "stack-lints::no-heap".to_string(),
+                "stack_lints::no_heap".to_string(),
+                "mockspace::no_bare_numeric".to_string(),
+                "stack_lints::no_heap".to_string(),
             ],
         };
         let msg = format!("{err}");
-        assert!(msg.contains("stack-lints::no-heap"));
-        assert!(msg.contains("mockspace::no-bare-numeric"));
+        assert!(msg.contains("stack_lints::no_heap"));
+        assert!(msg.contains("mockspace::no_bare_numeric"));
         assert!(msg.contains("(cycle)"));
     }
 
     #[test]
     fn not_found_error_display_names_host_and_preset() {
         let err = PresetResolveError::NotFound {
-            host: "stack-lints".to_string(),
-            name: "no-heap".to_string(),
+            host: "stack_lints".to_string(),
+            name: "no_heap".to_string(),
         };
         let msg = format!("{err}");
-        assert!(msg.contains("stack-lints::no-heap"));
+        assert!(msg.contains("stack_lints::no_heap"));
         assert!(msg.contains("[imports]"));
     }
 }

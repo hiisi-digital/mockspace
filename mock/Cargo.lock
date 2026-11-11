@@ -1292,6 +1292,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "letkajenkka"
+version = "0.0.1"
+source = "git+ssh://git@github.com/orgrinrt/letkajenkka.git?branch=dev#7cc8cfa14f6f3097c4aed33787d907d95ddfc946"
+
+[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1366,6 +1371,7 @@ dependencies = [
 name = "mockspace-config"
 version = "0.1.0"
 dependencies = [
+ "letkajenkka",
  "serde",
  "tempfile",
  "toml",

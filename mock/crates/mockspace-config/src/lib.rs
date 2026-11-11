@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod error;
+mod fold;
 pub mod parse;
 pub mod preset_resolver;
 
@@ -38,6 +39,7 @@ pub use config::{
     UndoSection,
 };
 pub use error::ConfigError;
+pub use fold::fold_name;
 pub use parse::{parse_mockspace_toml, parse_mockspace_toml_str};
 pub use preset_resolver::{
     PresetRef,

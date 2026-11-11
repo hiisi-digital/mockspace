@@ -246,3 +246,35 @@ fn a_heading_is_found_by_its_folded_forge_slug_outside_a_fence() {
 fn a_refusal_of_the_kind_the_standard_names_is_the_kind_the_error_carries() {
     assert!(matches!(FileRef::read("a::B::1"), Err(Refusal::Syntax(e)) if e.kind == Kind::Uppercase));
 }
+
+// Seven headings as a forge anchors them, which is what `forge_slug` has to give for a reference
+// to name a heading by the anchor in the address bar. The first four classes (inner hyphen,
+// underscore, dropped dot, dropped punctuation) are the ones a project-made slug missed. Each row
+// was taken from the forge's markdown endpoint, and the name beside it is what the heading is
+// called in a reference: the same slug folded, hyphens to underscores.
+//
+// Mutation: dropping `-` and `_` from what the slug keeps, or turning every punctuation run into a
+// hyphen (`warm-s-objective`), fails the rows that hold either.
+#[test]
+fn the_forge_slug_of_a_heading_matches_the_forge_and_its_reference_name_is_that_folded() {
+    let table = [
+        ("Well-known types", "well-known-types", "well_known_types"),
+        ("Trait-contract crates", "trait-contract-crates", "trait_contract_crates"),
+        ("no_std, no alloc", "no_std-no-alloc", "no_std_no_alloc"),
+        ("Pre-1.0 stability", "pre-10-stability", "pre_10_stability"),
+        ("the_sweep probe", "the_sweep-probe", "the_sweep_probe"),
+        ("Warm's objective", "warms-objective", "warms_objective"),
+        ("R(V), the drift class", "rv-the-drift-class", "rv_the_drift_class"),
+    ];
+    for (heading, forge, name) in table {
+        assert_eq!(forge_slug(heading), forge, "`{heading}` is `{forge}` in the address bar");
+        assert_eq!(heading_name(heading).as_deref(), Some(name), "`{heading}`");
+    }
+}
+
+// The control: a forge slug is no name until it is folded, since a hyphen is no part of one.
+#[test]
+fn a_forge_slug_with_its_hyphens_is_no_name_until_it_is_folded() {
+    assert!(names("seed::design::warms-objective").is_err());
+    assert!(names("seed::design::warms_objective").is_ok());
+}

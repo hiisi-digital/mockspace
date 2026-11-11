@@ -318,8 +318,8 @@ const COMMANDS: &[Cmd] = &[
                   `YYYY-MM-DD_` prefix to the compact timestamp form. `references-to-letkajenkka` rewrites every reference of the \
                   spelling before the letkajenkka standard (uppercase and extensions in a \
                   name, `::#heading`, spaces beside a separator) in the `*.md.tmpl` files \
-                  and the registry data, where the new spelling reaches the same file and \
-                  line, and names each one it leaves. With no name it \
+                  and the registry data (on a registry ref too), and the preset shorthands of `extends` in \
+                  `mockspace.toml`, where the new spelling reaches the same file and line, and names each one it leaves. With no name it \
                   lists the migrations.",
     },
     Cmd {
