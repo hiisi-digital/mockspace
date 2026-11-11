@@ -116,3 +116,72 @@ fn two_clones_making_the_same_new_ref_lose_neither_file() {
         assert!(tree.contains("from-b.md"), "a success holds the late file: {tree}");
     }
 }
+
+fn declare_extra(a: &refs_e2e::Clone<'_>) {
+    let cfg = String::from_utf8(a.read("mock/mockspace.toml")).unwrap();
+    a.write("mock/mockspace.toml", format!("{cfg}\n[[data_ref]]\nnamespace = \"extra\"\npath = \"extra\"\n").as_bytes());
+    a.git(&["add", "-f", "--", "mock/mockspace.toml"]);
+    a.commit_all("chore: declare `extra`");
+    a.push();
+}
+
+// Mutation: let `instantiate` of a declared ref the remote has not got yet fail, or write a record
+// the standing gate does not take, so the first commit that makes the ref has no way to run.
+#[test]
+fn a_declared_ref_not_born_yet_instantiates_empty_and_passes_the_gate() {
+    let w = World::new();
+    let a = w.first_clone("a");
+    fixture::build_tracked(&a);
+    fixture::migrate_one(&a, "research", "research", &[]);
+    declare_extra(&a);
+    let out = a.ok(&["data-refs", "instantiate", "extra"]);
+    assert!(out.stdout.contains("not born"), "{}", out.all());
+    assert!(a.path("mock/extra").is_dir() || !a.exists("mock/extra/x"), "no file made up");
+    a.ok(&["data-refs", "verify", "extra"]);
+    // the standing gate takes it: a command that reads the mock directory runs
+    a.ok(&["data-refs", "status", "extra"]);
+    assert!(w.remote_tip("refs/heads/mock/extra").is_none(), "instantiate creates no ref");
+    a.write("mock/extra/first.md", b"first\n");
+    a.ok(&["data-refs", "commit", "extra"]);
+    assert!(w.remote_git(&["ls-tree", "-r", "--name-only", "refs/heads/mock/extra"]).contains("first.md"));
+    a.ok(&["data-refs", "verify", "extra"]);
+}
+
+// Mutation: let the late clone's first commit be refused for good, or overwrite the early file.
+#[test]
+fn the_late_clone_of_a_ref_not_born_yet_merges_after_its_push_is_rejected() {
+    let w = World::new();
+    let a = w.first_clone("a");
+    fixture::build_tracked(&a);
+    fixture::migrate_one(&a, "research", "research", &[]);
+    declare_extra(&a);
+    let b = w.clone_of("b");
+    b.ok(&["data-refs", "instantiate", "research"]);
+    a.ok(&["data-refs", "instantiate", "extra"]);
+    b.ok(&["data-refs", "instantiate", "extra"]);
+    a.write("mock/extra/from-a.md", b"a\n");
+    b.write("mock/extra/from-b.md", b"b\n");
+    a.ok(&["data-refs", "commit", "extra"]);
+    let late = b.run(&["data-refs", "commit", "extra"]);
+    if !late.ok {
+        b.ok(&["data-refs", "update", "extra"]);
+        b.ok(&["data-refs", "commit", "extra"]);
+    }
+    let tree = w.remote_git(&["ls-tree", "-r", "--name-only", "refs/heads/mock/extra"]);
+    assert!(tree.contains("from-a.md") && tree.contains("from-b.md"), "{tree}");
+    assert_eq!(b.read("mock/extra/from-a.md"), b"a\n");
+    assert_eq!(b.read("mock/extra/from-b.md"), b"b\n");
+    b.ok(&["data-refs", "verify", "extra"]);
+}
+
+// Control: only a declared ref is not born by instantiate; a namespace nobody declared is refused.
+#[test]
+fn a_ref_absent_from_the_declarations_is_still_refused_by_instantiate() {
+    let w = World::new();
+    let a = w.first_clone("a");
+    fixture::build_tracked(&a);
+    fixture::migrate_one(&a, "research", "research", &[]);
+    let out = a.fails(&["data-refs", "instantiate", "nowhere"]);
+    assert!(out.all().contains("no [[data_ref]] has the namespace `nowhere`"), "{}", out.all());
+    assert!(!a.exists("mock/nowhere"));
+}

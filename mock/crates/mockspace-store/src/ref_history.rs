@@ -92,6 +92,10 @@ impl RefStore {
     /// (a symbolic link, a submodule) or whose name is not text is refused, because each would
     /// be read as a file it is not, or as another file of the same lossy name.
     pub(crate) fn tree_ids(&self, commit: &str) -> Result<BTreeMap<String, String>, StoreError> {
+        // the base of an instance of a ref not born yet holds no file
+        if commit == crate::instance::UNBORN {
+            return Ok(BTreeMap::new());
+        }
         let out = self.git.must(&["ls-tree", "-r", "-z", commit], &[], None)?;
         let mut ids = BTreeMap::new();
         for entry in out.stdout.split(|b| *b == 0).filter(|e| !e.is_empty()) {

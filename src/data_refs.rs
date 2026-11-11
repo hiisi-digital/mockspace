@@ -414,13 +414,26 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
                     if inst.is_dirty().map_err(|e| e.to_string())? {
                         return Err("has changes the ref does not, so `commit` them".into());
                     }
+                    if tip.is_none() && inst.is_unborn().map_err(|e| e.to_string())? {
+                        return Ok("clean, the ref is not born yet".into());
+                    }
                     if tip.as_deref() != Some(base.as_str()) {
                         return Err(format!("is at {base} and the ref is at {}", tip.as_deref().unwrap_or("none")));
                     }
                     Ok(format!("clean at {base}"))
                 },
                 "instantiate" => {
-                    store.refresh().map_err(|e| e.to_string())?;
+                    let fresh = store.refresh().map_err(|e| e.to_string())?;
+                    // a declared ref the remote does not have yet is a ref not born yet: its instance
+                    // holds no commit, and the first `commit` makes the ref
+                    if matches!(fresh, mockspace_store::Freshness::Empty)
+                        && store.local_tip().map_err(|e| e.to_string())?.is_none()
+                    {
+                        if !inst.is_unborn().map_err(|e| e.to_string())? {
+                            inst.begin().map_err(|e| e.to_string())?;
+                        }
+                        return Ok("not born yet, the first `commit` makes the ref".into());
+                    }
                     let tip = inst.materialize().map_err(|e| e.to_string())?;
                     Ok(format!("instantiated at {tip}"))
                 },

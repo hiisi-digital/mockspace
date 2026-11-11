@@ -44,6 +44,10 @@ use crate::ref_history::BATCH;
 use crate::ref_store::RefStore;
 use crate::store::{Applied, Freshness, Store};
 
+/// The base an instance of a ref not born yet records: no commit, so a tree of no files. Not a
+/// commit id, so it names nothing a ref could hold.
+pub(crate) const UNBORN: &str = "-";
+
 /// A directory kept in step with the local ref of a [`RefStore`].
 pub struct Instance<'a> {
     store: &'a RefStore,
@@ -118,8 +122,51 @@ impl<'a> Instance<'a> {
 
     /// The commit the files of the directory were last brought to, or `None` where no instance
     /// was made here.
+    /// For an instance of a ref not born yet it is [`Instance::is_unborn`]'s marker, which holds no
+    /// file.
     pub fn base(&self) -> Result<Option<String>, StoreError> {
         self.read_record()
+    }
+
+    /// Whether the directory is an instance of a ref that had no commit when it was made, and has
+    /// had none brought to it since: its base is no commit, and its first apply makes the ref.
+    pub fn is_unborn(&self) -> Result<bool, StoreError> {
+        Ok(self.base()?.as_deref() == Some(UNBORN))
+    }
+
+    /// Makes the directory an instance of a ref the remote does not have yet, which the caller
+    /// has asked the remote for: the directory is made if absent and must hold no file its
+    /// patterns match, and the record has no commit as its base. Refused where the ref has a tip
+    /// (it is instantiated with [`Instance::materialize`]) and where a record exists.
+    pub fn begin(&self) -> Result<(), StoreError> {
+        if self.store.local_tip()?.is_some() {
+            return Err(self.fail("is of a ref that has a tip, so it is instantiated from it", Vec::new()));
+        }
+        if self.base()?.is_some() {
+            return Err(self.fail("has a record already", Vec::new()));
+        }
+        let existed = self.dir.exists();
+        if existed {
+            if self.held.is_some() {
+                let here = self.walk()?;
+                if !here.is_empty() {
+                    return Err(self.fail("already holds files its patterns match", here));
+                }
+            } else if std::fs::read_dir(&self.dir).map_err(|e| self.io("reading", e))?.next().is_some() {
+                return Err(self.fail("is not an empty directory", Vec::new()));
+            }
+        }
+        let made = std::fs::create_dir_all(&self.dir)
+            .map_err(|e| self.io("creating", e))
+            .and_then(|()| self.exclude())
+            .and_then(|()| self.record(UNBORN));
+        if made.is_err() {
+            self.forget();
+            if !existed {
+                let _ = std::fs::remove_dir(&self.dir);
+            }
+        }
+        made
     }
 
     /// Writes the files of the local tip into the directory, which must be absent or empty, and
@@ -269,9 +316,10 @@ impl<'a> Instance<'a> {
             });
         }
         let tracked = Tracking::new(hook);
-        let applied = self
-            .store
-            .apply_from(Some(&delta.base), &delta.edit, message, &tracked)?;
+        // an instance of a ref not born yet was built on none: where another clone made the ref
+        // meanwhile, the hook is asked, as for any edit built on an older tip
+        let built_on = (delta.base != UNBORN).then_some(delta.base.as_str());
+        let applied = self.store.apply_from(built_on, &delta.edit, message, &tracked)?;
         // Of what was sent, the files the tip now settles: all of them when the hook was never
         // asked, else the ones it returned an entry for. A file it left out was not written.
         let mut settled = delta.sent;
