@@ -196,10 +196,53 @@ fn paired_survives_a_rehouse_in_the_clone_that_held_the_old_hash() {
     a.ok(&["data-refs", "paired", "HEAD"]);
 }
 
-// Mutation: hand the base of an instance of a ref not born yet to the pairing as a commit; the
-// landing then cannot be paired at all until somebody commits to a ref that has nothing to hold.
+// Mutation: write no line for a ref not born yet, or let the pairing read a missing line as one;
+// the landing then says nothing of the ref, and only the clocks of two machines could tell.
 #[test]
-fn a_ref_not_born_yet_has_no_line_and_pairing_skips_it() {
+fn a_ref_not_born_yet_has_a_line_that_says_so_and_pairing_takes_it() {
+    let w = refs_e2e::World::new();
+    let a = w.first_clone("a");
+    fixture::build_tracked(&a);
+    fixture::migrate_one(&a, "research", "research", &[]);
+    // a landing made before `extra` is declared
+    let early = a.ok(&["data-refs", "trailers"]).stdout;
+    land(&a, &early);
+    let cfg = String::from_utf8(a.read("mock/mockspace.toml")).unwrap();
+    a.write("mock/mockspace.toml", format!("{cfg}\n[[data_ref]]\nnamespace = \"extra\"\npath = \"extra\"\n").as_bytes());
+    a.git(&["add", "-f", "--", "mock/mockspace.toml"]);
+    a.commit_all("chore: declare `extra`");
+    a.push();
+    a.ok(&["data-refs", "instantiate", "extra"]);
+    let o = a.ok(&["data-refs", "trailers"]);
+    let lines: Vec<&str> = o.stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "a line for each ref: {}", o.all());
+    assert!(lines[0].starts_with(&format!("Mock-Ref: research {} ", tip(&w, "research"))), "{}", lines[0]);
+    assert_eq!(lines[1], "Mock-Ref: extra unborn");
+    land(&a, &o.stdout);
+    let p = a.ok(&["data-refs", "paired", "HEAD"]);
+    assert!(p.all().contains("extra") && p.all().contains("not born"), "the skip is said: {}", p.all());
+    // once the ref is born, a landing made after it carries its commit and is held to it
+    a.write("mock/extra/first.md", b"first\n");
+    a.ok(&["data-refs", "commit", "extra"]);
+    let born = a.ok(&["data-refs", "trailers"]).stdout;
+    assert_eq!(born.lines().count(), 2, "{born}");
+    assert!(!born.contains("unborn"), "{born}");
+    land(&a, "");
+    let o = a.fails(&["data-refs", "paired", "HEAD"]);
+    assert!(o.all().contains("extra"), "a landing after the birth with no line passed: {}", o.all());
+    // and the landing gated before the birth still pairs, though the ref has commits now
+    a.ok(&["data-refs", "paired", "HEAD~1"]);
+    // a landing from before the ref was declared needs no line for it: its own tree does not
+    // declare it
+    let p = a.ok(&["data-refs", "paired", "HEAD~3"]);
+    assert!(p.all().contains("extra: not declared"), "{}", p.all());
+}
+
+// Mutation: read a missing line as a ref not born yet where the landing's time is before the
+// first commit of the ref; a clone whose clock is behind then lands with no line for a ref that
+// was born, and the pairing lets it through.
+#[test]
+fn a_landing_with_no_line_for_a_born_ref_is_refused_whatever_its_clock_says() {
     let w = refs_e2e::World::new();
     let a = w.first_clone("a");
     fixture::build_tracked(&a);
@@ -210,21 +253,21 @@ fn a_ref_not_born_yet_has_no_line_and_pairing_skips_it() {
     a.commit_all("chore: declare `extra`");
     a.push();
     a.ok(&["data-refs", "instantiate", "extra"]);
-    let o = a.ok(&["data-refs", "trailers"]);
-    let lines: Vec<&str> = o.stdout.lines().collect();
-    assert_eq!(lines.len(), 1, "one line, for the ref that is born: {}", o.all());
-    assert!(lines[0].starts_with(&format!("Mock-Ref: research {} ", tip(&w, "research"))), "{}", lines[0]);
-    land(&a, &o.stdout);
-    let p = a.ok(&["data-refs", "paired", "HEAD"]);
-    assert!(p.all().contains("extra") && p.all().contains("not born"), "the skip is said: {}", p.all());
-    // once the ref is born, a landing made after it carries its line and is held to it
     a.write("mock/extra/first.md", b"first\n");
     a.ok(&["data-refs", "commit", "extra"]);
-    let born = a.ok(&["data-refs", "trailers"]).stdout;
-    assert_eq!(born.lines().count(), 2, "{born}");
-    land(&a, "");
-    let o = a.fails(&["data-refs", "paired", "HEAD"]);
-    assert!(o.all().contains("extra"), "a landing after the birth with no line passed: {}", o.all());
-    // and the landing made before the birth still pairs, though the ref has commits now
-    a.ok(&["data-refs", "paired", "HEAD~1"]);
+    let research = a.ok(&["data-refs", "trailers", "research"]).stdout;
+    // a clock a year behind: the landing reads as older than the ref's first commit
+    let msg = format!("feat: land with the data\n\n{research}");
+    let o = w
+        .command("git", &a.root)
+        .args(["commit", "-q", "--no-verify", "--allow-empty", "-m", &msg])
+        .env("GIT_AUTHOR_DATE", "1760000000 +0000")
+        .env("GIT_COMMITTER_DATE", "1760000000 +0000")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let first = w.remote_git(&["log", "--format=%at", "refs/heads/mock/extra"]);
+    assert!(first.trim().parse::<i64>().unwrap() > 1_760_000_000, "the control: the landing's clock is behind the ref's");
+    let p = a.fails(&["data-refs", "paired", "HEAD"]);
+    assert!(p.all().contains("extra") && p.all().contains("no `Mock-Ref` line"), "{}", p.all());
 }
