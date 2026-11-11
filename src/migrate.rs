@@ -43,6 +43,14 @@ pub const MIGRATIONS: &[Migration] = &[
         summary: "renames design-round files that carry a `YYYY-MM-DD_` prefix to the compact timestamp form",
         plan:    plan_round_filenames,
     },
+    Migration {
+        name:    "references-to-letkajenkka",
+        summary: "none: rewrites every reference of the spelling before the letkajenkka standard (uppercase and file \
+                  extensions in a name, `::#heading`, spaces beside a separator) in the `*.md.tmpl` files and the \
+                  registry data (on a registry ref too) to the new spelling, and folds the preset shorthands of `extends` \
+                  in `mockspace.toml`, where that reaches the same file and line, and names each reference it leaves",
+        plan:    plan_references,
+    },
 ];
 
 /// The names of [`MIGRATIONS`].
@@ -57,7 +65,7 @@ pub struct Plan {
     pub lines: Vec<String>,
     steps:     Vec<Step>,
     /// What is left to the caller once the run is through.
-    after:     &'static str,
+    after:     String,
 }
 
 #[derive(Debug)]
@@ -68,6 +76,9 @@ enum Step {
     Adopt(DataRefDecl),
     /// Append `text` to the config file.
     AppendConfig(String),
+    /// Write these registry files (path under the registry root, text), kept on a ref, through the
+    /// registry's own writer, one write for each ref they are held by.
+    WriteRegistry(Vec<(String, String)>),
     /// Take these paths (from the repository root) out of the index, leaving the files.
     Untrack(Vec<String>),
     /// Rename a file, both paths from the repository root.
@@ -75,6 +86,19 @@ enum Step {
         from: String,
         to:   String,
     },
+    /// Write a file whole, its path from the repository root.
+    Write {
+        path: String,
+        text: String,
+    },
+}
+
+impl Plan {
+    /// What is left to the caller once the run is through.
+    #[cfg(test)]
+    pub(crate) fn after(&self) -> &str {
+        &self.after
+    }
 }
 
 /// The plan of the migration `args` name, or every reason there is none.
@@ -193,6 +217,40 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
         } => {
             std::fs::rename(cfg.repo_root.join(from), cfg.repo_root.join(to))
                 .map_err(|e| format!("renaming {from} to {to}: {e}"))
+        },
+        Step::Write {
+            path,
+            text,
+        } => {
+            // the plan refused it; a link made since would still take the write out of the tree
+            if let Some(why) = crate::migrate_refs::symlinks_on(&cfg.repo_root, [path.as_str()].into_iter()).pop() {
+                return Err(why);
+            }
+            std::fs::write(cfg.repo_root.join(path), text).map_err(|e| format!("writing {path}: {e}"))
+        },
+        Step::WriteRegistry(files) => {
+            mockspace_registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
+            let stores =
+                mockspace_registry::RegistryStores::from_decls(&cfg.mock_dir, &cfg.repo_root, &cfg.registry_stores)
+                    .map_err(|e| e.to_string())?;
+            let writer = mockspace_registry::RegistryWriter::new(cfg, &stores);
+            let mut groups: std::collections::BTreeMap<String, Vec<(String, Option<Vec<u8>>)>> = Default::default();
+            for (rel, text) in files {
+                let dir = cfg
+                    .registry_stores
+                    .iter()
+                    .filter_map(|d| d.dir.as_deref())
+                    .map(|d| d.trim_matches('/'))
+                    .find(|d| rel == d || rel.starts_with(&format!("{d}/")))
+                    .ok_or_else(|| format!("{rel} is held by no registry ref"))?;
+                groups.entry(dir.to_string()).or_default().push((rel.clone(), Some(text.clone().into_bytes())));
+            }
+            for (dir, changes) in groups {
+                writer
+                    .write(&changes, "chore: rewrite references to the letkajenkka spelling")
+                    .map_err(|e| format!("the registry ref of `{dir}`: {e}"))?;
+            }
+            Ok(())
         },
     }
 }
@@ -394,7 +452,7 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
     Ok(Plan {
         lines,
         steps,
-        after: "commit the config and the removals on this branch",
+        after: "commit the config and the removals on this branch".to_string(),
     })
 }
 
@@ -448,7 +506,27 @@ fn plan_round_filenames(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String>
     Ok(Plan {
         lines,
         steps,
-        after: "commit the renames on this branch",
+        after: "commit the renames on this branch".to_string(),
+    })
+}
+
+fn plan_references(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String>> {
+    flags(args, &[])?;
+    let crate::migrate_refs::Planned { lines, writes, on_refs, instance_written } = crate::migrate_refs::plan(cfg)?;
+    let mut steps: Vec<Step> = writes.into_iter().map(|(path, text)| Step::Write { path, text }).collect();
+    if !on_refs.is_empty() {
+        steps.push(Step::WriteRegistry(on_refs));
+    }
+    // A file of a data ref's instance is no part of any branch, so committing the branch leaves it.
+    let after = if instance_written {
+        "commit the rewritten files on this branch, and `cargo mock data-refs commit` for the ones a data ref holds"
+    } else {
+        "commit the rewritten files on this branch"
+    };
+    Ok(Plan {
+        lines,
+        steps,
+        after: after.to_string(),
     })
 }
 

@@ -42,10 +42,9 @@ fn parse<'a>(args: &[&'a str]) -> Result<Ask<'a>, String> {
     let [target, field, value] = rest.as_slice() else {
         return Err(USAGE.to_string());
     };
-    let (ns, id) = target
-        .split_once("::")
-        .filter(|(n, i)| !n.is_empty() && !i.is_empty())
-        .ok_or_else(|| format!("`{target}` is not <namespace>::<id>\n{USAGE}"))?;
+    let &[ns, id] = crate::names(target).unwrap_or_default().as_slice() else {
+        return Err(format!("`{target}` is not <namespace>::<id>\n{USAGE}"));
+    };
     Ok(Ask {
         ns,
         id,

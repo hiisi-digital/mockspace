@@ -13,7 +13,7 @@
 //!
 //! An item of such a field is one of two shapes that cannot be mistaken for each
 //! other. A file citation has a root, a path and an anchor, so three segments or
-//! more: `research::dir::file::#heading`. A row link has two, a declared
+//! more: `research::dir::file::heading`. A row link has two, a declared
 //! namespace and a slug: `tenet::engine_time`. The first segment of a link is
 //! checked against the declared namespaces, and `namespace-root-collision`
 //! keeps a root from carrying the same name, so a two-segment item is a link
@@ -25,17 +25,16 @@
 
 use super::*;
 
-/// The namespace and slug of an item that links a row, when it is one.
+/// The namespace and slug of an item that links a row, when it is one: a path of exactly two
+/// names, the first a declared namespace.
 ///
-/// Returns the parts without judging the slug, so `slot::Not-A-Slug` is a link
-/// that is malformed rather than a citation that is unparsed, and the finding
-/// says which was meant.
+/// An item the standard refuses is no link. It is a citation that does not parse, and the finding
+/// for it carries the rule it broke, so `slot::Not-A-Slug` is reported as the uppercase it is.
 pub fn link_target<'a>(item: &'a str, namespaces: &BTreeSet<&str>) -> Option<(&'a str, &'a str)> {
-    let (namespace, slug) = item.trim().split_once("::")?;
-    if slug.contains("::") {
-        return None;
+    match crate::names(item.trim()).ok()?.as_slice() {
+        &[namespace, slug] if namespaces.contains(namespace) => Some((namespace, slug)),
+        _ => None,
     }
-    namespaces.contains(namespace).then_some((namespace, slug))
 }
 
 /// The declared namespace keys, which is what makes a two-segment item a link.
@@ -89,10 +88,6 @@ pub fn validate_links(reg: &Registry, namespaces: &[RegistryNamespace]) -> Vec<R
                 let Some((target, slug)) = link_target(item, &keys) else {
                     continue;
                 };
-                if !is_valid_slug(slug) {
-                    out.push(super::malformed_slug(row, name, item, String::new()));
-                    continue;
-                }
                 out.extend(super::dangling(reg, row, name, target, slug));
             }
         }

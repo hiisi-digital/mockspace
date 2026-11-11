@@ -1063,8 +1063,9 @@ fn apply_preset_chain(
 // =========================================================================
 
 /// Discover and parse the consumer's lints / mockspace TOML file for
-/// `workspace_root`. Searches in canonical order: `lints.toml`,
-/// `mock/lints.toml`, `mockspace.toml`; returns the first match parsed
+/// `workspace_root`. Searches in the order of
+/// [`mockspace_refnames::CONFIG_FILES`], which the reference migration
+/// reads too; returns the first match parsed
 /// as a [`LintsTomlFile`]. Returns the [`LintsTomlFile::default()`]
 /// (empty maps) when no file is found, so call sites can use the
 /// same shape whether or not the consumer authored one.
@@ -1074,14 +1075,9 @@ fn apply_preset_chain(
 /// going through the full [`LintsConfig::load`] pipeline. Internal
 /// callers in [`LintsConfig::load`] continue to use this helper too.
 pub fn find_and_read_lints_toml(workspace_root: &Path) -> Result<LintsTomlFile, LoadError> {
-    let candidates = [
-        workspace_root.join("lints.toml"),
-        workspace_root.join("mock").join("lints.toml"),
-        workspace_root.join("mockspace.toml"),
-    ];
-    for path in &candidates {
+    for path in mockspace_refnames::CONFIG_FILES.iter().map(|f| workspace_root.join(f)) {
         if path.exists() {
-            let contents = std::fs::read_to_string(path).map_err(|e| {
+            let contents = std::fs::read_to_string(&path).map_err(|e| {
                 LoadError::Io {
                     context: format!("reading {}", path.display()),
                     source:  e,
@@ -1762,7 +1758,7 @@ mod tests {
 
         fn insert(mut self, host: &str, preset: PresetFile) -> Self {
             self.presets
-                .insert((host.to_string(), preset.name.clone()), preset);
+                .insert((host.to_string(), mockspace_refnames::fold(&preset.name).unwrap().to_string()), preset);
             self
         }
     }
@@ -2059,7 +2055,7 @@ mod tests {
 
     #[test]
     fn synthesise_extends_to_first_party_preset_produces_lint() {
-        // A consumer references `mockspace::regex-probe` for a lint
+        // A consumer references `mockspace::regex_probe` for a lint
         // name (`probe-lint`) that is NOT in the auto-registered
         // catalog. The synthesis path resolves the preset, looks up
         // `content-regex` in PRIMITIVE_DESCRIPTORS, and constructs an
@@ -2080,7 +2076,7 @@ finding_kind = "todo"
             ),
         );
         let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
-        let user_block: toml::Table = "extends = \"mockspace::regex-probe\"\n".parse().unwrap();
+        let user_block: toml::Table = "extends = \"mockspace::regex_probe\"\n".parse().unwrap();
         user_lints.insert("probe-lint".to_string(), user_block);
         let user_toml = LintsTomlFile {
             lints:    user_lints,
@@ -2140,7 +2136,7 @@ finding_kind = "todo"
     fn synthesise_extends_to_unknown_preset_emits_config_error() {
         let source = InMemorySource::new();
         let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
-        let user_block: toml::Table = "extends = \"mockspace::not-shipped\"\n".parse().unwrap();
+        let user_block: toml::Table = "extends = \"mockspace::not_shipped\"\n".parse().unwrap();
         user_lints.insert("probe-lint".to_string(), user_block);
         let user_toml = LintsTomlFile {
             lints:    user_lints,
@@ -2174,7 +2170,7 @@ finding_kind = "todo"
                 preset_with_primitive(
                     "regex-probe",
                     "content-regex",
-                    Some("mockspace::token-probe"),
+                    Some("mockspace::token_probe"),
                     r#"
 [[patterns]]
 regex = "BAR"
@@ -2184,7 +2180,7 @@ finding_kind = "bar"
                 ),
             );
         let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
-        let user_block: toml::Table = "extends = \"mockspace::regex-probe\"\n".parse().unwrap();
+        let user_block: toml::Table = "extends = \"mockspace::regex_probe\"\n".parse().unwrap();
         user_lints.insert("probe-lint".to_string(), user_block);
         let user_toml = LintsTomlFile {
             lints:    user_lints,

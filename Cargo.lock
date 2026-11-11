@@ -204,6 +204,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
+name = "letkajenkka"
+version = "0.0.1-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b97cff48a021385c8c902dfadd26cb3fb334cc82a8c3460c37da2f5180dd2aee"
+
+[[package]]
 name = "libc"
 version = "0.2.183"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -245,6 +251,7 @@ dependencies = [
  "mockspace-bench-harness",
  "mockspace-lint-rules",
  "mockspace-manifest",
+ "mockspace-refnames",
  "mockspace-registry",
  "mockspace-store",
  "regex",
@@ -296,7 +303,9 @@ dependencies = [
 name = "mockspace-lint-rules"
 version = "0.0.0"
 dependencies = [
+ "letkajenkka",
  "mockspace-manifest",
+ "mockspace-refnames",
  "mockspace-verdicts",
  "tempfile",
  "toml",
@@ -314,10 +323,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mockspace-refnames"
+version = "0.1.0"
+dependencies = [
+ "letkajenkka",
+]
+
+[[package]]
 name = "mockspace-registry"
 version = "0.1.0"
 dependencies = [
+ "letkajenkka",
  "mockspace-manifest",
+ "mockspace-refnames",
  "mockspace-store",
  "mockspace-verdicts",
  "regex",

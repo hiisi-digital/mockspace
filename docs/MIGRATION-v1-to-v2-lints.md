@@ -262,10 +262,10 @@ entry at engine startup. Opt-in is one line per lint:
 
 ```toml
 [lints.no-bare-numeric]
-extends = "mockspace::no-bare-numeric"
+extends = "mockspace::no_bare_numeric"
 
 [lints.writing-style]
-extends = "mockspace::writing-style"
+extends = "mockspace::writing_style"
 ```
 
 Additional `[lints.<name>.config]` or `[lints.<name>.scope]` blocks

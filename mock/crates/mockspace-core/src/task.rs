@@ -254,6 +254,20 @@ pub enum TaskIdError {
         index: usize,
         error: SlugError,
     },
+    /// The reference syntax refuses the text, for the reason the error names.
+    Syntax(letkajenkka::Error),
+    /// The text parses and is no plain path of names.
+    NotPlain,
+}
+
+impl From<crate::segments::SegmentError> for TaskIdError {
+    fn from(e: crate::segments::SegmentError) -> Self {
+        match e {
+            crate::segments::SegmentError::Empty { position } => Self::EmptySegment { position },
+            crate::segments::SegmentError::Syntax(e) => Self::Syntax(e),
+            crate::segments::SegmentError::NotPlain => Self::NotPlain,
+        }
+    }
 }
 
 impl TaskId {
@@ -287,13 +301,7 @@ impl TaskId {
             return Err(TaskIdError::Empty);
         }
         let mut segments: Vec<Slug> = Vec::new();
-        let mut byte_pos: usize = 0;
-        for (index, raw) in input.split("::").enumerate() {
-            if raw.is_empty() {
-                return Err(TaskIdError::EmptySegment {
-                    position: byte_pos,
-                });
-            }
+        for (index, raw) in crate::segments::split(input)?.into_iter().enumerate() {
             let slug = Slug::new(raw).map_err(|error| {
                 TaskIdError::InvalidSegment {
                     index,
@@ -301,7 +309,6 @@ impl TaskId {
                 }
             })?;
             segments.push(slug);
-            byte_pos += raw.len() + 2;
         }
         let slug = segments.pop().expect("non-empty checked above");
         Ok(Self {
@@ -391,6 +398,8 @@ impl fmt::Display for TaskIdError {
             } => {
                 write!(f, "segment {index} is not a valid slug: {error}")
             },
+            Self::Syntax(e) => write!(f, "not a path under the reference syntax: {e}"),
+            Self::NotPlain => f.write_str("not a plain path of names"),
         }
     }
 }
@@ -589,12 +598,15 @@ mod tests {
 
     #[test]
     fn task_id_rejects_invalid_segment() {
+        // the syntax refuses an uppercase letter before a slug sees it
         match TaskId::parse("Bad::ns::slug") {
-            Err(TaskIdError::InvalidSegment {
-                index: 0,
-                ..
-            }) => {},
-            other => panic!("expected InvalidSegment(0), got {other:?}"),
+            Err(TaskIdError::Syntax(e)) => assert_eq!(e.name(), "uppercase"),
+            other => panic!("expected Syntax, got {other:?}"),
+        }
+        // and a segment the syntax accepts that is no slug is still refused as one
+        match TaskId::parse(&format!("ns::{}", "b".repeat(64))) {
+            Err(TaskIdError::InvalidSegment { index: 1, .. }) => {},
+            other => panic!("expected InvalidSegment(1), got {other:?}"),
         }
     }
 

@@ -38,7 +38,7 @@ pub enum Resolved {
     },
     /// One field of a row: `law::keys::statement`.
     Field(String),
-    /// A citation into a file: `seed::DESIGN::12`.
+    /// A citation into a file: `seed::design::12`.
     Citation {
         /// What a reader sees.
         text: String,

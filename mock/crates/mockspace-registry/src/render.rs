@@ -379,10 +379,9 @@ fn visible_value(raw: &str, cfg: &dyn RegistryEnv) -> String {
     if cfg.internal_roots().is_empty() || raw.is_empty() {
         return raw.to_string();
     }
-    let kept: Vec<&str> = raw
-        .split(", ")
+    let kept: Vec<&str> = crate::refpath::list(raw)
         .filter(|item| {
-            match FileRef::parse(item.trim()) {
+            match FileRef::parse(item) {
                 Some(r) => !cfg.internal_roots().contains(&r.root),
                 None => true,
             }
@@ -477,14 +476,7 @@ fn render_rows(
                 // implementation of what a row reference renders as, and a
                 // reference to a missing row stays visibly unresolved.
                 if let Some(target) = row_refs.get(c.as_str()) {
-                    let cell = row
-                        .fields
-                        .get(c)
-                        .map(String::as_str)
-                        .unwrap_or("")
-                        .split(", ")
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
+                    let cell = crate::refpath::list(row.fields.get(c).map(String::as_str).unwrap_or(""))
                         .map(|slug| format!("{{{{ {target}::{slug} }}}}"))
                         .collect::<Vec<_>>()
                         .join(", ");

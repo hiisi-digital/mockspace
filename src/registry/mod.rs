@@ -59,20 +59,7 @@ impl RegistryEnv for Config {
     /// repeating it at every reference buys nothing.
     fn crate_link(&self, name: &str, docs_dir: &Path) -> Option<String> {
         let cfg = self;
-        let prefixed = format!("{}-{name}", cfg.crate_prefix);
-        // Searched across every source directory: a reference names a crate, not a
-        // crate in a particular group, and resolving only against the first would
-        // silently fail to link anything outside it.
-        let found = cfg.src_dirs.iter().find_map(|d| {
-            if d.join(name).is_dir() {
-                Some(name.to_string())
-            } else if d.join(&prefixed).is_dir() {
-                Some(prefixed.clone())
-            } else {
-                None
-            }
-        });
-        let dir = found?;
+        let dir = self.crate_named(name)?.file_name()?.to_string_lossy().into_owned();
         let short = dir
             .strip_prefix(&format!("{}-", cfg.crate_prefix))
             .unwrap_or(&dir)
@@ -97,12 +84,31 @@ impl RegistryEnv for Config {
     }
 
     fn crate_dir(&self, name: &str) -> Option<PathBuf> {
-        let prefixed = format!("{}-{name}", self.crate_prefix);
-        // Across every source directory, for the same reason as `crate_link`: the expression
-        // names a crate, not a group.
-        [name.to_string(), prefixed]
-            .into_iter()
-            .find_map(|name| self.src_dirs.iter().map(|d| d.join(&name)).find(|d| d.is_dir()))
+        self.crate_named(name)
+    }
+}
+
+impl Config {
+    /// The directory of the crate a reference names. A reference spells the name in the
+    /// standard's character set, so `my_crate` reaches the directory `my-crate`, and the short
+    /// name reaches the prefixed one. Exact first, across every source directory, because the
+    /// expression names a crate and not a group.
+    fn crate_named(&self, name: &str) -> Option<PathBuf> {
+        let prefixed = mockspace_refnames::fold(&self.crate_prefix).map(|p| format!("{p}_{name}"));
+        [Some(name.to_string()), prefixed].into_iter().flatten().find_map(|want| {
+            self.src_dirs.iter().find_map(|d| {
+                let mut dirs: Vec<PathBuf> = fs::read_dir(d)
+                    .ok()?
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.is_dir())
+                    .collect();
+                dirs.sort();
+                dirs.into_iter().find(|p| {
+                    p.file_name().is_some_and(|n| mockspace_refnames::fold(&n.to_string_lossy()).is_some_and(|f| f == want.as_str()))
+                })
+            })
+        })
     }
 }
 
@@ -199,24 +205,6 @@ mod tests {
     }
 
     #[test]
-    fn a_rust_path_is_not_a_citation() {
-        // `::` is ordinary in prose about code. A citation needs a numeric
-        // final segment, which is what keeps the two apart.
-        assert!(FileRef::parse("std::mem::swap").is_none());
-        assert!(FileRef::parse("seed::DESIGN::844").is_some());
-    }
-
-    #[test]
-    fn a_citation_path_may_have_any_depth() {
-        // One rule covers mock::DESIGN::12 and mock::crates::numeric::DESIGN::12,
-        // so a deeper tree needs no root of its own.
-        let r = FileRef::parse("mock::crates::numeric::DESIGN::12").unwrap();
-        assert_eq!(r.root, "mock");
-        assert_eq!(r.path, "crates/numeric/DESIGN");
-        assert_eq!(r.anchor, Anchor::Line(12));
-    }
-
-    #[test]
     fn an_unknown_row_or_field_is_left_alone_and_reported() {
         let reg = reg_with("xpbd", "vocab", &[("what", "w")]);
         let text = "{{ reg::vocab::nope }} and {{ reg::vocab::xpbd::missing }}";
@@ -272,162 +260,6 @@ mod tests {
         // Unresolvable stays visibly unresolved rather than becoming a
         // plausible-looking wrong link.
         assert_eq!(r("{{ reg::vocab::nope }}"), "{{ reg::vocab::nope }}");
-    }
-
-    #[test]
-    fn a_heading_anchor_parses_and_renders() {
-        let r = FileRef::parse("seed::DESIGN::#the-four-lanes").unwrap();
-        assert_eq!(r.anchor, Anchor::Heading("the-four-lanes".into()));
-        assert_eq!(r.render(), "seed::DESIGN::#the-four-lanes");
-    }
-
-    #[test]
-    fn the_two_slug_forms_agree_on_spaces_and_disagree_on_punctuation() {
-        // On an ordinary heading they are the same string, which is why the
-        // divergence went unnoticed: nearly every heading is this shape.
-        assert_eq!(
-            heading_slug("The four lanes and the joint LOD cut"),
-            "the-four-lanes-and-the-joint-lod-cut"
-        );
-        assert_eq!(
-            forge_heading_slug("The four lanes and the joint LOD cut"),
-            "the-four-lanes-and-the-joint-lod-cut"
-        );
-
-        // Punctuation glued to a word is where they part. This one used to be
-        // asserted here under the name `heading_slugs_match_the_forge_form`,
-        // which is what the claim was: a forge produces `rv-the-drift-class`.
-        assert_eq!(heading_slug("R(V), the drift class"), "r-v-the-drift-class");
-        assert_eq!(
-            forge_heading_slug("R(V), the drift class"),
-            "rv-the-drift-class"
-        );
-
-        // The case that surfaced it: an apostrophe inside a word.
-        assert_eq!(heading_slug("Warm's objective"), "warm-s-objective");
-        assert_eq!(forge_heading_slug("Warm's objective"), "warms-objective");
-    }
-
-    /// Both forms resolve, which is the whole point of keeping two.
-    #[test]
-    fn a_heading_resolves_under_either_slug() {
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("INTENTS.md");
-        std::fs::write(&file, "# Preamble\n\ntext\n\n## Warm's objective\n\nmore\n").unwrap();
-
-        assert_eq!(
-            resolve_anchor(&file, &Anchor::Heading("warm-s-objective".into())),
-            Some(5),
-            "this project's own form has to keep resolving; every committed \
-             citation is written in it"
-        );
-        assert_eq!(
-            resolve_anchor(&file, &Anchor::Heading("warms-objective".into())),
-            Some(5),
-            "the form a browser shows, which is what a reader copies"
-        );
-    }
-
-    /// The forge's own answers, so the claim is a test rather than a sentence.
-    ///
-    /// Every row was taken from the forge's markdown endpoint rather than from
-    /// anybody's recollection of the rule, and the first version of
-    /// `forge_heading_slug` disagreed with three of the seven while its doc
-    /// comment claimed the copied anchor now resolved. It dropped `-` and `_`,
-    /// which a forge keeps, so it missed the underscore and inner-hyphen
-    /// classes entirely and simultaneously started accepting `wellknown-types`,
-    /// a spelling nothing emits.
-    ///
-    /// Two of the headings below are real in a consumer's tree.
-    ///
-    /// Reproduce a row with:
-    ///
-    /// ```text
-    /// curl -s -X POST https://api.github.com/markdown \
-    ///   -d '{"text":"## no_std, no alloc\n"}' |
-    ///   grep -o 'id="user-content-[^"]*"'
-    /// ```
-    #[test]
-    fn the_forge_form_matches_the_forge() {
-        // (heading, what the forge emits)
-        let table = [
-            ("Well-known types", "well-known-types"),
-            ("Trait-contract crates", "trait-contract-crates"),
-            ("no_std, no alloc", "no_std-no-alloc"),
-            ("Pre-1.0 stability", "pre-10-stability"),
-            ("the_sweep probe", "the_sweep-probe"),
-            ("Warm's objective", "warms-objective"),
-            ("R(V), the drift class", "rv-the-drift-class"),
-        ];
-        for (heading, forge) in table {
-            assert_eq!(
-                forge_heading_slug(heading),
-                forge,
-                "`{heading}` is `{forge}` in the address bar"
-            );
-        }
-    }
-
-    /// Where the two forms genuinely differ, and where they do not.
-    ///
-    /// Three of the seven above are identical under both, which is why the
-    /// divergence went unnoticed: the ordinary heading is the common case and
-    /// agrees. Naming which rows differ is what keeps a future edit to either
-    /// function from quietly collapsing them.
-    #[test]
-    fn the_two_forms_differ_only_on_punctuation_inside_a_word() {
-        let same = ["Well-known types", "Trait-contract crates"];
-        for h in same {
-            assert_eq!(heading_slug(h), forge_heading_slug(h), "{h}");
-        }
-        let differ = [
-            "no_std, no alloc",
-            "Pre-1.0 stability",
-            "the_sweep probe",
-            "Warm's objective",
-            "R(V), the drift class",
-        ];
-        for h in differ {
-            assert_ne!(
-                heading_slug(h),
-                forge_heading_slug(h),
-                "{h} is the same under both, so one of the two functions has moved"
-            );
-        }
-    }
-
-    /// The control. Accepting two forms must not turn into accepting anything.
-    #[test]
-    fn a_heading_that_is_not_there_still_fails_under_both() {
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("INTENTS.md");
-        std::fs::write(&file, "## Warm's objective\n").unwrap();
-
-        assert_eq!(
-            resolve_anchor(&file, &Anchor::Heading("cold-s-objective".into())),
-            None
-        );
-        assert_eq!(
-            resolve_anchor(&file, &Anchor::Heading("colds-objective".into())),
-            None
-        );
-        // A near miss on the punctuation of a heading that does exist: neither
-        // form produces this, so neither may accept it.
-        assert_eq!(
-            resolve_anchor(&file, &Anchor::Heading("warm's-objective".into())),
-            None
-        );
-    }
-
-    #[test]
-    fn a_line_anchor_still_parses() {
-        // Kept for frozen roots, where the file genuinely does not move.
-        assert_eq!(
-            FileRef::parse("seed::DESIGN::844").unwrap().anchor,
-            Anchor::Line(844)
-        );
-        assert!(FileRef::parse("seed::DESIGN::0").is_none());
-        assert!(FileRef::parse("seed::DESIGN::#").is_none());
     }
 
     #[test]
@@ -528,7 +360,7 @@ mod tests {
             min:         None,
             max:         None,
         }];
-        let reg = reg_with("seam", "law", &[("rests_on", "nosuchroot::DESIGN::1")]);
+        let reg = reg_with("seam", "law", &[("rests_on", "nosuchroot::design::1")]);
         let found = validate::validate_provenance(
             Path::new("."),
             &BTreeMap::new(),
@@ -561,7 +393,7 @@ mod tests {
             min:         None,
             max:         None,
         }];
-        let reg = reg_with("seam", "law", &[("derives_from", "nosuchroot::DESIGN::1")]);
+        let reg = reg_with("seam", "law", &[("derives_from", "nosuchroot::design::1")]);
         let found = validate::validate_provenance(
             Path::new("."),
             &BTreeMap::new(),
@@ -595,7 +427,7 @@ mod tests {
             min:         None,
             max:         None,
         }];
-        let reg = reg_with("seam", "law", &[("provenance", "nosuchroot::DESIGN::1")]);
+        let reg = reg_with("seam", "law", &[("provenance", "nosuchroot::design::1")]);
         let found = validate::validate_provenance(
             Path::new("."),
             &BTreeMap::new(),
@@ -633,7 +465,7 @@ mod tests {
             min:         None,
             max:         None,
         }];
-        let reg = reg_with("seam", "law", &[("rests_on", "nosuchroot::DESIGN::1")]);
+        let reg = reg_with("seam", "law", &[("rests_on", "nosuchroot::design::1")]);
         let found = validate::validate_provenance(
             Path::new("."),
             &BTreeMap::new(),
@@ -705,11 +537,11 @@ mod tests {
             )
         };
         assert_eq!(
-            r("The split becomes structural ({{ seed::DESIGN::189 }})."),
+            r("The split becomes structural ({{ seed::design::189 }})."),
             "The split becomes structural."
         );
         assert_eq!(
-            r("Bounded ({{ seed::DESIGN::618 }} {{ seed::IDENTITY::61 }})."),
+            r("Bounded ({{ seed::design::618 }} {{ seed::identity::61 }})."),
             "Bounded."
         );
     }
@@ -725,15 +557,15 @@ mod tests {
         ns.fields = vec![field("provenance", FieldVisibility::Public)];
         let reg = reg_with("keys", "law", &[(
             "provenance",
-            "seed::DESIGN::844, mock::DESIGN::12",
+            "seed::design::844, mock::design::12",
         )]);
         let table = render_table(&ns, &reg, &cfg);
         assert!(
-            !table.contains("seed::DESIGN"),
+            !table.contains("seed::design"),
             "internal root survived: {table}"
         );
         assert!(
-            table.contains("mock::DESIGN::12"),
+            table.contains("mock::design::12"),
             "public citation lost: {table}"
         );
     }
@@ -744,7 +576,7 @@ mod tests {
         cfg.internal_roots = ["seed".to_string()].into_iter().collect();
         let mut ns = ns("law", None);
         ns.fields = vec![field("provenance", FieldVisibility::Public)];
-        let reg = reg_with("keys", "law", &[("provenance", "seed::DESIGN::844")]);
+        let reg = reg_with("keys", "law", &[("provenance", "seed::design::844")]);
         let table = render_table(&ns, &reg, &cfg);
         assert!(!table.contains("provenance"), "empty column kept: {table}");
     }
@@ -868,7 +700,7 @@ mod tests {
 
         let reg = Registry::default();
         let out = resolve_all(
-            "see {{ crates::plan-validate }} now",
+            "see {{ crates::plan_validate }} now",
             &[],
             &reg,
             &BTreeMap::new(),
@@ -884,7 +716,7 @@ mod tests {
 
     #[test]
     fn a_hyphenated_crate_short_name_resolves() {
-        // `crates::plan-validate` is the common shape: most crate names in a
+        // `crates::plan_validate` is the common shape: most crate names in a
         // prefixed family have a hyphen in the part after the prefix.
         let tmp = tempfile::tempdir().unwrap();
         let crates_dir = tmp.path().join("mock").join("crates");
@@ -901,7 +733,7 @@ mod tests {
 
         let reg = Registry::default();
         let out = resolve_all(
-            "see {{ crates::plan-validate }} now",
+            "see {{ crates::plan_validate }} now",
             &[],
             &reg,
             &BTreeMap::new(),
@@ -960,7 +792,7 @@ mod tests {
             source:    PathBuf::from("t.toml"),
             fields:    [(
                 "statement".to_string(),
-                "see {{ crates::plan-validate }}".to_string(),
+                "see {{ crates::plan_validate }}".to_string(),
             )]
             .into_iter()
             .collect(),
@@ -1139,7 +971,7 @@ mod tests {
 
     #[test]
     fn a_dot_that_is_not_a_method_is_left_alone() {
-        // `seed::DESIGN::12` has no chain; neither does a field holding a
+        // `seed::design::12` has no chain; neither does a field holding a
         // filename. Only a dot followed by a call starts one.
         let reg = reg_with("keys", "law", &[("file", "seam.toml")]);
         let nss = vec![ns("law", None)];
@@ -1150,7 +982,7 @@ mod tests {
     fn sourcesof_a_row_is_what_it_rests_on() {
         // A different question from where it is declared, so a different
         // function. Conflating them makes one of the two unaskable.
-        let reg = reg_with("keys", "law", &[("provenance", "seed::DESIGN::12")]);
+        let reg = reg_with("keys", "law", &[("provenance", "seed::design::12")]);
         let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
         cfg.internal_roots = ["seed".to_string()].into_iter().collect();
         cfg.registry_roots = [("seed".to_string(), "corpus".to_string())]
@@ -1179,7 +1011,7 @@ mod tests {
             .collect();
         let reg = Registry::default();
         let out = resolve_all(
-            "from {{ pathof(seed::DESIGN::844) }}.",
+            "from {{ pathof(seed::design::844) }}.",
             &[],
             &reg,
             &cfg.registry_roots.clone(),

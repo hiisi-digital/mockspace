@@ -52,7 +52,7 @@ pub use identity::Identity;
 pub use ids::{Base, Oid};
 pub use instance::{Held, Instance, Look, exclude_lines, sparse_lines};
 pub use merge::{MergeHook, MergeRefusal, Reapply, Refuse};
-pub use path::validate_path;
+pub use path::{symlinks_on, validate_path};
 pub use reader::Reader;
 pub use ref_history::CommitInfo;
 pub use ref_store::{DATA_REF_ENV, RefStore};

@@ -11,6 +11,10 @@ publish = false
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+# The one parser of a hierarchical reference path.
+letkajenkka = "=0.0.1-rc.1"
+# The names of a reference, folded and read plain, as every mockspace crate reads them.
+mockspace-refnames = { path = "../mockspace-refnames" }
 
 [dev-dependencies]
 tempfile = "3"

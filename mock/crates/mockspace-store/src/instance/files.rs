@@ -59,19 +59,7 @@ impl Instance<'_> {
     /// Refuses where one of `paths`, or a directory above it, is a symlink: a write or a removal
     /// would go through it to wherever it points, outside the instance.
     pub(super) fn check_parents<S: AsRef<str>>(&self, paths: &[S]) -> Result<(), StoreError> {
-        let mut seen: BTreeSet<&str> = BTreeSet::new();
-        let mut links = Vec::new();
-        for path in paths {
-            let path = path.as_ref();
-            for i in path.match_indices('/').map(|(i, _)| i).chain([path.len()]) {
-                let above = &path[.. i];
-                if seen.insert(above)
-                    && std::fs::symlink_metadata(self.dir.join(above)).is_ok_and(|m| m.is_symlink())
-                {
-                    links.push(above.to_owned());
-                }
-            }
-        }
+        let links = crate::path::symlinks_on(&self.dir, paths);
         if links.is_empty() {
             Ok(())
         } else {

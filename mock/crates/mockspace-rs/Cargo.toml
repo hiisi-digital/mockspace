@@ -8,6 +8,8 @@ repository = "https://github.com/hiisi-digital/mockspace"
 publish = false
 
 [dependencies]
+# The names of a reference, folded and read plain, as every mockspace crate reads them.
+mockspace-refnames = { path = "../mockspace-refnames" }
 mockspace-core = { path = "../mockspace-core" }
 mockspace-config = { path = "../mockspace-config" }
 mockspace-rs-attrs = { path = "../mockspace-rs-attrs" }

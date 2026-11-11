@@ -1622,7 +1622,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         // repo whose own config says "a project with no packages is ordinary",
         // over fifteen placeholders in one document. Found by running it against
         // a real consumer rather than a fixture.
-        let is_reference = |e: &String| e.trim_matches(|c| c == '{' || c == '}').contains("::");
+        // A text the standard refuses is still a reference here, so this asks only whether the
+        // separator is in it, and no step of it is read.
+        let is_reference = |e: &String| e.contains("::");
         let refs_unresolved: usize = unresolved
             .iter()
             .map(|(_, v)| v.iter().filter(|e| is_reference(e)).count())
@@ -1640,15 +1642,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             // generate documents and two of them silently did not resolve references at all.
             let changed = registry_scope::Changed::of_run(mode, &cfg.repo_root);
             let mut findings = Vec::new();
-            // Only a reference into a declared namespace is a reference to a row. One naming
-            // anything else (an undeclared namespace, a crate, a malformed root) is a defect of
-            // the document itself and gates every run.
-            let is_row_ref = |e: &str| {
-                let root = e.trim_matches(|c: char| c == '{' || c == '}').trim();
-                root.split("::").next().is_some_and(|r| {
-                    cfg.registry_namespaces.iter().any(|ns| ns.key == r)
-                })
-            };
+            // Which of them gates which run is `registry_scope::dangling`'s to say.
+            let namespaces: std::collections::BTreeSet<&str> =
+                cfg.registry_namespaces.iter().map(|ns| ns.key.as_str()).collect();
             for (file, found) in &unresolved {
                 let template = plan.iter().find_map(|p| match &p.source {
                     document::Source::Template(path) if p.id.file_name(&cfg) == *file => {
@@ -1658,34 +1654,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 });
                 let refs: Vec<&str> =
                     found.iter().filter(|e| is_reference(e)).map(String::as_str).collect();
-                for (to_rows, group) in [
-                    (true, refs.iter().copied().filter(|e| is_row_ref(e)).collect::<Vec<_>>()),
-                    (false, refs.iter().copied().filter(|e| !is_row_ref(e)).collect::<Vec<_>>()),
-                ] {
-                    if group.is_empty() {
-                        continue;
-                    }
-                    let mut shown = group.clone();
-                    shown.sort_unstable();
-                    shown.dedup();
-                    shown.truncate(4);
-                    let gate = match (&template, to_rows) {
-                        (Some(t), true) => registry::GateScope::WhenChanged(t.clone()),
-                        _ => registry::GateScope::Always,
-                    };
-                    findings.push(registry::RegistryFinding {
-                        kind: "dangling-reference",
-                        message: format!(
-                            "{file}: {} reference(s) resolved to nothing and were rendered \
-                             literally ({}). A reference that resolves to nothing is worse than \
-                             prose, because it looks checked.",
-                            group.len(),
-                            shown.join(", ")
-                        ),
-                        source: template.clone(),
-                        gate,
-                    });
-                }
+                findings.extend(registry_scope::dangling(file, &refs, template.as_deref(), &namespaces));
             }
             let (gated, _) = registry_scope::report(findings, &changed);
             registry_errors += gated;

@@ -314,7 +314,7 @@ pub struct LintCrateRef {
 /// to consume directly.
 ///
 /// `extends` carries the optional preset shorthand (e.g.
-/// `extends = "stack-lints::no-heap"` or `extends = "mockspace::no-bare-numeric"`).
+/// `extends = "stack_lints::no_heap"` or `extends = "mockspace::no_bare_numeric"`).
 /// The loader expands `<host>::<name>` into the full
 /// `mock://(@|ext/<host>)/export/lint-preset/<name>` URI and resolves
 /// the preset chain before applying this entry's overrides. Per the

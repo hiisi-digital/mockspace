@@ -10,6 +10,10 @@ publish = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+# The one parser of a hierarchical reference path.
+letkajenkka = "=0.0.1-rc.1"
+# The names of a reference, folded and read plain, as every mockspace crate reads them.
+mockspace-refnames = { path = "../mockspace-refnames" }
 toml = "0.8"
 # Phase 5 IO storage substrate (orphan refs per spec §19). Same version
 # as homma uses for git ops to keep the workspace dep graph coherent.

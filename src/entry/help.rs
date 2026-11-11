@@ -321,7 +321,11 @@ const COMMANDS: &[Cmd] = &[
                   those files out of the index, leaving them on disk as the instance; the \
                   config and the removals are then committed on the branch. \
                   `round-filenames` renames design-round files that carry a legacy \
-                  `YYYY-MM-DD_` prefix to the compact timestamp form. With no name it \
+                  `YYYY-MM-DD_` prefix to the compact timestamp form. `references-to-letkajenkka` rewrites every reference of the \
+                  spelling before the letkajenkka standard (uppercase and extensions in a \
+                  name, `::#heading`, spaces beside a separator) in the `*.md.tmpl` files \
+                  and the registry data (on a registry ref too), and the preset shorthands of `extends` in \
+                  `mockspace.toml`, where the new spelling reaches the same file and line, and names each one it leaves. With no name it \
                   lists the migrations.",
     },
     Cmd {
