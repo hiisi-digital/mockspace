@@ -60,7 +60,7 @@ fn is_recovery_command(args: &[String]) -> bool {
     ];
     // `data-refs commit` writes the ref and pushes it, so only the verbs that read or restore are recovery.
     let reads_data_refs = args.iter().skip(1).position(|a| a == "data-refs").is_some_and(|at| {
-        args.get(at + 2).is_some_and(|verb| matches!(verb.as_str(), "status" | "verify" | "instantiate" | "restore" | "trailers" | "paired"))
+        args.get(at + 2).is_some_and(|verb| matches!(verb.as_str(), "status" | "verify" | "instantiate" | "update" | "restore" | "trailers" | "paired"))
     });
     reads_data_refs || args.iter().skip(1).any(|a| RECOVERY.contains(&a.as_str()))
 }
@@ -1778,7 +1778,7 @@ mod tests {
 
     #[test]
     fn the_data_ref_verbs_that_only_read_or_restore_survive_a_broken_pack() {
-        for verb in ["status", "verify", "instantiate", "restore", "trailers", "paired"] {
+        for verb in ["status", "verify", "instantiate", "update", "restore", "trailers", "paired"] {
             assert!(is_recovery_command(&args(&["data-refs", verb])), "`data-refs {verb}` writes no ref");
         }
         // the control: the one that writes the ref and pushes it gates like everything else

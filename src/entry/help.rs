@@ -182,11 +182,13 @@ const COMMANDS: &[Cmd] = &[
         name:    "data-refs",
         summary: "keep a directory of the mock directory on a git ref",
         args:    &[],
-        help:    "Takes `status|verify|instantiate|restore|commit|trailers [namespace]` and \
+        help:    "Takes `status|verify|instantiate|update|restore|commit|trailers [namespace]` and \
                   `paired <commit>` over the `[[data_ref]]` tables of mockspace.toml, each naming a \
                   ref namespace and the directory whose files it holds. `status` prints the ref's tip, the instance's base and whether the \
                   directory changed; `verify` fails unless the instance is clean at the tip; \
-                  `instantiate` fetches the ref into the directory; `restore` writes again the \
+                  `instantiate` fetches the ref into the directory; `update` fetches the ref and brings an \
+                  instance to its tip, keeping a file changed here only and refusing one changed \
+                  on both sides; `restore` writes again the \
                   files of the instance that are gone from disk; `commit` writes the \
                   directory's changes to the ref (the first commit seeds it from the files). \
                   A missing instance is an error in every verb but `instantiate`. With no \

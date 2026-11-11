@@ -256,55 +256,6 @@ impl DataRefDecl {
     }
 }
 
-/// What stops a run before anything reads the mock directory: a declared ref with no instance here,
-/// whose files would otherwise read as a directory with nothing in it, and a file a ref holds that
-/// the branch still tracks, which is then in two places that can differ. Every one is named.
-pub fn standing(cfg: &crate::config::Config) -> Result<(), Vec<String>> {
-    let mut why = Vec::new();
-    for d in &cfg.data_refs {
-        let ns = d.namespace();
-        let found = (|| -> Result<Option<String>, String> {
-            let store = d.open(&cfg.repo_root)?;
-            let inst = d.instance(&store, &cfg.mock_dir)?;
-            if inst.base().map_err(|e| e.to_string())?.is_none() {
-                return Ok(Some(format!(
-                    "the data ref `{ns}` has no instance at {}, so `cargo mock data-refs instantiate {ns}` fetches it",
-                    d.instance_dir(&cfg.mock_dir).display()
-                )));
-            }
-            // a clean of the work tree takes the files and leaves the record, and the directory then
-            // reads as one with nothing in it
-            if let (0, held) = inst.present().map_err(|e| e.to_string())? {
-                if held > 0 {
-                    return Ok(Some(format!(
-                        "the data ref `{ns}` has none of its {held} file(s) at {}, so `cargo mock data-refs restore {ns}` \
-                         writes them again",
-                        d.instance_dir(&cfg.mock_dir).display()
-                    )));
-                }
-            }
-            let tracked = d.tracked(&cfg.repo_root, &cfg.mock_dir)?;
-            if tracked.is_empty() {
-                return Ok(None);
-            }
-            let shown: Vec<&str> = tracked.iter().take(5).map(String::as_str).collect();
-            let more = if tracked.len() > 5 { format!(" and {} more", tracked.len() - 5) } else { String::new() };
-            Ok(Some(format!(
-                "the data ref `{ns}` holds {} file(s) the branch still has tracked ({}{more}); `git rm --cached` takes \
-                 them out of the tree and leaves the files",
-                tracked.len(),
-                shown.join(", ")
-            )))
-        })();
-        match found {
-            Ok(None) => {},
-            Ok(Some(line)) => why.push(line),
-            Err(e) => why.push(format!("the data ref `{ns}`: {e}")),
-        }
-    }
-    if why.is_empty() { Ok(()) } else { Err(why) }
-}
-
 impl DataRefDecl {
     /// The files under this ref's instance directory that the index of the branch holds and the ref would hold
     /// too, as paths from the repository root.
@@ -348,11 +299,13 @@ impl DataRefDecl {
 
 mod gate;
 mod landing;
+mod standing;
 pub use gate::{repo_lints_pass, run_gated};
 use landing::paired;
+pub use standing::standing;
 pub use landing::trailer_lines;
 
-/// `cargo mock data-refs <status|verify|instantiate|restore|commit|trailers> [namespace]` and
+/// `cargo mock data-refs <status|verify|instantiate|update|restore|commit|trailers> [namespace]` and
 /// `cargo mock data-refs paired <commit>`. Prints one line per ref it
 /// touched, and a refusal on stderr; exits non-zero when any ref could not be done.
 pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode {
@@ -361,7 +314,7 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
     use mockspace_store::{Refuse, Store};
 
     let Some((verb, rest)) = args.split_first() else {
-        eprintln!("data-refs: status, verify, instantiate, restore, commit or trailers [namespace], or paired <commit>");
+        eprintln!("data-refs: status, verify, instantiate, update, restore, commit or trailers [namespace], or paired <commit>");
         return ExitCode::FAILURE;
     };
     match *verb {
@@ -393,9 +346,9 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
                 },
             };
         },
-        "status" | "verify" | "instantiate" | "restore" | "commit" => {},
+        "status" | "verify" | "instantiate" | "update" | "restore" | "commit" => {},
         _ => {
-            eprintln!("data-refs: `{verb}` is none of status, verify, instantiate, restore, commit, trailers or paired");
+            eprintln!("data-refs: `{verb}` is none of status, verify, instantiate, update, restore, commit, trailers or paired");
             return ExitCode::FAILURE;
         },
     }
@@ -420,6 +373,13 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
                     let Some(base) = inst.base().map_err(|e| e.to_string())? else {
                         return Err("has no instance, so `instantiate` it".into());
                     };
+                    // a clean of the work tree, or a worktree made again at the same path, takes the
+                    // files and leaves the record; said apart from an edit, since the two are mended apart
+                    if let (0, held) = inst.present().map_err(|e| e.to_string())? {
+                        if held > 0 {
+                            return Err(format!("has none of its {held} file(s), so `restore` it"));
+                        }
+                    }
                     let dirty = inst.is_dirty().map_err(|e| e.to_string())?;
                     Ok(format!(
                         "tip {} base {base} {}",
@@ -445,6 +405,14 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
                     store.refresh().map_err(|e| e.to_string())?;
                     let tip = inst.materialize().map_err(|e| e.to_string())?;
                     Ok(format!("instantiated at {tip}"))
+                },
+                "update" => {
+                    if inst.base().map_err(|e| e.to_string())?.is_none() {
+                        return Err("has no instance, so `instantiate` it".into());
+                    }
+                    inst.update().map_err(|e| e.to_string())?;
+                    let tip = store.local_tip().map_err(|e| e.to_string())?;
+                    Ok(format!("at {}", tip.as_deref().unwrap_or("none")))
                 },
                 "restore" => {
                     let written = inst.restore().map_err(|e| e.to_string())?;
