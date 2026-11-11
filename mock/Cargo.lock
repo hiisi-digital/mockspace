@@ -1383,6 +1383,7 @@ version = "0.1.0"
 dependencies = [
  "fs2",
  "gix",
+ "letkajenkka",
  "serde",
  "tempfile",
  "toml",
