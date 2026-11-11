@@ -64,6 +64,8 @@ pub struct Plan {
 enum Step {
     /// Make the ref of `decl` from the files its directory holds and push it.
     Seed(DataRefDecl),
+    /// Record the directory of `decl` as the instance of the ref an earlier run made from it.
+    Adopt(DataRefDecl),
     /// Append `text` to the config file.
     AppendConfig(String),
     /// Take these paths (from the repository root) out of the index, leaving the files.
@@ -127,6 +129,11 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
             let inst = decl.instance(&store, &cfg.mock_dir)?;
             let message = format!("data: {}", decl.namespace());
             inst.seed(&message, &mockspace_store::Refuse).map(|_| ()).map_err(|e| e.to_string())
+        },
+        Step::Adopt(decl) => {
+            let store = decl.open(&cfg.repo_root)?;
+            let inst = decl.instance(&store, &cfg.mock_dir)?;
+            inst.adopt().map(|_| ()).map_err(|e| e.to_string())
         },
         Step::AppendConfig(text) => {
             let held = std::fs::read_to_string(&cfg.config_path)
@@ -304,8 +311,10 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
     }
     let store = decl.open(&cfg.repo_root).map_err(|e| vec![format!("migrate: {e}")])?;
     let inst = decl.instance(&store, &cfg.mock_dir).map_err(|e| vec![format!("migrate: {e}")])?;
-    let seeded = inst.base().map_err(|e| vec![format!("migrate: {e}")])?.is_some();
-    if seeded {
+    let recorded = inst.base().map_err(|e| vec![format!("migrate: {e}")])?.is_some();
+    // made here by a run that was stopped inside the seed: the ref has the files, no record says so
+    let mut unrecorded = false;
+    if recorded {
         // the files are tracked and clean, so what the ref holds is what the branch holds, unless
         // the directory was changed since
         if inst.is_dirty().map_err(|e| vec![format!("migrate: {e}")])? {
@@ -314,19 +323,28 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
                  `cargo mock data-refs commit {ns}` or put the files back, then run this again"
             )]);
         }
-    } else if declared {
-        return Err(vec![format!(
-            "migrate: mockspace.toml declares this ref and this clone has no instance of it, so it was made \
-             elsewhere; `git rm --cached` the files the branch still tracks and `cargo mock data-refs instantiate {ns}`"
-        )]);
     } else {
+        // No record here. Either the ref is not made yet, or a run made it and was stopped before
+        // it recorded the directory, which shows as a ref holding exactly the files the branch
+        // tracks. Anything else was made from other files, elsewhere.
         match mockspace_store::Store::refresh(&store) {
-            Ok(mockspace_store::Freshness::Empty) => {},
-            Ok(_) => {
+            Ok(mockspace_store::Freshness::Empty) if !declared => {},
+            Ok(mockspace_store::Freshness::Empty) => {
                 return Err(vec![format!(
-                    "migrate: the ref of `{ns}` already has commits on the remote, so it was made elsewhere; take \
-                     the branch that declares it and `cargo mock data-refs instantiate {ns}`"
+                    "migrate: mockspace.toml declares the ref of `{ns}` and the remote has no commit of it; take the \
+                     table out of mockspace.toml and run this again"
                 )]);
+            },
+            Ok(_) => {
+                if inst.is_the_tip().map_err(|e| vec![format!("migrate: {e}")])? {
+                    unrecorded = true;
+                } else {
+                    return Err(vec![format!(
+                        "migrate: the ref of `{ns}` already has commits and they do not hold what the branch tracks, \
+                         so it was made elsewhere; `git rm --cached` the files the branch still tracks and `cargo \
+                         mock data-refs instantiate {ns}` on a branch that declares it"
+                    )]);
+                }
             },
             Err(e) => {
                 return Err(vec![format!("migrate: the remote could not be asked about the ref of `{ns}`: {e}")]);
@@ -336,8 +354,13 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
 
     let table = table_of(&decl);
     let (mut lines, mut steps) = (Vec::new(), Vec::new());
-    if seeded {
+    if recorded {
         lines.push(format!("an earlier run of this migration made the ref of `{ns}`; finishing it"));
+    } else if unrecorded {
+        lines.push(format!(
+            "an earlier run of this migration made the ref of `{ns}` and did not record the directory; finishing it"
+        ));
+        steps.push(Step::Adopt(decl));
     } else {
         lines.push(format!("make the ref of `{ns}` from {} file(s) and push it", tracked.len()));
         steps.push(Step::Seed(decl));

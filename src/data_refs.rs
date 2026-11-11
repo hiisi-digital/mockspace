@@ -346,7 +346,9 @@ impl DataRefDecl {
     }
 }
 
+mod gate;
 mod landing;
+pub use gate::{repo_lints_pass, run_gated};
 use landing::paired;
 pub use landing::trailer_lines;
 

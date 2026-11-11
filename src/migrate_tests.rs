@@ -168,10 +168,17 @@ fn a_ref_that_already_has_commits_is_not_seeded_over() {
     let w = World::new();
     let a = consumer(&w, "a");
     assert_eq!(run(&a, &RESEARCH), ExitCode::SUCCESS);
-    // a second clone that never took the config change still tracks the directory
+    // a second clone that never took the config change still tracks the directory. Its files are
+    // the ref's, which is what a run stopped inside its seed leaves, so the call finishes there
     let b = consumer(&w, "b");
+    let finishing = plan(&b, &RESEARCH).unwrap().lines.join("\n");
+    assert!(finishing.contains("did not record") && !finishing.contains("make the ref"), "{finishing}");
+    // with other files than the ref's it is another tree, and nothing is seeded over the ref
+    write(&b, "research/note.md", "another clone's findings\n");
+    git(&b.repo_root, &["commit", "-q", "-am", "other findings"]);
     let why = plan(&b, &RESEARCH).unwrap_err().join("\n");
     assert!(why.contains("already has commits"), "{why}");
+    assert_eq!(run(&b, &RESEARCH), ExitCode::FAILURE);
     assert!(tracked(&b).iter().any(|p| p.starts_with("mock/research/")), "the refusal untracked files");
 }
 
@@ -304,4 +311,60 @@ fn a_run_stopped_after_the_ref_was_made_is_finished_by_the_same_call() {
     git(&cfg.repo_root, &["commit", "-q", "-m", "changed since"]);
     let why = plan(&Config::from_dir(&cfg.mock_dir), &RESEARCH).unwrap_err().join("\n");
     assert!(why.contains("changed since"), "{why}");
+}
+
+#[test]
+fn a_run_stopped_inside_the_seed_is_finished_by_the_same_call() {
+    let w = World::new();
+    let cfg = consumer(&w, "a");
+    let before = std::fs::read_to_string(&cfg.config_path).unwrap();
+    assert_eq!(run(&cfg, &RESEARCH), ExitCode::SUCCESS);
+    // as it stands where the seed pushed and was stopped before it recorded the directory: the
+    // ref made, no record, no table, the files tracked
+    std::fs::write(&cfg.config_path, &before).unwrap();
+    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    std::fs::remove_dir_all(cfg.repo_root.join(".git/mock-instances")).unwrap();
+    let again = Config::from_dir(&cfg.mock_dir);
+
+    let finishing = plan(&again, &RESEARCH).unwrap().lines.join("\n");
+    assert!(finishing.contains("did not record") && finishing.contains("[[data_ref]]"), "{finishing}");
+    assert_eq!(run(&again, &RESEARCH), ExitCode::SUCCESS);
+    let done = Config::from_dir(&cfg.mock_dir);
+    assert_eq!(done.data_refs.len(), 1);
+    assert_eq!(crate::data_refs::standing(&done), Ok(()));
+    assert_eq!(crate::data_refs::run(&done, &["verify"]), ExitCode::SUCCESS);
+
+    // the control: the same stop, and the branch's files are not the ref's any more
+    std::fs::write(&cfg.config_path, &before).unwrap();
+    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    std::fs::remove_dir_all(cfg.repo_root.join(".git/mock-instances")).unwrap();
+    write(&cfg, "research/note.md", "changed since\n");
+    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    git(&cfg.repo_root, &["commit", "-q", "-m", "changed since"]);
+    let why = plan(&Config::from_dir(&cfg.mock_dir), &RESEARCH).unwrap_err().join("\n");
+    assert!(why.contains("do not hold what the branch tracks"), "{why}");
+}
+
+#[test]
+fn a_commit_of_a_data_ref_is_stopped_where_the_lints_refuse_the_tree() {
+    let w = World::new();
+    let cfg = consumer(&w, "a");
+    assert_eq!(run(&cfg, &RESEARCH), ExitCode::SUCCESS);
+    let cfg = Config::from_dir(&cfg.mock_dir);
+    let tip = || cfg.data_refs[0].open(&cfg.repo_root).unwrap().local_tip().unwrap().unwrap();
+    let before = tip();
+    write(&cfg, "research/note.md", "a change the gates have a say on\n");
+    let (refuse, pass) = (|_: &std::path::Path| false, |_: &std::path::Path| true);
+
+    assert_eq!(crate::data_refs::run_gated(&cfg, &["commit"], &refuse), ExitCode::FAILURE);
+    assert_eq!(tip(), before, "the lints refused and the ref moved");
+    let changed = crate::data_refs::ref_files(&cfg).unwrap().changed;
+    assert!(changed.contains("research/note.md"), "the change left the gates' view: {changed:?}");
+    // a verb that writes no ref is not held up by them
+    assert_eq!(crate::data_refs::run_gated(&cfg, &["status"], &refuse), ExitCode::SUCCESS);
+
+    // the control: where they pass, the same call commits
+    assert_eq!(crate::data_refs::run_gated(&cfg, &["commit"], &pass), ExitCode::SUCCESS);
+    assert_ne!(tip(), before);
+    assert!(crate::data_refs::ref_files(&cfg).unwrap().changed.is_empty());
 }

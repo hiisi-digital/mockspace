@@ -305,6 +305,35 @@ impl<'a> Instance<'a> {
         Ok(applied)
     }
 
+    /// Whether the directory, which has no record, holds exactly the files of the ref's local
+    /// tip: the same paths with the same contents. That is the state a [`Instance::seed`] leaves
+    /// when it made the ref and was stopped before it recorded the directory. Writes nothing.
+    pub fn is_the_tip(&self) -> Result<bool, StoreError> {
+        if self.base()?.is_some() || !self.dir.is_dir() {
+            return Ok(false);
+        }
+        let Some(tip) = self.store.local_tip()? else { return Ok(false) };
+        let held = self.store.tree_ids(&tip)?;
+        self.check_held(&held)?;
+        let here = self.walk()?;
+        Ok(self.local_ids(&here)? == held)
+    }
+
+    /// Records the directory as an instance of the ref at its local tip, where
+    /// [`Instance::is_the_tip`] holds, and refuses where it does not. No file is written, since
+    /// the directory already holds what the tip does.
+    pub fn adopt(&self) -> Result<String, StoreError> {
+        if !self.is_the_tip()? {
+            return Err(self.fail("does not hold exactly the files of the ref's tip, so it is not taken as its instance", Vec::new()));
+        }
+        let Some(tip) = self.store.local_tip()? else {
+            return Err(self.fail("has no tip to be an instance of", Vec::new()));
+        };
+        self.exclude()?;
+        self.record(&tip)?;
+        Ok(tip)
+    }
+
     /// Fetches the ref and brings the directory to its tip. A file changed here and on the tip
     /// both is a conflict, and so is a file here where the tip has a directory or the other way
     /// round: the call writes nothing and names the files, and the directory keeps what it had.
