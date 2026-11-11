@@ -15,8 +15,9 @@ mockspace-store = { path = "../mockspace-store" }
 # The seam saved verdicts are plugged in by, shared with whatever else replays a check.
 mockspace-verdicts = { path = "../../../verdicts" }
 regex = { version = "1", default-features = false, features = ["std"] }
-# The one parser of a hierarchical reference path, `foo::bar::baz`; private, so spelled over ssh.
-letkajenkka = { git = "ssh://git@github.com/orgrinrt/letkajenkka.git", branch = "dev" }
+# The one parser of a hierarchical reference path, `foo::bar::baz`.
+# FIXME(02b7c73b2e63): private, so spelled over ssh, which the anonymous launcher install cannot fetch; becomes a crates.io version once the rc is published.
+letkajenkka = { git = "ssh://git@github.com/orgrinrt/letkajenkka.git", branch = "work/letkajenkka-refs" }
 serde = { version = "1", features = ["derive"] }
 toml_edit = { version = "0.22", features = ["serde"] }
 
