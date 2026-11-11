@@ -118,6 +118,14 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
+    // the declared instance is now what git would write over on a checkout of an older commit
+    if plan.steps.iter().any(|s| matches!(s, Step::Untrack(_))) {
+        let declared = Config::from_dir(&cfg.mock_dir);
+        if let Err(why) = crate::data_refs::keep_git_off_the_instances(&declared) {
+            eprintln!("migrate: the migration is made, and the sparse checkout that keeps git from writing over the instance is not set: {why}");
+            return ExitCode::FAILURE;
+        }
+    }
     println!("done: {}", plan.after);
     ExitCode::SUCCESS
 }

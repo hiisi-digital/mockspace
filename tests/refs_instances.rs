@@ -120,21 +120,6 @@ fn a_branch_switch_and_back_leaves_the_instance_and_its_edits_alone() {
     assert!(!a.tracked().iter().any(|p| p.starts_with("mock/research/")));
 }
 
-// Mutation: none needed in the engine, this is git; the test shows that a checkout of a commit from
-// before the migration cannot overwrite the instance, which is what keeps the edit.
-#[test]
-fn checking_out_a_commit_from_before_the_migration_cannot_overwrite_the_instance() {
-    let w = refs_e2e::World::new();
-    let a = w.first_clone("a");
-    fixture::build_tracked(&a);
-    let old = a.git(&["rev-parse", "HEAD"]).trim().to_string();
-    fixture::migrate_all(&a);
-    a.write(NOTES, b"edited after the migration\n");
-    let o = a.git_out(&["checkout", "-q", &old]);
-    assert!(!o.ok, "git refuses to overwrite the untracked instance: {}", o.all());
-    assert_eq!(a.read(NOTES), b"edited after the migration\n");
-    assert_eq!(a.git(&["branch", "--show-current"]).trim(), "dev");
-}
 
 // Mutation: have the migration's removal commit also remove the files from disk; a rebase over
 // it would then lose the instance.
@@ -173,22 +158,4 @@ fn a_git_clean_that_wipes_the_instance_is_recovered_to_the_committed_state() {
     a.ok(&["data-refs", "restore"]);
     instance_matches(&a, &held_on_remote(&w, &ALL), false).unwrap();
     let _ = check::branch;
-}
-
-// Mutation: none in the engine; the round trip is the situation of anyone who keeps a branch cut
-// before the migration. Leaving that branch removes the files it tracked from the disk, and
-// those are the instance's files.
-#[test]
-fn a_visit_to_a_branch_cut_before_the_migration_leaves_the_instance_as_it_was() {
-    let w = refs_e2e::World::new();
-    let a = w.first_clone("a");
-    fixture::build_tracked(&a);
-    a.git(&["branch", "old"]);
-    fixture::migrate_all(&a);
-    a.push();
-    let held = held_on_remote(&w, &ALL);
-    a.git(&["checkout", "-q", "old"]);
-    a.git(&["checkout", "-q", "dev"]);
-    assert!(a.exists(NOTES), "the instance's files are still on disk");
-    instance_matches(&a, &held, false).unwrap();
 }

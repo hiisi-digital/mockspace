@@ -299,9 +299,11 @@ impl DataRefDecl {
 
 mod gate;
 mod landing;
+mod sparse;
 mod standing;
 pub use gate::{repo_lints_pass, run_gated};
 use landing::paired;
+pub use sparse::install as keep_git_off_the_instances;
 pub use standing::standing;
 pub use landing::trailer_lines;
 
@@ -438,6 +440,17 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
                 failed = true;
             },
         }
+    }
+    // the instances are kept from git's own writes by the sparse checkout of this worktree: set up by
+    // `instantiate`, which every worktree runs, and checked by `verify`
+    let sparse = match *verb {
+        "instantiate" => sparse::install(cfg),
+        "verify" if !failed => sparse::check(cfg),
+        _ => Ok(()),
+    };
+    if let Err(why) = sparse {
+        eprintln!("{why}");
+        failed = true;
     }
     if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS }
 }
