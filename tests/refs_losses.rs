@@ -9,23 +9,7 @@ mod exec;
 mod refs_e2e;
 
 use refs_e2e::{World, fixture};
-
-const NOTES: &str = "mock/research/20261001_alpha/NOTES.md";
-
-/// A repository whose `feat` branch edits the notes before the migration, with the migration on
-/// `dev` and the instance of `research` edited and not committed.
-fn dirty_instance_and_an_old_branch(w: &World) -> refs_e2e::Clone<'_> {
-    let a = w.first_clone("a");
-    fixture::build_tracked(&a);
-    a.git(&["checkout", "-q", "-b", "feat"]);
-    a.write(NOTES, b"edited on the old branch\n");
-    a.commit_all("docs: edit the notes on the branch");
-    a.git(&["checkout", "-q", "dev"]);
-    fixture::migrate_all(&a);
-    a.push();
-    a.write(NOTES, b"DIRTY instance edit\n");
-    a
-}
+use fixture::{NOTES, dirty_instance_and_an_old_branch};
 
 // Mutation: a pattern with a `*` writes only the file line of the sparse block, so a directory
 // below it that the branch tracks is skip-worktree.

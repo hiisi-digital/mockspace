@@ -10,7 +10,10 @@
 mod ambient;
 
 pub mod check;
+pub mod consumer;
 pub mod fixture;
+pub mod spy;
+pub mod whole;
 pub mod world;
 
 pub use check::{strays, Held, Manifest, content_only, held_on_remote, instance_matches, no_loss};

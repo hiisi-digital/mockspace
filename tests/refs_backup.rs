@@ -7,8 +7,7 @@ mod ambient;
 mod refs_e2e;
 
 use refs_e2e::{Clone, World, fixture};
-
-const NOTES: &str = "mock/research/20261001_alpha/NOTES.md";
+use fixture::{NOTES, dirty_instance_and_an_old_branch};
 const IN_REF: &str = "20261001_alpha/NOTES.md";
 
 /// Every blob the latest copy holds at a path ending in `rel`, by content.
@@ -22,21 +21,6 @@ fn copies_of(c: &Clone, rel: &str) -> Vec<String> {
         .filter(|p| p.ends_with(rel))
         .map(|p| c.git(&["show", &format!("refs/mock-backup/research:{p}")]))
         .collect()
-}
-
-/// The fixture with a branch cut before the migration that edits the notes, the migration on `dev`,
-/// and the instance's notes edited and not committed.
-fn dirty_instance_and_an_old_branch(w: &World) -> Clone<'_> {
-    let a = w.first_clone("a");
-    fixture::build_tracked(&a);
-    a.git(&["checkout", "-q", "-b", "feat"]);
-    a.write(NOTES, b"edited on the old branch\n");
-    a.commit_all("docs: edit the notes on the branch");
-    a.git(&["checkout", "-q", "dev"]);
-    fixture::migrate_all(&a);
-    a.push();
-    a.write(NOTES, b"DIRTY instance edit\n");
-    a
 }
 
 // Mutation: copy the edit and say nothing when the file no longer holds it; the next `commit` then

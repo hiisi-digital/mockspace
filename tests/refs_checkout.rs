@@ -10,7 +10,7 @@ mod refs_e2e;
 
 use refs_e2e::{Held, World, fixture, held_on_remote, instance_matches};
 
-const NOTES: &str = "mock/research/20261001_alpha/NOTES.md";
+use refs_e2e::fixture::NOTES;
 const ALL: [Held; 4] = [
     Held { ns: "research", path: "research" },
     Held { ns: "benches", path: "benches" },

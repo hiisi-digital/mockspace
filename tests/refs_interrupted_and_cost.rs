@@ -1,65 +1,17 @@
 //! What an instance command does when git fails part way, and what a gated run costs in proportion
-//! to the bytes of the instance. A `git` in front of the real one on `PATH` logs each call and fails
-//! the calls a test names, so the failure is real and happens at one chosen step.
+//! to the bytes of the instance. The failures and the counts are the spy's (`refs_e2e/spy.rs`), so
+//! a failure is real and happens at one chosen step.
 
 #[path = "common/ambient.rs"]
 mod ambient;
 mod refs_e2e;
 
-use std::path::PathBuf;
 use std::time::Instant;
 
+use refs_e2e::spy::{self, Spy};
 use refs_e2e::{World, fixture};
 
-const NOTES: &str = "mock/research/20261001_alpha/NOTES.md";
-
-/// Puts a logging `git` first on the `PATH` of every command the world runs. Returns the log and
-/// the file whose lines name the calls to fail: a subcommand, then optionally a text the logged
-/// call must hold, or with a leading `!` must not. A call is logged as its subcommand, its
-/// arguments and the name of the index file it was given; a failed one is logged again behind
-/// `INJECTED`, so a test can tell the step was reached.
-fn counting_git(w: &World) -> (PathBuf, PathBuf) {
-    let base = w.base();
-    let (log, fail) = (base.join("git.log"), base.join("git.fail"));
-    let real = w.sh(&base, "sh", &["-c", "command -v git"]).stdout.trim().to_string();
-    let body = format!(
-        r#"#!/bin/sh
-sub=; skip=0
-for a in "$@"; do
-  if [ $skip = 1 ]; then skip=0; continue; fi
-  case "$a" in -C|-c) skip=1;; --*) ;; *) sub=$a; break;; esac
-done
-line="$sub $* idx=${{GIT_INDEX_FILE##*/}}"
-echo "$line" >> '{log}'
-if [ -f '{fail}' ]; then
-  while IFS= read -r want; do
-    w=${{want%% *}}; rest=${{want#"$w"}}; rest=${{rest# }}; hit=
-    [ "$w" = "$sub" ] || continue
-    case "$rest" in
-      "") hit=1 ;;
-      "!"*) case "$line" in *"${{rest#!}}"*) ;; *) hit=1 ;; esac ;;
-      *) case "$line" in *"$rest"*) hit=1 ;; esac ;;
-    esac
-    if [ -n "$hit" ]; then
-      echo "INJECTED $line" >> '{log}'
-      echo "injected failure of git $sub" >&2
-      exit 1
-    fi
-  done < '{fail}'
-fi
-exec '{real}' "$@"
-"#,
-        log = log.display(),
-        fail = fail.display(),
-        real = real
-    );
-    mockspace_manifest::write_executable(&base.join("shims/git"), body).unwrap();
-    (log, fail)
-}
-
-fn calls(log: &PathBuf, what: &str) -> usize {
-    std::fs::read_to_string(log).unwrap_or_default().lines().filter(|l| l.contains(what)).count()
-}
+use refs_e2e::fixture::NOTES;
 
 fn remote_notes(w: &World) -> String {
     w.remote_git(&["show", "refs/heads/mock/research:20261001_alpha/NOTES.md"])
@@ -85,15 +37,15 @@ const COPY_STEPS: [&str; 4] =
 /// follow) lands it once. Says whether the commit with the failure succeeded.
 fn commit_failing_at(fail_at: &str) -> bool {
     let w = fixture::migrated_remote();
-    let (log, fail) = counting_git(&w);
+    let spy = spy::install(&w);
     let a = fixture::seat(&w, "a");
     a.write(NOTES, b"an edit that must survive\n");
     a.write("mock/research/new.md", b"a new file\n");
     let before = w.remote_tip("refs/heads/mock/research").unwrap();
-    std::fs::write(&fail, format!("{fail_at}\n")).unwrap();
+    std::fs::write(&spy.fail, format!("{fail_at}\n")).unwrap();
     let o = a.run(&["data-refs", "commit", "research"]);
-    std::fs::remove_file(&fail).unwrap();
-    assert!(calls(&log, "INJECTED ") > 0, "{fail_at}: the step was never reached, so nothing was tested: {}", o.all());
+    spy.stop_failing();
+    assert!(spy.calls("INJECTED ") > 0, "{fail_at}: the step was never reached, so nothing was tested: {}", o.all());
     assert_eq!(a.read(NOTES), b"an edit that must survive\n", "{fail_at}: the edit is on disk");
     assert_eq!(a.read("mock/research/new.md"), b"a new file\n", "{fail_at}: the new file is on disk");
     let again = a.run(&["data-refs", "commit", "research"]);
@@ -138,17 +90,17 @@ fn a_copy_of_the_edit_that_fails_does_not_stop_the_commit() {
 #[test]
 fn an_update_that_fails_while_reading_blobs_loses_no_local_edit_and_the_retry_converges() {
     let w = fixture::migrated_remote();
-    let (log, fail) = counting_git(&w);
+    let spy = spy::install(&w);
     let (a, b) = (fixture::seat(&w, "a"), fixture::seat(&w, "b"));
     b.write(NOTES, b"b changed the notes\n");
     b.write("mock/research/from-b.md", b"new from b\n");
     b.remove("mock/research/empty.txt");
     b.ok(&["data-refs", "commit", "research"]);
     a.write("mock/research/crlf.txt", b"a's own edit\n");
-    std::fs::write(&fail, "cat-file\n").unwrap();
+    std::fs::write(&spy.fail, "cat-file\n").unwrap();
     let o = a.run(&["data-refs", "update", "research"]);
-    std::fs::remove_file(&fail).unwrap();
-    assert!(calls(&log, "INJECTED cat-file") > 0, "the read of the blobs was never reached: {}", o.all());
+    spy.stop_failing();
+    assert!(spy.calls("INJECTED cat-file") > 0, "the read of the blobs was never reached: {}", o.all());
     assert!(!o.ok, "{}", o.all());
     assert_eq!(a.read("mock/research/crlf.txt"), b"a's own edit\n", "a local edit survives the failure");
     a.ok(&["data-refs", "update", "research"]);
@@ -179,22 +131,22 @@ const HASHING: &str = "--no-filters --stdin-paths";
 
 /// Two runs of `args` with the margin waited out before them; asserts the first one hashed and
 /// the second hashed nothing and wrote no copy.
-fn second_run_hashes_nothing(a: &refs_e2e::Clone, log: &PathBuf, args: &[&str]) {
+fn second_run_hashes_nothing(a: &refs_e2e::Clone, spy: &Spy, args: &[&str]) {
     // an entry is trusted once the file was older than the margin when it was hashed
     std::thread::sleep(std::time::Duration::from_millis(2100));
-    std::fs::write(log, "").unwrap();
+    spy.clear();
     let t0 = Instant::now();
     a.ok(args);
     let first = t0.elapsed();
-    assert!(calls(log, HASHING) > 0, "the control: the first run hashes, or this counts the wrong call");
-    std::fs::write(log, "").unwrap();
+    assert!(spy.calls(HASHING) > 0, "the control: the first run hashes, or this counts the wrong call");
+    spy.clear();
     let t1 = Instant::now();
     a.ok(args);
     let second = t1.elapsed();
     eprintln!("an ad-hoc spike, test profile, {args:?}: first {first:?}, second {second:?}");
-    let log_text = std::fs::read_to_string(log).unwrap_or_default();
-    assert_eq!(calls(log, HASHING), 0, "the second run hashed again: {log_text}");
-    assert_eq!(calls(log, "commit-tree"), 0, "the second run wrote a copy of an unchanged edit: {log_text}");
+    let log_text = spy.text();
+    assert_eq!(spy.calls(HASHING), 0, "the second run hashed again: {log_text}");
+    assert_eq!(spy.calls("commit-tree"), 0, "the second run wrote a copy of an unchanged edit: {log_text}");
 }
 
 // Mutation: hash every file of the instance on every run, as the first version did: the second
@@ -202,10 +154,10 @@ fn second_run_hashes_nothing(a: &refs_e2e::Clone, log: &PathBuf, args: &[&str]) 
 #[test]
 fn an_unchanged_instance_is_not_hashed_again_on_the_next_run() {
     let w = big_instance(1500);
-    let (log, _fail) = counting_git(&w);
+    let spy = spy::install(&w);
     let a = w.clone_of("a");
     a.ok(&["data-refs", "instantiate"]);
-    second_run_hashes_nothing(&a, &log, &["data-refs", "status", "research"]);
+    second_run_hashes_nothing(&a, &spy, &["data-refs", "status", "research"]);
 }
 
 // Mutation: hash the edited files for their copy on every run, ahead of asking whether the copy
@@ -213,13 +165,13 @@ fn an_unchanged_instance_is_not_hashed_again_on_the_next_run() {
 #[test]
 fn an_unchanged_edit_is_not_hashed_again_for_its_copy() {
     let w = big_instance(300);
-    let (log, _fail) = counting_git(&w);
+    let spy = spy::install(&w);
     let a = w.clone_of("a");
     a.ok(&["data-refs", "instantiate"]);
     a.write(NOTES, &fixture::bytes(9, 200_000));
     a.write("mock/research/bulk/000/f00000.md", b"edited\n");
     a.write("mock/research/added.md", b"added\n");
-    second_run_hashes_nothing(&a, &log, &["data-refs", "status", "research"]);
+    second_run_hashes_nothing(&a, &spy, &["data-refs", "status", "research"]);
 }
 
 // Mutation: the same for an instance of a ref not born yet, whose every file is an edit.
@@ -234,12 +186,12 @@ fn an_instance_of_a_ref_not_born_yet_is_not_hashed_again() {
     a.git(&["add", "-f", "--", "mock/mockspace.toml"]);
     a.commit_all("chore: declare `extra`");
     a.push();
-    let (log, _fail) = counting_git(&w);
+    let spy = spy::install(&w);
     a.ok(&["data-refs", "instantiate", "extra"]);
     for i in 0 .. 50 {
         a.write(&format!("mock/extra/f{i}.md"), format!("file {i}\n").as_bytes());
     }
-    second_run_hashes_nothing(&a, &log, &["data-refs", "status", "extra"]);
+    second_run_hashes_nothing(&a, &spy, &["data-refs", "status", "extra"]);
 }
 
 // Mutation: trust the cache on the size alone; an edit of the same length is then never seen.

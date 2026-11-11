@@ -7,7 +7,7 @@ mod refs_e2e;
 
 use refs_e2e::{World, fixture};
 
-const NOTES: &str = "mock/research/20261001_alpha/NOTES.md";
+use refs_e2e::fixture::NOTES;
 
 // Mutation: drop the sparse block, so the checkout of the old branch writes its bytes over the
 // instance file and the rebase then replays onto them; the instance's bytes are gone from disk and
