@@ -8,6 +8,11 @@
 //! a copy that could not be made is a stop the person did not ask for, and the next engine command
 //! still finds what git wrote over by the bytes the copy kept from before.
 //!
+//! The hook runs while the transaction that moves `ORIG_HEAD` holds its locks. Under the reftable
+//! backend that is the lock of the whole stack, the backup ref's included, so `snapshot` makes the
+//! copy as objects and names it beside the instance's record, and the next engine command folds it
+//! into the ref (see `mockspace_store`'s `instance/pending.rs`).
+//!
 //! The hook is the repository's own, in `<git-common-dir>/hooks`, which no other repository reads.
 //! Where `core.hooksPath` points at the gate's durable directory, the gate's
 //! `reference-transaction` there hands over to it (`mockspace_manifest::gate::CHAIN_HOOKS`), and

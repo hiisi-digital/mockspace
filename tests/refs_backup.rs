@@ -227,3 +227,142 @@ fn an_edit_made_at_a_commit_from_before_the_migration_is_the_window_a_reset_leav
     );
     assert!(!copies_of(&a, IN_REF).contains(&"edited at the old commit\n".to_string()));
 }
+
+/// Holds the lock of the backup ref, as another writer, or the transaction a hook runs inside of
+/// under the reftable backend, does. Taken away by removing the file it returns.
+fn lock_backup_ref(c: &Clone) -> std::path::PathBuf {
+    let common = c.git(&["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    let lock = std::path::Path::new(common.trim()).join("refs/mock-backup/research.lock");
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    std::fs::write(&lock, b"").unwrap();
+    lock
+}
+
+/// Whether any copy in the history of the backup ref held `text`.
+fn history_holds(c: &Clone, text: &str) -> bool {
+    let commits = c.git(&["rev-list", "refs/mock-backup/research"]);
+    commits.lines().any(|commit| {
+        let tree = c.git(&["ls-tree", "-r", "--name-only", commit]);
+        tree.lines().filter(|p| p.ends_with(IN_REF)).any(|p| c.git(&["show", &format!("{commit}:{p}")]) == text)
+    })
+}
+
+// Mutation: write the bytes from before where the copy of what the file holds now could not be
+// made; what the person wrote since is then in no copy and no file.
+#[test]
+fn restore_refuses_where_the_bytes_on_disk_cannot_be_copied_first() {
+    let w = World::new();
+    let a = dirty_instance_and_an_old_branch(&w);
+    let _ = a.git_out(&["merge", "--no-edit", "feat"]);
+    let _ = a.git_out(&["merge", "--abort"]);
+    let s = a.ok(&["data-refs", "status", "research"]);
+    assert!(s.all().contains("written over"), "the control: the merge wrote over the edit: {}", s.all());
+    a.write(NOTES, b"written since, in no copy yet\n");
+    let lock = lock_backup_ref(&a);
+    let r = a.fails(&["data-refs", "restore", "research", IN_REF]);
+    assert_eq!(a.read(NOTES), b"written since, in no copy yet\n", "restore wrote over bytes no copy holds: {}", r.all());
+    std::fs::remove_file(&lock).unwrap();
+    a.ok(&["data-refs", "restore", "research", IN_REF]);
+    assert_eq!(a.read(NOTES), b"DIRTY instance edit\n");
+    assert!(history_holds(&a, "written since, in no copy yet\n"), "the bytes written over by the restore are in no copy");
+}
+
+// Mutation: take a guarded edit that holds new bytes for one the person made, whatever git did; an
+// edit git wrote over and the person edited again before any engine command is then named nowhere,
+// and the next commit pushes the second edit as though the first never was.
+#[test]
+fn an_edit_git_wrote_over_and_edited_again_before_any_engine_command_is_said() {
+    let w = World::new();
+    let a = dirty_instance_and_an_old_branch(&w);
+    let _ = a.git_out(&["merge", "--no-edit", "feat"]);
+    assert_eq!(a.read(NOTES), b"edited on the old branch\n", "the control: git wrote the branch's bytes over the edit");
+    a.write(NOTES, b"edited again while the merge stands\n");
+    let s = a.ok(&["data-refs", "status", "research"]);
+    assert!(s.all().contains(&format!("data-refs restore research {IN_REF}")), "{}", s.all());
+    let before = w.remote_tip("refs/heads/mock/research");
+    a.fails(&["data-refs", "commit", "research"]);
+    assert_eq!(w.remote_tip("refs/heads/mock/research"), before, "the second edit was pushed over the first");
+    a.ok(&["data-refs", "restore", "research", IN_REF]);
+    assert_eq!(a.read(NOTES), b"DIRTY instance edit\n");
+    assert!(history_holds(&a, "edited again while the merge stands\n"));
+}
+
+// Mutation: tell a file git wrote by its bytes on disk alone; git writes through the filters the
+// attributes name, so a file it wrote with `eol=crlf` holds bytes no commit has and reads as an edit.
+#[test]
+fn a_file_git_wrote_through_a_filter_is_said() {
+    let w = World::new();
+    let a = w.first_clone("a");
+    fixture::build_tracked(&a);
+    a.write(".gitattributes", b"*.md text eol=crlf\n");
+    a.commit_all("chore: write markdown with crlf");
+    a.git(&["checkout", "-q", "-b", "feat"]);
+    a.write(NOTES, b"edited on the old branch\n");
+    a.commit_all("docs: edit the notes on the branch");
+    a.git(&["checkout", "-q", "dev"]);
+    fixture::migrate_all(&a);
+    a.push();
+    let instance = a.read(NOTES);
+    let _ = a.git_out(&["merge", "--no-edit", "feat"]);
+    assert_eq!(a.read(NOTES), b"edited on the old branch\r\n", "the control: git wrote the file through the filter");
+    let s = a.ok(&["data-refs", "status", "research"]);
+    assert!(s.all().contains(&format!("data-refs restore research {IN_REF}")), "{}", s.all());
+    a.ok(&["data-refs", "restore", "research", IN_REF]);
+    assert_eq!(a.read(NOTES), instance);
+}
+
+// Mutation: give the copy up where the backup ref cannot be moved from the hook; under the reftable
+// backend the transaction the hook runs inside of holds that lock every time, and an edit no engine
+// command saw is then in no copy when the merge writes over it.
+#[test]
+fn a_copy_before_git_writes_that_the_ref_cannot_take_is_kept_and_taken_by_the_next_look() {
+    let w = World::new();
+    let a = dirty_instance_and_an_old_branch(&w);
+    let lock = lock_backup_ref(&a);
+    let m = a.git_out(&["merge", "--no-edit", "feat"]);
+    let _ = a.git_out(&["merge", "--abort"]);
+    std::fs::remove_file(&lock).unwrap();
+    let held = a.git_out(&["rev-parse", "--verify", "-q", "refs/mock-backup/research"]);
+    assert!(!held.ok, "the control: the ref took a copy while it was locked: {}", m.all());
+    let s = a.ok(&["data-refs", "status", "research"]);
+    assert!(s.all().contains(&format!("data-refs restore research {IN_REF}")), "{}", s.all());
+    assert!(history_holds(&a, "DIRTY instance edit\n"), "the copy is not in the ref after the look");
+    a.ok(&["data-refs", "restore", "research", IN_REF]);
+    assert_eq!(a.read(NOTES), b"DIRTY instance edit\n");
+}
+
+// Mutation: the same as the one before, under the reftable backend itself. A git that cannot move a
+// repository to it (`git refs migrate`, 2.46 and later) skips this, and says so.
+#[test]
+fn under_the_reftable_backend_the_copy_before_git_writes_is_kept() {
+    let w = World::new();
+    let a = dirty_instance_and_an_old_branch(&w);
+    let moved = a.git_out(&["refs", "migrate", "--ref-format=reftable"]);
+    if !moved.ok {
+        eprintln!("skipped: this git cannot move a repository to the reftable backend: {}", moved.all());
+        return;
+    }
+    let _ = a.git_out(&["merge", "--no-edit", "feat"]);
+    let _ = a.git_out(&["merge", "--abort"]);
+    let s = a.ok(&["data-refs", "status", "research"]);
+    assert!(s.all().contains(&format!("data-refs restore research {IN_REF}")), "{}", s.all());
+    a.ok(&["data-refs", "restore", "research", IN_REF]);
+    assert_eq!(a.read(NOTES), b"DIRTY instance edit\n");
+}
+
+// Mutation: none; this pins the window that remains of an edit git wrote over and the person edited
+// again before any engine command. Where the person took the path off the branch's index first,
+// nothing git left says it wrote there, the file holds new bytes, and the edit from before is kept
+// only in the history of the backup ref. The day it is named, this test says so.
+#[test]
+fn an_edit_written_over_then_taken_off_the_index_and_edited_again_is_the_window_left() {
+    let w = World::new();
+    let a = dirty_instance_and_an_old_branch(&w);
+    let _ = a.git_out(&["merge", "--no-edit", "feat"]);
+    assert_eq!(a.read(NOTES), b"edited on the old branch\n", "the control: git wrote the branch's bytes over the edit");
+    a.git(&["rm", "-q", "--cached", "--sparse", "--", NOTES]);
+    a.write(NOTES, b"edited again off the index\n");
+    let s = a.ok(&["data-refs", "status", "research"]);
+    assert!(!s.all().contains("written over"), "it is named now; close the window in the design text: {}", s.all());
+    assert!(history_holds(&a, "DIRTY instance edit\n"), "the edit from before is in no copy");
+}

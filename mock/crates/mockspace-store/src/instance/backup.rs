@@ -12,9 +12,8 @@
 //! - `guard`, every file of the instance as it was when git was about to move `ORIG_HEAD` (a hook
 //!   runs `data-refs snapshot`, see the engine), which a merge, a rebase and a reset do ahead of
 //!   writing the work tree;
-//! - `lost`, the files git wrote over: the next look finds a file of the guard that is gone, or
-//!   holds bytes the object database already has (bytes a commit brought, where an edit made since
-//!   is new bytes), and keeps the guard's bytes here. A file stays lost until it holds those bytes
+//! - `lost`, the files git wrote over: the next look finds a file of the guard that git wrote (see
+//!   `overwritten`), and keeps the guard's bytes here. A file stays lost until it holds those bytes
 //!   again ([`Instance::restore_written_over`]) or the bytes on disk are taken
 //!   ([`Instance::accept_written_over`]).
 //!
@@ -23,9 +22,10 @@
 //! `git show refs/mock-backup/<namespace>:<record>/<set>/<path>`.
 //!
 //! The copy is written with a compare-and-swap of the ref, re-read and built again on a lost race,
-//! so two worktrees copying at once both keep theirs. A failure to write it is said by the caller
-//! and fails no command that only reads; a failure to read it is an error, since what was written
-//! over is then not known.
+//! so two worktrees copying at once both keep theirs. A guard the ref cannot take is kept beside
+//! the record and folded in by the next look (see `pending`). Any other failure to write it is said
+//! by the caller and fails no command that only reads; a failure to read it is an error, since what
+//! was written over is then not known.
 //!
 //! What this does not cover is a write git makes with no reference moving before it and no engine
 //! command since the edit: `git cherry-pick` of a commit from before the migration is one.
@@ -34,6 +34,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::overwritten::Known;
 use super::{Delta, Instance};
 use crate::error::StoreError;
 use crate::ids::{FileId, Oid};
@@ -95,13 +96,6 @@ impl Drop for RemoveOnDrop {
     }
 }
 
-/// Why one attempt at writing the copy stopped.
-enum Stop {
-    /// The ref was not moved, since another writer moved it or holds its lock: built again.
-    Raced(StoreError),
-    Failed(StoreError),
-}
-
 impl Instance<'_> {
     /// The ref the copies of this instance's files are kept in.
     pub fn backup_ref(&self) -> String {
@@ -134,7 +128,15 @@ impl Instance<'_> {
     /// a file stands where the write would go. What the file holds now is copied first, as an
     /// edit, so it is in the history of the copy.
     pub fn restore_written_over(&self, paths: &[String]) -> Result<(), StoreError> {
-        let (_, copy) = self.keep(Keep::Look)?;
+        let (look, copy) = self.keep(Keep::Look)?;
+        // what the files hold now is in no copy, so nothing is written over it
+        look.copied.map_err(|e| StoreError::Io {
+            context: format!(
+                "copying what the files of the instance `{}` hold now, before writing the bytes from before over them",
+                self.dir.display()
+            ),
+            source:  std::io::Error::other(e.to_string()),
+        })?;
         let unknown: Vec<String> = paths.iter().filter(|p| !copy.lost.contains_key(*p)).cloned().collect();
         if !unknown.is_empty() {
             return Err(self.fail("names files git did not write over", unknown));
@@ -180,24 +182,46 @@ impl Instance<'_> {
                 sent,
             }
         };
+        // a guard the ref could not take is the last copy of this instance, newer than the ref's
+        let pending = self.pending()?;
+        // a guard is kept beside the record at once where the ref is in a reftable, whose lock the
+        // transaction this runs inside of holds
+        let held_by_git = keep == Keep::Guard && self.refs_in_reftable();
         let mut failure = None;
         // asked once, before this look writes anything: an edit it copies is in the database after
-        let mut committed = None;
+        let mut known = None;
         for attempt in 0 .. ATTEMPTS {
             let last = self.backup_tip()?;
-            let old = match &last {
-                Some(last) => self.read_copy(last)?,
+            let old = match pending.as_ref().or(last.as_ref()) {
+                Some(at) => self.read_copy(at)?,
                 None => Copy::default(),
             };
-            let mut new = self.next_copy(&old, &delta, keep, &mut committed)?;
+            let mut new = self.next_copy(&old, &delta, keep, &mut known)?;
             let written_over = new.lost.keys().cloned().collect();
-            if new == old {
+            if new == old && pending.is_none() {
                 return Ok((Look { written_over, copied: Ok(()) }, new));
             }
-            match self.write_copy(last.as_ref(), &old, &mut new, &delta) {
-                Ok(()) => return Ok((Look { written_over, copied: Ok(()) }, new)),
-                Err(Stop::Failed(e)) => return Ok((Look { written_over, copied: Err(e) }, new)),
-                Err(Stop::Raced(e)) => {
+            let commit = match self.build_copy(last.as_ref(), pending.as_ref(), &old, &mut new, &delta) {
+                Ok(commit) => commit,
+                Err(e) => return Ok((Look { written_over, copied: Err(e) }, new)),
+            };
+            if held_by_git {
+                let copied = self.keep_pending(&commit);
+                return Ok((Look { written_over, copied }, new));
+            }
+            match self.move_backup_ref(last.as_ref(), &commit) {
+                Ok(()) => {
+                    if let Some(pending) = &pending {
+                        self.drop_pending(pending);
+                    }
+                    return Ok((Look { written_over, copied: Ok(()) }, new));
+                },
+                // a guard is never given up: what the ref would not take is kept beside the record
+                Err(_) if keep == Keep::Guard && attempt + 1 == ATTEMPTS => {
+                    let copied = self.keep_pending(&commit);
+                    return Ok((Look { written_over, copied }, new));
+                },
+                Err(e) => {
                     failure = Some((written_over, new, e));
                     pause(attempt);
                 },
@@ -208,21 +232,22 @@ impl Instance<'_> {
     }
 
     /// The copy `old` becomes on this look.
-    fn next_copy(&self, old: &Copy, delta: &Delta, keep: Keep, committed: &mut Option<BTreeSet<Oid>>) -> Result<Copy, StoreError> {
+    fn next_copy(&self, old: &Copy, delta: &Delta, keep: Keep, known: &mut Option<Known>) -> Result<Copy, StoreError> {
         let mut lost = old.lost.clone();
         let changed: Vec<(&String, &FileId)> =
             old.guard.iter().filter(|(path, id)| delta.here.get(*path) != Some(*id) && !lost.contains_key(*path)).collect();
-        if !changed.is_empty() && committed.is_none() {
-            // what a base holds is in the database; what differs from it is asked
-            let mut known: BTreeSet<Oid> = delta.base_ids.values().map(|id| id.blob.clone()).collect();
-            known.extend(self.in_object_database(delta.sent.values().flatten().map(|id| &id.blob))?);
-            *committed = Some(known);
+        if !changed.is_empty() && known.is_none() {
+            *known = Some(self.known(delta, &changed)?);
         }
-        let none = BTreeSet::new();
-        let committed = committed.as_ref().unwrap_or(&none);
+        let none = Known {
+            blobs:     BTreeSet::new(),
+            git_wrote: BTreeSet::new(),
+        };
+        let known = known.as_ref().unwrap_or(&none);
         for (path, id) in changed {
-            // a file git wrote is gone or holds bytes a commit brought; one edited since holds new bytes
-            let by_git = delta.here.get(path).is_none_or(|now| committed.contains(&now.blob));
+            // a file git wrote is gone, holds bytes a commit brought, or is one git wrote through a
+            // filter or over a guarded edit; one the person edited since holds new bytes
+            let by_git = delta.here.get(path).is_none_or(|now| known.blobs.contains(&now.blob)) || known.git_wrote.contains(path);
             if by_git {
                 lost.insert(path.clone(), id.clone());
             }
@@ -238,17 +263,6 @@ impl Instance<'_> {
             guard,
             lost,
         })
-    }
-
-    /// Of `blobs`, the ones the object database holds.
-    fn in_object_database<'b>(&self, blobs: impl Iterator<Item = &'b Oid>) -> Result<BTreeSet<Oid>, StoreError> {
-        let blobs: Vec<&Oid> = blobs.collect();
-        if blobs.is_empty() {
-            return Ok(BTreeSet::new());
-        }
-        let input: String = blobs.iter().map(|b| format!("{b}\n")).collect();
-        let out = self.store.git.must(&["cat-file", "--batch-check=%(objectname)"], &[], Some(input.as_bytes()))?;
-        Ok(out.text().lines().filter_map(|l| Oid::parse(l).ok()).collect())
     }
 
     /// The commit the backup ref is at, or `None` where there is none.
@@ -284,11 +298,12 @@ impl Instance<'_> {
         Ok(copy)
     }
 
-    /// Writes `new` as the next commit of the backup ref over `last`. The files whose bytes the
-    /// object database may not hold (an edit or a guard's file that neither the base nor the last
-    /// copy has) are written to it first, and their ids in `new` are the ids of what was written.
-    fn write_copy(&self, last: Option<&Oid>, old: &Copy, new: &mut Copy, delta: &Delta) -> Result<(), Stop> {
-        let failed = Stop::Failed;
+    /// Builds `new` as the commit that follows `last` in the backup ref, with `pending`, a copy the
+    /// ref has not taken yet, as its second parent. The files whose bytes the object database may
+    /// not hold (an edit or a guard's file that neither the base nor the last copy has) are written
+    /// to it first, and their ids in `new` are the ids of what was written. Nothing here needs a
+    /// lock on a ref.
+    fn build_copy(&self, last: Option<&Oid>, pending: Option<&Oid>, old: &Copy, new: &mut Copy, delta: &Delta) -> Result<Oid, StoreError> {
         let git = &self.store.git;
         let held: BTreeSet<&Oid> = delta.base_ids.values().map(|id| &id.blob).chain(old.blobs()).collect();
         let unwritten: Vec<String> = new
@@ -302,18 +317,18 @@ impl Instance<'_> {
             .collect();
         if !unwritten.is_empty() {
             let input: String = unwritten.iter().map(|p| format!("{}\n", self.dir.join(p).display())).collect();
-            let out = git.must(&["hash-object", "-w", "--no-filters", "--stdin-paths"], &[], Some(input.as_bytes())).map_err(failed)?;
+            let out = git.must(&["hash-object", "-w", "--no-filters", "--stdin-paths"], &[], Some(input.as_bytes()))?;
             let text = out.text();
             let blobs: Vec<&str> = text.lines().collect();
             if blobs.len() != unwritten.len() {
-                return Err(failed(StoreError::Git {
+                return Err(StoreError::Git {
                     command: "hash-object -w --stdin-paths".to_owned(),
                     detail:  format!("{} ids for {} paths", blobs.len(), unwritten.len()),
-                }));
+                });
             }
             // the bytes written are the ones kept, should the file have changed since it was hashed
             for (path, blob) in unwritten.iter().zip(blobs) {
-                let blob = Oid::parse(blob).map_err(failed)?;
+                let blob = Oid::parse(blob)?;
                 for set in [&mut new.edit, &mut new.guard] {
                     if let Some(id) = set.get_mut(path) {
                         id.blob = blob.clone();
@@ -321,11 +336,11 @@ impl Instance<'_> {
                 }
             }
         }
-        let key = self.record_key().map_err(failed)?;
-        let mine = if new.is_empty() { None } else { Some(self.key_tree(new).map_err(failed)?) };
+        let key = self.record_key()?;
+        let mine = if new.is_empty() { None } else { Some(self.key_tree(new)?) };
         let mut entries = String::new();
         if let Some(last) = last {
-            let top = git.must(&["ls-tree", "-z", last.as_str()], &[], None).map_err(failed)?;
+            let top = git.must(&["ls-tree", "-z", last.as_str()], &[], None)?;
             for entry in top.stdout.split(|b| *b == 0).filter(|e| !e.is_empty()) {
                 let entry = String::from_utf8_lossy(entry);
                 if entry.split_once('\t').is_none_or(|(_, name)| name != key) {
@@ -337,7 +352,7 @@ impl Instance<'_> {
         if let Some(mine) = &mine {
             entries.push_str(&format!("040000 tree {mine}\t{key}\0"));
         }
-        let tree = git.must(&["mktree", "-z"], &[], Some(entries.as_bytes())).map_err(failed)?.text();
+        let tree = git.must(&["mktree", "-z"], &[], Some(entries.as_bytes()))?.text();
         let who = &self.store.identity;
         let ident = [
             ("GIT_AUTHOR_NAME", who.name.as_str()),
@@ -347,22 +362,27 @@ impl Instance<'_> {
         ];
         let message = format!("backup of the files of an instance at {}", self.dir.display());
         let mut args = vec!["commit-tree", tree.as_str()];
-        if let Some(last) = last {
-            args.extend(["-p", last.as_str()]);
+        for parent in last.into_iter().chain(pending.filter(|p| Some(*p) != last)) {
+            args.extend(["-p", parent.as_str()]);
         }
         args.extend(["-m", message.as_str()]);
-        let commit = git.must(&args, &ident, None).map_err(failed)?.text();
+        Oid::parse(&git.must(&args, &ident, None)?.text())
+    }
+
+    /// Moves the backup ref from `last` to `commit`. Fails without moving it where another writer
+    /// moved it first or holds its lock, and the copy is then built again.
+    fn move_backup_ref(&self, last: Option<&Oid>, commit: &Oid) -> Result<(), StoreError> {
         let reference = self.backup_ref();
         // an empty old value is the ref not existing, whatever the length of an id
         let old_value = last.map_or("", Oid::as_str);
-        let out = git.run(&["update-ref", &reference, &commit, old_value], &[], None).map_err(failed)?;
+        let out = self.store.git.run(&["update-ref", &reference, commit.as_str(), old_value], &[], None)?;
         if out.ok() {
             Ok(())
         } else {
-            Err(Stop::Raced(StoreError::Git {
+            Err(StoreError::Git {
                 command: format!("update-ref {reference}"),
                 detail:  out.stderr,
-            }))
+            })
         }
     }
 

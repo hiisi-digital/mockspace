@@ -24,6 +24,8 @@
 
 mod apply;
 mod backup;
+mod overwritten;
+mod pending;
 mod files;
 mod held;
 mod lines;
