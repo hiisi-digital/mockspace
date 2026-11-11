@@ -11,8 +11,14 @@
 //! hold. Mockspace folds the same way and reads a path of names the same way wherever it meets a
 //! reference, so both are held here once, and every crate of either workspace reaches them here.
 //! The character set itself is the standard's and is never restated.
+//!
+//! Where a reference is read is held here too, for the same reason: the code fences of a document,
+//! inside which nothing is a reference.
 
 use core::fmt;
+
+mod fence;
+pub use fence::Fences;
 
 use letkajenkka::ident::{is_body, is_start};
 use letkajenkka::{Path, Selector};

@@ -360,13 +360,10 @@ fn walk(dir: &Path, names: &[String], out: &mut Vec<PathBuf>) {
 #[must_use]
 pub fn heading_in(file: &Path, name: &str) -> Option<(usize, String)> {
     let text = fs::read_to_string(file).ok()?;
-    let mut fenced = false;
+    let mut fences = mockspace_refnames::Fences::new();
     text.lines().enumerate().find_map(|(i, l)| {
         let trimmed = l.trim_start();
-        if trimmed.starts_with("```") {
-            fenced = !fenced;
-        }
-        if fenced || !trimmed.starts_with('#') {
+        if !fences.prose(l) || !trimmed.starts_with('#') {
             return None;
         }
         let title = trimmed.trim_start_matches('#').trim();

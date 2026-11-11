@@ -45,17 +45,12 @@ fn resolve_once(
         namespaces.iter().map(|n| (n.key.as_str(), n)).collect();
 
     let mut out = String::with_capacity(text.len());
-    let mut in_fence = false;
+    let mut fences = mockspace_refnames::Fences::new();
     for (i, line) in text.lines().enumerate() {
         if i > 0 {
             out.push('\n');
         }
-        if line.trim_start().starts_with("```") {
-            in_fence = !in_fence;
-            out.push_str(line);
-            continue;
-        }
-        if in_fence {
+        if !fences.prose(line) {
             out.push_str(line);
             continue;
         }

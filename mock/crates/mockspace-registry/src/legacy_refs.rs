@@ -68,16 +68,12 @@ impl Found {
 #[must_use]
 pub fn in_text(text: &str, ctx: &Ctx<'_>) -> Vec<Found> {
     let mut out = Vec::new();
-    let mut fenced = false;
+    let mut fences = mockspace_refnames::Fences::new();
     let mut at = 0;
     for line in text.split_inclusive('\n') {
         let start = at;
         at += line.len();
-        if line.trim_start().starts_with("```") {
-            fenced = !fenced;
-            continue;
-        }
-        if fenced {
+        if !fences.prose(line) {
             continue;
         }
         for (span, old) in crate::placeholder_spans(line) {

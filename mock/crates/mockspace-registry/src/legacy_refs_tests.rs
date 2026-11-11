@@ -198,6 +198,21 @@ fn a_placeholder_spelled_alike_inside_a_fence_is_not_rewritten() {
     assert_eq!(apply(text, &found), "see {{ seed::design::844 }}\n\n```md\nwrite {{ seed::DESIGN::844 }} like this\n```\n");
 }
 
+// A tilde fence is a fence, and a fence of four backticks is not closed by three: a placeholder in
+// either is an example and stays as written.
+//
+// Mutation: toggling on three backticks alone, as the reader did, rewrites both fenced copies.
+#[test]
+fn a_placeholder_inside_a_tilde_fence_or_a_longer_fence_is_not_rewritten() {
+    let dir = world();
+    let (roots, ns) = (roots(), BTreeSet::from(["vocab"]));
+    let ctx = ctx_in(dir.path(), &roots, &ns);
+    let text = "~~~md\n{{ seed::DESIGN::844 }}\n~~~\n\n````md\n```\n{{ seed::DESIGN::844 }}\n````\nsee {{ seed::DESIGN::844 }}\n";
+    let found = in_text(text, &ctx);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].span.start, text.rfind("{{").unwrap());
+}
+
 // An item of a list is rewritten where it stands, so one that is the start of a later item does
 // not rewrite that one's first bytes.
 //

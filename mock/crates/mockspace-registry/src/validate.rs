@@ -613,13 +613,9 @@ pub fn files_examined(stderr: &str) -> Option<usize> {
 /// syntax shows it, and that is not a defect.
 pub fn unresolved_in_generated(text: &str) -> Vec<String> {
     let mut out = Vec::new();
-    let mut in_fence = false;
+    let mut fences = mockspace_refnames::Fences::new();
     for line in text.lines() {
-        if line.trim_start().starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
+        if !fences.prose(line) {
             continue;
         }
         for (raw, _) in crate::placeholder_exprs(line) {

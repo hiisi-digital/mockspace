@@ -54,13 +54,9 @@ pub fn find_registry_refs(
     namespaces: &BTreeSet<String>,
 ) -> Vec<(String, Option<String>)> {
     let mut found = Vec::new();
-    let mut in_fence = false;
+    let mut fences = mockspace_refnames::Fences::new();
     for line in text.lines() {
-        if line.trim_start().starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
+        if !fences.prose(line) {
             continue;
         }
         // Only inside a placeholder. A bare `law::keys` in prose is not a
