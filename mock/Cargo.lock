@@ -1294,7 +1294,7 @@ dependencies = [
 [[package]]
 name = "letkajenkka"
 version = "0.0.1"
-source = "git+ssh://git@github.com/orgrinrt/letkajenkka.git?branch=dev#7cc8cfa14f6f3097c4aed33787d907d95ddfc946"
+source = "git+ssh://git@github.com/orgrinrt/letkajenkka.git?branch=work%2Fletkajenkka-refs#796ef2c30141c0fbad42d9eda5a2943a9aa8a764"
 
 [[package]]
 name = "libc"

@@ -56,12 +56,7 @@ impl Refusal {
 pub fn names(text: &str) -> Result<Vec<&str>, Refusal> {
     let query = Query::parse(text).map_err(Refusal::Syntax)?;
     let Some(path) = query.path() else { return Err(Refusal::NotPlain) };
-    path.steps()
-        .map(|s| match (s.selector, s.constraints.is_empty()) {
-            (Selector::Ident(n), true) => Ok(n),
-            _ => Err(Refusal::NotPlain),
-        })
-        .collect()
+    path.plain().map(Iterator::collect).ok_or(Refusal::NotPlain)
 }
 
 /// An operation `name(argument)` of exactly one argument, as the argument's text.
@@ -88,14 +83,7 @@ pub fn operation<'a>(text: &'a str, name: &str) -> Option<&'a str> {
 /// dot, or holds a character outside the set).
 #[must_use]
 pub fn fold(name: &str) -> Option<String> {
-    let folded: String = name
-        .chars()
-        .map(|c| if c == '-' { '_' } else { c.to_ascii_lowercase() })
-        .collect();
-    let bytes = folded.as_bytes();
-    let ok = bytes.first().is_some_and(|b| letkajenkka::ident::is_start(*b))
-        && bytes.iter().all(|b| letkajenkka::ident::is_body(*b));
-    ok.then_some(folded)
+    letkajenkka::ident::fold(name).map(|f| f.to_string())
 }
 
 /// What a file or a directory is called in a reference: the whole name of a directory, and the name
@@ -108,22 +96,20 @@ fn fold_entry(name: &str, is_dir: bool) -> Option<String> {
     }
 }
 
-/// A heading as a forge anchors it: lowercase, whitespace to a hyphen, everything else dropped
-/// except `-` and `_`.
+/// A heading as GitHub anchors it: lowercase, everything deleted but letters, numbers, `_`, `-` and
+/// the space, and each remaining space written as one hyphen. Runs of spaces are not collapsed and
+/// nothing is trimmed.
 #[must_use]
 pub fn forge_slug(title: &str) -> String {
     let mut out = String::with_capacity(title.len());
-    let mut last_dash = false;
     for c in title.chars() {
-        if c.is_alphanumeric() || c == '-' || c == '_' {
-            out.extend(c.to_lowercase());
-            last_dash = false;
-        } else if c.is_whitespace() && !last_dash && !out.is_empty() {
+        if c == ' ' {
             out.push('-');
-            last_dash = true;
+        } else if c.is_alphanumeric() || c == '-' || c == '_' {
+            out.extend(c.to_lowercase());
         }
     }
-    out.trim_end_matches('-').to_string()
+    out
 }
 
 /// A heading as a reference names it: its forge slug, folded.

@@ -11,8 +11,9 @@ publish = false
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
-# The one parser of a hierarchical reference path; private, so spelled over ssh.
-letkajenkka = { git = "ssh://git@github.com/orgrinrt/letkajenkka.git", branch = "dev" }
+# The one parser of a hierarchical reference path.
+# FIXME(02b7c73b2e63): private, so spelled over ssh, which the anonymous launcher install cannot fetch; becomes a crates.io version once the rc is published.
+letkajenkka = { git = "ssh://git@github.com/orgrinrt/letkajenkka.git", branch = "work/letkajenkka-refs" }
 
 [dev-dependencies]
 tempfile = "3"

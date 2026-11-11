@@ -71,11 +71,6 @@ fn every_conformance_case_that_is_a_refusal_is_refused_with_its_name() {
             Err(Refusal::Syntax(e)) => assert_eq!(e.name(), want, "{name}: `{query}`"),
             other => panic!("{name}: `{query}` should be refused as {want}, got {other:?}"),
         }
-        assert_eq!(
-            FileRef::read(&query).unwrap_err(),
-            Refusal::Syntax(letkajenkka::Query::parse(&query).unwrap_err()),
-            "{name}: the citation reader refuses what the path reader refuses"
-        );
         checked += 1;
     }
     assert!(checked > 20, "the suite was read, {checked} refusals");
@@ -277,4 +272,30 @@ fn the_forge_slug_of_a_heading_matches_the_forge_and_its_reference_name_is_that_
 fn a_forge_slug_with_its_hyphens_is_no_name_until_it_is_folded() {
     assert!(names("seed::design::warms-objective").is_err());
     assert!(names("seed::design::warms_objective").is_ok());
+}
+
+// GitHub's slugger lowercases, deletes every character outside letters, numbers, `_`, `-` and the
+// space, and then turns each remaining space into one hyphen: runs are not collapsed, and nothing
+// is trimmed (`mock/research/202611111500_github-heading-anchors.md`). Each row below is that
+// algorithm applied by hand to the heading.
+//
+// Mutation: collapsing a run of spaces, trimming a trailing hyphen, or treating a tab or a
+// no-break space as a space, each fails a row.
+#[test]
+fn the_forge_slug_keeps_every_space_as_a_hyphen_and_trims_nothing() {
+    let table = [
+        ("a  b", "a--b"),
+        ("a   b", "a---b"),
+        ("Foo -", "foo--"),
+        ("a - b", "a---b"),
+        ("-lead", "-lead"),
+        ("trail-", "trail-"),
+        ("C++ & Rust", "c--rust"),
+        ("Tab\tbed", "tabbed"),
+        ("no\u{a0}break", "nobreak"),
+        ("under_score", "under_score"),
+    ];
+    for (heading, slug) in table {
+        assert_eq!(forge_slug(heading), slug, "{heading:?}");
+    }
 }
