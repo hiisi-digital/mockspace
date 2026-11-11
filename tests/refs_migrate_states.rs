@@ -201,3 +201,53 @@ fn a_fresh_clone_of_a_migrated_repository_refuses_the_migration_as_made() {
     b.ok(&["data-refs", "instantiate"]);
     b.ok(&["data-refs", "verify"]);
 }
+
+// A fresh clone that instantiated the ref and then fell out of keeping git off the instance holds a
+// record of the instance, though no run of the migration went through it. The run is refused as
+// made all the same, and changes nothing: the finishing step is for a clone the seed ran in.
+//
+// `core.hooksPath` at a directory of the person's own is taken back by the gate on every launcher
+// run, before the engine reads it, so that way reaches no failed keep-off through the launcher; it
+// stays here for what the run must not do to the person's directory.
+//
+// Mutation: key the finishing step on the record of the instance; the runs over a second ref
+// declared and over a sparse checkout turned off then say they finish a stopped run, and succeed.
+#[test]
+fn a_fresh_clone_that_instantiated_and_fell_out_of_keep_off_refuses_the_migration_as_made() {
+    type Break = fn(&refs_e2e::Clone);
+    let ways: [(&str, Break); 3] = [
+        ("a second ref declared", |b| {
+            let cfg = String::from_utf8(b.read("mock/mockspace.toml")).unwrap();
+            b.write("mock/mockspace.toml", format!("{cfg}\n[[data_ref]]\nnamespace = \"lore\"\npath = \"lore\"\n").as_bytes());
+        }),
+        ("the sparse checkout turned off", |b| {
+            b.git(&["sparse-checkout", "disable"]);
+        }),
+        ("core.hooksPath at a directory of the person's own", |b| {
+            let own = b.w.base().join("own-hooks");
+            std::fs::create_dir_all(&own).unwrap();
+            b.git(&["config", "core.hooksPath", own.to_str().unwrap()]);
+        }),
+    ];
+    for (way, break_it) in ways {
+        let w = fixture::migrated_remote();
+        let b = w.clone_of("b");
+        b.ok(&["data-refs", "instantiate"]);
+        assert!(b.exists("mock/research"), "{way}: the instance is made");
+        break_it(&b);
+        // a launcher run first, so the gate has done what it does to the config before it is read
+        let kept_off = b.run(&["data-refs", "verify"]);
+        let before = check::at(&b, "HEAD");
+        let config = b.git(&["config", "--list", "--local"]);
+        let sparse = std::fs::read(b.root.join(".git/info/sparse-checkout")).ok();
+        let own = b.w.base().join("own-hooks");
+        let o = research(&b);
+        assert!(!o.ok, "{way}: a migration no run went through here is refused: {}\nverify said: {}", o.all(), kept_off.all());
+        assert!(o.all().contains("made here before"), "{way}: {}", o.all());
+        assert_eq!(check::at(&b, "HEAD"), before, "{way}");
+        assert_eq!(b.git(&["config", "--list", "--local"]), config, "{way}: the clone's config is as it was");
+        assert_eq!(std::fs::read(b.root.join(".git/info/sparse-checkout")).ok(), sparse, "{way}: the sparse block is as it was");
+        let own_hooks: Vec<_> = std::fs::read_dir(&own).map(|d| d.flatten().map(|e| e.file_name()).collect()).unwrap_or_default();
+        assert!(own_hooks.is_empty(), "{way}: nothing is written into the person's own hooks: {own_hooks:?}");
+    }
+}
