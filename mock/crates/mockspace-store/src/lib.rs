@@ -49,7 +49,7 @@ pub use merge::{MergeHook, MergeRefusal, Reapply, Refuse};
 pub use path::validate_path;
 pub use reader::Reader;
 pub use ref_history::CommitInfo;
-pub use ref_store::RefStore;
+pub use ref_store::{DATA_REF_ENV, RefStore};
 pub use refs::{RefPair, RemoteForm};
 pub use retry::RetryPolicy;
 pub use store::{Applied, Freshness, Store};
