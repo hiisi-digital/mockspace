@@ -1,0 +1,105 @@
+//! Two clones following the same refs, through `data-refs update` and `commit`.
+
+mod refs_e2e;
+
+use refs_e2e::{fixture, status_of, tip};
+
+const NOTES: &str = "mock/research/20261001_alpha/NOTES.md";
+const SPACES: &str = "mock/research/notes with spaces.md";
+const EMPTY: &str = "mock/research/empty.txt";
+
+// Mutation: make `update` overwrite every file with the tip's; the clone's own uncommitted edit
+// is then replaced and the first assertion fails.
+#[test]
+fn an_update_brings_in_the_other_clones_change_and_keeps_an_edit_of_another_file() {
+    let w = fixture::migrated_remote();
+    let (a, b) = (fixture::seat(&w, "a"), fixture::seat(&w, "b"));
+    a.write(NOTES, b"a's edit, not committed\n");
+    b.write(SPACES, b"b's edit\n");
+    b.write("mock/research/new.md", b"new by b\n");
+    b.remove(EMPTY);
+    b.ok(&["data-refs", "commit", "research"]);
+    a.ok(&["data-refs", "update", "research"]);
+    assert_eq!(a.read(NOTES), b"a's edit, not committed\n");
+    assert_eq!(a.read(SPACES), b"b's edit\n");
+    assert_eq!(a.read("mock/research/new.md"), b"new by b\n");
+    assert!(!a.exists(EMPTY), "b's deletion arrives");
+    assert!(status_of(&a, "research").ends_with("changed"), "{}", status_of(&a, "research"));
+    // and the kept edit is still part of a's next commit, which lands on top of b's
+    a.ok(&["data-refs", "commit", "research"]);
+    let c = fixture::seat(&w, "c");
+    assert_eq!(c.read(NOTES), b"a's edit, not committed\n");
+    assert_eq!(c.read(SPACES), b"b's edit\n");
+    assert!(!c.exists(EMPTY));
+}
+
+// Mutation: let `update` write the tip over a file both sides changed.
+#[test]
+fn a_file_changed_on_both_sides_is_refused_and_nothing_is_written() {
+    let w = fixture::migrated_remote();
+    let (a, b) = (fixture::seat(&w, "a"), fixture::seat(&w, "b"));
+    a.write(NOTES, b"a's edit\n");
+    a.write("mock/research/other.md", b"a's other file\n");
+    b.write(NOTES, b"b's edit\n");
+    b.write("mock/research/from-b.md", b"b's new file\n");
+    b.ok(&["data-refs", "commit", "research"]);
+    let before = tip(&w, "research");
+    let o = a.fails(&["data-refs", "update", "research"]);
+    assert!(o.all().contains("NOTES.md"), "the refusal names the file: {}", o.all());
+    assert_eq!(a.read(NOTES), b"a's edit\n");
+    assert!(!a.exists("mock/research/from-b.md"), "nothing is written on a refusal");
+    assert_eq!(a.read("mock/research/other.md"), b"a's other file\n");
+    assert_eq!(tip(&w, "research"), before);
+}
+
+// Mutation: treat a deletion as no change, so the tip's edit lands over the deleted file.
+#[test]
+fn a_file_deleted_here_and_edited_there_is_refused() {
+    let w = fixture::migrated_remote();
+    let (a, b) = (fixture::seat(&w, "a"), fixture::seat(&w, "b"));
+    a.remove(NOTES);
+    b.write(NOTES, b"b's edit\n");
+    b.ok(&["data-refs", "commit", "research"]);
+    let o = a.run(&["data-refs", "update", "research"]);
+    assert!(!o.ok, "a deletion against an edit is a change on both sides: {}", o.all());
+    assert!(!a.exists(NOTES), "the deletion is not undone silently");
+}
+
+// Mutation: treat a file edited here and deleted there as unchanged here, so it is deleted.
+#[test]
+fn a_file_edited_here_and_deleted_there_keeps_the_edit() {
+    let w = fixture::migrated_remote();
+    let (a, b) = (fixture::seat(&w, "a"), fixture::seat(&w, "b"));
+    a.write(NOTES, b"a's edit\n");
+    b.remove(NOTES);
+    b.ok(&["data-refs", "commit", "research"]);
+    let o = a.run(&["data-refs", "update", "research"]);
+    assert!(a.exists(NOTES) && a.read(NOTES) == b"a's edit\n", "the edit survives, ok={}: {}", o.ok, o.all());
+}
+
+#[test]
+fn a_file_deleted_on_both_sides_is_no_conflict() {
+    let w = fixture::migrated_remote();
+    let (a, b) = (fixture::seat(&w, "a"), fixture::seat(&w, "b"));
+    a.remove(EMPTY);
+    b.remove(EMPTY);
+    b.ok(&["data-refs", "commit", "research"]);
+    a.ok(&["data-refs", "update", "research"]);
+    assert!(!a.exists(EMPTY));
+}
+
+// Mutation: let `update` write back every file the tip holds, undoing the local deletion.
+#[test]
+fn a_local_deletion_survives_an_update_and_goes_with_the_next_commit() {
+    let w = fixture::migrated_remote();
+    let (a, b) = (fixture::seat(&w, "a"), fixture::seat(&w, "b"));
+    a.remove(EMPTY);
+    b.write(SPACES, b"b's edit\n");
+    b.ok(&["data-refs", "commit", "research"]);
+    a.ok(&["data-refs", "update", "research"]);
+    assert!(!a.exists(EMPTY), "the deletion is kept, not restored by the update");
+    a.ok(&["data-refs", "commit", "research"]);
+    let c = fixture::seat(&w, "c");
+    assert!(!c.exists(EMPTY));
+    assert_eq!(c.read(SPACES), b"b's edit\n");
+}
