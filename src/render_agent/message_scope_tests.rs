@@ -248,3 +248,95 @@ fn a_command_touching_no_repository_at_all_is_left_alone() {
         "the gate refused a command that authors no message: {out}"
     );
 }
+
+#[test]
+fn a_plumbing_verb_that_starts_with_a_message_verb_authors_nothing() {
+    // `git merge-tree`, `merge-base` and `merge-file` read and write no message,
+    // and neither do `tag-like` words a verb is only the prefix of. The verb
+    // used to end at a word boundary, which a hyphen is, so each was taken for
+    // a merge and the gate built the whole lint pack to check nothing.
+    let (mine, _other) = two_repos("plumbing");
+    let gate = gate_for(&mine);
+    for cmd in [
+        "git merge-tree --write-tree origin/dev feature",
+        "git merge-base origin/dev feature",
+        "git merge-file ours base theirs",
+        "git am-not-a-verb",
+        "git commit-graph write",
+    ] {
+        let out = run_from(&mine, &gate, &bash_payload(cmd));
+        assert!(!claimed(&out), "`{cmd}` was claimed as a message: {out}");
+    }
+    // The control: the verb itself, ending at a space, the end, or a separator.
+    for cmd in [
+        "git merge --no-ff feature",
+        "git merge",
+        "git commit;",
+        "git commit -m 'Fixed a whole load of things and this subject runs far past the seventy-two character limit.'",
+    ] {
+        let out = run_from(&mine, &gate, &bash_payload(cmd));
+        assert!(claimed(&out), "`{cmd}` went unclaimed: {out}");
+    }
+}
+
+#[test]
+fn every_terminator_of_a_message_verb_still_claims_the_call() {
+    // The verb ends at anything that cannot continue a word, which is what a
+    // shell reads as the end of the word: a separator, a quote, a backtick, a
+    // redirect, a backslash. An ending that named a short list let each of
+    // these through, and `git commit-tree` authors a message of its own.
+    // Driven twice: from inside the repository, where only the later domain
+    // pattern decides, and behind `git -C <elsewhere> fetch &&`, where the
+    // scope pattern at the top of the gate decides whether the call is ours.
+    let (mine, other) = two_repos("terminators");
+    let gate = gate_for(&mine);
+    let verbs = [
+        "echo `git commit`",
+        "bash -c \"git merge\"",
+        "git commit>/dev/null",
+        "git am<p.mbox",
+        "git commit\\",
+        "git commit&",
+        "git commit|cat",
+        "(git commit)",
+        "git commit-tree -m x <tree>",
+        "git commit-tree -m x tree",
+    ];
+    let mut missed = Vec::new();
+    for cmd in verbs {
+        if !claimed(&run_from(&mine, &gate, &bash_payload(cmd))) {
+            missed.push(format!("inside: {cmd}"));
+        }
+        let behind = format!("git -C {} fetch && {cmd}", other.display());
+        if !claimed(&run_from(&mine, &gate, &bash_payload(&behind))) {
+            missed.push(format!("behind -C: {cmd}"));
+        }
+    }
+    assert!(missed.is_empty(), "went unclaimed: {missed:#?}");
+}
+
+#[test]
+fn the_mockspace_gate_takes_commit_and_push_and_not_commit_graph() {
+    // The gate is for `git commit` and `git push` and ends the verb the way the
+    // message gate does, so `git commit-graph write` is not mistaken for a
+    // commit. The repository here has no validator, so a call the gate takes
+    // is refused as broken and one it leaves alone is silent.
+    let (mine, _other) = two_repos("mockspace-gate");
+    let gate = builtin_mockspace_gate()
+        .replace("{{HOOK_HELPERS}}", crate::render_agent::CLAUDE_HOOK_HELPERS)
+        .replace("{{REPO_ROOT}}", &mine.display().to_string());
+    for cmd in [
+        "git commit -m x",
+        "git push origin dev",
+        "git commit",
+        "echo `git commit`",
+        "git -C . commit",
+    ] {
+        let out = run_from(&mine, &gate, &bash_payload(cmd));
+        assert!(claimed(&out), "`{cmd}` slipped past the mockspace gate: {out}");
+    }
+    for cmd in ["git commit-graph write", "git push-not-a-verb", "git status"] {
+        let out = run_from(&mine, &gate, &bash_payload(cmd));
+        assert!(!claimed(&out), "`{cmd}` was taken by the mockspace gate: {out}");
+    }
+}

@@ -223,7 +223,7 @@ fn agent_gate_hook_self_heals_then_blocks() {
     let hook = builtin_mockspace_gate();
     // gates only git commit/push, anchored to the subcommand verb so
     // read-only commands are not caught
-    assert!(hook.contains(r"\bgit[[:space:]]+(commit|push)\b"));
+    assert!(hook.contains(r"\bgit[[:space:]]+(commit|push)([^[:alnum:]_-]|$)"));
     assert!(!hook.contains(r"\bgit\b.*\b(commit|push)\b"));
     // checks both the validator and that core.hooksPath is wired
     assert!(hook.contains("target/hooks/pre-commit"));
