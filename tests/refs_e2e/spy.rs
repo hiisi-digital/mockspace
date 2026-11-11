@@ -80,10 +80,11 @@ fi
 if [ -f '{measure}' ]; then
   # what the call is handed: the bytes of its arguments and of its input, which grow with the files
   # the caller names to it where the number of calls does not
-  args="$*"
   tmp='{sizes}'.$$
   cat > "$tmp"
-  echo "$sub ${{#args}} $(wc -c < "$tmp")" >> '{sizes}'
+  # the process id of the caller, where a name holds it, counts as one byte, so the count is the
+  # same whatever number the system gave the process
+  echo "$sub $(printf %s "$*" | sed "s/$PPID/P/g" | wc -c) $(sed "s/$PPID/P/g" "$tmp" | wc -c)" >> '{sizes}'
   exec 3< "$tmp"
   rm -f "$tmp"
   exec '{real}' "$@" <&3 3<&-

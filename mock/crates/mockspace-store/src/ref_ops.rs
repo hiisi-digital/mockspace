@@ -313,12 +313,22 @@ impl RefStore {
 }
 
 
-/// Makes a directory of its own in `git_dir` for the bytes of one blob write.
+/// Makes a directory of its own in `git_dir` for the bytes of one blob write, named by the first
+/// number no other is: making a directory fails where one is there, so two writers, in one process
+/// or two, never share one, and the name holds nothing of the process, so what git is handed is the
+/// same from run to run.
 fn staging_dir(git_dir: &std::path::Path) -> std::io::Result<PathBuf> {
-    let dir = git_dir.join(format!("mockspace-store-{}.blobs", unique()));
-    std::fs::create_dir(&dir)?;
-    Ok(dir)
+    for n in 0 .. {
+        let dir = git_dir.join(format!("mockspace-store-{n}.blobs"));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {},
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!("a number no directory is named by")
 }
+
 struct RemoveDirOnDrop(PathBuf);
 
 impl Drop for RemoveDirOnDrop {
