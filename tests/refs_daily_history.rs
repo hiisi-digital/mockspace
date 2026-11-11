@@ -85,16 +85,13 @@ fn history_holds_at(c: &refs_e2e::Clone, ns: &str, name: &str, text: &[u8]) -> b
     })
 }
 
-// Mutation: none; this pins a loss the design does not name. An edit made on `dev` and carried to a
-// commit from before the migration, which the sparse checkout keeps, is a tracked file there, and the
-// forced ways back (`checkout -f`, `reset --hard`) drop it. No engine command saw it, and one run at
-// the old commit declares no ref, so no copy holds it. Where an engine command saw it on `dev`, the
-// copy of edits keeps it, but only in the history of the backup ref: nothing names it after the
-// forced way back, and `restore` writes the base's bytes. Which of the hook, the engine at an old
-// commit or the copy closes it is op's call, asked in question ticket
-// `the_way_back_from_a_pre_migration_commit_drops_an_edit_carri`; the day one does, this test says so.
+// Mutation: let an engine command at a commit from before the migration, where no ref is declared,
+// copy nothing; an edit made on `dev` and carried there, which the sparse checkout keeps and which is
+// a tracked file there, is then dropped by the forced ways back (`checkout -f`, `reset --hard`) with
+// no copy holding it. The engine copies every file of each instance this worktree last installed as
+// the hook does, so the way back is said as git writing over the file, and `restore` brings it back.
 #[test]
-fn the_forced_way_back_from_a_commit_from_before_the_migration_drops_an_edit_carried_there() {
+fn the_forced_way_back_from_a_commit_from_before_the_migration_keeps_an_edit_carried_there() {
     for (way, looked) in [(&["checkout", "-q", "-f", "dev"][..], false), (&["reset", "-q", "--hard", "dev"], false), (&["checkout", "-q", "-f", "dev"], true)] {
         let (w, _) = migrated();
         let a = seat(&w, "a");
@@ -110,17 +107,16 @@ fn the_forced_way_back_from_a_commit_from_before_the_migration_drops_an_edit_car
         assert!(at_old.all().contains("no [[data_ref]] is declared"), "{}", at_old.all());
         a.git(way);
         let _ = a.git_out(&["checkout", "-q", "dev"]);
+        assert!(history_holds(&a, "research", text), "{way:?}: a copy holds the edit: {}", at_old.all());
+        l.kept(&w, &[&a]).unwrap();
         let s = a.run(&["data-refs", "status", "research"]);
-        a.ok(&["data-refs", "restore", "research"]);
-        assert_ne!(a.read(NOTES), text, "{way:?}: the edit is back on disk; drop this pin");
-        let after = a.run(&["data-refs", "status", "research"]);
-        assert!(!after.all().contains("written over"), "{way:?}: the edit is said now; drop this pin: {}", after.all());
-        if looked {
-            assert!(history_holds(&a, "research", text), "{way:?}: the copy of edits held it: {}", s.all());
-            l.kept(&w, &[&a]).unwrap();
-        } else {
-            assert!(l.kept(&w, &[&a]).is_err(), "{way:?}: the edit is somewhere now; drop this pin");
+        if a.read(NOTES) != text {
+            assert!(s.all().contains("written over: 20261001_alpha/NOTES.md"), "{way:?}: the way back is said: {}", s.all());
+            a.ok(&["data-refs", "restore", "research", "20261001_alpha/NOTES.md"]);
         }
+        assert_eq!(a.read(NOTES), text, "{way:?}: the edit is back on disk");
+        a.ok(&["data-refs", "commit", "research"]);
+        l.kept(&w, &[&a]).unwrap();
     }
 }
 
