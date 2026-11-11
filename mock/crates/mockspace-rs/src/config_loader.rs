@@ -1063,8 +1063,9 @@ fn apply_preset_chain(
 // =========================================================================
 
 /// Discover and parse the consumer's lints / mockspace TOML file for
-/// `workspace_root`. Searches in canonical order: `lints.toml`,
-/// `mock/lints.toml`, `mockspace.toml`; returns the first match parsed
+/// `workspace_root`. Searches in the order of
+/// [`mockspace_refnames::CONFIG_FILES`], which the reference migration
+/// reads too; returns the first match parsed
 /// as a [`LintsTomlFile`]. Returns the [`LintsTomlFile::default()`]
 /// (empty maps) when no file is found, so call sites can use the
 /// same shape whether or not the consumer authored one.
@@ -1074,14 +1075,9 @@ fn apply_preset_chain(
 /// going through the full [`LintsConfig::load`] pipeline. Internal
 /// callers in [`LintsConfig::load`] continue to use this helper too.
 pub fn find_and_read_lints_toml(workspace_root: &Path) -> Result<LintsTomlFile, LoadError> {
-    let candidates = [
-        workspace_root.join("lints.toml"),
-        workspace_root.join("mock").join("lints.toml"),
-        workspace_root.join("mockspace.toml"),
-    ];
-    for path in &candidates {
+    for path in mockspace_refnames::CONFIG_FILES.iter().map(|f| workspace_root.join(f)) {
         if path.exists() {
-            let contents = std::fs::read_to_string(path).map_err(|e| {
+            let contents = std::fs::read_to_string(&path).map_err(|e| {
                 LoadError::Io {
                     context: format!("reading {}", path.display()),
                     source:  e,

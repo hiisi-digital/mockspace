@@ -164,14 +164,10 @@ pub(crate) fn plan(cfg: &Config) -> Result<Planned, Vec<String>> {
     })
 }
 
-/// The files of the repository that the loaders read for the preset shorthands of `[lints.<name>]`,
-/// from the repository root. This is the loader's own list (`find_and_read_lints_toml`, which a test
-/// holds this to); the cargo workspaces share no crate to put it in.
-pub(crate) const CONFIG_FILES: &[&str] = &["lints.toml", "mock/lints.toml", "mockspace.toml"];
-
-/// Every config file that exists, the one this run loaded among them.
+/// Every config file the loaders read for the preset shorthands that exists, the one this run loaded
+/// among them.
 fn config_files(cfg: &Config) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = CONFIG_FILES.iter().map(|f| cfg.repo_root.join(f)).filter(|p| p.is_file()).collect();
+    let mut out: Vec<PathBuf> = mockspace_refnames::CONFIG_FILES.iter().map(|f| cfg.repo_root.join(f)).filter(|p| p.is_file()).collect();
     if cfg.config_path.is_file() && !out.contains(&cfg.config_path) {
         out.push(cfg.config_path.clone());
     }

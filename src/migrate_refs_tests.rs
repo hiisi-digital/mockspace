@@ -358,20 +358,6 @@ fn every_file_the_loaders_read_for_presets_is_rewritten_and_an_array_of_them_ite
     }
 }
 
-// The files read are the loader's own list, kept in one place here since the two cargo workspaces
-// share no crate: this fails when the loader's list changes and this one does not.
-#[test]
-fn the_files_read_are_the_ones_the_loader_names() {
-    let loader = include_str!("../mock/crates/mockspace-rs/src/config_loader.rs");
-    let at = loader.find("pub fn find_and_read_lints_toml").expect("the loader's finder");
-    let candidates = &loader[at ..][.. loader[at ..].find("for path in").expect("the loop over them")];
-    for file in CONFIG_FILES {
-        let written = file.split('/').fold("workspace_root".to_string(), |s, part| format!("{s}.join(\"{part}\")"));
-        assert!(candidates.contains(&written), "{file}: `{written}` is not in the loader's list");
-    }
-    assert_eq!(candidates.matches("workspace_root.join(").count(), CONFIG_FILES.len(), "the loader names a file this does not");
-}
-
 use crate::registry::engine_world::EngineClone as _;
 use crate::registry::test_world::World;
 

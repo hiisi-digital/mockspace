@@ -13,12 +13,17 @@
 //! The character set itself is the standard's and is never restated.
 //!
 //! Where a reference is read is held here too, for the same reason: the code fences of a document,
-//! inside which nothing is a reference.
+//! inside which nothing is a reference, and the config files a preset shorthand is written in.
 
 use core::fmt;
 
 mod fence;
 pub use fence::Fences;
+
+/// The files a config of lints is read from, from the repository root, in the order the loader
+/// tries them: the preset shorthands of `[lints.<name>]` are written in these, so the loader and
+/// the migration that rewrites the shorthands read the one list.
+pub const CONFIG_FILES: &[&str] = &["lints.toml", "mock/lints.toml", "mockspace.toml"];
 
 use letkajenkka::ident::{is_body, is_start};
 use letkajenkka::{Path, Selector};
