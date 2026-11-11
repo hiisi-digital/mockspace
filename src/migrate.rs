@@ -152,6 +152,7 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
 fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
     match step {
         Step::Seed(decl, tracked) => {
+            mark_seeded(cfg, decl)?;
             let store = decl.open(&cfg.repo_root)?;
             let inst = decl.instance(&store, &cfg.mock_dir)?;
             let message = format!("data: {}", decl.namespace());
@@ -164,7 +165,9 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
                 .collect();
             inst.seed_tracked(&keep, &message, &mockspace_store::Refuse).map(|_| ()).map_err(|e| e.to_string())
         },
+        // the seed of a run that was stopped inside it, finished here
         Step::Adopt(decl) => {
+            mark_seeded(cfg, decl)?;
             let store = decl.open(&cfg.repo_root)?;
             let inst = decl.instance(&store, &cfg.mock_dir)?;
             inst.adopt().map(|_| ()).map_err(|e| e.to_string())
@@ -279,15 +282,6 @@ fn flags<'a>(args: &[&'a str], known: &[&str]) -> Result<Vec<(&'a str, &'a str)>
     if why.is_empty() { Ok(out) } else { Err(why) }
 }
 
-/// Whether this clone holds the record the seed step leaves of the ref's instance, which is what
-/// says a run of the migration went through here. A record that cannot be read stops the plan.
-fn seeded_here(cfg: &Config, decl: &DataRefDecl) -> Result<bool, Vec<String>> {
-    let ns = decl.namespace();
-    decl.open(&cfg.repo_root)
-        .and_then(|store| decl.instance(&store, &cfg.mock_dir).and_then(|inst| inst.base().map_err(|e| e.to_string())))
-        .map(|base| base.is_some())
-        .map_err(|e| vec![format!("migrate: the record of the instance of `{ns}` could not be read: {e}")])
-}
 
 fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String>> {
     let given = flags(args, &["--namespace", "--path", "--include", "--form", "--remote"])?;
@@ -334,9 +328,10 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
     }
 
     let tracked = decl.tracked(&cfg.repo_root, &cfg.mock_dir).map_err(|e| vec![format!("migrate: {e}")])?;
-    // the last step left undone: everything is moved, the seed left this clone its instance, and
-    // git is not kept off the instance yet. A clone with no record of the instance was never part
-    // of the run: a fresh clone of a repository migrated elsewhere wants `data-refs instantiate`
+    // the last step left undone: everything is moved, the seed ran in this clone and left it its
+    // instance, and git is not kept off the instance yet. A clone the seed did not run in was never
+    // part of the run, whatever record of an instance it holds: a fresh clone of a repository
+    // migrated elsewhere wants `data-refs instantiate`
     if declared
         && tracked.is_empty()
         && seeded_here(cfg, &decl)?
@@ -541,6 +536,10 @@ fn plan_references(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String>> {
         after: after.to_string(),
     })
 }
+
+#[path = "migrate_seeded.rs"]
+mod seeded;
+use seeded::{mark_seeded, seeded_here};
 
 #[cfg(test)]
 #[path = "migrate_tests.rs"]
