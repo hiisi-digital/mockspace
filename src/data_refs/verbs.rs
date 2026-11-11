@@ -95,11 +95,19 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> ExitCode {
     };
     // a branch cut before a migration declares none of the refs its worktree still holds, so the copy of
     // the files goes by the declarations this worktree last installed as well
-    let remembered = if *verb == "snapshot" { sparse::remembered(cfg) } else { Vec::new() };
+    let remembered = sparse::remembered(cfg);
+    let undeclared: Vec<&DataRefDecl> =
+        remembered.iter().filter(|r| !cfg.data_refs.iter().any(|d| d.namespace() == r.namespace())).collect();
+    if *verb != "snapshot" {
+        // at such a commit the files of an instance are the branch's too, and a forced way back
+        // (`checkout -f`, `reset --hard`) writes over an edit carried there with no reference
+        // moving first, so every engine command there keeps a copy of them as the hook does
+        guard_undeclared(cfg, &undeclared);
+    }
     let decls: Vec<&DataRefDecl> = cfg
         .data_refs
         .iter()
-        .chain(remembered.iter().filter(|r| !cfg.data_refs.iter().any(|d| d.namespace() == r.namespace())))
+        .chain(undeclared.iter().copied().filter(|_| *verb == "snapshot"))
         .filter(|d| g.wanted.is_none_or(|w| d.namespace() == w))
         .collect();
     if decls.is_empty() {
@@ -133,6 +141,22 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> ExitCode {
         failed = true;
     }
     if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS }
+}
+
+/// Keeps every file of each instance in `undeclared` in its copy, as the hook does before git
+/// writes. A copy that cannot be made is said and stops nothing, as from the hook.
+fn guard_undeclared(cfg: &crate::config::Config, undeclared: &[&DataRefDecl]) {
+    for d in undeclared {
+        let ns = d.namespace();
+        let copied = (|| -> Result<(), String> {
+            let store = d.open(&cfg.repo_root)?;
+            let inst = d.instance(&store, &cfg.mock_dir)?;
+            inst.guard().map_err(|e| e.to_string())?.copied.map_err(|e| e.to_string())
+        })();
+        if let Err(e) = copied {
+            eprintln!("{ns}: this commit declares no such ref, and the copy of the files of its instance could not be made: {e}");
+        }
+    }
 }
 
 /// The look every verb but `instantiate` takes first. `None` where it could not be taken and the

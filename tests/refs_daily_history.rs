@@ -110,8 +110,12 @@ fn the_forced_way_back_from_a_commit_from_before_the_migration_keeps_an_edit_car
         assert!(history_holds(&a, "research", text), "{way:?}: a copy holds the edit: {}", at_old.all());
         l.kept(&w, &[&a]).unwrap();
         let s = a.run(&["data-refs", "status", "research"]);
-        if a.read(NOTES) != text {
-            assert!(s.all().contains("written over: 20261001_alpha/NOTES.md"), "{way:?}: the way back is said: {}", s.all());
+        if !a.exists(NOTES) || a.read(NOTES) != text {
+            // git wrote over the file, or took the whole instance as it left the commit that tracks it
+            assert!(s.all().contains("20261001_alpha/NOTES.md"), "{way:?}: the way back is said: {}", s.all());
+            if !a.exists(NOTES) {
+                a.ok(&["data-refs", "restore"]);
+            }
             a.ok(&["data-refs", "restore", "research", "20261001_alpha/NOTES.md"]);
         }
         assert_eq!(a.read(NOTES), text, "{way:?}: the edit is back on disk");
