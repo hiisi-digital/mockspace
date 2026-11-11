@@ -99,15 +99,29 @@ impl Instance<'_> {
             return Ok(());
         };
         let Ok(rel) = dir.strip_prefix(&top) else { return Ok(()) };
-        let Some(rel) = rel.to_str().filter(|r| !r.is_empty()) else { return Ok(()) };
-        let mut line = String::from("/");
+        let Some(rel) = rel.to_str() else { return Ok(()) };
+        if rel.is_empty() && self.held.is_none() {
+            return Ok(());
+        }
+        let mut lead = String::new();
         for c in rel.chars() {
             if "\\*?[]!# ".contains(c) {
-                line.push('\\');
+                lead.push('\\');
             }
-            line.push(c);
+            lead.push(c);
         }
-        line.push('/');
+        if !lead.is_empty() {
+            lead.insert(0, '/');
+        }
+        // the whole directory, or each pattern under it: a pattern is checked to hold nothing the
+        // exclude file reads otherwise than the instance does
+        let lines: Vec<String> = match &self.held {
+            None => vec![format!("{lead}/")],
+            // an exclude pattern matches a directory as well as a file, and an excluded directory is
+            // never looked into, so each pattern is followed by the line that takes directories
+            // back out of it: what is left excluded is the files, which is what the instance holds
+            Some(held) => held.patterns().flat_map(|p| [format!("{lead}/{p}"), format!("!{lead}/{p}/")]).collect(),
+        };
         let out = self.store.git.must(
             &["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
             &[],
@@ -115,9 +129,11 @@ impl Instance<'_> {
         )?;
         let file = PathBuf::from(out.text());
         let held = std::fs::read_to_string(&file).unwrap_or_default();
-        if held.lines().any(|l| l == line) {
+        let missing: Vec<&String> = lines.iter().filter(|line| !held.lines().any(|l| l == line.as_str())).collect();
+        if missing.is_empty() {
             return Ok(());
         }
+        let line = missing.iter().map(|l| l.as_str()).collect::<Vec<_>>().join("\n");
         if let Some(parent) = file.parent() {
             std::fs::create_dir_all(parent).map_err(|e| self.io("creating the directory of", e))?;
         }

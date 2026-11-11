@@ -40,6 +40,11 @@ pub struct DataRefDecl {
     pub remote:    Option<String>,
     /// `branch` (the default) or `ref`, as for a registry store.
     pub form:      Option<String>,
+    /// The files of `path` the ref holds, as patterns relative to it (`**/*.md.tmpl`, `*/**`).
+    /// Absent, the ref holds every file of the directory and the directory is the ref's alone.
+    /// Given, it holds only the files a pattern matches, and the branch keeps the others, so a
+    /// crate's templates leave the tree while its sources stay.
+    pub include:   Option<Vec<String>>,
 }
 
 impl DataRefDecl {
@@ -61,7 +66,10 @@ impl DataRefDecl {
 }
 
 /// The first components of a path that belong to a store of their own and are never a data ref's.
-const OWN_STORES: [&str; 3] = ["registry", "design_rounds", "test-history"];
+const OWN_STORES: [&str; 3] = ["registry", ROUNDS, "test-history"];
+
+/// The directory of the design rounds under the mock directory.
+const ROUNDS: &str = "design_rounds";
 
 /// Whether directories `a` and `b` (relative, trimmed of `/`) are the same or one holds the other.
 fn nested(a: &str, b: &str) -> bool {
@@ -82,6 +90,9 @@ pub fn validate_against(decls: &[DataRefDecl], taken: &[String]) -> Result<(), V
         match d.namespace.as_deref() {
             None | Some("") => why.push(format!("{at}: `namespace` is missing or empty")),
             Some(ns) => {
+                if !crate::pairing::is_ref_name(ns) {
+                    why.push(format!("{at}: the namespace `{ns}` is not one a ref and a `Mock-Ref` line can be named by"));
+                }
                 if decls.iter().take(i).any(|o| o.namespace.as_deref() == Some(ns)) {
                     why.push(format!("{at}: the namespace `{ns}` is declared twice"));
                 }
@@ -105,8 +116,25 @@ pub fn validate_against(decls: &[DataRefDecl], taken: &[String]) -> Result<(), V
                     why.push(format!("{at}: path `{p}` {bad}"));
                 } else {
                     let p = p.trim_matches('/');
-                    if let Some(own) = OWN_STORES.iter().find(|s| nested(p, s)) {
-                        why.push(format!("{at}: path `{p}` is under `{own}`, which has a store of its own"));
+                    match OWN_STORES.iter().find(|s| nested(p, s)) {
+                        // The closed rounds are directories of `design_rounds` and belong to no
+                        // branch, where the flat files of an open round are the branch's own. A
+                        // ref may hold the first by patterns that reach only into a directory.
+                        Some(&ROUNDS) if p == ROUNDS && d.include.is_some() => {
+                            for pat in d.include.iter().flatten() {
+                                let first = pat.split('/').next().unwrap_or("");
+                                if !pat.contains('/') || first == "**" {
+                                    why.push(format!(
+                                        "{at}: pattern `{pat}` could hold a flat file of `{ROUNDS}`, which is an open \
+                                         round's and stays on its branch"
+                                    ));
+                                }
+                            }
+                        },
+                        Some(own) => {
+                            why.push(format!("{at}: path `{p}` is under `{own}`, which has a store of its own"));
+                        },
+                        None => {},
                     }
                     for (j, o) in decls.iter().enumerate().take(i) {
                         let Some(other) = o.path.as_deref().map(|o| o.trim_matches('/')) else {
@@ -118,6 +146,17 @@ pub fn validate_against(decls: &[DataRefDecl], taken: &[String]) -> Result<(), V
                     }
                 }
             },
+        }
+        if let Some(patterns) = d.include.as_deref() {
+            if let Err(e) = mockspace_store::Held::new(patterns) {
+                why.push(format!("{at}: `include` {e}"));
+            }
+            if d.instance.is_some() {
+                why.push(format!(
+                    "{at}: `instance` and `include` are both given, and files held by pattern stay where the \
+                     branch's own files are"
+                ));
+            }
         }
         if let Some(inst) = d.instance.as_deref() {
             if let Some(bad) = path_problem(inst) {
@@ -156,22 +195,226 @@ impl DataRefDecl {
         let rel = self.instance.as_deref().or(self.path.as_deref()).unwrap_or("").trim_matches('/');
         rel.split('/').fold(mock_dir.to_path_buf(), |p, part| p.join(part))
     }
+
+    /// The instance of this ref over `store`, holding the files `include` names where it is given.
+    pub fn instance<'a>(
+        &self,
+        store: &'a RefStore,
+        mock_dir: &Path,
+    ) -> Result<mockspace_store::Instance<'a>, String> {
+        let inst = mockspace_store::Instance::new(store, self.instance_dir(mock_dir)).map_err(|e| e.to_string())?;
+        match self.include.as_deref() {
+            None => Ok(inst),
+            Some(patterns) => Ok(inst.holding(mockspace_store::Held::new(patterns).map_err(|e| e.to_string())?)),
+        }
+    }
 }
 
-/// `cargo mock data-refs <status|verify|instantiate|commit> [namespace]`. Prints one line per ref it
+/// What stops a run before anything reads the mock directory: a declared ref with no instance here,
+/// whose files would otherwise read as a directory with nothing in it, and a file a ref holds that
+/// the branch still tracks, which is then in two places that can differ. Every one is named.
+pub fn standing(cfg: &crate::config::Config) -> Result<(), Vec<String>> {
+    let mut why = Vec::new();
+    for d in &cfg.data_refs {
+        let ns = d.namespace();
+        let found = (|| -> Result<Option<String>, String> {
+            let store = d.open(&cfg.repo_root)?;
+            let inst = d.instance(&store, &cfg.mock_dir)?;
+            if inst.base().map_err(|e| e.to_string())?.is_none() {
+                return Ok(Some(format!(
+                    "the data ref `{ns}` has no instance at {}, so `cargo mock data-refs instantiate {ns}` fetches it",
+                    d.instance_dir(&cfg.mock_dir).display()
+                )));
+            }
+            // a clean of the work tree takes the files and leaves the record, and the directory then
+            // reads as one with nothing in it
+            if let (0, held) = inst.present().map_err(|e| e.to_string())? {
+                if held > 0 {
+                    return Ok(Some(format!(
+                        "the data ref `{ns}` has none of its {held} file(s) at {}, so `cargo mock data-refs restore {ns}` \
+                         writes them again",
+                        d.instance_dir(&cfg.mock_dir).display()
+                    )));
+                }
+            }
+            let tracked = d.tracked(&cfg.repo_root, &cfg.mock_dir)?;
+            if tracked.is_empty() {
+                return Ok(None);
+            }
+            let shown: Vec<&str> = tracked.iter().take(5).map(String::as_str).collect();
+            let more = if tracked.len() > 5 { format!(" and {} more", tracked.len() - 5) } else { String::new() };
+            Ok(Some(format!(
+                "the data ref `{ns}` holds {} file(s) the branch still has tracked ({}{more}); `git rm --cached` takes \
+                 them out of the tree and leaves the files",
+                tracked.len(),
+                shown.join(", ")
+            )))
+        })();
+        match found {
+            Ok(None) => {},
+            Ok(Some(line)) => why.push(line),
+            Err(e) => why.push(format!("the data ref `{ns}`: {e}")),
+        }
+    }
+    if why.is_empty() { Ok(()) } else { Err(why) }
+}
+
+impl DataRefDecl {
+    /// The files under this ref's instance directory that the index of the branch holds and the ref would hold
+    /// too, as paths from the repository root.
+    pub fn tracked(&self, repo_root: &Path, mock_dir: &Path) -> Result<Vec<String>, String> {
+        let dir = self.instance_dir(mock_dir);
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo_root)
+            .args(["--literal-pathspecs", "ls-files", "-z", "--full-name", "--"])
+            .arg(&dir)
+            .output()
+            .map_err(|e| format!("running git ls-files: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("git ls-files failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        let held = match self.include.as_deref() {
+            None => None,
+            Some(patterns) => Some(mockspace_store::Held::new(patterns).map_err(|e| e.to_string())?),
+        };
+        let lead = match dir.strip_prefix(repo_root) {
+            Ok(rel) => {
+                rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
+            },
+            Err(_) => return Err(format!("{} is not under the repository", dir.display())),
+        };
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .filter(|p| {
+                let inside = p.strip_prefix(lead.as_str()).map(|r| r.trim_start_matches('/'));
+                match (&held, inside) {
+                    (None, _) => true,
+                    (Some(h), Some(rel)) => h.holds(rel),
+                    (Some(_), None) => false,
+                }
+            })
+            .map(str::to_owned)
+            .collect())
+    }
+}
+
+/// The `Mock-Ref` trailer of each declared ref (or of `wanted` alone), naming the commit its
+/// instance here is at. A landing made in this clone was gated against exactly those files, so
+/// these are the lines its commit carries. Refused over an instance with changes the ref does not
+/// hold, since the gate then read files no commit names.
+pub fn trailer_lines(cfg: &crate::config::Config, wanted: Option<&str>) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for d in cfg.data_refs.iter().filter(|d| wanted.is_none_or(|w| d.namespace() == w)) {
+        let ns = d.namespace();
+        let store = d.open(&cfg.repo_root).map_err(|e| format!("{ns}: {e}"))?;
+        let inst = d.instance(&store, &cfg.mock_dir).map_err(|e| format!("{ns}: {e}"))?;
+        let Some(base) = inst.base().map_err(|e| format!("{ns}: {e}"))? else {
+            return Err(format!("{ns}: has no instance, so `instantiate` it"));
+        };
+        if inst.is_dirty().map_err(|e| format!("{ns}: {e}"))? {
+            return Err(format!("{ns}: has changes the ref does not, so `commit` them before the landing is paired"));
+        }
+        let pairing = crate::pairing_ref::pairing_of(&store, Some(&base)).map_err(|e| format!("{ns}: {e}"))?;
+        out.push(crate::pairing::Trailer::new(ns, pairing).map_err(|e| format!("{ns}: {e}"))?.render());
+    }
+    Ok(out)
+}
+
+/// Checks that the commit `rev` carries a `Mock-Ref` trailer for every declared ref and that each
+/// names a commit the ref holds, by hash or, where the hash is gone, by time and digest.
+fn paired(cfg: &crate::config::Config, rev: &str) -> Result<Vec<String>, Vec<String>> {
+    use crate::pairing::Resolution;
+    let message = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&cfg.repo_root)
+        .args(["log", "-1", "--format=%B", "--end-of-options", rev, "--"])
+        .output()
+        .map_err(|e| vec![format!("running git log: {e}")])?;
+    if !message.status.success() {
+        return Err(vec![format!("`{rev}` is not a commit here: {}", String::from_utf8_lossy(&message.stderr).trim())]);
+    }
+    let trailers = crate::pairing::trailers(&String::from_utf8_lossy(&message.stdout)).map_err(|e| vec![e])?;
+    let (mut ok, mut why) = (Vec::new(), Vec::new());
+    for d in &cfg.data_refs {
+        let ns = d.namespace();
+        let Some(trailer) = trailers.iter().find(|t| t.name() == ns) else {
+            why.push(format!("{ns}: `{rev}` carries no `Mock-Ref` line for it"));
+            continue;
+        };
+        let found = d
+            .open(&cfg.repo_root)
+            .and_then(|store| {
+                // a commit made elsewhere since the last fetch is on the remote and not here yet
+                mockspace_store::Store::refresh(&store).map_err(|e| e.to_string())?;
+                crate::pairing_ref::resolve(&store, trailer.pairing(), crate::pairing::DEFAULT_WINDOW_SECS)
+            });
+        match found {
+            Ok(Resolution::ByHash(c)) => ok.push(format!("{ns}: paired with {c}")),
+            Ok(Resolution::ByTimeAndDigest(c)) => ok.push(format!("{ns}: paired with {c}, found by time and digest")),
+            Ok(Resolution::Ambiguous(hits)) => {
+                why.push(format!("{ns}: the recorded hash is gone and {} commits hold the same files", hits.len()));
+            },
+            Ok(Resolution::Mismatch { .. }) => {
+                why.push(format!("{ns}: the commit `{}` does not hold the files the trailer records", trailer.pairing().hash()));
+            },
+            Ok(Resolution::Missing) => why.push(format!("{ns}: no commit of the ref holds the files the trailer records")),
+            Ok(Resolution::Truncated) => {
+                why.push(format!("{ns}: not found in the history fetched, which is cut short; fetch more of the ref"));
+            },
+            Err(e) => why.push(format!("{ns}: {e}")),
+        }
+    }
+    if why.is_empty() { Ok(ok) } else { Err(why) }
+}
+
+/// `cargo mock data-refs <status|verify|instantiate|restore|commit|trailers> [namespace]` and
+/// `cargo mock data-refs paired <commit>`. Prints one line per ref it
 /// touched, and a refusal on stderr; exits non-zero when any ref could not be done.
 pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode {
     use std::process::ExitCode;
 
-    use mockspace_store::{Instance, Refuse, Store};
+    use mockspace_store::{Refuse, Store};
 
     let Some((verb, rest)) = args.split_first() else {
-        eprintln!("data-refs: status, verify, instantiate or commit [namespace]");
+        eprintln!("data-refs: status, verify, instantiate, restore, commit or trailers [namespace], or paired <commit>");
         return ExitCode::FAILURE;
     };
-    if !matches!(*verb, "status" | "verify" | "instantiate" | "commit") {
-        eprintln!("data-refs: `{verb}` is none of status, verify, instantiate or commit");
-        return ExitCode::FAILURE;
+    match *verb {
+        "trailers" => {
+            return match trailer_lines(cfg, rest.first().copied()) {
+                Ok(lines) => {
+                    lines.iter().for_each(|l| println!("{l}"));
+                    ExitCode::SUCCESS
+                },
+                Err(why) => {
+                    eprintln!("{why}");
+                    ExitCode::FAILURE
+                },
+            };
+        },
+        "paired" => {
+            let Some(rev) = rest.first() else {
+                eprintln!("data-refs: `paired` takes the commit to check");
+                return ExitCode::FAILURE;
+            };
+            return match paired(cfg, rev) {
+                Ok(lines) => {
+                    lines.iter().for_each(|l| println!("{l}"));
+                    ExitCode::SUCCESS
+                },
+                Err(why) => {
+                    why.iter().for_each(|l| eprintln!("{l}"));
+                    ExitCode::FAILURE
+                },
+            };
+        },
+        "status" | "verify" | "instantiate" | "restore" | "commit" => {},
+        _ => {
+            eprintln!("data-refs: `{verb}` is none of status, verify, instantiate, restore, commit, trailers or paired");
+            return ExitCode::FAILURE;
+        },
     }
     let wanted = rest.first().copied();
     let decls: Vec<&DataRefDecl> = cfg.data_refs.iter().filter(|d| wanted.is_none_or(|w| d.namespace() == w)).collect();
@@ -187,8 +430,7 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
         let ns = d.namespace();
         let outcome = (|| -> Result<String, String> {
             let store = d.open(&cfg.repo_root)?;
-            let dir = d.instance_dir(&cfg.mock_dir);
-            let inst = Instance::new(&store, &dir).map_err(|e| e.to_string())?;
+            let inst = d.instance(&store, &cfg.mock_dir)?;
             match *verb {
                 "status" => {
                     let tip = store.local_tip().map_err(|e| e.to_string())?;
@@ -220,6 +462,10 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
                     store.refresh().map_err(|e| e.to_string())?;
                     let tip = inst.materialize().map_err(|e| e.to_string())?;
                     Ok(format!("instantiated at {tip}"))
+                },
+                "restore" => {
+                    let written = inst.restore().map_err(|e| e.to_string())?;
+                    Ok(format!("{written} file(s) written again"))
                 },
                 _ => {
                     let message = format!("data: {ns}");

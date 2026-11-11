@@ -86,6 +86,11 @@ pub enum StoreError {
         why:   &'static str,
         paths: Vec<String>,
     },
+    /// A pattern of the files an instance holds cannot be read as one.
+    Pattern {
+        pattern: String,
+        why:     &'static str,
+    },
 }
 
 impl fmt::Display for StoreError {
@@ -177,6 +182,10 @@ impl fmt::Display for StoreError {
                 context,
                 source,
             } => write!(f, "{context}: {source}"),
+            Self::Pattern {
+                pattern,
+                why,
+            } => write!(f, "pattern `{pattern}`: {why}"),
             Self::Instance {
                 dir,
                 why,

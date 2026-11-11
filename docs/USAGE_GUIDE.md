@@ -399,7 +399,27 @@ remote = "origin"        # optional
 form = "branch"          # optional: "branch" or "ref"
 ```
 
-A key the table does not read refuses the config, and so does a namespace declared twice or shared with a registry store or the test history, a `path` or `instance` that is, or lies inside or around, another's, and a `path` under `registry`, `design_rounds` or `test-history`, which have stores of their own. `cargo mock data-refs status|verify|instantiate|commit [namespace]` works the refs: `status` and `verify` read the ref as this clone last saw it and do not fetch, so run `instantiate` first to see a remote move; `instantiate` fetches a ref into its directory, `commit` writes the directory's changes back (the first one makes the ref from the files), and a directory with no instance is an error in all of them but `instantiate`.
+A key the table does not read refuses the config, and so does a namespace declared twice or shared with a registry store or the test history, a `path` or `instance` that is, or lies inside or around, another's, and a `path` under `registry` or `test-history`, which have stores of their own. `design_rounds` is taken only by patterns, as below. A namespace is `/`-separated parts of lowercase letters, digits, `-`, `_` and `.`. `cargo mock data-refs status|verify|instantiate|restore|commit [namespace]` works the refs: `status` and `verify` read the ref as this clone last saw it and do not fetch, so run `instantiate` first to see a remote move; `instantiate` fetches a ref into its directory, `commit` writes the directory's changes back (the first one makes the ref from the files), and a directory with no instance is an error in all of them but `instantiate`. `restore` writes again the files of an instance that are gone from disk, from the commit the instance was at, and leaves a file that is there as it is.
+
+A table with `include` holds only some files of its directory, and the branch keeps the others. The patterns are relative to `path`, `*` stands for any run of characters inside one name and `**` for any number of whole directories, and nothing else is special:
+
+```toml
+[[data_ref]]
+namespace = "templates"
+path = "crates"
+include = ["**/*.md.tmpl"]   # the templates leave the tree, the sources beside them stay
+
+[[data_ref]]
+namespace = "rounds"
+path = "design_rounds"
+include = ["*/**"]           # the closed rounds; a flat file is an open round's and stays on its branch
+```
+
+Such a table takes no `instance`, since its files lie among the branch's own. `design_rounds` is taken only this way, by patterns that reach into a directory. A ref whose tip holds a file no pattern matches is refused before anything is written, and so is a write below a symlink, and an update that a file of the branch stands in the way of.
+
+Every command but `data-refs` and the recovery ones (`clean`, `activate`, `deactivate`, `status`, `migrate`, `registry-append`) stops before it reads the mock directory when a declared ref has no instance in this clone, when an instance has none of its files on disk, and when the branch still tracks a file a ref holds. The first is answered by `cargo mock data-refs instantiate`, the second by `cargo mock data-refs restore`, the third by `git rm --cached` on the files it names.
+
+A landing is gated against the data as one clone held it, and the commit says which. `cargo mock data-refs trailers` prints a `Mock-Ref: <namespace> <hash> <author time> <digest>` line for each declared ref, naming the commit its instance is at, and refuses over an instance with changes the ref does not hold. The landing's message carries those lines. `cargo mock data-refs paired <commit>` fetches each ref and reads them back: it fails unless the commit has a line for every declared ref and each names a commit of the ref, by hash or, where the hash is gone after a rehouse, by the one commit within a day of the recorded time whose files give the recorded digest.
 
 ### Lints
 

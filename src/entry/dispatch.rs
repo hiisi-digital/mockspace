@@ -60,7 +60,7 @@ fn is_recovery_command(args: &[String]) -> bool {
     ];
     // `data-refs commit` writes the ref and pushes it, so only the verbs that read or restore are recovery.
     let reads_data_refs = args.iter().skip(1).position(|a| a == "data-refs").is_some_and(|at| {
-        args.get(at + 2).is_some_and(|verb| matches!(verb.as_str(), "status" | "verify" | "instantiate"))
+        args.get(at + 2).is_some_and(|verb| matches!(verb.as_str(), "status" | "verify" | "instantiate" | "restore" | "trailers" | "paired"))
     });
     reads_data_refs || args.iter().skip(1).any(|a| RECOVERY.contains(&a.as_str()))
 }
@@ -337,6 +337,19 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // brought up.
     if first_positional(&args) == Some("check-test-history") {
         return crate::suite::history_guard::run(&cfg.repo_root, &cfg.mock_dir);
+    }
+
+    // A declared data ref with no instance reads as a directory with nothing in it, and a file a
+    // ref holds that the branch still tracks is in two places. Either stops the run here, before
+    // a lint or a tool reads the mock directory. The verbs that repair it are let through.
+    if !is_recovery_command(&args) && first_positional(&args) != Some("data-refs") {
+        if let Err(why) = crate::data_refs::standing(&cfg) {
+            eprintln!();
+            for line in why {
+                eprintln!("BLOCKED: {line}");
+            }
+            return ExitCode::FAILURE;
+        }
     }
 
     // Keep the durable gate installed and active with no user involvement. This
@@ -1749,6 +1762,15 @@ mod tests {
                 "`{cmd}` repairs or inspects, so it must stay usable"
             );
         }
+    }
+
+    #[test]
+    fn the_data_ref_verbs_that_only_read_or_restore_survive_a_broken_pack() {
+        for verb in ["status", "verify", "instantiate", "restore", "trailers", "paired"] {
+            assert!(is_recovery_command(&args(&["data-refs", verb])), "`data-refs {verb}` writes no ref");
+        }
+        // the control: the one that writes the ref and pushes it gates like everything else
+        assert!(!is_recovery_command(&args(&["data-refs", "commit"])));
     }
 
     #[test]

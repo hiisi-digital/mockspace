@@ -20,12 +20,15 @@
 //! Nothing here guards a file saved by another process in the instant between the comparison
 //! and the write of [`Instance::update`]; an instance is not edited while that runs.
 
+mod files;
+mod held;
 mod records;
 mod tracking;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
+pub use held::Held;
 use tracking::Tracking;
 
 use crate::edit::Edit;
@@ -39,6 +42,7 @@ use crate::store::{Applied, Freshness, Store};
 pub struct Instance<'a> {
     store: &'a RefStore,
     dir:   PathBuf,
+    held:  Option<Held>,
 }
 
 /// What the directory held against the base: the edit, the base it is against, and the blob id
@@ -65,6 +69,7 @@ impl<'a> Instance<'a> {
         let this = Self {
             store,
             dir: resolved(&absolute),
+            held: None,
         };
         match this.dir.to_str() {
             Some(text) if !text.chars().any(char::is_control) => Ok(this),
@@ -72,9 +77,32 @@ impl<'a> Instance<'a> {
         }
     }
 
+    /// The same instance holding only the files `held` matches. The directory may then hold
+    /// files of the branch as well: they are not read, written, removed or excluded, and a
+    /// tip that holds a file the patterns do not match is refused before anything is written.
+    pub fn holding(mut self, held: Held) -> Self {
+        self.held = Some(held);
+        self
+    }
+
     /// The directory, absolute.
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    fn holds(&self, rel: &str) -> bool {
+        self.held.as_ref().is_none_or(|h| h.holds(rel))
+    }
+
+    /// Refuses a tree of the ref that holds a path this instance does not: written here it
+    /// would be a file the branch sees and no later edit of the instance could name.
+    fn check_held(&self, ids: &BTreeMap<String, String>) -> Result<(), StoreError> {
+        let outside: Vec<String> = ids.keys().filter(|p| !self.holds(p)).cloned().collect();
+        if outside.is_empty() {
+            Ok(())
+        } else {
+            Err(self.fail("is of a ref that holds files outside its patterns", outside))
+        }
     }
 
     /// The commit the files of the directory were last brought to, or `None` where no instance
@@ -97,9 +125,16 @@ impl<'a> Instance<'a> {
         };
         let existed = self.dir.exists();
         if existed {
-            let mut entries = std::fs::read_dir(&self.dir).map_err(|e| self.io("reading", e))?;
-            if entries.next().is_some() {
-                return Err(self.fail("is not an empty directory", Vec::new()));
+            if self.held.is_some() {
+                let here = self.walk()?;
+                if !here.is_empty() {
+                    return Err(self.fail("already holds files its patterns match", here));
+                }
+            } else {
+                let mut entries = std::fs::read_dir(&self.dir).map_err(|e| self.io("reading", e))?;
+                if entries.next().is_some() {
+                    return Err(self.fail("is not an empty directory", Vec::new()));
+                }
             }
             if let Some(base) = self.base()? {
                 if !self.store.tree_ids(&base)?.is_empty() {
@@ -110,13 +145,26 @@ impl<'a> Instance<'a> {
                 }
             }
         }
+        let ids = self.store.tree_ids(&tip)?;
+        self.check_held(&ids)?;
+        self.check_parents(&ids.keys().collect::<Vec<_>>())?;
         let made = self
             .fill(&tip)
             .and_then(|()| self.exclude())
             .and_then(|()| self.record(&tip));
         if made.is_err() {
             self.forget();
-            if existed {
+            if self.held.is_some() {
+                // the directory holds the branch's files too, so only what the fill wrote goes
+                for path in ids.keys() {
+                    if std::fs::remove_file(self.dir.join(path)).is_ok() {
+                        self.prune(path);
+                    }
+                }
+                if !existed {
+                    let _ = std::fs::remove_dir(&self.dir);
+                }
+            } else if existed {
                 for entry in std::fs::read_dir(&self.dir).into_iter().flatten().flatten() {
                     let path = entry.path();
                     let _ = if path.is_dir() {
@@ -162,6 +210,8 @@ impl<'a> Instance<'a> {
     fn delta(&self) -> Result<Delta, StoreError> {
         let base = self.require_base()?;
         let held = self.store.tree_ids(&base)?;
+        // a base holding what the patterns do not would have those files read as removed here
+        self.check_held(&held)?;
         let here = self.walk()?;
         let ids = self.local_ids(&here)?;
         let (mut edit, mut sent) = (Edit::new(), BTreeMap::new());
@@ -275,6 +325,7 @@ impl<'a> Instance<'a> {
             return Ok(());
         }
         let (from, to) = (self.store.tree_ids(&base)?, self.store.tree_ids(&tip)?);
+        self.check_held(&to)?;
         let moved: Vec<String> = from
             .keys()
             .chain(to.keys())
@@ -312,6 +363,7 @@ impl<'a> Instance<'a> {
             .copied()
             .filter(|p| to.contains_key(*p))
             .collect();
+        self.check_parents(&plan)?;
         let in_the_way = self.in_the_way(&removals, &writes)?;
         if !in_the_way.is_empty() {
             return Err(self.fail("holds files in the way of the tip", in_the_way));
@@ -327,7 +379,7 @@ impl<'a> Instance<'a> {
         for chunk in writes.chunks(BATCH) {
             let wanted: Vec<&str> = chunk.iter().map(|p| to[*p].as_str()).collect();
             for (path, bytes) in chunk.iter().zip(self.store.blobs(&wanted)?) {
-                // what stands at a path to be written holds no file, or `in_the_way` refused
+                // a directory at a path to be written holds directories only, or `in_the_way` refused
                 if self.dir.join(path.as_str()).is_dir() {
                     std::fs::remove_dir_all(self.dir.join(path.as_str()))
                         .map_err(|e| self.io("removing", e))?;
@@ -338,48 +390,6 @@ impl<'a> Instance<'a> {
         self.record(&tip)
     }
 
-    /// Of `writes`, the paths that cannot be written once `removals` are gone: one under a file
-    /// that stays, or one that is a directory still holding files.
-    fn in_the_way(
-        &self,
-        removals: &[&String],
-        writes: &[&String],
-    ) -> Result<Vec<String>, StoreError> {
-        if writes.is_empty() {
-            return Ok(Vec::new());
-        }
-        let gone: BTreeSet<&String> = removals.iter().copied().collect();
-        let staying: BTreeSet<String> = self
-            .walk()?
-            .into_iter()
-            .filter(|p| !gone.contains(p))
-            .collect();
-        let mut blocked = Vec::new();
-        for path in writes {
-            let below = format!("{path}/");
-            let under_a_file = path
-                .match_indices('/')
-                .any(|(i, _)| staying.contains(&path[.. i]));
-            let holds_files = staying
-                .range(below.clone() ..)
-                .next()
-                .is_some_and(|p| p.starts_with(&below));
-            if under_a_file || holds_files {
-                blocked.push((*path).clone());
-            }
-        }
-        Ok(blocked)
-    }
-
-    /// Removes the directories above `rel` that its removal left empty, never the instance's own.
-    fn prune(&self, rel: &str) {
-        let mut at = self.dir.join(rel);
-        while at.pop() && at != self.dir {
-            if std::fs::remove_dir(&at).is_err() {
-                break;
-            }
-        }
-    }
 
     fn require_base(&self) -> Result<String, StoreError> {
         if !self.dir.is_dir() {
@@ -389,87 +399,6 @@ impl<'a> Instance<'a> {
             .ok_or_else(|| self.fail("was not made by `materialize`", Vec::new()))
     }
 
-    fn is_file(&self, rel: &str) -> bool {
-        self.dir.join(rel).is_file()
-    }
-
-    fn write(&self, rel: &str, bytes: &[u8]) -> Result<(), StoreError> {
-        let path = self.dir.join(rel);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| self.io("creating", e))?;
-        }
-        std::fs::write(&path, bytes).map_err(|e| self.io("writing", e))
-    }
-
-    /// The regular files under the directory, as `/`-separated paths, sorted.
-    fn walk(&self) -> Result<Vec<String>, StoreError> {
-        let mut out = Vec::new();
-        self.walk_into(&self.dir, "", &mut out)?;
-        Ok(out)
-    }
-
-    fn walk_into(&self, dir: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), StoreError> {
-        let mut entries = std::fs::read_dir(dir)
-            .map_err(|e| self.io("reading", e))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| self.io("reading", e))?;
-        entries.sort_by_key(|e| e.file_name());
-        for entry in entries {
-            let Ok(name) = entry.file_name().into_string() else {
-                return Err(self.fail("holds a file name that is not text", Vec::new()));
-            };
-            let rel = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
-            let kind = entry.file_type().map_err(|e| self.io("reading", e))?;
-            if kind.is_symlink() {
-                return Err(self.fail("holds a symlink", vec![rel]));
-            } else if kind.is_dir() {
-                self.walk_into(&entry.path(), &rel, out)?;
-            } else if kind.is_file() {
-                out.push(rel);
-            } else {
-                return Err(self.fail("holds something that is not a regular file", vec![rel]));
-            }
-        }
-        Ok(())
-    }
-
-    /// The blob id each of `paths` would have if committed as it is, by path. A path that is
-    /// not a file here has no entry.
-    fn local_ids<S: AsRef<str>>(
-        &self,
-        paths: &[S],
-    ) -> Result<BTreeMap<String, String>, StoreError> {
-        let present: Vec<&str> = paths
-            .iter()
-            .map(AsRef::as_ref)
-            .filter(|p| self.is_file(p))
-            .collect();
-        let mut ids = BTreeMap::new();
-        for chunk in present.chunks(BATCH) {
-            let mut input = String::new();
-            for path in chunk {
-                input.push_str(&self.dir.join(path).display().to_string());
-                input.push('\n');
-            }
-            let out = self.store.git.must(
-                &["hash-object", "--no-filters", "--stdin-paths"],
-                &[],
-                Some(input.as_bytes()),
-            )?;
-            let text = out.text();
-            let found: Vec<&str> = text.lines().collect();
-            if found.len() != chunk.len() {
-                return Err(StoreError::Git {
-                    command: "hash-object --stdin-paths".to_owned(),
-                    detail:  format!("{} ids for {} paths", found.len(), chunk.len()),
-                });
-            }
-            for (path, id) in chunk.iter().zip(found) {
-                ids.insert((*path).to_owned(), id.to_owned());
-            }
-        }
-        Ok(ids)
-    }
 
     fn dir_text(&self) -> String {
         self.dir.display().to_string()

@@ -150,9 +150,9 @@ fn a_trailer_with_a_bad_name_a_bad_key_or_no_pairing_is_refused() {
     let p = pairing().render();
     for bad in [
         format!("Mock-Ref: Registry {p}"),
-        format!("Mock-Ref: -registry {p}"),
-        format!("Mock-Ref: _registry {p}"),
-        format!("Mock-Ref: reg/istry {p}"),
+        format!("Mock-Ref: .registry {p}"),
+        format!("Mock-Ref: reg//istry {p}"),
+        format!("Mock-Ref: registry.lock {p}"),
         format!("Mock-Ref:  {p}"),
         format!("Mock-Ref registry {p}"),
         format!("mock-ref: registry {p}"),
@@ -475,8 +475,15 @@ fn a_pairing_is_only_made_of_a_real_hash_a_real_digest_and_a_time_that_has_a_yea
 fn a_trailer_is_only_made_for_a_name_a_ref_can_have() {
     let p = Pairing::new(H1, T, D1).unwrap();
     assert!(Trailer::new("registry", p.clone()).is_ok());
-    for bad in ["", "Registry", "-registry", "_x", "a b", "a/b", "a.b"] {
+    for bad in ["", "Registry", "a b", "a//b", "/a", "a/", ".a", "a/.b", "a..b", "a.lock", "a/b.lock/c"] {
         assert!(Trailer::new(bad, p.clone()).is_err(), "{bad:?}");
     }
-    const _: () = assert!(is_ref_name("registry") && is_ref_name("a-b_c9") && !is_ref_name("-x"));
+    // what the store takes as a namespace is a name here too, or a ref could have no trailer
+    for good in ["a/b", "a.b", "_x", "-x", "data/x-1.y", "lock", "a.locks"] {
+        assert!(Trailer::new(good, p.clone()).is_ok(), "{good:?}");
+    }
+    // one validator: a name is taken here exactly when the store makes a ref of it
+    for name in ["registry", "a-b_c9", "-x", "a..b", "A", "a/b.lock"] {
+        assert_eq!(is_ref_name(name), mockspace_store::RefPair::branch_form(name).is_ok(), "{name}");
+    }
 }
