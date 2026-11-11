@@ -7,10 +7,12 @@ documents are generated.
 
 `{{ root::selector... }}` in any `*.md.tmpl`.
 
-What stands between the braces is a path in the letkajenkka standard (`foo::bar::baz`),
-read by the `letkajenkka` crate, through the `refpath` module of `mockspace-registry`. The standard fixes the
-shape and the character set; mockspace fixes what the roots, namespaces and fields mean,
-and folds its own names into the standard's character set where it resolves.
+What stands between the braces is a path of steps joined by `::`, with no space beside a separator
+(`foo::bar::baz`). A step is a name, a line number (`12`), or a span of lines (`3..9`). A name is
+lowercase letters, digits and underscores, and opens on a letter. The syntax is named letkajenkka and
+read by the crate of that name, through the `refpath` module of `mockspace-registry`; what it fixes is
+the shape and the character set, and mockspace fixes what the roots, namespaces and fields mean and
+folds its own names into that character set where it resolves.
 
 | Written | Refers to | Renders as |
 |---|---|---|
@@ -321,8 +323,7 @@ hazard into a fact.
 A citation's path may have any depth, and it ends in an anchor, a line, a span of
 lines or a heading: `{{ mock::crates::numeric::design::12 }}` needs no root of its own.
 
-The syntax is the letkajenkka standard, one parser for every reference, and its
-character set is lowercase letters, digits and underscores, opening on a letter. A
+The syntax has one parser for every reference. A
 name is never written with an uppercase letter, a hyphen, a dot or an extension: the
 host folds its own naming into that set. `{{ mock::design::12 }}` finds
 `DESIGN.md.tmpl` without the author tracking whether a document is a template here and
@@ -332,22 +333,22 @@ them and picking silently would point the citation somewhere they did not choose
 spelling tells two such files apart, so one is renamed or removed. A file or directory
 whose name cannot fold, because it opens on a digit or holds a dot, cannot be cited.
 
-The spelling before the standard (uppercase, extensions, `::#heading`, spaces around
+The spelling before this syntax (uppercase, extensions, `::#heading`, spaces around
 the separator) is refused, and the refusal names the migration that rewrites it:
 `cargo mock migrate references-to-letkajenkka [--dry-run]`. It rewrites a reference
 only where the new spelling resolves to the file and line the old one did, and lists
 the rest. The same migration folds each preset shorthand of `extends` in the
-`[lints.<name>]` tables of `mockspace.toml` into the standard's names (`stack-lints::no-heap`
+`[lints.<name>]` tables of `mockspace.toml` into this syntax's names (`stack-lints::no-heap`
 becomes `stack_lints::no_heap`), and it reads a registry kept on a ref through the
 registry's own stores and writes it back to that ref, never into the tree.
 
-## What the standard leaves to mockspace
+## What the syntax leaves to mockspace
 
-`refsto` is an operation the standard reserves, and `pathof` and `sourcesof` are
+An operation is a name and one query in parentheses. `refsto` is reserved by the syntax, and `pathof` and `sourcesof` are
 mockspace's own, each taking one query: `{{ pathof(mock::design::12) }}`. The postfix
 chain after a finished operation, `{{ pathof(crates::store).dir() }}`, is mockspace's too
-and is no part of the standard's grammar, which has no step after an operation. The
-standard names sets, wildcards and constraints; a reference here is a plain path of
+and is no part of the syntax, which has no step after an operation. The
+syntax also has sets (`{a, b}`), wildcards (`*`, `**`) and constraints (`<name>`); a reference here is a plain path of
 names, so each of those is refused where a row or a citation is expected.
 
 ## What is checked
@@ -357,7 +358,7 @@ rot in one and pass in the other.
 
 Reported: a reference to a row nothing declares; a field a row does not carry;
 a slug declared twice in one namespace, which no per-file schema can catch
-because each file is valid alone; a citation that does not parse under the standard; a root nobody
+because each file is valid alone; a citation that does not parse; a root nobody
 declared; a citation matching several files; and one whose line is past the end
 of its file. A row reference naming no row, or written qualified rather than as a
 bare slug. A field type naming neither a builtin nor a namespace, and a namespace
