@@ -99,7 +99,7 @@ Transitions are subcommands, not manual renames:
 | `cargo mock deprecate`    | Deprecate the active CL; in `IMPL` also unlocks doc CL; a stub changelist (bare title) beside a locked one of its kind is retired instead, in any phase; otherwise prints the comparison the replacement owes the `deprecation-comparison` lint: the `## Comparison to deprecated changelist` section with a `###` subheader for each `##` header, and the names it must mention | `DOC`, `IMPL`, or any with a stub |
 | `cargo mock close`        | Archive the round into a `<round-id>/` subdir with `.meta` + `.history`; takes the changelists, the files carrying the id of one, the files one names, any flat file given as `--take <file>`, and lists the flat files it leaves; `--take` with no round open files the named flat topics under the newest closed round | `CLOSED`, or `--take` with no round open |
 | `cargo mock archive`      | Archive an abandoned round into a `<round-id>-abandoned/` subdir; with changelists it takes what `close` takes (without `--take`) and is named by their id, and in the TOPIC phase, with none, it takes every flat file and is named by the earliest | any                     |
-| `cargo mock migrate`      | Rename legacy `YYYY-MM-DD_*.md` files to the compact format       | any                     |
+| `cargo mock migrate <name>` | Make one named change of the repo's shape (see below)          | any                     |
 | `cargo mock round-id`     | Print a fresh round id, `YYYYMMDDHHMM-tttt`                       | any                     |
 | `cargo mock rename-round <old> [<new>]` | Give a round a new id: directory, files, `.meta`, local tags | any                     |
 
@@ -420,6 +420,23 @@ Such a table takes no `instance`, since its files lie among the branch's own. `d
 Every command but `data-refs` and the recovery ones (`clean`, `activate`, `deactivate`, `status`, `migrate`, `registry-append`) stops before it reads the mock directory when a declared ref has no instance in this clone, when an instance has none of its files on disk, and when the branch still tracks a file a ref holds. The first is answered by `cargo mock data-refs instantiate`, the second by `cargo mock data-refs restore`, the third by `git rm --cached` on the files it names.
 
 A landing is gated against the data as one clone held it, and the commit says which. `cargo mock data-refs trailers` prints a `Mock-Ref: <namespace> <hash> <author time> <digest>` line for each declared ref, naming the commit its instance is at, and refuses over an instance with changes the ref does not hold. The landing's message carries those lines. `cargo mock data-refs paired <commit>` fetches each ref and reads them back: it fails unless the commit has a line for every declared ref and each names a commit of the ref, by hash or, where the hash is gone after a rehouse, by the one commit within a day of the recorded time whose files give the recorded digest.
+
+### Migrations
+
+`cargo mock migrate <name> [flags] [--dry-run]` makes one named change of a repository's shape. A call names the migration and gives it everything as flags, and nothing is read off the tree to decide what to do. A migration checks that the tree is the one it was written for and refuses with the reason when it is not. The plan is printed first and names every path that would change, and `--dry-run` stops there.
+
+| Migration | Flags | What it does |
+|---|---|---|
+| `directory-to-ref` | `--namespace <ns> --path <dir> [--include <pattern>]... [--form branch\|ref] [--remote <name>]` | Appends the `[[data_ref]]` table to `mockspace.toml`, makes the ref from the files the branch tracks under the directory (or the ones the patterns match) and pushes it, then takes those files out of the index. They stay on disk as the instance. |
+| `round-filenames` | none | Renames design-round files that carry a legacy `YYYY-MM-DD_` prefix to the compact timestamp form. |
+
+`directory-to-ref` refuses a directory the branch tracks no such file in, a held file that is changed or untracked, a declaration the config already has, and a ref that already has commits on the remote, which is instantiated and not made again. After it the config and the removals are one commit on the branch:
+
+```bash
+cargo mock migrate directory-to-ref --namespace research --path research --dry-run
+cargo mock migrate directory-to-ref --namespace research --path research
+git add mock/mockspace.toml && git commit -m "chore: move `research` to its ref"
+```
 
 ### Lints
 
