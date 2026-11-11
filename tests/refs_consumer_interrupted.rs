@@ -1,8 +1,11 @@
-//! Each migration of a consumer stopped part way and finished by the same call. A `directory-to-ref`
-//! run is stopped at every git call it makes, one run for each; a migration that only renames or
-//! writes files is stopped after each file. The run that finishes it leaves what a run nobody stopped
-//! leaves: the same files, index, hiding of the instances, hooks and ref trees. Nothing is lost on
-//! the way, and the call made once more is refused.
+//! Each migration of a consumer stopped part way and finished by the same call, for the consumer
+//! whose mock directory is not called `mock`, the one with every odd kind of file and the one of
+//! thousands of files. A `directory-to-ref` run is stopped at every git call it makes, one run for
+//! each: once by the call failing, and once by the process that makes it being killed before it
+//! runs, with a signal it cannot handle, so none of its own error handling runs. A migration
+//! that only renames or writes files is stopped after each file. The run that finishes it leaves what
+//! a run nobody stopped leaves: the same files, index, hiding of the instances, hooks and ref trees.
+//! Nothing is lost on the way, and the call made once more is refused.
 
 #[path = "common/ambient.rs"]
 mod ambient;
@@ -17,19 +20,16 @@ use refs_e2e::spy;
 use refs_e2e::whole::{self, Allowed};
 use refs_e2e::{Clone, World};
 
-/// The mock directory is not called `mock`, so every path the engine works out from it is tried.
-const S: Shape = consumer::ELSEWHERE;
-
 fn strs(a: &[String]) -> Vec<&str> {
     a.iter().map(String::as_str).collect()
 }
 
 /// A remote of a consumer with its first `k` calls made, each committed, and pushed.
-fn prepared(k: usize) -> World {
-    let w = consumer::remote(&S);
+fn prepared(s: &Shape, k: usize) -> World {
+    let w = consumer::remote(s);
     {
         let c = w.clone_of("prep");
-        for args in S.calls().iter().take(k) {
+        for args in s.calls().iter().take(k) {
             c.ok(&strs(args));
             c.commit_all("chore: a migration");
         }
@@ -38,23 +38,29 @@ fn prepared(k: usize) -> World {
     w
 }
 
-/// A world of its own whose remote is a copy of `prep`'s.
+/// A world of its own whose remote is a copy of `prep`'s, with the store its filtered files are in.
 fn copy_of(prep: &World) -> World {
     let w = World::new();
     std::fs::remove_dir_all(&w.remote).unwrap();
     let o = w.sh(&w.base(), "cp", &["-a", prep.remote.to_str().unwrap(), w.remote.to_str().unwrap()]);
     assert!(o.ok, "{}", o.all());
+    let store = prep.base().join("lfs-store");
+    if store.exists() {
+        let o = w.sh(&w.base(), "cp", &["-a", store.to_str().unwrap(), w.base().join("lfs-store").to_str().unwrap()]);
+        assert!(o.ok, "{}", o.all());
+    }
     w
 }
 
 /// A person's clone: the refs it declares instantiated, build output in the directories, and the
 /// engine's first run made.
-fn seat(w: &World) -> Clone<'_> {
+fn seat<'w>(s: &Shape, w: &'w World) -> Clone<'w> {
     let c = w.clone_of("a");
     if String::from_utf8_lossy(&c.read("mockspace.toml")).contains("[[data_ref]]") {
         c.ok(&["data-refs", "instantiate"]);
     }
-    S.add_ignored_output(&c);
+    s.add_ignored_output(&c);
+    s.add_own_setup(&c);
     let _ = c.run(&["status"]);
     c
 }
@@ -106,13 +112,13 @@ fn differ(want: &[(String, String)], got: &[(String, String)]) -> Vec<String> {
 }
 
 /// What call `k` may change and still have lost nothing.
-fn allowed(k: usize) -> Allowed {
-    let calls = S.calls();
+fn allowed(s: &Shape, k: usize) -> Allowed {
+    let calls = s.calls();
     if k == 0 {
-        let renamed = S.renames().iter().map(|(f, t)| (f.clone().into_bytes(), t.clone().into_bytes())).collect();
+        let renamed = s.renames().iter().map(|(f, t)| (f.clone().into_bytes(), t.clone().into_bytes())).collect();
         Allowed { renamed, ..Allowed::default() }
     } else if k == calls.len() - 1 {
-        Allowed { rewritten: S.rewritten(), ..Allowed::default() }
+        Allowed { rewritten: s.rewritten(), ..Allowed::default() }
     } else {
         Allowed { rewritten: [b"mockspace.toml".to_vec()].into(), ..Allowed::default() }
     }
@@ -146,30 +152,55 @@ fn each(n: usize, what: &str, one: impl Fn(usize) -> Result<(), String> + Sync) 
     assert!(bad.is_empty(), "{} of {n} failed:\n\n{}", bad.len(), bad.join("\n\n"));
 }
 
+/// How a run is stopped at a git call.
+#[derive(Clone, Copy, PartialEq)]
+enum Stop {
+    /// The call fails, and the engine handles the failure.
+    Fail,
+    /// The process that makes the call is killed before it runs, and handles nothing.
+    Kill,
+}
+
 /// Call `k` stopped at each git call it makes, then made again.
-fn stopped_at_each_git_call(k: usize) {
-    let calls = S.calls();
+fn stopped_at_each_git_call(s: &Shape, k: usize, stop: Stop) {
+    let calls = s.calls();
     let args = strs(&calls[k]);
-    let prep = prepared(k);
+    let prep = prepared(s, k);
     let clean_w = copy_of(&prep);
-    let clean = seat(&clean_w);
+    let clean = seat(s, &clean_w);
     let counted = spy::install(&clean_w);
     counted.clear();
     clean.ok(&args);
     let made = counted.spawns();
     let want = left(&clean);
     assert!(made > 0, "the control: {args:?} makes git calls");
+    // the number of calls is not fixed from run to run (a file's stamp is trusted or not by the
+    // clock), so a run may not reach a call the clean run made; it must then end as a run nobody
+    // stopped
+    let stopped = AtomicUsize::new(0);
     each(made, "stopped at git call", |i| {
         let n = i + 1;
         let w = copy_of(&prep);
-        let c = seat(&w);
+        let c = seat(s, &w);
         let spy = spy::install(&w);
         let before = whole::capture(&c);
         spy.clear();
-        spy.fail_at(n);
+        match stop {
+            Stop::Fail => spy.fail_at(n),
+            Stop::Kill => spy.kill_at(n),
+        }
         let first = c.run(&args);
         spy.stop_failing();
-        let failed = spy.text().lines().find(|l| l.starts_with("INJECTED ")).unwrap_or("none").to_string();
+        let mark = if stop == Stop::Kill { "KILLED " } else { "INJECTED " };
+        let failed = spy.text().lines().find(|l| l.starts_with(mark)).unwrap_or("none").to_string();
+        if failed != "none" {
+            stopped.fetch_add(1, Ordering::SeqCst);
+        } else if !first.ok {
+            return Err(format!("no call {n} was reached, and the run failed\nfirst: {}", first.all()));
+        }
+        if stop == Stop::Kill && failed != "none" && first.ok {
+            return Err(format!("the control: a killed run reads as done; {failed}\nfirst: {}", first.all()));
+        }
         let finish = c.run(&args);
         let ctx = format!("{failed}\nfirst: {}\nfinish: {}", first.all(), finish.all());
         if first.ok {
@@ -185,47 +216,34 @@ fn stopped_at_each_git_call(k: usize) {
         if c.run(&args).ok {
             return Err(format!("made again after it was finished; {ctx}"));
         }
-        whole::kept(&c, &before, &whole::capture(&c), &allowed(k)).map_err(|e| format!("lost: {e}\n{ctx}"))?;
+        whole::kept(&c, &before, &whole::capture(&c), &allowed(s, k)).map_err(|e| format!("lost: {e}\n{ctx}"))?;
         let d = differ(&want, &left(&c));
         if d.is_empty() { Ok(()) } else { Err(format!("left other than a run nobody stopped:\n{}\n{ctx}", d.join("\n"))) }
     });
+    let stopped = stopped.into_inner();
+    assert!(stopped > 0, "the control: no run of {made} was stopped at its call");
 }
 
-#[test]
-fn round_filenames_stopped_at_each_git_call_is_finished_by_the_same_call() {
-    stopped_at_each_git_call(0);
-}
-
-#[test]
-fn a_whole_directory_moved_to_a_ref_stopped_at_each_git_call_is_finished_by_the_same_call() {
-    stopped_at_each_git_call(1);
-}
-
-#[test]
-fn a_directory_moved_by_pattern_stopped_at_each_git_call_is_finished_by_the_same_call() {
-    let last = S.calls().len() - 2;
-    assert_eq!(S.calls()[last][3], "templates", "the control: the last move is the one by pattern");
-    stopped_at_each_git_call(last);
-}
-
-#[test]
-fn the_reference_rewrite_stopped_at_each_git_call_is_finished_by_the_same_call() {
-    stopped_at_each_git_call(S.calls().len() - 1);
+/// The calls of `s`: the renames, each move and the reference rewrite, by their place in the list.
+fn moves_of(s: &Shape) -> (usize, usize, usize) {
+    let calls = s.calls();
+    let by_pattern = calls.len() - 2;
+    assert_eq!(calls[by_pattern][3], "templates", "the control: the last move is the one by pattern");
+    (1, by_pattern, calls.len() - 1)
 }
 
 // Mutation: plan the renames from a list the run keeps of its own, or refuse a tree where some of
 // the dated files are renamed already; the call then cannot finish what a stopped run began.
-#[test]
-fn round_filenames_stopped_after_each_rename_is_finished_by_the_same_call() {
-    let prep = prepared(0);
-    let renames = S.renames();
+fn round_filenames_stopped_after_each_rename(s: &Shape) {
+    let prep = prepared(s, 0);
+    let renames = s.renames();
     let clean_w = copy_of(&prep);
-    let clean = seat(&clean_w);
+    let clean = seat(s, &clean_w);
     clean.ok(&["migrate", "round-filenames"]);
     let want = left(&clean);
     each(renames.len(), "stopped after rename", |done| {
         let w = copy_of(&prep);
-        let c = seat(&w);
+        let c = seat(s, &w);
         for (f, t) in &renames[.. done] {
             std::fs::rename(c.path(f), c.path(t)).unwrap();
         }
@@ -246,12 +264,11 @@ fn round_filenames_stopped_after_each_rename_is_finished_by_the_same_call() {
 
 // Mutation: rewrite a file whose references are in the standard spelling already, or refuse a tree
 // where some are; the call then cannot finish what a stopped run began, or writes a file twice.
-#[test]
-fn the_reference_rewrite_stopped_after_each_file_is_finished_by_the_same_call() {
-    let k = S.calls().len() - 1;
-    let prep = prepared(k);
+fn the_reference_rewrite_stopped_after_each_file(s: &Shape) {
+    let k = s.calls().len() - 1;
+    let prep = prepared(s, k);
     let clean_w = copy_of(&prep);
-    let clean = seat(&clean_w);
+    let clean = seat(s, &clean_w);
     let run = clean.ok(&["migrate", "references-to-letkajenkka"]);
     let want = left(&clean);
     // a file is named once for each reference it rewrites, and written once
@@ -261,11 +278,11 @@ fn the_reference_rewrite_stopped_after_each_file_is_finished_by_the_same_call() 
             order.push(p);
         }
     }
-    assert_eq!(order.len(), S.rewritten().len(), "the control: the run names each file it writes\n{}", run.stdout);
+    assert_eq!(order.len(), s.rewritten().len(), "the control: the run names each file it writes\n{}", run.stdout);
     let written: Vec<Vec<u8>> = order.iter().map(|p| clean.read(p)).collect();
     each(order.len(), "stopped after file", |done| {
         let w = copy_of(&prep);
-        let c = seat(&w);
+        let c = seat(s, &w);
         for (p, b) in order.iter().zip(&written).take(done) {
             c.write(p, b);
         }
@@ -283,3 +300,71 @@ fn the_reference_rewrite_stopped_after_each_file_is_finished_by_the_same_call() 
         if d.is_empty() { Ok(()) } else { Err(d.join("\n")) }
     });
 }
+
+/// The same scenarios for each shape, as tests of their own so they run beside each other.
+macro_rules! for_shape {
+    ($m:ident, $s:expr) => {
+        mod $m {
+            use super::*;
+
+            const S: Shape = $s;
+
+            #[test]
+            fn round_filenames_stopped_at_each_git_call_is_finished_by_the_same_call() {
+                stopped_at_each_git_call(&S, 0, Stop::Fail);
+            }
+
+            #[test]
+            fn round_filenames_killed_at_each_git_call_is_finished_by_the_same_call() {
+                stopped_at_each_git_call(&S, 0, Stop::Kill);
+            }
+
+            #[test]
+            fn a_whole_directory_moved_to_a_ref_stopped_at_each_git_call_is_finished_by_the_same_call() {
+                stopped_at_each_git_call(&S, moves_of(&S).0, Stop::Fail);
+            }
+
+            #[test]
+            fn a_whole_directory_moved_to_a_ref_killed_at_each_git_call_is_finished_by_the_same_call() {
+                stopped_at_each_git_call(&S, moves_of(&S).0, Stop::Kill);
+            }
+
+            #[test]
+            fn a_directory_moved_by_pattern_stopped_at_each_git_call_is_finished_by_the_same_call() {
+                stopped_at_each_git_call(&S, moves_of(&S).1, Stop::Fail);
+            }
+
+            #[test]
+            fn a_directory_moved_by_pattern_killed_at_each_git_call_is_finished_by_the_same_call() {
+                stopped_at_each_git_call(&S, moves_of(&S).1, Stop::Kill);
+            }
+
+            #[test]
+            fn the_reference_rewrite_stopped_at_each_git_call_is_finished_by_the_same_call() {
+                stopped_at_each_git_call(&S, moves_of(&S).2, Stop::Fail);
+            }
+
+            #[test]
+            fn the_reference_rewrite_killed_at_each_git_call_is_finished_by_the_same_call() {
+                stopped_at_each_git_call(&S, moves_of(&S).2, Stop::Kill);
+            }
+
+            #[test]
+            fn round_filenames_stopped_after_each_rename_is_finished_by_the_same_call() {
+                round_filenames_stopped_after_each_rename(&S);
+            }
+
+            #[test]
+            fn the_reference_rewrite_stopped_after_each_file_is_finished_by_the_same_call() {
+                the_reference_rewrite_stopped_after_each_file(&S);
+            }
+        }
+    };
+}
+
+// the mock directory is not called `mock`, so every path the engine works out from it is tried
+for_shape!(elsewhere, consumer::ELSEWHERE);
+// symlinks, executables, binaries, CRLF, a name that is not UTF-8, a filter, and a sparse checkout
+for_shape!(odd, consumer::ODD);
+// a mock directory of thousands of files
+for_shape!(large, consumer::LARGE);
