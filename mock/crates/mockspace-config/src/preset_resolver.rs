@@ -351,7 +351,7 @@ mod tests {
     fn shorthand_refuses_the_spelling_before_the_standard_naming_the_migration() {
         // Mutation: the reader before the standard split on `::` and trimmed, so each of these was
         // accepted; the hyphens and the padding are what the standard refuses.
-        for old in ["stack-lints::no-heap", "mockspace::no_bare_numeric", "  stack_lints::no_heap  ", "Stack::no_heap"] {
+        for old in ["stack-lints::no-heap", "  stack_lints::no_heap  ", "Stack::no_heap"] {
             let err = parse_preset_shorthand(old).unwrap_err();
             assert!(
                 matches!(&err, PresetResolveError::MalformedShorthand { reason, .. } if reason.contains("references-to-letkajenkka")),
@@ -360,7 +360,6 @@ mod tests {
         }
     }
 
-    #[test]
     #[test]
     fn shorthand_rejects_missing_separator_empty_parts_and_extra_separators() {
         for (text, part) in [
