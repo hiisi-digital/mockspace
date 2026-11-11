@@ -16,7 +16,7 @@ mockspace-store = { path = "../mockspace-store" }
 mockspace-verdicts = { path = "../../../verdicts" }
 regex = { version = "1", default-features = false, features = ["std"] }
 # The one parser of a hierarchical reference path, `foo::bar::baz`.
-letkajenkka = "0.0.1-rc.1"
+letkajenkka = "=0.0.1-rc.1"
 # The names of a reference, folded and read plain, as every mockspace crate reads them.
 mockspace-refnames = { path = "../mockspace-refnames" }
 serde = { version = "1", features = ["derive"] }

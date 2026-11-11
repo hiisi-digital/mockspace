@@ -11,4 +11,4 @@ workspace = "../../.."
 # Both cargo workspaces read references, so this crate is built by each: a member of the root one,
 # and excluded from `mock/`, whose crates take it by path.
 [dependencies]
-letkajenkka = "0.0.1-rc.1"
+letkajenkka = "=0.0.1-rc.1"
