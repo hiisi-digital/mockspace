@@ -183,28 +183,13 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
                 .map_err(|e| format!("writing {}: {e}", cfg.config_path.display()))
         },
         Step::Untrack(paths) => {
-            // by standard input, so a tree of any size is one call
-            let mut child = Command::new("git")
-                .arg("-C")
-                .arg(&cfg.repo_root)
-                .args(["update-index", "--force-remove", "-z", "--stdin"])
-                .stdin(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
+            // by standard input, so a tree of any size is one call; the store's runner feeds the
+            // list while it reads what git says, so a refusal ends the call with git's words
+            let input: Vec<u8> = paths.iter().flat_map(|p| p.bytes().chain([0])).collect();
+            let out = mockspace_store::Git::new(cfg.repo_root.clone())
+                .run(&["update-index", "--force-remove", "-z", "--stdin"], &[], Some(&input))
                 .map_err(|e| format!("running git update-index: {e}"))?;
-            {
-                use std::io::Write;
-                let mut input = child.stdin.take().ok_or("git update-index took no input")?;
-                for p in paths {
-                    input.write_all(p.as_bytes()).and_then(|()| input.write_all(b"\0")).map_err(|e| e.to_string())?;
-                }
-            }
-            let out = child.wait_with_output().map_err(|e| e.to_string())?;
-            if out.status.success() {
-                Ok(())
-            } else {
-                Err(format!("git update-index: {}", String::from_utf8_lossy(&out.stderr).trim()))
-            }
+            if out.ok() { Ok(()) } else { Err(format!("git update-index: {}", out.stderr)) }
         },
         // the declared instance is now what git would write over on a checkout of an older commit;
         // the config is read again, since a step before may have appended the declaration

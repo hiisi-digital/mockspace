@@ -380,9 +380,10 @@ fn a_commit_of_a_data_ref_is_stopped_where_the_lints_refuse_the_tree() {
 fn untracking_a_list_git_refuses_ends_with_gits_own_words() {
     let w = World::new();
     let cfg = consumer(&w, "a");
+    let before = tracked(&cfg);
     let mut paths = vec!["../outside/the/repository".to_string()];
     paths.extend((0..20_000).map(|n| format!("research/a/long/path/that/is/not/tracked/at/all/{n:08}.md")));
     let err = carry_out(&cfg, &Step::Untrack(paths)).unwrap_err();
     assert!(err.starts_with("git update-index:") && err.contains("outside"), "{err}");
-    assert_eq!(tracked(&cfg).len(), 5, "nothing is untracked");
+    assert_eq!(tracked(&cfg), before, "nothing is untracked");
 }
