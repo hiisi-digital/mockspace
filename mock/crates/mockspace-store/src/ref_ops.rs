@@ -224,7 +224,7 @@ impl RefStore {
                         .git
                         .must(&["hash-object", "-w", "--stdin"], &[], Some(bytes))?
                         .text();
-                    let mode = if edit.is_exec(path) { "100755" } else { "100644" };
+                    let mode = crate::ids::Mode::of(edit.is_exec(path)).git();
                     lines.push_str(&format!("{mode} {blob}\t{path}\0"));
                 },
                 None => lines.push_str(&format!("0 {ZERO_OID}\t{path}\0")),
