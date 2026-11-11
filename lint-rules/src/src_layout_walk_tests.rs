@@ -72,7 +72,7 @@ fn changed(root: &Path) -> Vec<(String, String)> {
 fn changed_in(root: &Path, dirs: &[&str], keep: impl Fn(&str) -> bool) -> Vec<(String, String)> {
     let abs: Vec<PathBuf> = dirs.iter().map(|d| root.join(d)).collect();
     let layout = SrcLayout::new(root, &abs);
-    changed_files(root, &layout, keep)
+    changed_files(root, &layout, &crate::src_layout::NO_REF_FILES, keep)
 }
 
 fn move_to_new(root: &Path, name: &str) {
@@ -337,4 +337,40 @@ fn a_move_that_was_never_staged_is_also_not_a_change() {
     .unwrap();
 
     assert_eq!(changed(root), Vec::new());
+}
+
+/// A file a data ref holds is judged by what the engine read off its instance. Git's view of
+/// it is the branch letting go of the file, and after that nothing at all.
+#[test]
+fn a_file_a_ref_holds_is_judged_by_its_instance_and_not_by_git() {
+    use super::RefFiles;
+
+    let dir = repo_with_a_committed_file();
+    let root = dir.path();
+    std::fs::write(root.join("crates/old/DESIGN.md.tmpl"), "design\n").unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "a template beside the source"]);
+    // the migration: the template leaves the index and stays on disk
+    git(root, &["rm", "-q", "--cached", "crates/old/DESIGN.md.tmpl"]);
+    let layout = SrcLayout::new(root, &[root.join("crates")]);
+    let walk = |refs: &RefFiles| changed_files(root, &layout, refs, |_| true);
+
+    let held: std::collections::BTreeSet<String> = ["crates/old/DESIGN.md.tmpl".to_string()].into();
+    let clean = RefFiles {
+        held:    held.clone(),
+        changed: Default::default(),
+    };
+    assert_eq!(walk(&clean), Vec::new(), "letting go of a held file was read as a change to it");
+
+    let edited = RefFiles {
+        held:    held.clone(),
+        changed: held,
+    };
+    assert_eq!(walk(&edited), [("crates/old/DESIGN.md.tmpl".to_string(), "changed on its ref".to_string())]);
+    // the filter the caller gives still decides
+    assert_eq!(changed_files(root, &layout, &edited, |f| f.ends_with(".rs")), Vec::new());
+
+    // the control: with no ref holding it, git's view stands and the removal is a change
+    let seen = walk(&super::NO_REF_FILES);
+    assert!(seen.iter().any(|(f, _)| f == "crates/old/DESIGN.md.tmpl"), "{seen:?}");
 }

@@ -61,7 +61,7 @@ impl RepoLint for ChangelistDocGate {
             return Vec::new();
         }
 
-        let violating_files = pending_doc_templates(workspace_root, ctx.src_dirs);
+        let violating_files = pending_doc_templates(workspace_root, ctx.src_dirs, ctx.ref_files);
 
         violating_files
             .into_iter()
@@ -115,9 +115,13 @@ impl RepoLint for ChangelistDocGate {
 /// lock` asks for them before locking a doc changelist, because the lock is
 /// what ends the window they can still be committed in: after it, each one is
 /// either reverted or carried through a deprecation.
-pub fn pending_doc_templates(mock_dir: &Path, src_dirs: &[PathBuf]) -> Vec<(String, String)> {
+pub fn pending_doc_templates(
+    mock_dir: &Path,
+    src_dirs: &[PathBuf],
+    refs: &src_layout::RefFiles,
+) -> Vec<(String, String)> {
     let layout = SrcLayout::new(mock_dir, src_dirs);
-    src_layout::changed_files(mock_dir, &layout, |f| is_doc_template(&layout, f))
+    src_layout::changed_files(mock_dir, &layout, refs, |f| is_doc_template(&layout, f))
 }
 
 /// A doc template is a `.md.tmpl` or `.md` file under a source directory, with

@@ -191,6 +191,23 @@ fn subcommand_args<'a>(args: &'a [String], subcmd: &str) -> Vec<&'a str> {
     out
 }
 
+/// Whether a `data-refs` call writes a ref: `commit`, the one verb that takes the instance's
+/// changes out of view by putting them on the ref.
+fn writes_a_data_ref(verb_args: &[&str]) -> bool {
+    verb_args.first() == Some(&"commit")
+}
+
+/// Runs the repository lints, which the phase gates are among, the way a commit of the branch
+/// does, and says whether they pass.
+fn repo_lints_pass(repo_root: &std::path::Path) -> bool {
+    std::process::Command::new("cargo")
+        .args(["mock", "--lint-only", "--scope", "infra"])
+        .current_dir(repo_root)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 /// The blocking message for a pack that would not build.
 ///
 /// It names the failure, says what it costs, and lists the causes worth
@@ -769,7 +786,14 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 return crate::registry_append::run(&cfg, &subcommand_args(&args, "registry-append"));
             },
             "data-refs" => {
-                return crate::data_refs::run(&cfg, &subcommand_args(&args, "data-refs"));
+                let verb_args = subcommand_args(&args, "data-refs");
+                // What a commit of a data ref takes out of the instance's changes, the phase gates
+                // no longer see, so they are asked first, as they are before a commit of the branch.
+                if writes_a_data_ref(&verb_args) && !repo_lints_pass(&cfg.repo_root) {
+                    eprintln!("data-refs: the lints refuse this tree, so nothing was committed to a ref; `cargo mock --lint-only --scope infra` names why");
+                    return ExitCode::FAILURE;
+                }
+                return crate::data_refs::run(&cfg, &verb_args);
             },
             "query" => {
                 // The argument after the subcommand, not a fixed position:
@@ -1167,6 +1191,14 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             .filter(crate::panel::is_open)
             .map(|p| p.slug)
             .collect();
+        // Likewise the files a data ref holds: git does not know them, the instances do.
+        let ref_files = match crate::data_refs::ref_files(&cfg) {
+            Ok(files) => files,
+            Err(why) => {
+                eprintln!("BLOCKED: {why}");
+                return ExitCode::FAILURE;
+            },
+        };
 
         // The registry gate, on the lint path only, before the lints that read it.
         //
@@ -1237,6 +1269,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     &lint_registry_view,
                     &cfg.canon_paths,
                     &open_panels,
+                    &ref_files,
                     &cfg.primitive_introductions,
                     pack,
                 );
@@ -1278,6 +1311,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     &lint_registry_view,
                     &cfg.canon_paths,
                     &open_panels,
+                    &ref_files,
                     &cfg.primitive_introductions,
                     pack,
                 );
@@ -1303,6 +1337,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     &lint_registry_view,
                     &cfg.canon_paths,
                     &open_panels,
+                    &ref_files,
                     &cfg.primitive_introductions,
                     pack,
                 );
@@ -1771,6 +1806,11 @@ mod tests {
         }
         // the control: the one that writes the ref and pushes it gates like everything else
         assert!(!is_recovery_command(&args(&["data-refs", "commit"])));
+        // and it is the one verb the repository lints are asked before
+        assert!(writes_a_data_ref(&["commit"]) && writes_a_data_ref(&["commit", "research"]));
+        for verb in ["status", "verify", "instantiate", "restore", "trailers", "paired"] {
+            assert!(!writes_a_data_ref(&[verb]), "`data-refs {verb}` was gated as a write");
+        }
     }
 
     #[test]

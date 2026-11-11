@@ -218,6 +218,7 @@ fn gate_verdict(cfg: &Config, krate: &str, file: &Path, text: &str) -> usize {
         &mockspace_lint_rules::RegistryView::default(),
         &[],
         &[],
+        &mockspace_lint_rules::src_layout::NO_REF_FILES,
         &cfg.primitive_introductions,
         &LintPack::default(),
     )

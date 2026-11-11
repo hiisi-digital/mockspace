@@ -62,6 +62,7 @@ fn check_in(mock: &Path, root: &Path) -> Vec<LintError> {
         invocation:  None,
         canon_paths: &[],
         open_panels: &[],
+        ref_files: &crate::src_layout::NO_REF_FILES,
         registry:    &Default::default(),
         verdicts:    None,
     })

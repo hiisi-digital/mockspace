@@ -76,7 +76,7 @@ impl RepoLint for ChangelistLock {
 
         // Check doc templates if doc CL is locked.
         if doc_locked {
-            let doc_files = get_modified_crate_files(workspace_root, &layout, true);
+            let doc_files = get_modified_crate_files(workspace_root, &layout, ctx.ref_files, true);
             let cl_name = locked_doc_name.as_deref().unwrap_or("doc changelist");
 
             for (file, source) in doc_files {
@@ -103,7 +103,7 @@ impl RepoLint for ChangelistLock {
         if src_locked {
             let src_files = crate::fmt_only::drop_fmt_only(
                 workspace_root,
-                get_modified_crate_files(workspace_root, &layout, false),
+                get_modified_crate_files(workspace_root, &layout, ctx.ref_files, false),
             );
             let cl_name = locked_src_name.as_deref().unwrap_or("src changelist");
 
@@ -134,9 +134,10 @@ impl RepoLint for ChangelistLock {
 fn get_modified_crate_files(
     workspace_root: &Path,
     layout: &SrcLayout,
+    refs: &src_layout::RefFiles,
     docs: bool,
 ) -> Vec<(String, String)> {
-    src_layout::changed_files(workspace_root, layout, |f| {
+    src_layout::changed_files(workspace_root, layout, refs, |f| {
         if docs { is_locked_doc(layout, f) } else { is_source(layout, f) }
     })
 }

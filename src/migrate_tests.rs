@@ -198,3 +198,25 @@ fn the_rest_of_the_mock_directory_moves_to_one_ref_and_the_sources_stay() {
     assert_eq!(crate::data_refs::run(&again, &["verify"]), ExitCode::SUCCESS);
     assert!(cfg.mock_dir.join("catalogue.md").is_file() && cfg.mock_dir.join("research/deep/er.md").is_file());
 }
+
+#[test]
+fn the_gates_are_told_which_held_files_changed() {
+    let w = World::new();
+    let cfg = consumer(&w, "a");
+    assert_eq!(run(&cfg, &TEMPLATES), ExitCode::SUCCESS);
+    let cfg = Config::from_dir(&cfg.mock_dir);
+    let files = crate::data_refs::ref_files(&cfg).unwrap();
+    let held: Vec<&str> = files.held.iter().map(String::as_str).collect();
+    assert_eq!(held, ["crates/one/DESIGN.md.tmpl", "crates/two/README.md.tmpl"]);
+    assert!(files.changed.is_empty(), "{:?}", files.changed);
+
+    write(&cfg, "crates/one/DESIGN.md.tmpl", "a new design of one\n");
+    write(&cfg, "crates/one/NOTES.md.tmpl", "added\n");
+    std::fs::remove_file(cfg.mock_dir.join("crates/two/README.md.tmpl")).unwrap();
+    write(&cfg, "crates/one/src/lib.rs", "pub fn one() -> u8 { 1 }\n");
+    let files = crate::data_refs::ref_files(&cfg).unwrap();
+    let changed: Vec<&str> = files.changed.iter().map(String::as_str).collect();
+    assert_eq!(changed, ["crates/one/DESIGN.md.tmpl", "crates/one/NOTES.md.tmpl", "crates/two/README.md.tmpl"]);
+    assert!(files.held.contains("crates/one/NOTES.md.tmpl") && files.held.contains("crates/two/README.md.tmpl"));
+    assert!(!files.held.contains("crates/one/src/lib.rs"), "a source is the branch's, and git judges it");
+}

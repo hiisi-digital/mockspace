@@ -62,7 +62,13 @@ fn refuse_an_empty_lock(dr: &Path, cl: &ParsedChangelist) -> Option<ExitCode> {
 /// so they would be stranded: reverted, or carried through a deprecation and a
 /// second doc changelist, for want of one commit made first.
 fn refuse_uncommitted_templates(cfg: &Config) -> Option<ExitCode> {
-    let pending = lint_rules::pending_doc_templates(&cfg.mock_dir, &cfg.src_dirs);
+    let pending = match crate::data_refs::ref_files(cfg) {
+        Ok(refs) => lint_rules::pending_doc_templates(&cfg.mock_dir, &cfg.src_dirs, &refs),
+        Err(why) => {
+            eprintln!("error: {why}");
+            return Some(ExitCode::FAILURE);
+        },
+    };
     if pending.is_empty() {
         return None;
     }

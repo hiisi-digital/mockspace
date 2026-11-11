@@ -133,6 +133,7 @@ fn lint_run(cfg: &Config, mode: LintMode, crates: &crate::model::CrateMap, pack:
         &RegistryView::default(),
         &[],
         &[],
+        &mockspace_lint_rules::src_layout::NO_REF_FILES,
         &cfg.primitive_introductions,
         pack,
     )

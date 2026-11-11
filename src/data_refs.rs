@@ -540,3 +540,21 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
 #[cfg(test)]
 #[path = "data_refs_tests.rs"]
 mod tests;
+
+/// The files the declared refs hold, and which of them differ from the commit their instance is
+/// at, each as a path relative to the mock directory. The phase gates judge these files by it,
+/// since git tracks none of them and so says nothing of what changed.
+pub fn ref_files(cfg: &crate::config::Config) -> Result<mockspace_lint_rules::src_layout::RefFiles, String> {
+    let mut out = mockspace_lint_rules::src_layout::RefFiles::default();
+    for d in &cfg.data_refs {
+        let ns = d.namespace();
+        let store = d.open(&cfg.repo_root).map_err(|e| format!("the data ref `{ns}`: {e}"))?;
+        let inst = d.instance(&store, &cfg.mock_dir).map_err(|e| format!("the data ref `{ns}`: {e}"))?;
+        let (held, changed) = inst.files().map_err(|e| format!("the data ref `{ns}`: {e}"))?;
+        let rel = d.instance.as_deref().or(d.path.as_deref()).unwrap_or("").trim_matches('/');
+        let lead = if rel == WHOLE || rel.is_empty() { String::new() } else { format!("{rel}/") };
+        out.held.extend(held.into_iter().map(|p| format!("{lead}{p}")));
+        out.changed.extend(changed.into_iter().map(|p| format!("{lead}{p}")));
+    }
+    Ok(out)
+}

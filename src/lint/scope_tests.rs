@@ -61,6 +61,7 @@ fn run(cfg: &Config, mode: LintMode, scope: Option<&[&str]>, doc_only: bool) -> 
         &RegistryView::default(),
         &[],
         &[],
+        &mockspace_lint_rules::src_layout::NO_REF_FILES,
         &cfg.primitive_introductions,
         &LintPack::default(),
     )
