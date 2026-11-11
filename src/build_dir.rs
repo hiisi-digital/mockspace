@@ -140,7 +140,7 @@ pub fn mark_target_root_of(artifact: &Path) -> Option<PathBuf> {
 /// had each worktree build its own bench and test trees beside it, several
 /// gigabytes a worktree.
 pub fn build_target_dir(start: &Path) -> Option<std::ffi::OsString> {
-    resolve_target_dir(inherited_target_dir(), start, cargo_home().as_deref())
+    resolve_target_dir(inherited_target_dir(), start, Path::new("/"), cargo_home().as_deref())
 }
 
 /// `build_target_dir` with the environment's answer and the cargo home passed
@@ -149,9 +149,12 @@ pub fn build_target_dir(start: &Path) -> Option<std::ffi::OsString> {
 fn resolve_target_dir(
     env: Option<std::ffi::OsString>,
     start: &Path,
+    stop: &Path,
     cargo_home: Option<&Path>,
 ) -> Option<std::ffi::OsString> {
-    env.or_else(|| configured_target_dir(start, cargo_home).map(PathBuf::into_os_string))
+    env.or_else(|| {
+        configured_target_dir_within(start, stop, cargo_home).map(PathBuf::into_os_string)
+    })
 }
 
 /// The two environment spellings alone. The lint store reads its answer as a path
@@ -183,10 +186,26 @@ fn cargo_home() -> Option<PathBuf> {
 /// in `cargo_home`, whose parent is then the base. An absolute value is
 /// returned as it is.
 pub fn configured_target_dir(start: &Path, cargo_home: Option<&Path>) -> Option<PathBuf> {
-    let dirs = start
-        .ancestors()
-        .map(|d| d.join(".cargo"))
-        .chain(cargo_home.map(Path::to_path_buf));
+    configured_target_dir_within(start, Path::new("/"), cargo_home)
+}
+
+/// `configured_target_dir` with the walk stopped at `stop`, which is the last
+/// directory whose `.cargo` is read. A directory that is not above `start`
+/// stops nothing, and the walk goes to the root. Tests pass their tempdir, so a
+/// config above the system temp directory cannot reach them.
+fn configured_target_dir_within(
+    start: &Path,
+    stop: &Path,
+    cargo_home: Option<&Path>,
+) -> Option<PathBuf> {
+    let mut above = Vec::new();
+    for d in start.ancestors() {
+        above.push(d.join(".cargo"));
+        if d == stop {
+            break;
+        }
+    }
+    let dirs = above.into_iter().chain(cargo_home.map(Path::to_path_buf));
     for dir in dirs {
         for name in ["config", "config.toml"] {
             let Ok(text) = fs::read_to_string(dir.join(name)) else { continue };
@@ -328,7 +347,7 @@ mod tests {
         assert!(!absent.exists());
     }
 
-    // `configured_target_dir`. Every tree is `<tmp>/work/deep`, with the configs
+    // `configured_target_dir_within`, stopped at the tempdir. Every tree is `<tmp>/work/deep`, with the configs
     // placed by the case, and the answers are compared as paths under `<tmp>`.
 
     fn put(dir: &Path, name: &str, text: &str) {
@@ -349,8 +368,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path().join("home");
         fs::create_dir_all(&home).unwrap();
-        assert_eq!(configured_target_dir(&deep(tmp.path()), Some(&home)), None);
-        assert_eq!(configured_target_dir(&deep(tmp.path()), None), None);
+        assert_eq!(configured_target_dir_within(&deep(tmp.path()), tmp.path(), Some(&home)), None);
+        assert_eq!(configured_target_dir_within(&deep(tmp.path()), tmp.path(), None), None);
     }
 
     #[test]
@@ -359,7 +378,7 @@ mod tests {
         let start = deep(tmp.path());
         put(&tmp.path().join("work/.cargo"), "config.toml", "[build]\ntarget-dir = \"/near\"\n");
         put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/far\"\n");
-        assert_eq!(configured_target_dir(&start, None), Some(PathBuf::from("/near")));
+        assert_eq!(configured_target_dir_within(&start, tmp.path(), None), Some(PathBuf::from("/near")));
     }
 
     #[test]
@@ -368,7 +387,7 @@ mod tests {
         let start = deep(tmp.path());
         put(&tmp.path().join("work/.cargo"), "config.toml", "[net]\nretry = 1\n");
         put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/far\"\n");
-        assert_eq!(configured_target_dir(&start, None), Some(PathBuf::from("/far")));
+        assert_eq!(configured_target_dir_within(&start, tmp.path(), None), Some(PathBuf::from("/far")));
     }
 
     #[test]
@@ -377,10 +396,10 @@ mod tests {
         let start = deep(tmp.path());
         let home = tmp.path().join("home");
         put(&home, "config.toml", "[build]\ntarget-dir = \"/home-wide\"\n");
-        assert_eq!(configured_target_dir(&start, Some(&home)), Some(PathBuf::from("/home-wide")));
+        assert_eq!(configured_target_dir_within(&start, tmp.path(), Some(&home)), Some(PathBuf::from("/home-wide")));
         // and an ancestor's wins over it
         put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/tree\"\n");
-        assert_eq!(configured_target_dir(&start, Some(&home)), Some(PathBuf::from("/tree")));
+        assert_eq!(configured_target_dir_within(&start, tmp.path(), Some(&home)), Some(PathBuf::from("/tree")));
     }
 
     #[test]
@@ -389,7 +408,7 @@ mod tests {
         let start = deep(tmp.path());
         put(&tmp.path().join("work/.cargo"), "config.toml", "[build\ntarget-dir = = \"/bad\"\n");
         put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/good\"\n");
-        assert_eq!(configured_target_dir(&start, None), Some(PathBuf::from("/good")));
+        assert_eq!(configured_target_dir_within(&start, tmp.path(), None), Some(PathBuf::from("/good")));
     }
 
     #[test]
@@ -397,7 +416,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let start = deep(tmp.path());
         put(&tmp.path().join(".cargo"), "config.toml", "build.target-dir = \"/dotted\"\n");
-        assert_eq!(configured_target_dir(&start, None), Some(PathBuf::from("/dotted")));
+        assert_eq!(configured_target_dir_within(&start, tmp.path(), None), Some(PathBuf::from("/dotted")));
     }
 
     #[test]
@@ -406,7 +425,7 @@ mod tests {
         let start = deep(tmp.path());
         put(&tmp.path().join("work/.cargo"), "config.toml", "[build]\ntarget-dir = 5\n");
         put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/after\"\n");
-        assert_eq!(configured_target_dir(&start, None), Some(PathBuf::from("/after")));
+        assert_eq!(configured_target_dir_within(&start, tmp.path(), None), Some(PathBuf::from("/after")));
     }
 
     #[test]
@@ -418,7 +437,7 @@ mod tests {
         let cargo = tmp.path().join(".cargo");
         put(&cargo, "config", "[build]\ntarget-dir = \"/plain\"\n");
         put(&cargo, "config.toml", "[build]\ntarget-dir = \"/toml\"\n");
-        assert_eq!(configured_target_dir(&start, None), Some(PathBuf::from("/plain")));
+        assert_eq!(configured_target_dir_within(&start, tmp.path(), None), Some(PathBuf::from("/plain")));
     }
 
     #[test]
@@ -428,7 +447,7 @@ mod tests {
         put(&tmp.path().join("work/.cargo"), "config.toml", "[build]\ntarget-dir = \"out/t\"\n");
         // not against `start`, and not against the `.cargo` directory itself
         assert_eq!(
-            configured_target_dir(&start, None),
+            configured_target_dir_within(&start, tmp.path(), None),
             Some(tmp.path().join("work").join("out/t"))
         );
     }
@@ -440,7 +459,7 @@ mod tests {
         let home = tmp.path().join("user").join(".cargo");
         put(&home, "config.toml", "[build]\ntarget-dir = \"shared\"\n");
         assert_eq!(
-            configured_target_dir(&start, Some(&home)),
+            configured_target_dir_within(&start, tmp.path(), Some(&home)),
             Some(tmp.path().join("user").join("shared"))
         );
     }
@@ -451,13 +470,13 @@ mod tests {
         let start = deep(tmp.path());
         put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/from-config\"\n");
         let env = std::ffi::OsString::from("/from-env");
-        assert_eq!(resolve_target_dir(Some(env.clone()), &start, None), Some(env));
+        assert_eq!(resolve_target_dir(Some(env.clone()), &start, tmp.path(), None), Some(env));
         assert_eq!(
-            resolve_target_dir(None, &start, None),
+            resolve_target_dir(None, &start, tmp.path(), None),
             Some(std::ffi::OsString::from("/from-config"))
         );
         // control: neither set
         let bare = tempfile::tempdir().unwrap();
-        assert_eq!(resolve_target_dir(None, &deep(bare.path()), None), None);
+        assert_eq!(resolve_target_dir(None, &deep(bare.path()), bare.path(), None), None);
     }
 }
