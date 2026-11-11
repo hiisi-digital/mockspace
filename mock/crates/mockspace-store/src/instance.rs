@@ -109,6 +109,19 @@ impl<'a> Instance<'a> {
         self.held.as_ref().is_none_or(|h| h.holds(rel))
     }
 
+    /// Refuses a directory that already holds a file the instance would hold, naming each. What a
+    /// `.gitignore` keeps out and what a cache directory holds is no file of the instance, is never
+    /// read, removed or written by it, and stands in nobody's way: a clone that built in the directory
+    /// before the ref reached it keeps its build output and its ignored files.
+    fn holds_nothing_yet(&self) -> Result<(), StoreError> {
+        let here = self.walk()?;
+        if here.is_empty() {
+            return Ok(());
+        }
+        let why = if self.held.is_some() { "already holds files its patterns match" } else { "already holds files" };
+        Err(self.fail(why, here))
+    }
+
     /// Refuses a tree of the ref that holds a path this instance does not: written here it
     /// would be a file the branch sees and no later edit of the instance could name.
     fn check_held(&self, ids: &BTreeMap<String, FileId>) -> Result<(), StoreError> {
@@ -146,14 +159,7 @@ impl<'a> Instance<'a> {
         }
         let existed = self.dir.exists();
         if existed {
-            if self.held.is_some() {
-                let here = self.walk()?;
-                if !here.is_empty() {
-                    return Err(self.fail("already holds files its patterns match", here));
-                }
-            } else if std::fs::read_dir(&self.dir).map_err(|e| self.io("reading", e))?.next().is_some() {
-                return Err(self.fail("is not an empty directory", Vec::new()));
-            }
+            self.holds_nothing_yet()?;
         }
         let made = std::fs::create_dir_all(&self.dir)
             .map_err(|e| self.io("creating", e))
@@ -168,7 +174,7 @@ impl<'a> Instance<'a> {
         made
     }
 
-    /// Writes the files of the local tip into the directory, which must be absent or empty, and
+    /// Writes the files of the local tip into the directory, which must hold no file of the instance, and
     /// records the tip as the base. Gives the tip. An empty directory that has a record, whose
     /// base holds files, is one where every file was removed, and is refused: the removals are
     /// an edit not yet applied, and the directory itself removed starts the instance again.
@@ -182,17 +188,7 @@ impl<'a> Instance<'a> {
         };
         let existed = self.dir.exists();
         if existed {
-            if self.held.is_some() {
-                let here = self.walk()?;
-                if !here.is_empty() {
-                    return Err(self.fail("already holds files its patterns match", here));
-                }
-            } else {
-                let mut entries = std::fs::read_dir(&self.dir).map_err(|e| self.io("reading", e))?;
-                if entries.next().is_some() {
-                    return Err(self.fail("is not an empty directory", Vec::new()));
-                }
-            }
+            self.holds_nothing_yet()?;
             if let Some(base) = self.base()? {
                 if !self.ids_of(&base)?.is_empty() {
                     return Err(self.fail(

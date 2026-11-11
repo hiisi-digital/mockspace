@@ -63,7 +63,7 @@ fn materialize_refuses_a_directory_with_files_and_a_ref_that_is_not_there() {
     std::fs::write(busy.join("mine"), "x").unwrap();
     let err = Instance::new(&a, &busy).unwrap().materialize().unwrap_err();
     assert!(matches!(err, StoreError::Instance { .. }), "{err}");
-    assert!(err.to_string().contains("not an empty directory"), "{err}");
+    assert!(err.to_string().contains("already holds files") && err.to_string().contains("mine"), "the refusal names the file: {err}");
     assert_eq!(
         std::fs::read_to_string(busy.join("mine")).unwrap(),
         "x",
