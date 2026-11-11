@@ -14,9 +14,11 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use letkajenkka::{Query, Selector};
 use mockspace_refnames::{Folded, fold};
+use regex::Regex;
 
 /// The migration that rewrites a repository's references from the spelling before the standard.
 pub const MIGRATION: &str = "references-to-letkajenkka";
@@ -108,20 +110,31 @@ fn fold_entry(name: &str, is_dir: bool) -> Option<Folded<'_>> {
     }
 }
 
-/// A heading as GitHub anchors it: lowercase, everything deleted but letters, numbers, `_`, `-` and
-/// the space, and each remaining space written as one hyphen. Runs of spaces are not collapsed and
-/// nothing is trimmed.
+/// A heading as GitHub anchors it, by the slugger it follows: lowercased, then every character
+/// deleted but the space, the hyphen and what `slug_keeps` keeps, then each remaining space written as
+/// one hyphen. Runs of spaces are not collapsed and nothing is trimmed.
 #[must_use]
 pub fn forge_slug(title: &str) -> String {
-    let mut out = String::with_capacity(title.len());
-    for c in title.chars() {
-        if c == ' ' {
-            out.push('-');
-        } else if c.is_alphanumeric() || c == '-' || c == '_' {
-            out.extend(c.to_lowercase());
-        }
-    }
-    out
+    title
+        .to_lowercase()
+        .chars()
+        .filter_map(|c| {
+            match c {
+                ' ' => Some('-'),
+                c if c == '-' || slug_keeps(c) => Some(c),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// Whether the slugger keeps `c`: anything alphabetic, and the marks, the decimal digits and the
+/// connector punctuation, which are not. It deletes the rest, other numbers and alphabetic-less
+/// symbols among them (`mock/research/202611111500_github-heading-anchors.md`).
+fn slug_keeps(c: char) -> bool {
+    static NOT_ALPHABETIC: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^[\p{M}\p{Nd}\p{Pc}]$").expect("the classes are the regex crate's own"));
+    c.is_alphabetic() || NOT_ALPHABETIC.is_match(c.encode_utf8(&mut [0; 4]))
 }
 
 /// A heading as a reference names it: its forge slug, folded.

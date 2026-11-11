@@ -282,10 +282,10 @@ fn a_forge_slug_with_its_hyphens_is_no_name_until_it_is_folded() {
     assert!(names("seed::design::warms_objective").is_ok());
 }
 
-// GitHub's slugger lowercases, deletes every character outside letters, numbers, `_`, `-` and the
-// space, and then turns each remaining space into one hyphen: runs are not collapsed, and nothing
-// is trimmed (`mock/research/202611111500_github-heading-anchors.md`). Each row below is that
-// algorithm applied by hand to the heading.
+// GitHub's slugger lowercases, deletes every character but the space, the hyphen and the ones it
+// keeps (the next test), and then turns each remaining space into one hyphen: runs are not
+// collapsed, and nothing is trimmed (`mock/research/202611111500_github-heading-anchors.md`). Each
+// row below is that algorithm applied by hand to the heading.
 //
 // Mutation: collapsing a run of spaces, trimming a trailing hyphen, or treating a tab or a
 // no-break space as a space, each fails a row.
@@ -302,6 +302,31 @@ fn the_forge_slug_keeps_every_space_as_a_hyphen_and_trims_nothing() {
         ("Tab\tbed", "tabbed"),
         ("no\u{a0}break", "nobreak"),
         ("under_score", "under_score"),
+    ];
+    for (heading, slug) in table {
+        assert_eq!(forge_slug(heading), slug, "{heading:?}");
+    }
+}
+
+// The slugger's generator deletes the other numbers, the punctuation but the connector kind, the
+// symbols, the controls, the format characters and the separators, less anything alphabetic, the
+// space and the hyphen; it keeps the rest. One row for each class the two readings of "letters and
+// numbers" disagree on, and one for each kept class beside them.
+//
+// Mutation: keeping what `char::is_alphanumeric` keeps, as the slug did, deletes the combining
+// mark and the connector and keeps the superscript two; dropping the alphabetic test deletes the
+// circled letter.
+#[test]
+fn the_forge_slug_keeps_marks_and_connectors_and_deletes_other_numbers() {
+    let table = [
+        ("e\u{301}", "e\u{301}"),
+        ("a\u{203f}b", "a\u{203f}b"),
+        ("x\u{b2}", "x"),
+        ("\u{663}", "\u{663}"),
+        ("\u{2160}", "\u{2170}"),
+        ("\u{24b6}", "\u{24d0}"),
+        ("a\u{2192}b", "ab"),
+        ("a\u{200d}b", "ab"),
     ];
     for (heading, slug) in table {
         assert_eq!(forge_slug(heading), slug, "{heading:?}");
