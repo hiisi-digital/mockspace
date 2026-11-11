@@ -105,9 +105,26 @@ pub fn install(cfg: &Config) -> Result<(), String> {
         return Ok(());
     }
     let repo = &cfg.repo_root;
+    let setting = |key: &str| -> Result<bool, String> {
+        let out = Git::new(repo.clone()).run(&["config", "--type=bool", "--get", key], &[], None).map_err(|e| e.to_string())?;
+        Ok(out.ok() && out.text() == "true")
+    };
+    // lines a sparse checkout that is off left in the file are no patterns of anybody's now, and
+    // turning it on would hide the branch's files they leave out
+    let was_on = setting("core.sparseCheckout")?;
+    let cone = was_on && setting("core.sparseCheckoutCone")?;
+    let existing = if was_on { existing } else { String::new() };
     worktree_config(cfg)?;
     git(repo, &["config", "--worktree", "core.sparseCheckout", "true"])?;
     git(repo, &["config", "--worktree", "core.sparseCheckoutCone", "false"])?;
+    if cone {
+        eprintln!(
+            "data-refs: the sparse checkout of this worktree was in cone mode, and is now in the full pattern mode the \
+             instances need; its patterns in {} are read as full patterns from here on, which `git sparse-checkout list` \
+             shows",
+            file.display()
+        );
+    }
     let text = compose(&existing, &lines);
     if text != existing {
         if let Some(parent) = file.parent() {

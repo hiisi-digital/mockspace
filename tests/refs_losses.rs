@@ -205,6 +205,39 @@ fn a_removed_declaration_leaves_no_block_behind() {
     a.ok(&["data-refs", "verify"]);
 }
 
+fn sparse_file(c: &refs_e2e::Clone) -> std::path::PathBuf {
+    std::path::PathBuf::from(c.git(&["rev-parse", "--path-format=absolute", "--git-path", "info/sparse-checkout"]).trim())
+}
+
+// Mutation: keep the lines a sparse checkout that is off left in its file; turning it on then reads
+// them as patterns again, and the next checkout takes away every file of the branch they leave out.
+#[test]
+fn the_lines_of_a_sparse_checkout_that_was_off_are_not_revived() {
+    let w = fixture::migrated_remote();
+    let a = fixture::seat(&w, "a");
+    a.git(&["config", "--worktree", "core.sparseCheckout", "false"]);
+    std::fs::write(sparse_file(&a), "/mock/\n").unwrap();
+    a.ok(&["data-refs", "commit"]);
+    let text = std::fs::read_to_string(sparse_file(&a)).unwrap();
+    assert!(text.starts_with("/*\n") && !text.lines().any(|l| l == "/mock/"), "a stale line came back: {text}");
+    a.git(&["sparse-checkout", "reapply"]);
+    assert!(a.exists("README.md"), "the branch's own file is gone");
+}
+
+// Mutation: switch the sparse checkout out of cone mode without a word; the person's own patterns
+// are then read another way, and nothing says so.
+#[test]
+fn switching_a_sparse_checkout_out_of_cone_mode_is_said() {
+    let w = fixture::migrated_remote();
+    let a = fixture::seat(&w, "a");
+    a.git(&["config", "--worktree", "core.sparseCheckoutCone", "true"]);
+    let o = a.ok(&["data-refs", "commit"]);
+    assert!(o.stderr.contains("cone mode"), "{}", o.all());
+    assert_eq!(a.git(&["config", "--worktree", "--get", "core.sparseCheckoutCone"]).trim(), "false");
+    let o = a.ok(&["data-refs", "commit"]);
+    assert!(!o.stderr.contains("cone mode"), "said again with nothing switched: {}", o.all());
+}
+
 // Mutation: write the unescaped directory into the block, so `[1]` is a class and matches `1`.
 #[test]
 fn a_directory_with_glob_characters_is_protected_as_itself() {
