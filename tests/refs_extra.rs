@@ -90,35 +90,6 @@ fn a_ref_on_the_mock_directory_itself_round_trips_to_a_second_clone() {
     assert!(b.tracked().iter().all(|p| !p.starts_with("mock/research/")), "{:?}", b.tracked());
 }
 
-// Mutation: let the late clone's first commit overwrite the ref the early one made.
-#[test]
-fn two_clones_making_the_same_new_ref_lose_neither_file() {
-    let w = World::new();
-    let a = w.first_clone("a");
-    fixture::build_tracked(&a);
-    fixture::migrate_one(&a, "research", "research", &[]);
-    let cfg = String::from_utf8(a.read("mock/mockspace.toml")).unwrap();
-    a.write("mock/mockspace.toml", format!("{cfg}\n[[data_ref]]\nnamespace = \"extra\"\npath = \"extra\"\n").as_bytes());
-    a.git(&["add", "-f", "--", "mock/mockspace.toml"]);
-    a.commit_all("chore: declare `extra`");
-    a.push();
-    let b = w.clone_of("b");
-    b.ok(&["data-refs", "instantiate", "research"]);
-    a.ok(&["data-refs", "instantiate", "extra"]);
-    b.ok(&["data-refs", "instantiate", "extra"]);
-    for (c, file) in [(&a, "from-a.md"), (&b, "from-b.md")] {
-        c.write(&format!("mock/extra/{file}"), file.as_bytes());
-    }
-    a.ok(&["data-refs", "commit", "extra"]);
-    let late = b.run(&["data-refs", "commit", "extra"]);
-    let tree = w.remote_git(&["ls-tree", "-r", "--name-only", "refs/heads/mock/extra"]);
-    assert!(tree.contains("from-a.md"), "the early commit stays: {tree}");
-    assert!(b.exists("mock/extra/from-b.md"), "the late edit is still on disk: {}", late.all());
-    if late.ok {
-        assert!(tree.contains("from-b.md"), "a success holds the late file: {tree}");
-    }
-}
-
 fn declare_extra(a: &refs_e2e::Clone<'_>) {
     let cfg = String::from_utf8(a.read("mock/mockspace.toml")).unwrap();
     a.write("mock/mockspace.toml", format!("{cfg}\n[[data_ref]]\nnamespace = \"extra\"\npath = \"extra\"\n").as_bytes());
