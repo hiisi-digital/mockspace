@@ -11,7 +11,7 @@
 
 use toml_edit::{Array, DocumentMut, Item, Value};
 
-use crate::registry_merge::scan::{Doc, Key};
+use crate::merge::scan::{Doc, Key};
 
 /// `text` with `value` added to `field` of the row `ns` / `id`, or `None` where the field
 /// already holds it. A field the row does not have yet is made as a one-entry array.

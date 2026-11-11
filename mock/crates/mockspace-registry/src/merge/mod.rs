@@ -24,7 +24,7 @@
 //! to it and the registry's duplicate check is what reports it.
 
 mod merge;
-pub(crate) mod scan;
+pub mod scan;
 
 use std::path::Path;
 use std::process::{Command, ExitCode};
@@ -32,7 +32,7 @@ use std::process::{Command, ExitCode};
 use scan::Doc;
 
 /// The marker length git uses unless told otherwise.
-pub(crate) const DEFAULT_MARKER: usize = 7;
+pub const DEFAULT_MARKER: usize = 7;
 
 /// Merge three versions of a registry file's text.
 ///
@@ -40,7 +40,7 @@ pub(crate) const DEFAULT_MARKER: usize = 7;
 /// text merge. The result is only returned if it cuts into the same rows the
 /// merge decided on, so a merge that produced something unreadable is also an
 /// `Err` rather than a bad file.
-pub(crate) fn merge_text(
+pub fn merge_text(
     base: &str,
     ours: &str,
     theirs: &str,
@@ -88,7 +88,7 @@ fn text_merge(base: &str, ours: &str, theirs: &str, marker: usize) -> ExitCode {
 }
 
 /// `args` are what follows the subcommand: `%O %A %B %P [%L]`, the marker size being git's `%L`.
-pub(crate) fn run(args: &[&str]) -> ExitCode {
+pub fn run(args: &[&str]) -> ExitCode {
     let [base, ours, theirs, path, rest @ ..] = args else {
         eprintln!("usage: mock merge-registry <base> <ours> <theirs> <path> [<marker size>]");
         return ExitCode::from(2);

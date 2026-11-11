@@ -11,10 +11,9 @@ use std::path::PathBuf;
 use mockspace_store::{RefPair, RefStore, RetryPolicy};
 
 use super::*;
-use crate::config::Config;
-use crate::test_remote::Remote;
+use mockspace_store::test_support::Remote;
 
-pub(crate) const CONFIG: &str = r#"project_name = "fixture"
+pub const CONFIG: &str = r#"project_name = "fixture"
 crate_prefix = "fixture"
 
 [[registry.namespace]]
@@ -34,18 +33,18 @@ type = "string[]"
 description = "What was said."
 "#;
 
-pub(crate) const STORE_DECL: &str = "\n[[registry.store]]\ndir = \"ticket\"\n";
+pub const STORE_DECL: &str = "\n[[registry.store]]\ndir = \"ticket\"\n";
 
 /// A bare remote and any number of clones of it, each a project with the config above.
-pub(crate) struct World {
-    pub(crate) remote: Remote,
-    pub(crate) tmp:    PathBuf,
+pub struct World {
+    pub remote: Remote,
+    pub tmp:    PathBuf,
 }
 
-pub(crate) const TICKET_REF: &str = "refs/heads/mock/registry/ticket";
+pub const TICKET_REF: &str = "refs/heads/mock/registry/ticket";
 
 impl World {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let remote = Remote::new();
         let tmp = remote.tmp.path().to_path_buf();
         Self {
@@ -54,41 +53,48 @@ impl World {
         }
     }
 
-    /// A clone whose project mounts `ticket` on the ref (`mounted`) or keeps it in the tree.
-    pub(crate) fn clone_of(&self, name: &str, mounted: bool) -> Config {
+    /// The root of a clone whose project mounts `ticket` on the ref (`mounted`) or keeps it in
+    /// the tree, its config written.
+    pub fn project(&self, name: &str, mounted: bool) -> PathBuf {
         let root = self.remote.clone_dir(name);
         let config = format!("{CONFIG}{}", if mounted { STORE_DECL } else { "" });
         std::fs::write(root.join("mock/mockspace.toml"), config).unwrap();
-        let cfg = Config::from_dir(&root.join("mock"));
-        crate::registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
+        root
+    }
+
+    /// Such a clone, as the registry reads it, with its schemas generated.
+    pub fn env_of(&self, name: &str, mounted: bool) -> Env {
+        let root = self.project(name, mounted);
+        let cfg = Env::from_dir(&root.join("mock")).unwrap();
+        crate::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.namespaces);
         cfg
     }
 
-    pub(crate) fn remote_ref(&self) -> Option<String> {
+    pub fn remote_ref(&self) -> Option<String> {
         self.remote.tip(TICKET_REF)
     }
 
-    pub(crate) fn remote_file(&self, path: &str) -> Option<String> {
+    pub fn remote_file(&self, path: &str) -> Option<String> {
         self.remote.file(TICKET_REF, path)
     }
 }
 /// The ref-mounted stores of `cfg`, with no waiting between attempts.
-pub(crate) fn stores(cfg: &Config) -> RegistryStores {
+pub fn stores(cfg: &dyn RegistryEnv) -> RegistryStores {
     let pair = RefPair::branch_form("registry/ticket").unwrap();
-    let store = RefStore::new(&cfg.repo_root, "origin", pair).with_retry(RetryPolicy::immediate(4));
-    RegistryStores::directory(&cfg.mock_dir)
+    let store = RefStore::new(cfg.repo_root(), "origin", pair).with_retry(RetryPolicy::immediate(4));
+    RegistryStores::directory(cfg.mock_dir())
         .mount("ticket", Box::new(store))
         .unwrap()
 }
 
-pub(crate) fn row(id: &str, title: &str) -> String {
+pub fn row(id: &str, title: &str) -> String {
     format!("[[ticket]]\nid = \"{id}\"\ntitle = \"{title}\"\n\n")
 }
 
-pub(crate) fn put(rel: &str, text: &str) -> Vec<(String, Option<Vec<u8>>)> {
+pub fn put(rel: &str, text: &str) -> Vec<(String, Option<Vec<u8>>)> {
     vec![(rel.to_string(), Some(text.as_bytes().to_vec()))]
 }
 
-pub(crate) fn ids(reg: &Registry) -> Vec<String> {
+pub fn ids(reg: &Registry) -> Vec<String> {
     reg.rows.keys().cloned().collect()
 }

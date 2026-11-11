@@ -195,7 +195,7 @@ pub fn links_of(reg: &Registry, namespaces: &[RegistryNamespace], qualified: &st
 ///
 /// The registry stores each link once, on the row that states it, so there is
 /// no second place to keep in step. This is the tool that shows the other end.
-pub fn cmd_links(cfg: &crate::config::Config, id: &str) -> std::process::ExitCode {
+pub fn cmd_links(cfg: &dyn RegistryEnv, id: &str) -> std::process::ExitCode {
     use std::process::ExitCode;
 
     if id.trim().is_empty() {
@@ -209,7 +209,7 @@ pub fn cmd_links(cfg: &crate::config::Config, id: &str) -> std::process::ExitCod
             return ExitCode::FAILURE;
         },
     };
-    match links_report(&registry, &cfg.registry_namespaces, id) {
+    match links_report(&registry, cfg.namespaces(), id) {
         Ok(text) => {
             print!("{text}");
             ExitCode::SUCCESS

@@ -285,7 +285,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // three temp files, and needs no project: discovery, the gate and a lint
     // pack that may have to build are all work a merge must not wait on.
     if first_positional(&args) == Some("merge-registry") {
-        return crate::registry_merge::run(&subcommand_args(&args, "merge-registry"));
+        return crate::registry::merge::run(&subcommand_args(&args, "merge-registry"));
     }
 
     // Registering the drivers in the user's git config needs no project either.
@@ -766,7 +766,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 return ExitCode::SUCCESS;
             },
             "registry-append" => {
-                return crate::registry_append::run(&cfg, &subcommand_args(&args, "registry-append"));
+                return crate::registry::append::run(&cfg, &subcommand_args(&args, "registry-append"));
             },
             "data-refs" => {
                 return crate::data_refs::run(&cfg, &subcommand_args(&args, "data-refs"));
@@ -2304,7 +2304,8 @@ fn registry_gate(
     // The store lint verdicts live in, opened here as well because this phase runs before the lint
     // run opens its own; both are the same directory, salted by the same engine and pack.
     let verdicts = crate::lint::verdicts::DiskVerdicts::open(&pack.identity);
-    let saved = verdicts.as_ref().map(|v| v as &dyn mockspace_lint_rules::verdict::VerdictCache);
+    let saved = verdicts.as_ref().map(|v| registry::Saved(v));
+    let saved = saved.as_ref().map(|s| s as &dyn registry::VerdictCache);
     match registry::check_schemas(&cfg.repo_root, &cfg.registry_namespaces, saved) {
         registry::SchemaCheck::Ran {
             failures,

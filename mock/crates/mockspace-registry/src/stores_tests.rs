@@ -6,16 +6,17 @@
 //! Where the registry lives: the directory that stays the default, a directory mounted on a ref,
 //! and the `[[registry.store]]` declaration. Real git and a real bare repository throughout.
 
+use crate::RegistryEnv as _;
 use super::*;
-use crate::config::Config;
-use crate::registry::test_world::*;
-use crate::registry::{RegistryWriter, load_registry_from, load_registry_in_dir};
+use crate::Env;
+use crate::test_world::*;
+use crate::{RegistryWriter, load_registry_from, load_registry_in_dir};
 
 #[test]
 fn the_directory_stays_the_default_and_reads_as_it_always_did() {
     let w = World::new();
-    let cfg = w.clone_of("a", false);
-    assert!(cfg.registry_stores.is_empty());
+    let cfg = w.env_of("a", false);
+    assert!(cfg.stores.is_empty());
     let reg_dir = cfg.mock_dir.join("registry");
     for (rel, text) in [
         ("a.toml", row("one", "1")),
@@ -30,7 +31,7 @@ fn the_directory_stays_the_default_and_reads_as_it_always_did() {
     }
     let reg = load_registry_from(
         &cfg.registry_stores().unwrap(),
-        &cfg.registry_namespaces,
+        &cfg.namespaces,
         None,
     )
     .unwrap();
@@ -71,7 +72,7 @@ fn the_directory_stays_the_default_and_reads_as_it_always_did() {
 #[test]
 fn a_mounted_directory_hides_what_the_tree_still_holds_under_its_name() {
     let w = World::new();
-    let cfg = w.clone_of("a", true);
+    let cfg = w.env_of("a", true);
     let old = cfg.mock_dir.join("registry/ticket/old.toml");
     std::fs::create_dir_all(old.parent().unwrap()).unwrap();
     std::fs::write(&old, row("stale", "S")).unwrap();
@@ -80,7 +81,7 @@ fn a_mounted_directory_hides_what_the_tree_still_holds_under_its_name() {
     RegistryWriter::new(&cfg, &s)
         .write(&put("ticket/new.toml", &row("fresh", "F")), "m")
         .unwrap();
-    let reg = load_registry_from(&s, &cfg.registry_namespaces, None).unwrap();
+    let reg = load_registry_from(&s, &cfg.namespaces, None).unwrap();
     assert_eq!(ids(&reg), ["ticket::fresh", "ticket::kept"]);
     assert!(
         !reg.files_read.contains(&old),
@@ -91,7 +92,7 @@ fn a_mounted_directory_hides_what_the_tree_still_holds_under_its_name() {
 #[test]
 fn one_write_may_not_span_two_stores() {
     let w = World::new();
-    let cfg = w.clone_of("a", true);
+    let cfg = w.env_of("a", true);
     let s = stores(&cfg);
     let changes = [
         (
@@ -110,9 +111,9 @@ fn one_write_may_not_span_two_stores() {
 #[test]
 fn a_store_declaration_is_read() {
     let w = World::new();
-    let cfg = w.clone_of("a", true);
-    assert_eq!(cfg.registry_stores.len(), 1);
-    assert_eq!(cfg.registry_stores[0].dir.as_deref(), Some("ticket"));
+    let cfg = w.env_of("a", true);
+    assert_eq!(cfg.stores.len(), 1);
+    assert_eq!(cfg.stores[0].dir.as_deref(), Some("ticket"));
 }
 
 #[test]
@@ -122,13 +123,13 @@ fn a_misspelt_key_in_a_store_declaration_refuses_the_config_as_in_a_history() {
     let root = w.remote.clone_dir("a");
     let text = format!("{CONFIG}{STORE_DECL}fom = \"ref\"\n");
     std::fs::write(root.join("mock/mockspace.toml"), text).unwrap();
-    let _ = Config::from_dir(&root.join("mock"));
+    let _ = Env::from_dir(&root.join("mock")).unwrap();
 }
 
 #[test]
 fn a_store_declaration_with_no_directory_is_refused_at_open() {
     let w = World::new();
-    let cfg = w.clone_of("a", false);
+    let cfg = w.env_of("a", false);
     for dir in [None, Some(String::new()), Some("/".to_string())] {
         let decl = RefDecl {
             dir,
@@ -144,7 +145,7 @@ fn a_store_declaration_with_no_directory_is_refused_at_open() {
 #[test]
 fn a_form_that_is_neither_branch_nor_ref_is_refused_at_open() {
     let w = World::new();
-    let cfg = w.clone_of("a", false);
+    let cfg = w.env_of("a", false);
     let decl = RefDecl {
         dir: Some("ticket".into()),
         form: Some("both".into()),
@@ -159,9 +160,9 @@ fn a_form_that_is_neither_branch_nor_ref_is_refused_at_open() {
 #[test]
 fn a_registry_directory_that_cannot_be_read_is_an_error_and_never_an_empty_registry() {
     let w = World::new();
-    let cfg = w.clone_of("a", false);
+    let cfg = w.env_of("a", false);
     // the directory form of the loader, as the integration tests call it
-    let ok = load_registry_in_dir(&cfg.mock_dir, &cfg.registry_namespaces).unwrap();
+    let ok = load_registry_in_dir(&cfg.mock_dir, &cfg.namespaces).unwrap();
     assert!(
         ok.rows.is_empty(),
         "control: a project with no rows loads empty"
@@ -170,6 +171,6 @@ fn a_registry_directory_that_cannot_be_read_is_an_error_and_never_an_empty_regis
     let registry = cfg.mock_dir.join("registry");
     std::fs::remove_dir_all(&registry).ok();
     std::fs::write(&registry, "not a directory").unwrap();
-    let err = load_registry_in_dir(&cfg.mock_dir, &cfg.registry_namespaces).unwrap_err();
+    let err = load_registry_in_dir(&cfg.mock_dir, &cfg.namespaces).unwrap_err();
     assert!(matches!(err, RegistryStoreError::Store { .. }), "{err}");
 }

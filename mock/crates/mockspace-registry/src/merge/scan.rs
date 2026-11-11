@@ -29,7 +29,7 @@ use toml_edit::{ImDocument, Item, Table};
 
 /// What identifies a block.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) enum Key {
+pub enum Key {
     /// A `[[namespace]]` entry and its `id`.
     Row {
         ns: String,
@@ -52,25 +52,25 @@ impl std::fmt::Display for Key {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Block {
-    pub(crate) key:   Key,
-    pub(crate) chunk: String,
-    pub(crate) tail:  String,
+pub struct Block {
+    pub key:   Key,
+    pub chunk: String,
+    pub tail:  String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Doc {
-    pub(crate) head:   String,
-    pub(crate) blocks: Vec<Block>,
+pub struct Doc {
+    pub head:   String,
+    pub blocks: Vec<Block>,
 }
 
 /// Why a file is not cut into blocks. Every one of these sends the merge to
 /// git's own text merge, which is what happens without a driver.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Unsupported(pub(crate) String);
+pub struct Unsupported(pub(crate) String);
 
 impl Doc {
-    pub(crate) fn render(&self) -> String {
+    pub fn render(&self) -> String {
         let mut out = self.head.clone();
         for b in &self.blocks {
             out.push_str(&b.chunk);
@@ -79,7 +79,7 @@ impl Doc {
         out
     }
 
-    pub(crate) fn keys(&self) -> Vec<&Key> {
+    pub fn keys(&self) -> Vec<&Key> {
         self.blocks.iter().map(|b| &b.key).collect()
     }
 }
@@ -163,7 +163,7 @@ fn prefix_start(text: &str, header: usize, lower: usize) -> usize {
 }
 
 impl Doc {
-    pub(crate) fn parse(text: &str) -> Result<Doc, Unsupported> {
+    pub fn parse(text: &str) -> Result<Doc, Unsupported> {
         let im =
             ImDocument::parse(text).map_err(|e| Unsupported(format!("not valid TOML: {e}")))?;
         let mut headers = Vec::new();

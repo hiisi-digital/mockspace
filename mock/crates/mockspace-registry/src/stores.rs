@@ -281,19 +281,11 @@ pub(crate) fn is_registry_file(rel: &str) -> bool {
             .all(|d| !d.starts_with('.'))
 }
 
-impl crate::config::Config {
-    /// The stores of this project's registry: its directory, with each `[[registry.store]]`
-    /// directory mounted on its ref.
-    pub fn registry_stores(&self) -> Result<RegistryStores, RegistryStoreError> {
-        RegistryStores::from_decls(&self.mock_dir, &self.repo_root, &self.registry_stores)
-    }
-}
-
 /// Where a namespace is kept on a git ref: the one declaration of a store on a ref, read with the
 /// same strictness whether it holds registry files (`[[registry.store]]`) or test history
 /// (`[test.history]`), so a misspelt key refuses the config in both.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-#[cfg_attr(test, derive(serde::Serialize))]
+#[cfg_attr(any(test, feature = "test-support"), derive(serde::Serialize))]
 #[serde(default, deny_unknown_fields)]
 pub struct RefDecl {
     /// The directory under `<mock>/registry/` whose files the ref holds. A `[[registry.store]]`

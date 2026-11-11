@@ -3,91 +3,148 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-//! A registry of terms and concepts, resolved at doc-generation time.
+//! The engine's side of the registry.
 //!
-//! A project accumulates identifiers for the things its documents refer to:
-//! probes, measurements, constants, invariants, vocabulary. Without somewhere
-//! to hold them, each document family invents its own convention and the
-//! conventions drift. Worse, nothing can answer "what are all the X", and a
-//! gap is only visible against an enumeration.
-//!
-//! Data lives under `<mock>/registry/`, arbitrarily nested, every `*.toml`
-//! beneath it loaded. **A file's namespace is the array-of-tables key it
-//! declares, never its path.** That is what makes the nesting free: a project
-//! may file by subject (`registry/water.toml` holding `[[spike]]`, `[[bench]]`,
-//! and `[[constant]]` rows) and still query by kind.
-//!
-//! # Identity
-//!
-//! A row is identified by its namespace and a slug: `vocab::xpbd`,
-//! `spike::actuator_fit_converges`. Slugs are snake_case and unique within
-//! their namespace.
-//!
-//! That pair is the row's key path, and it is the whole of the row's identity.
-//! The files a registry is written in are no part of it: any number of
-//! `*.toml` files under any names and directories make one registry, and
-//! splitting a file, merging two, renaming one or moving a row to another
-//! changes nothing a reader, a check or a relation sees, except what `pathof`
-//! answers, which is that file. A namespace lists its
-//! rows by key path, never by the order of the files that hold them. One key
-//! path declared in two files is refused, with both files named, and where a
-//! row lives is only ever given as a place to look.
-//!
-//! Slugs rather than numbers because a number carries no meaning, and an
-//! identifier carrying no meaning has to be *managed*: never reused, never
-//! renumbered, never reordered, since any of those silently repoints every
-//! reference to it. A slug needs none of that discipline. It says what it
-//! refers to, it survives reordering, and it stays readable in prose.
-//!
-//! # References
-//!
-//! One syntax, `root::selector...`, covers both kinds:
-//!
-//! - `reg::vocab::xpbd` selects a row; `reg::vocab::xpbd::what` selects a field.
-//! - `seed::DESIGN::844` selects a line in a file, under a declared root.
-//!
-//! Both resolve at generation and both are checked, so a reference pointing
-//! nowhere is reported rather than rendered as something that looks fine.
-//!
-//! Designed for v2, prototyped here in v1. See
-//! `docs/REFERENCE-SYNTAX.md`.
-
-//! # Layout
-//!
-//! Split along the path a row takes rather than by size: it is loaded, its
-//! references are found, those are resolved, the result is rendered, and what
-//! a schema structurally cannot check is validated.
+//! The registry is the crate `mockspace-registry`: rows, their loading, checking, resolving and
+//! writing, usable without this engine. What is here is what the engine adds to it: its config
+//! as the environment the registry reads, the link a `crates::<name>` reference renders as, the
+//! view a lint is handed, and the saved verdicts of a lint run as the schema check's.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-mod bounds;
-mod load;
-mod model;
-mod refs;
-mod render;
-mod resolve;
-mod resolved;
-mod rowref;
-mod schema_replay;
-mod stores;
-#[cfg(test)]
-pub(crate) mod test_world;
-mod writer;
-pub(crate) mod validate;
+pub use mockspace_registry::*;
 
-pub use bounds::*;
-pub use load::*;
-pub use model::*;
-pub use refs::*;
-pub use render::*;
-pub use resolve::*;
-pub use resolved::*;
-pub use rowref::*;
-pub use stores::*;
-pub use writer::*;
-pub use validate::*;
+use crate::config::Config;
+
+impl RegistryEnv for Config {
+    fn repo_root(&self) -> &Path {
+        &self.repo_root
+    }
+
+    fn mock_dir(&self) -> &Path {
+        &self.mock_dir
+    }
+
+    fn docs_dir(&self) -> &Path {
+        &self.docs_dir
+    }
+
+    fn namespaces(&self) -> &[RegistryNamespace] {
+        &self.registry_namespaces
+    }
+
+    fn stores(&self) -> &[RefDecl] {
+        &self.registry_stores
+    }
+
+    fn roots(&self) -> &BTreeMap<String, String> {
+        &self.registry_roots
+    }
+
+    fn frozen_roots(&self) -> &BTreeSet<String> {
+        &self.frozen_roots
+    }
+
+    fn prose_roots(&self) -> &BTreeMap<String, String> {
+        &self.prose_roots
+    }
+
+    fn internal_roots(&self) -> &BTreeSet<String> {
+        &self.internal_roots
+    }
+
+    /// Accepts the short name or the full directory name, since the prefix is stable and
+    /// repeating it at every reference buys nothing.
+    fn crate_link(&self, name: &str, docs_dir: &Path) -> Option<String> {
+        let cfg = self;
+        let prefixed = format!("{}-{name}", cfg.crate_prefix);
+        // Searched across every source directory: a reference names a crate, not a
+        // crate in a particular group, and resolving only against the first would
+        // silently fail to link anything outside it.
+        let found = cfg.src_dirs.iter().find_map(|d| {
+            if d.join(name).is_dir() {
+                Some(name.to_string())
+            } else if d.join(&prefixed).is_dir() {
+                Some(prefixed.clone())
+            } else {
+                None
+            }
+        });
+        let dir = found?;
+        let short = dir
+            .strip_prefix(&format!("{}-", cfg.crate_prefix))
+            .unwrap_or(&dir)
+            .to_string();
+        // Look the name up rather than glob for it. The docs directory is cleaned
+        // at the start of a run and refilled during it, so a glob answers "has this
+        // been written yet" rather than "what is this crate's document", and a
+        // reference from a crate rendered early to one rendered later resolved to
+        // nothing at all.
+        if let Some(file) = cfg.doc_index.crate_doc(&short) {
+            return Some(format!("[{short}]({}{file})", cfg.doc_link_prefix));
+        }
+        // Fall back to the glob for a caller that has not computed the map, which
+        // is every test and any path that resolves before generation.
+        let stem = short.to_uppercase().replace('-', "_");
+        let file = fs::read_dir(docs_dir)
+            .ok()?
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .find(|f| f.ends_with(&format!("{stem}.md")))?;
+        Some(format!("[{short}]({file})"))
+    }
+
+    fn crate_dir(&self, name: &str) -> Option<PathBuf> {
+        let prefixed = format!("{}-{name}", self.crate_prefix);
+        // Across every source directory, for the same reason as `crate_link`: the expression
+        // names a crate, not a group.
+        [name.to_string(), prefixed]
+            .into_iter()
+            .find_map(|name| self.src_dirs.iter().map(|d| d.join(&name)).find(|d| d.is_dir()))
+    }
+}
+
+/// The saved verdicts of a lint run, as the store the registry's schema check replays from.
+pub struct Saved<'a>(pub &'a dyn mockspace_lint_rules::verdict::VerdictCache);
+
+impl VerdictCache for Saved<'_> {
+    fn digest(&self, parts: &[&[u8]]) -> String {
+        self.0.digest(parts)
+    }
+
+    fn replay(&self, key: &str) -> Option<String> {
+        self.0.replay(key)
+    }
+
+    fn remember(&self, key: &str, encoded: &str) {
+        self.0.remember(key, encoded);
+    }
+
+    fn tally(&self, hit: bool, what: &str) {
+        self.0.tally(hit, what);
+    }
+}
+
+/// The flattened, reverse-edged view a lint or a tool checks the registry with.
+///
+/// Built here rather than in the lint crate because computing the reverse edges needs the
+/// declared field types, which are configuration. Handing over the answer keeps that knowledge
+/// in one place, and a lint asking "what references this" cannot get a different answer from
+/// `refsto` in a document.
+pub fn build_view(reg: &Registry, namespaces: &[RegistryNamespace]) -> mockspace_lint_rules::RegistryView {
+    let rows: BTreeMap<String, mockspace_lint_rules::RowFields> =
+        reg.rows.iter().map(|(q, row)| (q.clone(), row.fields.clone())).collect();
+    mockspace_lint_rules::RegistryView::new(rows, reverse_edges(reg, namespaces))
+}
+
+#[cfg(test)]
+#[path = "schema_replay_tests.rs"]
+mod schema_replay_tests;
+#[cfg(test)]
+pub(crate) mod engine_world;
+
 
 #[cfg(test)]
 mod tests {
@@ -1470,89 +1527,3 @@ mod tests {
     }
 }
 
-/// Answer one reference expression from the command line.
-///
-/// The same syntax documents use, resolved by the same code, shown for a
-/// terminal instead of for a markdown parser. That identity is the point: an
-/// expression worked out at a prompt while thinking about a design pastes into
-/// a document unchanged, and a reference in a document can be run to see what
-/// it will say.
-///
-/// The alternative, a query path with a syntax of its own, would be two
-/// languages to learn and two resolvers to keep in agreement.
-pub fn cmd_query(cfg: &crate::config::Config, expr: &str) -> std::process::ExitCode {
-    use std::process::ExitCode;
-
-    if expr.trim().is_empty() {
-        eprintln!("usage: cargo mock query '<expression>'");
-        eprintln!();
-        eprintln!("  law                              a namespace, as a table");
-        eprintln!("  law::keys                        one row");
-        eprintln!("  law::keys::statement             one field");
-        eprintln!("  law.where(crates~store)          rows whose field contains a value");
-        eprintln!("  law.where(status=settled)        rows whose field is exactly a value");
-        eprintln!("  law.select(id,statement)         only these columns");
-        eprintln!("  law.where(...).count()           how many");
-        eprintln!("  pathof(law::keys)                where it is declared");
-        eprintln!("  sourcesof(law::keys)             what it rests on");
-        eprintln!();
-        eprintln!("Every one of these is valid in a document template too.");
-        return ExitCode::FAILURE;
-    }
-
-    let namespaces = &cfg.registry_namespaces;
-    let registry = match cfg.registry_stores().and_then(|s| load_registry_for_expr_from(&s, namespaces, expr)) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return ExitCode::FAILURE;
-        },
-    };
-    let (registry, _) = resolve_data(
-        namespaces,
-        &registry,
-        &cfg.registry_roots,
-        &cfg.repo_root,
-        &cfg.docs_dir,
-        cfg,
-    );
-    let by_key: std::collections::BTreeMap<&str, &RegistryNamespace> =
-        namespaces.iter().map(|n| (n.key.as_str(), n)).collect();
-
-    match resolve_typed(
-        expr.trim(),
-        &by_key,
-        &registry,
-        &cfg.registry_roots,
-        &cfg.repo_root,
-        &cfg.docs_dir,
-        cfg,
-    ) {
-        Some(found) => {
-            print!("{}", found.to_terminal());
-            ExitCode::SUCCESS
-        },
-        None => {
-            // The same answer a document gets, said out loud. A reference that
-            // resolves to nothing is reported rather than rendered as something
-            // plausible, and that holds here too.
-            eprintln!("no result: `{}` does not resolve", expr.trim());
-
-            // Say what was available rather than only that something was not.
-            // A query naming a column that does not exist is the common
-            // mistake, and the columns are right there to list.
-            let base = expr.trim().split(['.', ':']).next().unwrap_or("").trim();
-            if let Some(ns) = namespaces.iter().find(|n| n.key == base) {
-                let (columns, rows) = table_cells(ns, &registry);
-                eprintln!("`{base}` has {} rows and these columns:", rows.len());
-                eprintln!("  {}", columns.join(", "));
-            } else {
-                let known: Vec<&str> = namespaces.iter().map(|n| n.key.as_str()).collect();
-                if !known.is_empty() {
-                    eprintln!("namespaces: {}", known.join(", "));
-                }
-            }
-            ExitCode::FAILURE
-        },
-    }
-}

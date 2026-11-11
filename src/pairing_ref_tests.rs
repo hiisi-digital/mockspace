@@ -12,7 +12,7 @@ use mockspace_store::{Edit, Reapply, RefPair, RefStore, Store};
 
 use super::*;
 use crate::pairing::{DEFAULT_WINDOW_SECS, tree_digest};
-use crate::test_remote::{Remote, git};
+use mockspace_store::test_support::{Remote, git};
 
 const T1: &str = "id = \"t1\"\n";
 const T2: &str = "id = \"t2\"\n";

@@ -22,7 +22,7 @@
 //! (`a_known_gap_the_writer_lets_a_row_a_document_names_be_removed`)
 //!
 //! When another writer moves a ref first, the merge driver of registry files
-//! (`registry_merge`) is the race handler: it merges the file as it was when this write began,
+//! (`merge`) is the race handler: it merges the file as it was when this write began,
 //! as this write left it and as the winner left it, by row. The checks then run again on the
 //! merged result, so a rebase cannot land what the first attempt would have been refused.
 
@@ -32,7 +32,7 @@ use mockspace_store::{Applied, Edit, MergeHook, MergeRefusal, Reader};
 
 use super::stores::is_registry_file;
 use super::*;
-use crate::config::Config;
+use crate::RegistryEnv;
 
 /// One file of the registry and its text, `None` where it is not text.
 type Files = Vec<(String, Option<String>)>;
@@ -42,14 +42,14 @@ type Files = Vec<(String, Option<String>)>;
 const SCHEMA_FINDING: &str = "[schema] the registry does not match its schema";
 
 pub struct RegistryWriter<'a> {
-    cfg:           &'a Config,
+    cfg:           &'a dyn RegistryEnv,
     stores:        &'a RegistryStores,
     /// The lines the last schema check failed with, for the refusal that names it.
     schema_detail: std::cell::RefCell<Vec<String>>,
 }
 
 impl<'a> RegistryWriter<'a> {
-    pub fn new(cfg: &'a Config, stores: &'a RegistryStores) -> Self {
+    pub fn new(cfg: &'a dyn RegistryEnv, stores: &'a RegistryStores) -> Self {
         Self {
             cfg,
             stores,
@@ -159,22 +159,22 @@ impl<'a> RegistryWriter<'a> {
         let cfg = self.cfg;
         let scratch = Scratch::new();
         let mock_rel = cfg
-            .mock_dir
-            .strip_prefix(&cfg.repo_root)
+            .mock_dir()
+            .strip_prefix(cfg.repo_root())
             .unwrap_or(std::path::Path::new("mock"));
         let laid = (|| -> std::io::Result<()> {
             std::fs::copy(
-                cfg.repo_root.join(".taplo.toml"),
+                cfg.repo_root().join(".taplo.toml"),
                 scratch.0.join(".taplo.toml"),
             )?;
             let schemas = |root: &std::path::Path| {
-                crate::build_dir::target_dir(root)
+                crate::env::target_dir(root)
                     .join("mockspace")
                     .join("registry-schemas")
             };
             let to = schemas(&scratch.0);
             std::fs::create_dir_all(&to)?;
-            for e in std::fs::read_dir(schemas(&cfg.repo_root))? {
+            for e in std::fs::read_dir(schemas(cfg.repo_root()))? {
                 let e = e?;
                 std::fs::copy(e.path(), to.join(e.file_name()))?;
             }
@@ -191,12 +191,12 @@ impl<'a> RegistryWriter<'a> {
                 "[schema-unavailable] the registry could not be laid out for the schema check: {e}"
             )];
         }
-        match check_schemas(&scratch.0, &cfg.registry_namespaces, None) {
+        match check_schemas(&scratch.0, cfg.namespaces(), None) {
             SchemaCheck::Ran { failures } => {
                 // taplo's log is not the same twice: a line it writes in one run is missing from the
                 // next, and it names the copy it read. Only whether it failed is stable, so that is the
                 // finding, and the lines are kept aside to be shown with a refusal.
-                let (scratch_root, tree_root) = (scratch.0.to_string_lossy(), cfg.repo_root.to_string_lossy());
+                let (scratch_root, tree_root) = (scratch.0.to_string_lossy(), cfg.repo_root().to_string_lossy());
                 let mut seen = BTreeSet::new();
                 let lines: Vec<String> = failures
                     .into_iter()
@@ -242,7 +242,7 @@ impl<'a> RegistryWriter<'a> {
         let cfg = self.cfg;
         let mut out = Vec::new();
         let known: BTreeSet<&str> = cfg
-            .registry_namespaces
+            .namespaces()
             .iter()
             .map(|n| n.key.as_str())
             .collect();
@@ -271,17 +271,17 @@ impl<'a> RegistryWriter<'a> {
         let reg = rows_of_texts(
             self.stores.root(),
             files.clone(),
-            &cfg.registry_namespaces,
+            cfg.namespaces(),
             None,
         );
-        let ns = &cfg.registry_namespaces;
+        let ns = cfg.namespaces();
         let findings = validate(ns, &reg)
             .into_iter()
             .chain(validate_row_references(&reg, ns))
             .chain(validate_provenance(
-                &cfg.repo_root,
-                &cfg.registry_roots,
-                &cfg.frozen_roots,
+                cfg.repo_root(),
+                cfg.roots(),
+                cfg.frozen_roots(),
                 &reg,
                 ns,
             ));
@@ -291,9 +291,9 @@ impl<'a> RegistryWriter<'a> {
             let (_, cycles) = resolve_data(
                 ns,
                 &reg,
-                &cfg.registry_roots,
-                &cfg.repo_root,
-                &cfg.docs_dir,
+                cfg.roots(),
+                cfg.repo_root(),
+                cfg.docs_dir(),
                 cfg,
             );
             out.extend(
@@ -357,7 +357,7 @@ fn refuse_new(old: &[String], new: Vec<String>) -> Result<(), RegistryStoreError
     if fresh.is_empty() { Ok(()) } else { Err(RegistryStoreError::Refused(fresh)) }
 }
 
-/// The race handler: `registry_merge` over each file the write touched, then the checks again.
+/// The race handler: the merge over each file the write touched, then the checks again.
 struct Race<'a, 'b> {
     writer:  &'b RegistryWriter<'a>,
     /// The directory the store holds, `.` for the tree.
@@ -399,11 +399,11 @@ impl MergeHook for Race<'_, '_> {
                 (Some(b), Some(t)) => {
                     let ours = std::str::from_utf8(b)
                         .map_err(|_| refuse(format!("{rel} is not UTF-8")))?;
-                    let out = crate::registry_merge::merge_text(
+                    let out = crate::merge::merge_text(
                         base.as_deref().unwrap_or(""),
                         ours,
                         t,
-                        crate::registry_merge::DEFAULT_MARKER,
+                        crate::merge::DEFAULT_MARKER,
                     )
                     .map_err(|why| refuse(format!("{rel}: {}", why.0)))?;
                     if out.conflicts > 0 {

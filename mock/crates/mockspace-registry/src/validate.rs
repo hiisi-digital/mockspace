@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-use mockspace_lint_rules::verdict::VerdictCache;
+use crate::VerdictCache;
 
 use super::*;
 
@@ -274,7 +274,7 @@ const FIELD_KEYS: &[&str] =
 /// it configures stayed off while the config plainly said otherwise. That cost
 /// a debugging cycle to find and would have cost more had the feature been one
 /// whose absence is quiet.
-pub(crate) const REF_ROOT_KEYS: &[&str] = &["path", "frozen", "links", "label", "internal"];
+pub const REF_ROOT_KEYS: &[&str] = &["path", "frozen", "links", "label", "internal"];
 
 /// Keys the document **root** may carry. Mirrors `RawConfig`, plus the one
 /// section it deliberately does not deserialize.
@@ -292,7 +292,7 @@ pub(crate) const REF_ROOT_KEYS: &[&str] = &["path", "frozen", "links", "label", 
 /// `lints` is here because `config.rs` reads it through `toml_edit` directly
 /// rather than through `RawConfig`, its values being heterogeneous. It is a
 /// real key and belongs in the list; the test below knows it is the exception.
-pub(crate) const ROOT_KEYS: &[&str] = &[
+pub const ROOT_KEYS: &[&str] = &[
     "project_name",
     "crate_prefix",
     "abi_version",
@@ -541,7 +541,7 @@ pub fn check_schemas(
 }
 
 /// [`check_schemas`] with the validator named, so a test can stand a counting one in for taplo.
-pub(crate) fn check_schemas_with(
+pub fn check_schemas_with(
     program: &std::ffi::OsStr,
     repo_root: &Path,
     namespaces: &[RegistryNamespace],
@@ -639,7 +639,7 @@ pub(crate) fn check_schemas_with(
 /// It logs `found files total=N excluded=M`, and what was checked is the
 /// difference. Absent from the output, the count is unknown rather than zero,
 /// so a taplo that stops logging it does not start failing every run.
-pub(crate) fn files_examined(stderr: &str) -> Option<usize> {
+pub fn files_examined(stderr: &str) -> Option<usize> {
     let line = stderr.lines().find(|l| l.contains("found files total="))?;
     let get = |key: &str| -> Option<usize> {
         let at = line.find(key)? + key.len();
@@ -681,7 +681,7 @@ pub fn unresolved_in_generated(text: &str) -> Vec<String> {
         if in_fence {
             continue;
         }
-        for (raw, _) in crate::registry::placeholder_exprs(line) {
+        for (raw, _) in crate::placeholder_exprs(line) {
             out.push(raw);
         }
     }
@@ -759,7 +759,7 @@ pub fn namespace_root_collisions(
         // fail worse than a root collision does. A namespace named `crates` is
         // shadowed silently. One named `reg` rewrites `reg::x` into
         // `reg::reg::x` on every pass and never terminates.
-        if crate::registry::RESERVED_ROOTS.contains(&ns.key.as_str()) {
+        if crate::RESERVED_ROOTS.contains(&ns.key.as_str()) {
             out.push(RegistryFinding {
                 kind: "namespace-reserved-name",
                 message: format!(

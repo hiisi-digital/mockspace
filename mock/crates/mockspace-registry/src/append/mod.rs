@@ -22,8 +22,8 @@ mod tests;
 
 use std::process::ExitCode;
 
-use crate::config::Config;
-use crate::registry::{RegistryStores, RegistryWriter, load_registry_from};
+use crate::RegistryEnv;
+use crate::{RegistryStores, RegistryWriter, load_registry_from};
 
 const USAGE: &str = "usage: cargo mock registry-append <namespace>::<id> <field> <value> [--local]";
 
@@ -57,9 +57,9 @@ fn parse<'a>(args: &[&'a str]) -> Result<Ask<'a>, String> {
 
 /// The file that holds the row, as a path under the registry root, after the namespace and
 /// the field are checked against what the project declares.
-fn file_of(cfg: &Config, stores: &RegistryStores, ask: &Ask<'_>) -> Result<String, String> {
+fn file_of(cfg: &dyn RegistryEnv, stores: &RegistryStores, ask: &Ask<'_>) -> Result<String, String> {
     let namespace = cfg
-        .registry_namespaces
+        .namespaces()
         .iter()
         .find(|n| n.key == ask.ns)
         .ok_or_else(|| format!("no registry namespace `{}` is declared", ask.ns))?;
@@ -74,7 +74,7 @@ fn file_of(cfg: &Config, stores: &RegistryStores, ask: &Ask<'_>) -> Result<Strin
             ask.ns, ask.field, declared.r#type
         ));
     }
-    let reg = load_registry_from(stores, &cfg.registry_namespaces, None).map_err(|e| e.to_string())?;
+    let reg = load_registry_from(stores, cfg.namespaces(), None).map_err(|e| e.to_string())?;
     let source = reg
         .get(&format!("{}::{}", ask.ns, ask.id))
         .map(|r| r.source.clone())
@@ -85,7 +85,7 @@ fn file_of(cfg: &Config, stores: &RegistryStores, ask: &Ask<'_>) -> Result<Strin
 }
 
 /// The subcommand. `args` follow `registry-append`.
-pub(crate) fn run(cfg: &Config, args: &[&str]) -> ExitCode {
+pub fn run(cfg: &dyn RegistryEnv, args: &[&str]) -> ExitCode {
     match step(cfg, args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -95,7 +95,7 @@ pub(crate) fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     }
 }
 
-fn step(cfg: &Config, args: &[&str]) -> Result<(), String> {
+fn step(cfg: &dyn RegistryEnv, args: &[&str]) -> Result<(), String> {
     let ask = parse(args)?;
     let stores = cfg.registry_stores().map_err(|e| e.to_string())?;
     let rel = file_of(cfg, &stores, &ask)?;
@@ -103,12 +103,12 @@ fn step(cfg: &Config, args: &[&str]) -> Result<(), String> {
     // what it wrote there would be lost: the write goes through the writer.
     let kept_on_a_ref = stores.route(&rel).1 != ".";
     if !ask.local && !kept_on_a_ref {
-        if let Some(delegate) = hook::find(&cfg.repo_root) {
+        if let Some(delegate) = hook::find(cfg.repo_root()) {
             let target = format!("{}::{}", ask.ns, ask.id);
             let taken = hook::run(
                 &delegate,
-                &cfg.repo_root,
-                &cfg.mock_dir,
+                cfg.repo_root(),
+                cfg.mock_dir(),
                 &target,
                 ask.field,
                 ask.value,

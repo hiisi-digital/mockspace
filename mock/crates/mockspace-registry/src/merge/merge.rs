@@ -22,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::scan::{Block, Doc, Key};
 
-pub(crate) struct Outcome {
+pub struct Outcome {
     pub(crate) text:      String,
     pub(crate) conflicts: usize,
     pub(crate) keys:      Vec<Key>,

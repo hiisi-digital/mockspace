@@ -7,7 +7,7 @@
 //!
 //! Two branches that each add a row to the same spot of a registry file touch
 //! the same lines and conflict as text, though they agree on everything that
-//! matters. `mock merge-registry` (see [`crate::registry_merge`]) merges by what
+//! matters. `mock merge-registry` (see [`crate::registry::merge`]) merges by what
 //! a row is, and this wires git to call it for every `*.toml` under
 //! `<mock>/registry/`, at any depth, since the loader reads them all by their
 //! `[[namespace]]` key and never by what the file is called.

@@ -39,6 +39,8 @@ mod ref_store;
 mod refs;
 mod retry;
 mod store;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 
 pub use dir::DirStore;
 pub use edit::Edit;

@@ -228,7 +228,7 @@ pub(crate) fn run(
     } else {
         None
     };
-    let registry = match crate::registry::load_registry_for(&cfg) {
+    let registry = match crate::registry::load_registry_for(cfg) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error: {e}");

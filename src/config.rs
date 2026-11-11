@@ -150,7 +150,7 @@ pub struct Config {
     /// (`DESIGN`, `IDENTITY`). These sort first. Everything else that is not
     /// generated from a crate sorts last, as supplementary material.
     pub primary_docs:           Vec<String>,
-    /// Named roots for registry provenance references. See `RawRegistry::roots`.
+    /// Named roots for registry provenance references. See `registry::RefRoot`.
     pub registry_roots:         BTreeMap<String, String>,
     /// Roots declared frozen. Line citations into any other root are reported
     /// as fragile.
@@ -515,59 +515,6 @@ struct RawModeSignalToml {
     mode:   Option<String>,
 }
 
-/// One declared reference root. A table rather than a bare string so a root
-/// can gain options without breaking every project that declared one.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[cfg_attr(test, derive(serde::Serialize))]
-#[serde(default)]
-struct RawRefRoot {
-    path:   String,
-    /// Whether this root's contents are settled and will not shift.
-    ///
-    /// Line citations are only honest into a frozen root. Everywhere else an
-    /// edit above a cited line silently repoints it, which is the failure this
-    /// project treats as worst: the check passes and the answer is wrong.
-    /// Declaring a root frozen is a claim that its files do not move, and it
-    /// is what turns a line citation from a hazard into a fact.
-    frozen: bool,
-
-    /// Whether a citation into this root renders as a link.
-    ///
-    /// Defaults to true. The question is never whether a root lives under the
-    /// design workspace, since a crate and a bibliography entry both do and
-    /// both render perfectly well for a reader who has only the published
-    /// tree. The question is whether the rendered form leaks an internal path.
-    /// A research corpus does; setting this false renders the citation as
-    /// prose under `label`, so the provenance survives in the document without
-    /// the path doing so.
-    #[serde(default = "default_root_links")]
-    links: bool,
-
-    /// What this root is called in prose when it does not render as a link.
-    /// `seed` is an internal handle that means nothing to a reader; "Prior
-    /// research" is what it actually is.
-    label: Option<String>,
-
-    /// Whether citations into this root are dropped from generated documents.
-    ///
-    /// Stronger than `links = false`, which keeps the citation and renders it
-    /// as prose. Some roots are worth citing in the source and worth nothing
-    /// in the result: a reader who cannot open the corpus gains nothing from
-    /// being told a row came from it, and a provenance column that says
-    /// "Prior research" on every row says nothing on any of them.
-    ///
-    /// Filtering is per item rather than per cell, so a row citing both this
-    /// root and a public one keeps the public citation. A cell left empty by
-    /// filtering renders empty, and a column left empty across every row drops
-    /// entirely, which is the existing rule for a column no row carries.
-    #[serde(default)]
-    internal: bool,
-}
-
-fn default_root_links() -> bool {
-    true
-}
-
 #[derive(Debug, Default, Deserialize)]
 #[cfg_attr(test, derive(serde::Serialize))]
 #[serde(default)]
@@ -575,19 +522,9 @@ struct RawRef {
     /// Named roots a citation may use, relative to the repository root. The
     /// root name is what disambiguates a project's own document from a corpus
     /// it indexes when both are called the same thing.
-    roots: BTreeMap<String, RawRefRoot>,
+    roots: BTreeMap<String, crate::registry::RefRoot>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[cfg_attr(test, derive(serde::Serialize))]
-#[serde(default)]
-struct RawRegistry {
-    #[serde(rename = "namespace")]
-    namespace: Vec<crate::registry::RegistryNamespace>,
-    /// Directories of the registry kept on a git ref instead of the tree.
-    #[serde(rename = "store")]
-    store: Vec<crate::registry::RefDecl>,
-}
 
 #[derive(Deserialize, Default)]
 #[cfg_attr(test, derive(serde::Serialize))]
@@ -663,7 +600,7 @@ struct RawConfig {
     /// to by identifier. Absent means the project does not use the registry,
     /// which must stay a no-cost default.
     #[serde(default)]
-    registry: Option<RawRegistry>,
+    registry: Option<crate::registry::RegistryDecl>,
 
     /// Directories of the mock directory kept on a git ref. See `crate::data_refs`.
     #[serde(default, rename = "data_ref")]
@@ -1129,26 +1066,21 @@ impl Config {
             panel_discipline: raw_agent.agent_panel_discipline.unwrap_or(false),
         };
 
-        // Builtins first, then the project's own, so a project may repoint a
-        // builtin root but never has to declare one to get started.
-        let mock_rel = mock_dir
-            .strip_prefix(&repo_root)
-            .unwrap_or(&mock_dir)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let mut registry_roots_raw = crate::registry::builtin_roots(&mock_rel);
-        if let Some(r) = raw.ref_cfg.as_ref() {
-            for (name, root) in &r.roots {
-                registry_roots_raw.insert(name.clone(), root.path.clone());
-            }
-        }
         let auto_fmt = clone_says(&repo_root, "autoFmt")
             .or(raw.auto_fmt)
             .unwrap_or(true);
         let auto_clippy_fix = clone_says(&repo_root, "autoClippyFix")
             .or(raw.auto_clippy_fix)
             .unwrap_or(true);
-        let registry_decl = raw.registry.take().unwrap_or_default();
+        // What the registry reads of the project is derived once, by the registry.
+        let no_roots = BTreeMap::new();
+        let registry_env = crate::registry::Env::from_parts(
+            repo_root.clone(),
+            mock_dir.clone(),
+            docs_dir.clone(),
+            raw.registry.take().unwrap_or_default(),
+            raw.ref_cfg.as_ref().map_or(&no_roots, |r| &r.roots),
+        );
         Config {
             mock_dir,
             crates_dir,
@@ -1168,46 +1100,16 @@ impl Config {
             unprefixed_crates: raw.unprefixed_crates,
             abi_version: raw.abi_version.unwrap_or(1),
             nuke_marker: DEFAULT_NUKE_MARKER.to_string(),
-            registry_namespaces: crate::registry::with_builtins(&registry_decl.namespace),
-            registry_stores: registry_decl.store,
+            registry_namespaces: registry_env.namespaces,
+            registry_stores: registry_env.stores,
             data_refs: raw.data_refs.clone(),
             deep_dive_index: raw.deep_dive_index.unwrap_or(false),
             ordered_docs: raw.ordered_docs.unwrap_or(false),
             primary_docs: raw.primary_docs,
-            registry_roots: registry_roots_raw,
-            prose_roots: raw
-                .ref_cfg
-                .as_ref()
-                .map(|r| {
-                    r.roots
-                        .iter()
-                        .filter(|(_, v)| !v.links)
-                        .map(|(k, v)| (k.clone(), v.label.clone().unwrap_or_else(|| k.clone())))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            internal_roots: raw
-                .ref_cfg
-                .as_ref()
-                .map(|r| {
-                    r.roots
-                        .iter()
-                        .filter(|(_, v)| v.internal)
-                        .map(|(k, _)| k.clone())
-                        .collect()
-                })
-                .unwrap_or_default(),
-            frozen_roots: raw
-                .ref_cfg
-                .as_ref()
-                .map(|r| {
-                    r.roots
-                        .iter()
-                        .filter(|(_, v)| v.frozen)
-                        .map(|(k, _)| k.clone())
-                        .collect()
-                })
-                .unwrap_or_default(),
+            registry_roots: registry_env.roots,
+            prose_roots: registry_env.prose_roots,
+            internal_roots: registry_env.internal_roots,
+            frozen_roots: registry_env.frozen_roots,
             install_git_hooks,
             install_cargo_config,
             install_agent_files,
@@ -2353,12 +2255,12 @@ mod key_lists_cannot_rot {
 
     #[test]
     fn every_key_a_ref_root_carries_is_in_ref_root_keys() {
-        let keys = declared_keys(&RawRefRoot::default());
+        let keys = declared_keys(&crate::registry::RefRoot::default());
         assert!(!keys.is_empty(), "control: the instance declares something");
         for k in &keys {
             assert!(
                 crate::registry::validate::REF_ROOT_KEYS.contains(&k.as_str()),
-                "`{k}` is a field of RawRefRoot and is missing from REF_ROOT_KEYS, so a \
+                "`{k}` is a field of RefRoot and is missing from REF_ROOT_KEYS, so a \
                  config declaring it would be reported as unknown and fail the gate"
             );
         }
@@ -2368,11 +2270,11 @@ mod key_lists_cannot_rot {
     fn ref_root_keys_names_nothing_the_struct_dropped() {
         // the other direction. a key left in the list after its field went
         // away is a key the check silently permits forever.
-        let keys = declared_keys(&RawRefRoot::default());
+        let keys = declared_keys(&crate::registry::RefRoot::default());
         for k in crate::registry::validate::REF_ROOT_KEYS {
             assert!(
                 keys.iter().any(|e| e == k),
-                "REF_ROOT_KEYS names `{k}`, which RawRefRoot no longer carries"
+                "REF_ROOT_KEYS names `{k}`, which RefRoot no longer carries"
             );
         }
     }

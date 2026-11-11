@@ -405,24 +405,13 @@ mod render_tests;
 #[cfg(test)]
 mod tests;
 
-/// The flattened, reverse-edged view a lint or a tool checks the registry with.
+/// For each row that is referenced, the rows that reference it, sorted and each once.
 ///
-/// Built here rather than in the lint crate because computing the reverse edges
-/// needs the declared field types, which are configuration. Handing over the
-/// answer keeps that knowledge in one place, and a lint asking "what references
-/// this" cannot get a different answer from `refsto` in a document.
-pub fn build_view(
-    reg: &Registry,
-    namespaces: &[RegistryNamespace],
-) -> mockspace_lint_rules::RegistryView {
-    let rows: BTreeMap<String, mockspace_lint_rules::RowFields> = reg
-        .rows
-        .iter()
-        .map(|(q, row)| (q.clone(), row.fields.clone()))
-        .collect();
-    // One pass over every edge rather than `referrers` per row, which would be
-    // quadratic on a corpus of a few thousand rows. Same definition of an edge
-    // either way, because both go through `for_each_edge`.
+/// One pass over every edge rather than `referrers` per row, which would be quadratic on a
+/// corpus of a few thousand rows. Same definition of an edge either way, because both go
+/// through `for_each_edge`, so a check asking "what references this" cannot get a different
+/// answer from `refsto` in a document.
+pub fn reverse_edges(reg: &Registry, namespaces: &[RegistryNamespace]) -> BTreeMap<String, Vec<String>> {
     let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for_each_edge(reg, namespaces, |target, source| {
         edges.entry(target).or_default().push(source);
@@ -431,5 +420,5 @@ pub fn build_view(
         v.sort();
         v.dedup();
     }
-    mockspace_lint_rules::RegistryView::new(rows, edges)
+    edges
 }

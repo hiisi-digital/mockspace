@@ -13,7 +13,7 @@ use mockspace_store::{RefPair, RefStore, RetryPolicy, StoreError};
 use super::*;
 use crate::config::Config;
 use crate::suite::history::{Green, TestRecord};
-use crate::test_remote::{Remote, git};
+use mockspace_store::test_support::{Remote, git};
 
 const REF: &str = "refs/heads/mock/test-history";
 

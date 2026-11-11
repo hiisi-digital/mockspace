@@ -156,8 +156,7 @@ fn a_link_is_a_reverse_edge() {
     let nss = [ns("slot", &[]), ns("answer", &[("related", "ref[]")])];
     let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("related", "slot::display")])]);
     assert_eq!(referrers(&r, &nss, "slot::display"), ["answer::niri"]);
-    let view = build_view(&r, &nss);
-    assert_eq!(view.referrers("slot::display"), ["answer::niri"]);
+    assert_eq!(reverse_edges(&r, &nss).get("slot::display").cloned().unwrap_or_default(), ["answer::niri"]);
 }
 
 /// The control: a link to a row nothing declares is no edge, as a typed
@@ -245,8 +244,8 @@ fn the_report_refuses_what_is_not_a_row() {
 fn a_link_cell_renders_as_the_slug_of_the_row_it_names() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("related", "ref[]")])];
     let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("related", "slot::display")])]);
-    let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
-    cfg.registry_namespaces = nss.clone();
+    let mut cfg = crate::Env::from_dir(Path::new("/nonexistent")).unwrap();
+    cfg.namespaces = nss.clone();
     let table = render_table(&nss[1], &r, &cfg);
     let rendered = resolve_all(
         &table,
@@ -266,8 +265,8 @@ fn a_link_cell_renders_as_the_slug_of_the_row_it_names() {
 fn a_citation_cell_stays_text() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("related", "ref[]")])];
     let r = reg(&[("answer", "niri", &[("related", "mock::DESIGN::12")])]);
-    let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
-    cfg.registry_namespaces = nss.clone();
+    let mut cfg = crate::Env::from_dir(Path::new("/nonexistent")).unwrap();
+    cfg.namespaces = nss.clone();
     let table = render_table(&nss[1], &r, &cfg);
     assert!(table.contains("| mock::DESIGN::12 |"), "{table}");
     assert!(!table.contains("{{"), "{table}");
@@ -344,8 +343,8 @@ fn a_cell_with_a_link_and_two_citations_keeps_the_link_and_the_public_citation()
             "seed::notes::niri::#tiling, slot::display, mock::DESIGN::12",
         )]),
     ]);
-    let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
-    cfg.registry_namespaces = nss.clone();
+    let mut cfg = crate::Env::from_dir(Path::new("/nonexistent")).unwrap();
+    cfg.namespaces = nss.clone();
     cfg.internal_roots = ["seed".to_string()].into_iter().collect();
     let table = render_table(&nss[1], &r, &cfg);
     let rendered = resolve_all(
@@ -377,8 +376,8 @@ fn an_internal_root_filter_does_not_eat_a_link() {
             "slot::display, slot::notes::x::#h",
         )]),
     ]);
-    let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
-    cfg.registry_namespaces = nss.clone();
+    let mut cfg = crate::Env::from_dir(Path::new("/nonexistent")).unwrap();
+    cfg.namespaces = nss.clone();
     cfg.internal_roots = ["slot".to_string()].into_iter().collect();
     let table = render_table(&nss[1], &r, &cfg);
     assert!(table.contains("{{ slot::display }}"), "{table}");

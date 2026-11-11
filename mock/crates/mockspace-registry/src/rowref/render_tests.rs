@@ -27,8 +27,8 @@ use super::*;
 fn a_row_reference_cell_is_its_slug() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "slot")])];
     let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
-    let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
-    cfg.registry_namespaces = nss.clone();
+    let mut cfg = crate::Env::from_dir(Path::new("/nonexistent")).unwrap();
+    cfg.namespaces = nss.clone();
     let table = render_table(&nss[1], &r, &cfg);
     let rendered = resolve_all(
         &table,
@@ -56,8 +56,8 @@ fn a_row_reference_cell_is_its_slug() {
 fn an_untyped_cell_holding_the_same_value_stays_text() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "string[]")])];
     let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
-    let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
-    cfg.registry_namespaces = nss.clone();
+    let mut cfg = crate::Env::from_dir(Path::new("/nonexistent")).unwrap();
+    cfg.namespaces = nss.clone();
     let table = render_table(&nss[1], &r, &cfg);
     assert!(
         !table.contains("{{"),
@@ -67,8 +67,8 @@ fn an_untyped_cell_holding_the_same_value_stays_text() {
 }
 
 fn resolved(text: &str, nss: &[RegistryNamespace], r: &Registry) -> String {
-    let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
-    cfg.registry_namespaces = nss.to_vec();
+    let mut cfg = crate::Env::from_dir(Path::new("/nonexistent")).unwrap();
+    cfg.namespaces = nss.to_vec();
     resolve_all(
         text,
         nss,
@@ -168,8 +168,8 @@ fn a_field_reference_to_a_missing_row_keeps_its_reference() {
 fn the_cell_and_the_field_reference_agree_about_a_missing_row() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "slot[]")])];
     let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display, nosuch")])]);
-    let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
-    cfg.registry_namespaces = nss.clone();
+    let mut cfg = crate::Env::from_dir(Path::new("/nonexistent")).unwrap();
+    cfg.namespaces = nss.clone();
     let table = render_table(&nss[1], &r, &cfg);
     assert!(table.contains("{{ slot::nosuch }}"), "{table}");
 }

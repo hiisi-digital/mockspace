@@ -23,7 +23,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use mockspace_lint_rules::verdict::VerdictCache;
+use crate::VerdictCache;
 
 /// What is saved under a key whose check passed.
 pub(super) const PASSED: &str = "taplo-check-passed-v1";
@@ -34,7 +34,7 @@ const SCHEMA_LINE: &str = "schema.path = \"target/mockspace/registry-schemas/reg
 /// The key for one run, or `None` when taplo could read what the key does not hold or an input
 /// cannot be read, which is a run with no replay. `taplo_version` is what the validator printed for
 /// `--version`; `env_changes_taplo` says `TAPLO_CONFIG` or `RUST_LOG` is set.
-pub(super) fn input_key(
+pub fn input_key(
     cache: &dyn VerdictCache,
     repo_root: &Path,
     taplo_version: &[u8],
@@ -53,7 +53,7 @@ pub(super) fn input_key(
     if named.iter().any(|(_, bytes)| may_bind_a_schema(bytes)) {
         return None;
     }
-    let schemas = crate::build_dir::target_dir(repo_root).join("mockspace").join("registry-schemas");
+    let schemas = crate::schemas_dir(repo_root);
     for entry in fs::read_dir(&schemas).ok()? {
         let entry = entry.ok()?;
         let name = format!("schemas/{}", entry.file_name().to_string_lossy());
@@ -114,6 +114,3 @@ fn collect(root: &Path, dir: &Path, ancestors: &mut Vec<PathBuf>, out: &mut Vec<
     Some(())
 }
 
-#[cfg(test)]
-#[path = "schema_replay_tests.rs"]
-mod tests;

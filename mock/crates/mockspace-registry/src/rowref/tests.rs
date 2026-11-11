@@ -322,10 +322,16 @@ fn a_partial_slug_match_is_not_a_referrer() {
     );
 }
 
+/// The referrers of `q` as the reverse edges give them, which is what the view a lint and a
+/// tool are handed is built from.
+fn by_edges(r: &Registry, nss: &[RegistryNamespace], q: &str) -> Vec<String> {
+    reverse_edges(r, nss).get(q).cloned().unwrap_or_default()
+}
+
 /// The view a lint and a tool are handed must carry the same reverse edges
 /// `refsto` computes, or a check and a document disagree about the same data.
 #[test]
-fn the_view_carries_the_rows_and_the_reverse_edges() {
+fn the_reverse_edges_are_the_ones_refsto_computes() {
     let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot[]")])];
     let r = reg(&[
         ("slot", "display", &[]),
@@ -333,18 +339,14 @@ fn the_view_carries_the_rows_and_the_reverse_edges() {
         ("answer", "niri", &[("slot", "display")]),
         ("answer", "wlr", &[("slot", "display, audio")]),
     ]);
-    let v = build_view(&r, &nss);
-    assert_eq!(v.len(), 4);
-    assert_eq!(v.rows_in("slot"), ["slot::audio", "slot::display"]);
-    assert_eq!(v.referrers("slot::display"), [
+    assert_eq!(by_edges(&r, &nss, "slot::display"), [
         "answer::niri",
         "answer::wlr"
     ]);
-    assert_eq!(v.referrers("slot::audio"), ["answer::wlr"]);
-    assert_eq!(v.field("answer::niri", "slot"), Some("display"));
+    assert_eq!(by_edges(&r, &nss, "slot::audio"), ["answer::wlr"]);
     // The same question `refsto` answers, from the same data.
     assert_eq!(
-        v.referrers("slot::display"),
+        by_edges(&r, &nss, "slot::display"),
         referrers(&r, &nss, "slot::display")
     );
 }
@@ -355,10 +357,8 @@ fn the_view_carries_the_rows_and_the_reverse_edges() {
 fn an_untyped_field_contributes_no_edge_to_the_view() {
     let nss = [ns("slot", &[]), ns("answer", &[("slot", "string")])];
     let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
-    let v = build_view(&r, &nss);
-    assert_eq!(v.len(), 2, "the rows are still there");
     assert!(
-        v.referrers("slot::display").is_empty(),
+        by_edges(&r, &nss, "slot::display").is_empty(),
         "an ordinary string field must not become a relation"
     );
 }
@@ -367,7 +367,7 @@ fn an_untyped_field_contributes_no_edge_to_the_view() {
 /// implementations disagreed on.
 ///
 /// `refsto` refuses a target that is not a row, deliberately: a row that does
-/// not exist is not a row with no referrers. `build_view` had no such guard and
+/// not exist is not a row with no referrers. The reverse edges had no such guard and
 /// happily reported `answer::niri` as referring to a slot nothing declares, so a
 /// lint and a document gave different answers about the same data, which is the
 /// one thing the view exists to prevent.
@@ -384,7 +384,7 @@ fn a_dangling_reference_is_not_an_edge_in_either_direction() {
         "the function a document uses"
     );
     assert!(
-        build_view(&r, &nss).referrers("slot::ghost").is_empty(),
+        by_edges(&r, &nss, "slot::ghost").is_empty(),
         "and the view a lint uses, which reported the edge before this"
     );
 }
@@ -397,7 +397,7 @@ fn a_reference_to_a_row_that_exists_is_an_edge_in_both() {
     let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot")])];
     let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
     assert_eq!(referrers(&r, &nss, "slot::display"), ["answer::niri"]);
-    assert_eq!(build_view(&r, &nss).referrers("slot::display"), [
+    assert_eq!(by_edges(&r, &nss, "slot::display"), [
         "answer::niri"
     ]);
 }

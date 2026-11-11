@@ -22,7 +22,7 @@ pub fn resolve_all(
     roots: &BTreeMap<String, String>,
     repo_root: &Path,
     docs_dir: &Path,
-    cfg: &crate::config::Config,
+    cfg: &dyn RegistryEnv,
 ) -> String {
     // One pass. Data is resolved bottom-up before any document renders, so a
     // reference inside a row's field is already inlined by the time a table
@@ -38,7 +38,7 @@ fn resolve_once(
     roots: &BTreeMap<String, String>,
     repo_root: &Path,
     docs_dir: &Path,
-    cfg: &crate::config::Config,
+    cfg: &dyn RegistryEnv,
 ) -> String {
     let by_key: BTreeMap<&str, &RegistryNamespace> =
         namespaces.iter().map(|n| (n.key.as_str(), n)).collect();
@@ -122,46 +122,10 @@ fn regex_lite_replace(s: &str, from: &str, to: &str) -> String {
     out
 }
 
-/// Resolve `crates::<name>` to a link to that crate's generated document.
-///
-/// Accepts the short name or the full directory name, since the prefix is
-/// stable and repeating it at every reference buys nothing.
-fn resolve_crate_ref(name: &str, cfg: &crate::config::Config, docs_dir: &Path) -> Option<String> {
-    let prefixed = format!("{}-{name}", cfg.crate_prefix);
-    // Searched across every source directory: a reference names a crate, not a
-    // crate in a particular group, and resolving only against the first would
-    // silently fail to link anything outside it.
-    let found = cfg.src_dirs.iter().find_map(|d| {
-        if d.join(name).is_dir() {
-            Some(name.to_string())
-        } else if d.join(&prefixed).is_dir() {
-            Some(prefixed.clone())
-        } else {
-            None
-        }
-    });
-    let dir = found?;
-    let short = dir
-        .strip_prefix(&format!("{}-", cfg.crate_prefix))
-        .unwrap_or(&dir)
-        .to_string();
-    // Look the name up rather than glob for it. The docs directory is cleaned
-    // at the start of a run and refilled during it, so a glob answers "has this
-    // been written yet" rather than "what is this crate's document", and a
-    // reference from a crate rendered early to one rendered later resolved to
-    // nothing at all.
-    if let Some(file) = cfg.doc_index.crate_doc(&short) {
-        return Some(format!("[{short}]({}{file})", cfg.doc_link_prefix));
-    }
-    // Fall back to the glob for a caller that has not computed the map, which
-    // is every test and any path that resolves before generation.
-    let stem = short.to_uppercase().replace('-', "_");
-    let file = fs::read_dir(docs_dir)
-        .ok()?
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        .find(|f| f.ends_with(&format!("{stem}.md")))?;
-    Some(format!("[{short}]({file})"))
+/// Resolve `crates::<name>` to a link to that crate's generated document, which the project
+/// answers: the registry holds no crates of its own.
+fn resolve_crate_ref(name: &str, cfg: &dyn RegistryEnv, docs_dir: &Path) -> Option<String> {
+    cfg.crate_link(name, docs_dir)
 }
 
 /// Split `<expr>.verb(arg).verb()` into the expression and its verbs.
@@ -421,25 +385,12 @@ fn resolve_pathof(
     by_key: &BTreeMap<&str, &RegistryNamespace>,
     reg: &Registry,
     repo_root: &Path,
-    cfg: &crate::config::Config,
+    cfg: &dyn RegistryEnv,
 ) -> Option<String> {
     let parts: Vec<&str> = expr.split("::").map(str::trim).collect();
 
     if parts[0] == CRATE_ROOT && parts.len() == 2 {
-        let prefixed = format!("{}-{}", cfg.crate_prefix, parts[1]);
-        for name in [parts[1].to_string(), prefixed] {
-            // Across every source directory, for the same reason as
-            // `resolve_crate_ref`: the expression names a crate, not a group.
-            if let Some(dir) = cfg
-                .src_dirs
-                .iter()
-                .map(|d| d.join(&name))
-                .find(|d| d.is_dir())
-            {
-                return Some(rel_to_repo(&dir, repo_root));
-            }
-        }
-        return None;
+        return cfg.crate_dir(parts[1]).map(|dir| rel_to_repo(&dir, repo_root));
     }
 
     let mut segs = parts.clone();
@@ -453,10 +404,10 @@ fn resolve_pathof(
 
     // A citation names a file, and that file is where the thing is.
     let r = FileRef::parse(expr)?;
-    if cfg.internal_roots.contains(&r.root) {
+    if cfg.internal_roots().contains(&r.root) {
         return Some(String::new());
     }
-    let rel = cfg.registry_roots.get(&r.root)?;
+    let rel = cfg.roots().get(&r.root)?;
     match resolve_cited_path(&repo_root.join(rel), &r.path) {
         PathResolution::Found(target) => Some(rel_to_repo(&target, repo_root)),
         _ => None,
@@ -474,7 +425,7 @@ fn resolve_sourcesof(
     roots: &BTreeMap<String, String>,
     repo_root: &Path,
     docs_dir: &Path,
-    cfg: &crate::config::Config,
+    cfg: &dyn RegistryEnv,
 ) -> Option<String> {
     let mut segs: Vec<&str> = expr.split("::").map(str::trim).collect();
     if segs.first() == Some(&REGISTRY_ROOT) {
@@ -510,7 +461,7 @@ fn resolve_refsto(
     roots: &BTreeMap<String, String>,
     repo_root: &Path,
     docs_dir: &Path,
-    cfg: &crate::config::Config,
+    cfg: &dyn RegistryEnv,
 ) -> Option<Vec<String>> {
     let mut segs: Vec<&str> = expr.split("::").map(str::trim).collect();
     if segs.first() == Some(&REGISTRY_ROOT) {
@@ -525,7 +476,7 @@ fn resolve_refsto(
     // answer is the one a reader is most likely to act on.
     reg.get(&qualified)?;
     Some(
-        super::referrers(reg, &cfg.registry_namespaces, &qualified)
+        super::referrers(reg, cfg.namespaces(), &qualified)
             .into_iter()
             .filter_map(|q| resolve_expr(&q, by_key, reg, roots, repo_root, docs_dir, cfg))
             .collect(),
@@ -547,7 +498,7 @@ fn resolve_expr(
     roots: &BTreeMap<String, String>,
     repo_root: &Path,
     docs_dir: &Path,
-    cfg: &crate::config::Config,
+    cfg: &dyn RegistryEnv,
 ) -> Option<String> {
     resolve_typed(expr, by_key, reg, roots, repo_root, docs_dir, cfg).map(|r| r.to_markdown())
 }
@@ -574,7 +525,7 @@ pub fn resolve_typed(
     roots: &BTreeMap<String, String>,
     repo_root: &Path,
     docs_dir: &Path,
-    cfg: &crate::config::Config,
+    cfg: &dyn RegistryEnv,
 ) -> Option<Resolved> {
     // A postfix chain narrows whatever the expression resolved to:
     // `pathof(crates::store).dir()`. Split off first, so the base expression is
@@ -724,7 +675,7 @@ pub fn resolve_typed(
                         .find(|f| f.name == parts[3])
                         .and_then(|f| super::row_reference_target(&f.r#type))
                         .map(|(t, _)| t)
-                        .filter(|t| cfg.registry_namespaces.iter().any(|n| n.key == *t))
+                        .filter(|t| cfg.namespaces().iter().any(|n| n.key == *t))
                     {
                         let raw = row.fields.get(parts[3])?;
                         return Some(Resolved::List(
@@ -776,7 +727,7 @@ pub fn resolve_typed(
     // Empty rather than absent, so the parenthetical it may sit in is left for
     // `resolve_all` to tidy: a citation that was the only thing in its
     // parentheses would otherwise leave `()` behind.
-    if cfg.internal_roots.contains(&r.root) {
+    if cfg.internal_roots().contains(&r.root) {
         return Some(Resolved::Hidden);
     }
 
@@ -784,7 +735,7 @@ pub fn resolve_typed(
     // appears, because a generated document is also read internally and the
     // provenance is the point; what does not appear is the path, which is the
     // only part that leaks.
-    if let Some(label) = cfg.prose_roots.get(&r.root) {
+    if let Some(label) = cfg.prose_roots().get(&r.root) {
         return Some(Resolved::Citation {
             text: match &r.anchor {
                 Anchor::Heading(h) => format!("{label}, {} ({h})", r.path),
@@ -835,7 +786,7 @@ pub fn resolve_data(
     roots: &BTreeMap<String, String>,
     repo_root: &Path,
     docs_dir: &Path,
-    cfg: &crate::config::Config,
+    cfg: &dyn RegistryEnv,
 ) -> (Registry, Vec<RegistryFinding>) {
     let by_key: BTreeMap<&str, &RegistryNamespace> =
         namespaces.iter().map(|n| (n.key.as_str(), n)).collect();
@@ -906,7 +857,7 @@ fn resolve_row(
     roots: &BTreeMap<String, String>,
     repo_root: &Path,
     docs_dir: &Path,
-    cfg: &crate::config::Config,
+    cfg: &dyn RegistryEnv,
     done: &mut BTreeMap<String, BTreeMap<String, String>>,
     path: &mut Vec<String>,
     findings: &mut Vec<RegistryFinding>,

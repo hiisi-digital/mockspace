@@ -7,12 +7,12 @@
 //! it lets through. Real git and a real bare repository throughout.
 
 use super::*;
-use crate::registry::test_world::*;
+use crate::test_world::*;
 
 #[test]
 fn a_write_the_checks_refuse_never_reaches_the_ref() {
     let w = World::new();
-    let cfg = w.clone_of("a", true);
+    let cfg = w.env_of("a", true);
     let s = stores(&cfg);
     let writer = RegistryWriter::new(&cfg, &s);
     writer
@@ -48,12 +48,12 @@ fn a_write_the_checks_refuse_never_reaches_the_ref() {
 #[test]
 fn a_write_the_checks_pass_alone_but_refuse_after_the_rebase_never_lands() {
     let w = World::new();
-    let (a, b) = (w.clone_of("a", true), w.clone_of("b", true));
+    let (a, b) = (w.env_of("a", true), w.env_of("b", true));
     let (sa, sb) = (stores(&a), stores(&b));
     RegistryWriter::new(&a, &sa)
         .write(&put("ticket/seed.toml", &row("seed", "S")), "seed")
         .unwrap();
-    load_registry_from(&sb, &b.registry_namespaces, None).unwrap();
+    load_registry_from(&sb, &b.namespaces, None).unwrap();
     RegistryWriter::new(&a, &sa)
         .write(&put("ticket/a.toml", &row("dup", "A")), "a")
         .unwrap();
@@ -72,7 +72,7 @@ fn a_write_the_checks_pass_alone_but_refuse_after_the_rebase_never_lands() {
 #[test]
 fn a_row_the_schema_refuses_never_reaches_the_ref() {
     let w = World::new();
-    let cfg = w.clone_of("a", true);
+    let cfg = w.env_of("a", true);
     let s = stores(&cfg);
     let w_ = RegistryWriter::new(&cfg, &s);
     // a row with an id and no `title`, which the fixture declares required
@@ -101,7 +101,7 @@ fn a_row_the_schema_refuses_never_reaches_the_ref() {
 #[test]
 fn the_checks_that_need_no_taplo_refuse_on_their_own() {
     let w = World::new();
-    let cfg = w.clone_of("a", false);
+    let cfg = w.env_of("a", false);
     let s = RegistryStores::directory(&cfg.mock_dir);
     let writer = RegistryWriter::new(&cfg, &s);
     let changed: BTreeSet<String> = ["bad.toml".to_string(), "noid.toml".to_string()].into();
@@ -141,7 +141,7 @@ fn the_checks_that_need_no_taplo_refuse_on_their_own() {
 #[test]
 fn a_schema_failure_already_in_the_tree_does_not_block_a_valid_ref_write() {
     let w = World::new();
-    let cfg = w.clone_of("a", true);
+    let cfg = w.env_of("a", true);
     let tree = cfg.mock_dir.join("registry/other.toml");
     std::fs::create_dir_all(tree.parent().unwrap()).unwrap();
     std::fs::write(&tree, "[[ticket]]\nid = \"untitled\"\n").unwrap();
@@ -155,7 +155,7 @@ fn a_schema_failure_already_in_the_tree_does_not_block_a_valid_ref_write() {
 #[test]
 fn a_reference_cycle_made_by_a_write_is_refused() {
     let w = World::new();
-    let cfg = w.clone_of("a", true);
+    let cfg = w.env_of("a", true);
     let s = stores(&cfg);
     let cyc = "[[ticket]]\nid = \"a\"\ntitle = \"{{ ticket::b::title }}\"\n\n[[ticket]]\nid = \"b\"\ntitle = \"{{ ticket::a::title }}\"\n";
     let err = RegistryWriter::new(&cfg, &s)
@@ -196,13 +196,13 @@ fn findings_the_registry_already_had_are_not_new_however_many() {
 
 /// A document of the tree resolved against the registry as `stores` holds it now, and the tokens
 /// the generation's own scan (`unresolved_in_generated`) finds left in it.
-fn dangling_in(cfg: &Config, stores: &RegistryStores, document: &str) -> Vec<String> {
-    let reg = load_registry_from(stores, &cfg.registry_namespaces, None).unwrap();
+fn dangling_in(cfg: &Env, stores: &RegistryStores, document: &str) -> Vec<String> {
+    let reg = load_registry_from(stores, &cfg.namespaces, None).unwrap();
     let rendered = resolve_all(
         document,
-        &cfg.registry_namespaces,
+        &cfg.namespaces,
         &reg,
-        &cfg.registry_roots,
+        &cfg.roots,
         &cfg.repo_root,
         &cfg.docs_dir,
         cfg,
@@ -221,7 +221,7 @@ fn dangling_in(cfg: &Config, stores: &RegistryStores, document: &str) -> Vec<Str
 #[test]
 fn a_known_gap_the_writer_lets_a_row_a_document_names_be_removed() {
     let w = World::new();
-    let cfg = w.clone_of("a", true);
+    let cfg = w.env_of("a", true);
     let s = stores(&cfg);
     let writer = RegistryWriter::new(&cfg, &s);
     writer

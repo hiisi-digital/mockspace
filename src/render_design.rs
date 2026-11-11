@@ -108,7 +108,7 @@ fn is_timestamp_line(line: &str) -> bool {
 /// The line every generation header opens with, whatever comment syntax
 /// carries it. One spelling, so the header and the check that recognises it
 /// cannot drift apart.
-pub const GENERATED_MARKER: &str = "AUTO-GENERATED: DO NOT EDIT DIRECTLY";
+pub const GENERATED_MARKER: &str = mockspace_registry::GENERATED_MARKER;
 
 /// How far into a file the marker is looked for.
 ///

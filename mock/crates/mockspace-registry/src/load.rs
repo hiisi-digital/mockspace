@@ -234,6 +234,6 @@ pub fn load_registry_for_expr_from(
 }
 
 /// The registry of a project, from the stores its config declares: the directory unless it mounts a ref.
-pub fn load_registry_for(cfg: &crate::config::Config) -> Result<Registry, RegistryStoreError> {
-    load_registry_from(&cfg.registry_stores()?, &cfg.registry_namespaces, None)
+pub fn load_registry_for(cfg: &dyn RegistryEnv) -> Result<Registry, RegistryStoreError> {
+    load_registry_from(&cfg.registry_stores()?, cfg.namespaces(), None)
 }

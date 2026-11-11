@@ -245,6 +245,7 @@ dependencies = [
  "mockspace-bench-harness",
  "mockspace-lint-rules",
  "mockspace-manifest",
+ "mockspace-registry",
  "mockspace-store",
  "regex",
  "serde",
@@ -309,6 +310,18 @@ dependencies = [
  "serde",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "mockspace-registry"
+version = "0.1.0"
+dependencies = [
+ "mockspace-manifest",
+ "mockspace-store",
+ "regex",
+ "serde",
+ "tempfile",
+ "toml_edit",
 ]
 
 [[package]]

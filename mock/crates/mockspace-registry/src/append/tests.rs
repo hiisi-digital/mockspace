@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
+use crate::RegistryEnv as _;
 use std::path::Path;
 
 use super::edit::append;
@@ -108,7 +109,7 @@ fn place_hook(root: &Path, body: &str) -> std::path::PathBuf {
     let dir = root.join(".mockspace/hooks");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("registry-append");
-    crate::test_exec::write_executable(&path, format!("#!/bin/sh\n{body}\n"));
+    mockspace_manifest::write_executable(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
     path
 }
 
@@ -171,21 +172,21 @@ description = "What was said."
 const ROW: &str = "[[ticket]]\nid = \"one\"\ntitle = \"One\"\n";
 
 /// A project with the config above; `ticket/` is kept on a ref when `mounted`, else in the tree.
-fn project(remote: &crate::test_remote::Remote, mounted: bool) -> crate::config::Config {
+fn project(remote: &mockspace_store::test_support::Remote, mounted: bool) -> crate::Env {
     let root = remote.clone_dir("p");
     let decl = if mounted { "\n[[registry.store]]\ndir = \"ticket\"\n" } else { "" };
     std::fs::write(root.join("mock/mockspace.toml"), format!("{CONFIG}{decl}")).unwrap();
-    let cfg = crate::config::Config::from_dir(&root.join("mock"));
-    crate::registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
+    let cfg = crate::Env::from_dir(&root.join("mock")).unwrap();
+    crate::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.namespaces);
     cfg
 }
 
 #[test]
 fn an_append_to_a_row_on_a_ref_goes_through_the_writer_and_skips_a_delegate() {
-    let remote = crate::test_remote::Remote::new();
+    let remote = mockspace_store::test_support::Remote::new();
     let cfg = project(&remote, true);
     let stores = cfg.registry_stores().unwrap();
-    crate::registry::RegistryWriter::new(&cfg, &stores)
+    crate::RegistryWriter::new(&cfg, &stores)
         .write(
             &[("ticket/t.toml".into(), Some(ROW.as_bytes().to_vec()))],
             "seed",
@@ -210,7 +211,7 @@ fn an_append_to_a_row_on_a_ref_goes_through_the_writer_and_skips_a_delegate() {
 
 #[test]
 fn an_append_in_the_tree_asks_the_delegate_and_without_one_writes_the_file() {
-    let remote = crate::test_remote::Remote::new();
+    let remote = mockspace_store::test_support::Remote::new();
     let cfg = project(&remote, false);
     let file = cfg.mock_dir.join("registry/ticket/t.toml");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();

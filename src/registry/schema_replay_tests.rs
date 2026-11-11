@@ -9,10 +9,8 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
-use super::super::validate::{SchemaCheck, check_schemas_with};
-use super::super::{RegistryNamespace, builtin_vocab};
+use super::{GENERATED_MARKER, RegistryNamespace, SchemaCheck, builtin_vocab, check_schemas_with, input_key};
 use crate::lint::verdicts::DiskVerdicts;
-use crate::render_design::GENERATED_MARKER;
 
 /// What mockspace writes at the root: marked as generated, with the registry as its include.
 const GENERATED_CONFIG: &str = "# AUTO-GENERATED: DO NOT EDIT DIRECTLY\n\n[[rule]]\ninclude = [\"mock/registry/**/*.toml\"]\nschema.path = \"target/mockspace/registry-schemas/registry.schema.json\"\n";
@@ -54,7 +52,7 @@ impl Fixture {
         );
         let path = self.taplo_path();
         let _ = fs::remove_file(&path);
-        crate::test_exec::write_executable(&path, script);
+        mockspace_manifest::write_executable(&path, script).unwrap();
     }
 
     fn runs(&self) -> usize {
@@ -63,7 +61,8 @@ impl Fixture {
 
     fn check(&self, program: &Path) -> SchemaCheck {
         let _serial = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let store = DiskVerdicts::open_in(self.store.path(), "pack").expect("a store");
+        let disk = DiskVerdicts::open_in(self.store.path(), "pack").expect("a store");
+        let store = super::Saved(&disk);
         let namespaces: Vec<RegistryNamespace> = vec![builtin_vocab()];
         check_schemas_with(&OsString::from(program), self.root.path(), &namespaces, Some(&store))
     }
@@ -204,9 +203,10 @@ fn a_registry_file_naming_its_own_schema_is_never_replayed() {
 #[test]
 fn an_environment_that_names_another_config_gives_no_key() {
     let f = Fixture::new();
-    let store = DiskVerdicts::open_in(f.store.path(), "pack").expect("a store");
-    assert!(super::input_key(&store, f.root.path(), b"taplo 0.10.0", false).is_some(), "the control: a plain tree has a key");
-    assert!(super::input_key(&store, f.root.path(), b"taplo 0.10.0", true).is_none());
+    let disk = DiskVerdicts::open_in(f.store.path(), "pack").expect("a store");
+    let store = super::Saved(&disk);
+    assert!(input_key(&store, f.root.path(), b"taplo 0.10.0", false).is_some(), "the control: a plain tree has a key");
+    assert!(input_key(&store, f.root.path(), b"taplo 0.10.0", true).is_none());
 }
 
 #[test]
@@ -222,7 +222,7 @@ fn a_taplo_that_prints_its_version_on_stderr_keys_on_it() {
     };
     let install = |version: &str| {
         let _ = fs::remove_file(&path);
-        crate::test_exec::write_executable(&path, body(version));
+        mockspace_manifest::write_executable(&path, body(version)).unwrap();
     };
     install("taplo 0.10.0");
     assert!(f.passes());
@@ -254,7 +254,8 @@ fn taplo_installed() -> bool {
 }
 
 fn real_check(root: &Path, store: &Path) -> bool {
-    let store = DiskVerdicts::open_in(store, "pack").expect("a store");
+    let disk = DiskVerdicts::open_in(store, "pack").expect("a store");
+    let store = super::Saved(&disk);
     let namespaces: Vec<RegistryNamespace> = vec![builtin_vocab()];
     matches!(
         check_schemas_with(&OsString::from("taplo"), root, &namespaces, Some(&store)),
@@ -373,7 +374,7 @@ fn a_file_edited_while_taplo_runs_does_not_get_the_pass_saved_under_its_old_cont
     let original = fs::read_to_string(&reg).unwrap();
     let path = f.taplo_path();
     let _ = fs::remove_file(&path);
-    crate::test_exec::write_executable(&path, body);
+    mockspace_manifest::write_executable(&path, body).unwrap();
     assert!(f.passes());
     fs::write(&reg, original).unwrap();
     assert!(f.passes());
@@ -390,7 +391,7 @@ fn a_failed_version_probe_is_never_keyed() {
     );
     let path = f.taplo_path();
     let _ = fs::remove_file(&path);
-    crate::test_exec::write_executable(&path, body);
+    mockspace_manifest::write_executable(&path, body).unwrap();
     assert!(f.passes());
     assert!(f.passes());
     assert_eq!(f.runs(), 2, "a validator that cannot say its version is run every time");

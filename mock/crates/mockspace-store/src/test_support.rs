@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Run git in `dir`, panic with its words when it fails, give its output trimmed.
-pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
+pub fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -28,13 +28,13 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 /// A bare remote, and the directory its clones are made in.
-pub(crate) struct Remote {
-    pub(crate) tmp:  tempfile::TempDir,
-    pub(crate) bare: PathBuf,
+pub struct Remote {
+    pub tmp:  tempfile::TempDir,
+    pub bare: PathBuf,
 }
 
 impl Remote {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let tmp = tempfile::tempdir().unwrap();
         let bare = tmp.path().join("remote.git");
         std::fs::create_dir(&bare).unwrap();
@@ -46,7 +46,7 @@ impl Remote {
     }
 
     /// A repository `name` whose `origin` is the bare one, with a `mock/` directory in it.
-    pub(crate) fn clone_dir(&self, name: &str) -> PathBuf {
+    pub fn clone_dir(&self, name: &str) -> PathBuf {
         let root = self.tmp.path().join(name);
         std::fs::create_dir_all(root.join("mock")).unwrap();
         git(&root, &["init", "-q"]);
@@ -60,7 +60,7 @@ impl Remote {
     }
 
     /// The commit at `reference` on the remote, if there is one.
-    pub(crate) fn tip(&self, reference: &str) -> Option<String> {
+    pub fn tip(&self, reference: &str) -> Option<String> {
         let out = git(&self.bare, &[
             "for-each-ref",
             "--format=%(objectname)",
@@ -70,7 +70,7 @@ impl Remote {
     }
 
     /// The text of `path` at `reference` on the remote.
-    pub(crate) fn file(&self, reference: &str, path: &str) -> Option<String> {
+    pub fn file(&self, reference: &str, path: &str) -> Option<String> {
         Command::new("git")
             .arg("-C")
             .arg(&self.bare)
