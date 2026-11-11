@@ -523,3 +523,7 @@ fn each_byte_of_a_value_is_traced_to_the_byte_of_the_file_that_writes_it() {
     assert_eq!(raw_span(&[Some(1), None, Some(4)], &(0 .. 1)), Some(1 .. 2));
     assert_eq!(raw_span(&[Some(1), None, Some(4)], &(0 .. 3)), None);
 }
+
+#[cfg(unix)]
+#[path = "migrate_refs_bytes_tests.rs"]
+mod bytes;
