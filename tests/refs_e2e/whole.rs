@@ -155,7 +155,7 @@ pub fn kept(c: &Clone, before: &Whole, after: &Whole, allowed: &Allowed) -> Resu
 
 /// What the engine writes for itself on a run that lints: its build directories and the taplo
 /// config at the root. It appearing is no change to anybody's data.
-fn engine_output(p: &[u8]) -> bool {
+pub fn engine_output(p: &[u8]) -> bool {
     let p = shown(p);
     p == ".taplo.toml" || p.starts_with("target/") || p.contains("/target/")
 }

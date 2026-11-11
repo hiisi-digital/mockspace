@@ -47,25 +47,6 @@ fn bytes(p: &str) -> Vec<u8> {
     p.as_bytes().to_vec()
 }
 
-/// The files the reference migration is to rewrite in a consumer of `s`: every template and row
-/// file that cites in the spelling before the standard, and the configs the loaders read presets
-/// from. A file not here that is rewritten, or one here that is not, fails the run.
-fn rewritten_in(s: &Shape) -> BTreeSet<Vec<u8>> {
-    let mut out: BTreeSet<Vec<u8>> = ["mockspace.toml", "lints.toml"].iter().map(|p| bytes(p)).collect();
-    for rel in ["DESIGN.md.tmpl", "crates/alpha/README.md.tmpl", "crates/beta/README.md.tmpl", "registry/ruling/rows.toml"] {
-        out.insert(bytes(&s.at(rel)));
-    }
-    // the loaders read `mock/lints.toml` by that name, whatever the mock directory is called
-    if s.mock == "mock" {
-        out.insert(bytes("mock/lints.toml"));
-    }
-    if s.odd {
-        out.insert(bytes(&s.at("crates/alpha/CRLF.md.tmpl")));
-        out.insert(bytes(&s.at("registry/ruling/crlf.toml")));
-    }
-    out
-}
-
 /// The whole migration of a consumer of `s` in a clone made from its v1 remote, every step checked.
 /// Returns the world and the clone.
 fn migrate(s: &Shape) -> (refs_e2e::World, std::path::PathBuf) {
@@ -84,7 +65,7 @@ fn migrate(s: &Shape) -> (refs_e2e::World, std::path::PathBuf) {
             let config = Allowed { rewritten: [bytes("mockspace.toml")].into(), ..Allowed::default() };
             step(&c, &args, &config, &format!("chore: move `{ns}` to its ref"));
         }
-        let want = rewritten_in(s);
+        let want = s.rewritten();
         let dry = step(
             &c,
             &["migrate", "references-to-letkajenkka"],
@@ -237,7 +218,7 @@ fn in_a_round_whose_doc_changelist_is_locked_the_rewritten_templates_wait_on_dis
     c.commit_all("chore: rewrite references to the letkajenkka spelling");
     let o = c.run(&["data-refs", "commit"]);
     assert!(!o.ok && o.all().contains("lints refuse"), "the rewrite on a ref passed the phase gates now: {}", o.all());
-    let rewritten = rewritten_in(&s);
+    let rewritten = s.rewritten();
     whole::kept(&c, &before, &whole::capture(&c), &Allowed { rewritten, ..Allowed::default() }).unwrap();
     assert!(String::from_utf8(c.read(&readme)).unwrap().contains("seed::design::the_four_lanes"), "the rewrite is on disk");
     assert_eq!(w.remote_tip("refs/heads/mock/templates").unwrap(), tip, "the ref is as it was");

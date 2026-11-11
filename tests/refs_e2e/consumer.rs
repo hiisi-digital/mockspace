@@ -148,6 +148,36 @@ impl Shape {
         .collect()
     }
 
+    /// The files the reference migration is to rewrite in this consumer, from the root: every
+    /// template and row file that cites in the spelling before the standard, and the configs the
+    /// loaders read presets from.
+    pub fn rewritten(&self) -> std::collections::BTreeSet<Vec<u8>> {
+        let mut out: std::collections::BTreeSet<Vec<u8>> =
+            ["mockspace.toml", "lints.toml"].iter().map(|p| p.as_bytes().to_vec()).collect();
+        let mut add = |rel: &str| out.insert(self.at(rel).into_bytes());
+        for rel in ["DESIGN.md.tmpl", "crates/alpha/README.md.tmpl", "crates/beta/README.md.tmpl", "registry/ruling/rows.toml"] {
+            add(rel);
+        }
+        if self.odd {
+            add("crates/alpha/CRLF.md.tmpl");
+            add("registry/ruling/crlf.toml");
+        }
+        // the loaders read `mock/lints.toml` by that name, whatever the mock directory is called
+        if self.mock == "mock" {
+            out.insert(b"mock/lints.toml".to_vec());
+        }
+        out
+    }
+
+    /// The calls a consumer of this shape makes, in order: the rounds renamed, each directory
+    /// moved, the references rewritten.
+    pub fn calls(&self) -> Vec<Vec<String>> {
+        let mut out = vec![vec!["migrate".to_string(), "round-filenames".to_string()]];
+        out.extend(self.moves().into_iter().map(|(ns, path, include)| move_args(ns, path, include)));
+        out.push(vec!["migrate".to_string(), "references-to-letkajenkka".to_string()]);
+        out
+    }
+
     /// Builds the consumer over several commits in `c` and pushes `dev`; ignored build output is on
     /// disk and never tracked.
     pub fn build(&self, c: &Clone) {
