@@ -58,12 +58,9 @@
 //! references are found, those are resolved, the result is rendered, and what
 //! a schema structurally cannot check is validated.
 
-
-
-
-
 pub mod append;
 mod bounds;
+mod check;
 mod env;
 mod load;
 pub mod merge;
@@ -81,6 +78,7 @@ pub mod validate;
 mod writer;
 
 pub use bounds::*;
+pub use check::*;
 pub use env::*;
 pub use load::*;
 pub use model::*;

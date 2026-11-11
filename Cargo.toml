@@ -4,6 +4,7 @@ members = [
     "cargo-mock",
     "mockspace-manifest",
     "lint-rules",
+    "verdicts",
     "bench-core",
     "bench-harness",
     "bench-macro",

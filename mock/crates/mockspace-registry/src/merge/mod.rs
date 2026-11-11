@@ -34,6 +34,24 @@ use scan::Doc;
 /// The marker length git uses unless told otherwise.
 pub const DEFAULT_MARKER: usize = 7;
 
+/// The merge driver's name, as `.gitattributes` and a clone's config both spell it. One name for
+/// every tool that keeps a registry, so two of them in one clone register the same driver and
+/// neither takes the other's.
+pub const DRIVER: &str = "mockspace-registry";
+
+/// The comment that goes above the attribute line in `.gitattributes`.
+pub const ATTRIBUTES_NOTE: &str =
+    "# mockspace: registry rows merge by namespace and id, see the registry merge driver";
+
+/// The attribute line that sends every `*.toml` under the registry directory, at any depth, to
+/// the driver: the loader reads them all by their `[[namespace]]` key and never by what a file is
+/// called. `None` where the directory is outside the repository or is its root.
+pub fn attributes_line(repo_root: &std::path::Path, registry_dir: &std::path::Path) -> Option<String> {
+    use mockspace_store::attributes::{pattern, relative};
+    let rel = relative(repo_root, registry_dir).filter(|r| !r.is_empty())?;
+    Some(format!("{}/**/*.toml merge={DRIVER}", pattern(&rel)))
+}
+
 /// Merge three versions of a registry file's text.
 ///
 /// `Err` is a file this driver does not handle, and the caller falls back to a

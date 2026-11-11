@@ -2230,44 +2230,19 @@ fn registry_gate(
         registry.rows.len(),
         registry.by_namespace.len()
     );
-    let mut settle = |findings: Vec<registry::RegistryFinding>| {
-        let (gated, warned) = registry_scope::report(findings, &changed);
-        errors += gated;
-        demoted += warned;
-    };
-    settle(cycles.to_vec());
-    settle(registry::validate_provenance(
-        &cfg.repo_root,
-        &cfg.registry_roots,
-        &cfg.frozen_roots,
-        registry,
-        &cfg.registry_namespaces,
-    ));
-    settle(registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots));
-    settle(registry::validate(&cfg.registry_namespaces, registry));
-    // The declarations, then the data. There is no gate between them:
-    // `row_reference_fields` already skips a field whose type names no
-    // namespace, so an unknown type suppresses its own field's rows and
-    // nothing else. A project-wide gate stood here and suppressed genuine
-    // findings in unrelated namespaces, which cost an author a second round
-    // of failures after fixing a typo somewhere they were not looking.
-    let declarations = registry::unknown_field_types(&cfg.registry_namespaces)
-        .into_iter()
-        .chain(registry::namespace_type_collisions(
-            &cfg.registry_namespaces,
-        ))
-        .chain(registry::value_field_targets(&cfg.registry_namespaces))
-        .chain(registry::misplaced_bounds(&cfg.registry_namespaces))
-        .chain(registry::unfit_values(&cfg.registry_namespaces));
-    settle(
-        declarations
-            .chain(registry::validate_row_references(
-                registry,
-                &cfg.registry_namespaces,
-            ))
-            .collect(),
-    );
-    drop(settle);
+    // What a registry is held to is the registry crate's to say (`registry::check`), so a tool that
+    // keeps one without this engine holds it to the same. What is the engine's here: the keys of the
+    // config's root, the store saved verdicts replay from, the level an inert key is reported at,
+    // and which findings this run blocks on.
+    let config_text = std::fs::read_to_string(&cfg.config_path);
+    // The store lint verdicts live in, opened here as well because this phase runs before the lint
+    // run opens its own; both are the same directory, salted by the same engine and pack.
+    let verdicts = crate::lint::verdicts::DiskVerdicts::open(&pack.identity);
+    let saved = verdicts.as_ref().map(|v| v as &dyn registry::VerdictCache);
+    let checked = registry::check(cfg, registry, cycles, config_text.as_deref().ok(), saved);
+    let (gated, warned) = registry_scope::report(checked.findings, &changed);
+    errors += gated;
+    demoted += warned;
     // A warning by default, and the choice is deliberate under the rule
     // stated above: what prints ERROR blocks, and an inert key does not stop
     // the registry from being correct. It stops the author from knowing their
@@ -2286,9 +2261,9 @@ fn registry_gate(
         .get("registry-config-keys")
         .copied()
         .unwrap_or(Severity::ADVISORY);
-    match std::fs::read_to_string(&cfg.config_path) {
+    match &config_text {
         Ok(text) => {
-            for f in registry::config_unknown_keys(&text) {
+            for f in registry::root_unknown_keys(text).into_iter().chain(checked.inert_keys) {
                 match key_severity.effective(mode) {
                     Level::Pass => {},
                     Level::Info | Level::Warn => {
@@ -2303,9 +2278,8 @@ fn registry_gate(
         },
         Err(e) => {
             // A check that could not run is not a check that passed: the
-            // same reasoning `SchemaCheck::Unavailable` already applies to
-            // the schema gate applies here, so absence is reported rather
-            // than swallowed.
+            // same reasoning an unverifiable shape gets applies here, so
+            // absence is reported rather than swallowed.
             eprintln!(
                 "  warning: could not read {} to check for unknown config \
                  keys: {e}",
@@ -2313,51 +2287,13 @@ fn registry_gate(
             );
         },
     }
-    // The store lint verdicts live in, opened here as well because this phase runs before the lint
-    // run opens its own; both are the same directory, salted by the same engine and pack.
-    let verdicts = crate::lint::verdicts::DiskVerdicts::open(&pack.identity);
-    let saved = verdicts.as_ref().map(|v| registry::Saved(v));
-    let saved = saved.as_ref().map(|s| s as &dyn registry::VerdictCache);
-    match registry::check_schemas(&cfg.repo_root, &cfg.registry_namespaces, saved) {
-        registry::SchemaCheck::Ran {
-            failures,
-        } if failures.is_empty() => {
-            eprintln!("  schema check passed");
-        },
-        registry::SchemaCheck::Ran {
-            failures,
-        } => {
-            for f in failures {
+    match checked.shape {
+        registry::Shape::Passed => eprintln!("  schema check passed"),
+        registry::Shape::NothingToVerify => eprintln!("  schema check skipped: no rows to verify"),
+        registry::Shape::Refused(found) => {
+            for f in found {
                 errors += 1;
-                eprintln!("  ERROR [schema]: {f}");
-            }
-        },
-        registry::SchemaCheck::Unavailable => {
-            // A run that could not check is not a run that passed. The
-            // findings above are two-valued and cannot say "do not trust
-            // this", so an unverifiable row shape reported as success is a
-            // green that means nothing: every required field, every type
-            // and every slug pattern went unchecked.
-            //
-            // Gated on rows existing, not on namespaces existing. Two
-            // namespaces are builtin (`vocab` and `reference`, prepended by
-            // `with_builtins`), so `registry_namespaces` is never empty and
-            // a guard on it fails every project that has no registry at all.
-            // That was the first version of this and the no-registry control
-            // caught it.
-            //
-            // Rows are the thing a schema verifies. No rows, nothing unverified.
-
-            if registry.rows.is_empty() {
-                eprintln!("  schema check skipped: no rows to verify");
-            } else {
-                errors += 1;
-                eprintln!(
-                    "  ERROR [schema-unavailable]: taplo is not installed, so the shape of \
-                     {} row(s) is unverified: required fields, types and slug patterns were \
-                     all unchecked. Install taplo.",
-                    registry.rows.len()
-                );
+                eprintln!("  ERROR [{}]: {}", f.kind, f.message);
             }
         },
     }

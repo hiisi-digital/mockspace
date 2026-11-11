@@ -113,3 +113,56 @@ fn an_expression_is_answered_as_a_document_would_have_it() {
     assert!(out.contains("see first"), "{out}");
     assert!(out.contains("ticket::none"), "a reference to no row is left to be reported: {out}");
 }
+
+#[test]
+fn one_call_holds_a_registry_to_everything_and_says_what_blocks() {
+    let good = "[[ticket]]\nid = \"one\"\ntitle = \"first\"\n\n[[ticket]]\nid = \"two\"\ntitle = \"second\"\nneeds = [\"one\"]\n";
+    let tmp = project(CONFIG, good);
+    let env = Env::from_dir(&tmp.path().join("mock")).unwrap();
+    let reg = load_registry_for(&env).unwrap();
+    let checked = mockspace_registry::check(&env, &reg, &[], Some(CONFIG), None);
+    assert!(checked.findings.is_empty(), "the control: a registry in order has no finding");
+    assert!(checked.inert_keys.is_empty(), "the engine's keys at the root are not this crate's to report");
+
+    // a row citing no row, a cycle the caller found, and a key nothing reads, each where it belongs
+    let dangling = good.replace("needs = [\"one\"]", "needs = [\"gone\"]");
+    std::fs::write(tmp.path().join("mock/registry/ticket/open.toml"), dangling).unwrap();
+    let reg = load_registry_for(&env).unwrap();
+    let cycle = mockspace_registry::RegistryFinding {
+        kind:    "reference-cycle",
+        message: "a cycle".into(),
+        source:  None,
+        gate:    mockspace_registry::GateScope::Always,
+    };
+    let misspelt = format!("{CONFIG}\n[[registry.namspace]]\nkey = \"lost\"\n");
+    let checked = mockspace_registry::check(&env, &reg, &[cycle], Some(&misspelt), None);
+    let kinds: Vec<_> = checked.findings.iter().map(|f| f.kind).collect();
+    assert_eq!(kinds, ["reference-cycle", "unknown-row-reference"]);
+    assert!(checked.blocking().count() >= 2, "both are among what blocks");
+    assert_eq!(checked.inert_keys.len(), 1);
+    assert!(checked.inert_keys[0].message.contains("[registry] declares `namspace`"), "{}", checked.inert_keys[0].message);
+}
+
+#[test]
+fn a_registry_with_no_row_is_never_refused_for_its_shape() {
+    // with a validator installed the shape passes, and with none there is nothing unverified
+    let tmp = project(CONFIG, "");
+    let env = Env::from_dir(&tmp.path().join("mock")).unwrap();
+    mockspace_registry::generate_schemas(&env.repo_root, &env.mock_dir, env.namespaces());
+    let reg = load_registry_for(&env).unwrap();
+    let checked = mockspace_registry::check(&env, &reg, &[], None, None);
+    assert!(!matches!(checked.shape, mockspace_registry::Shape::Refused(_)));
+}
+
+#[test]
+fn the_merge_driver_is_named_and_wired_the_same_by_every_tool() {
+    use mockspace_registry::merge::{DRIVER, attributes_line};
+    let root = Path::new("/repo");
+    assert_eq!(
+        attributes_line(root, &root.join("mock dir/registry")).as_deref(),
+        Some(format!("/mock\\ dir/registry/**/*.toml merge={DRIVER}").as_str()),
+        "at any depth, the path escaped as a pattern"
+    );
+    assert_eq!(attributes_line(root, Path::new("/elsewhere/registry")), None, "outside the repository");
+    assert_eq!(attributes_line(root, root), None, "the root itself is no registry directory");
+}

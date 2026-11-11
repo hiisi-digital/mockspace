@@ -23,7 +23,7 @@ const PRODUCERS: [&str; 5] = [
     include_str!("bounds.rs"),
     include_str!("resolve.rs"),
     include_str!("rowref/mod.rs"),
-    include_str!("../../../../src/entry/dispatch.rs"),
+    include_str!("check.rs"),
 ];
 
 fn listed(keys: &[&str]) -> BTreeSet<String> {

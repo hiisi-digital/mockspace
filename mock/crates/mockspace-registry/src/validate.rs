@@ -195,7 +195,6 @@ pub enum GateScope {
 pub const FINDING_KINDS: &[&str] = &[
     "reference-cycle",
     "duplicate-id",
-    "dangling-reference",
     "malformed-provenance",
     "unknown-provenance-root",
     "unresolvable-provenance",
@@ -224,12 +223,14 @@ pub const FINDING_KINDS: &[&str] = &[
     // NOTE: the per-finding severity map (`table.findings`, parsed at
     // `config.rs:1017`) is a real, working mechanism elsewhere: ordinary lints
     // registered with `mockspace_lint_rules::run_lint` consult it already. No
-    // registry check is dispatched that way, though: `run_inner` in
-    // `dispatch.rs` calls these functions by hand and prints their findings
+    // registry check is dispatched that way, though: the engine calls
+    // `check` by hand and prints its findings
     // directly, which is why the map went unconsulted for this whole list.
     // `unknown-config-key` is now the one exception (severity is read at that
     // call site under the lint name `registry-config-keys`). Every other kind
     // here still has no consumer.
+    // a row the generated schema of its namespace refuses, from `check`
+    "schema",
     "schema-unavailable",
     // Produced by `config_unknown_keys`, over the config file rather than the
     // row data, which no generated schema covers.
@@ -276,77 +277,13 @@ const FIELD_KEYS: &[&str] =
 /// whose absence is quiet.
 pub const REF_ROOT_KEYS: &[&str] = &["path", "frozen", "links", "label", "internal"];
 
-/// Keys the document **root** may carry. Mirrors `RawConfig`, plus the one
-/// section it deliberately does not deserialize.
-///
-/// This is the half the first version of this check missed, and it is the half
-/// the motivating defect was in: `canon_paths` is a root key, so a typo in it
-/// at the root was still discarded in silence after `[ref.roots.*]` was covered.
-///
-/// It also carries the keys the **launcher** reads rather than the engine: the
-/// engine pin and `mock_dir`. Those are `mockspace_manifest::ManifestHeader`'s
-/// fields, and leaving them out reported every project's own pin as unknown.
-/// Caught by running this against a real config rather than against a fixture,
-/// which is the only reason it was caught at all.
-///
-/// `lints` is here because `config.rs` reads it through `toml_edit` directly
-/// rather than through `RawConfig`, its values being heterogeneous. It is a
-/// real key and belongs in the list; the test below knows it is the exception.
-pub const ROOT_KEYS: &[&str] = &[
-    "project_name",
-    "crate_prefix",
-    "abi_version",
-    "src_dirs",
-    "append_only",
-    "data_ref",
-    "lockfiles",
-    "proc_macro_crates",
-    "lint_proc_macro_source",
-    "module_crates",
-    "unprefixed_crates",
-    "layers",
-    "primary_domain_macro",
-    "primary_domain_label",
-    "install_git_hooks",
-    "install_cargo_config",
-    "install_agent_files",
-    "auto_fmt",
-    "auto_clippy_fix",
-    "deny_check",
-    "domain_kinds",
-    "known_macros",
-    "agent_macros",
-    "macro_styles",
-    "crate_colors",
-    "crate_grouping",
-    "primitive-introductions",
-    "canon_paths",
-    "panel_consolidate_every",
-    "test",
-    "registry",
-    "deep_dive_index",
-    "ref",
-    "ordered_docs",
-    "primary_docs",
-    "lints",
-    // `lint-crates` is the same exception as `lints` and was missed for the same
-    // reason: `src/bootstrap/lints.rs::parse_lint_crates` reads it out of the
-    // document directly, so it is in no struct and a list derived from the
-    // structs cannot see it. Every repo declaring an external lint pack was
-    // told its declaration is discarded silently, on every run, while the pack
-    // compiled a few lines earlier in the same output.
-    "lint-crates",
-    // the launcher's, from `mockspace_manifest::ManifestHeader`
-    "mock_dir",
-    "mockspace_git",
-    "mockspace_version",
-    "mockspace_rev",
-    "mockspace_branch",
-    "mockspace_tag",
-];
+/// Keys `[registry]` may carry. Mirrors `RegistryDecl`.
+const REGISTRY_KEYS: &[&str] = &["namespace", "store"];
 
-/// Report keys anywhere in the config that deserialize into nothing: at the
-/// document root, in `[ref.roots.*]`, and in the namespace declarations.
+/// Report keys of the tables the registry reads that deserialize into nothing: in `[ref]`, in
+/// `[ref.roots.*]`, in `[registry]` and in the namespace declarations. The keys of the document
+/// root are whoever owns the rest of the config's to hold: this crate reads `registry` and `ref`
+/// there and passes over every other.
 ///
 /// The registry's row data is covered by generated schemas run through a TOML
 /// validator, which is why this file deliberately does not re-check what a schema
@@ -365,22 +302,6 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
     let Ok(doc) = config_text.parse::<toml_edit::DocumentMut>() else {
         return out; // a config that does not parse is somebody else's error
     };
-
-    // The document root. A key here is the case the motivating defect was
-    // actually in, and the first version of this check did not look.
-    for (k, _) in doc.iter() {
-        if !ROOT_KEYS.contains(&k) {
-            out.push(RegistryFinding {
-                kind:    "unknown-config-key",
-                message: format!(
-                    "the config declares `{k}` at its root, which mockspace does not read. \
-                     It is discarded silently."
-                ),
-                source:  None,
-                gate:    GateScope::Always,
-            });
-        }
-    }
 
     // `[ref]` itself. `roots` is the only thing it carries, so anything else
     // here is a key that read as configuration and was not.
@@ -439,6 +360,21 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
     let Some(reg) = doc.get("registry").and_then(|i| i.as_table()) else {
         return out;
     };
+    // `[registry]` itself, which carries the namespaces and the stores and nothing else. A
+    // misspelt `[[registry.namspace]]` lands here, and reads as a project with one namespace fewer.
+    for (k, _) in reg.iter() {
+        if !REGISTRY_KEYS.contains(&k) {
+            out.push(RegistryFinding {
+                kind:    "unknown-config-key",
+                message: format!(
+                    "[registry] declares `{k}`, which mockspace does not read there. It is discarded \
+                     silently; `[registry]` carries `namespace` and `store`."
+                ),
+                source:  None,
+                gate:    GateScope::Always,
+            });
+        }
+    }
     // A key of `[[registry.store]]` that is not read refuses the config as it parses (the one
     // declaration is `deny_unknown_fields`), so there is nothing to report here.
     let Some(spaces) = reg.get("namespace").and_then(|i| i.as_array_of_tables()) else {

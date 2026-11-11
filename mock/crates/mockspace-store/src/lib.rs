@@ -23,6 +23,7 @@
 //! files hold (the writer's), deleting or rewriting history, signing, and any
 //! knowledge of what a registry, a round or a test history is.
 
+pub mod attributes;
 mod commit_reader;
 mod dir;
 mod edit;

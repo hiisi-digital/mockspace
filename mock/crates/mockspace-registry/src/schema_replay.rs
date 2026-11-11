@@ -75,10 +75,6 @@ fn is_the_generated_config(config: &str) -> bool {
     matches!(lines.as_slice(), ["[[rule]]", include, schema] if include.starts_with("include = [") && *schema == SCHEMA_LINE)
 }
 
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|w| w == needle)
-}
-
 /// Whether a keyed file might bind a schema of its own. Refused broadly rather than by taplo's
 /// grammar: any `#:` comment (a directive, however it is spaced) and any file that does not parse
 /// or carries a root key that decodes to `$schema` (however it is escaped).

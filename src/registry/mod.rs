@@ -106,27 +106,6 @@ impl RegistryEnv for Config {
     }
 }
 
-/// The saved verdicts of a lint run, as the store the registry's schema check replays from.
-pub struct Saved<'a>(pub &'a dyn mockspace_lint_rules::verdict::VerdictCache);
-
-impl VerdictCache for Saved<'_> {
-    fn digest(&self, parts: &[&[u8]]) -> String {
-        self.0.digest(parts)
-    }
-
-    fn replay(&self, key: &str) -> Option<String> {
-        self.0.replay(key)
-    }
-
-    fn remember(&self, key: &str, encoded: &str) {
-        self.0.remember(key, encoded);
-    }
-
-    fn tally(&self, hit: bool, what: &str) {
-        self.0.tally(hit, what);
-    }
-}
-
 /// The flattened, reverse-edged view a lint or a tool checks the registry with.
 ///
 /// Built here rather than in the lint crate because computing the reverse edges needs the
@@ -139,11 +118,19 @@ pub fn build_view(reg: &Registry, namespaces: &[RegistryNamespace]) -> mockspace
     mockspace_lint_rules::RegistryView::new(rows, reverse_edges(reg, namespaces))
 }
 
+
+/// The finding kinds the engine emits beside the registry crate's (`FINDING_KINDS`): what only a
+/// rendered document can show, which a tool that renders none never finds.
+pub const RENDER_FINDING_KINDS: &[&str] = &["dangling-reference"];
 #[cfg(test)]
 #[path = "schema_replay_tests.rs"]
 mod schema_replay_tests;
 #[cfg(test)]
 pub(crate) mod engine_world;
+mod config_keys;
+pub use config_keys::{ROOT_KEYS, config_unknown_keys, root_unknown_keys};
+#[cfg(test)]
+mod parity_tests;
 
 
 #[cfg(test)]

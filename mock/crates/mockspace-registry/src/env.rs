@@ -105,22 +105,9 @@ impl RegistryEnv for Env {
 }
 
 /// Where saved verdicts of the schema check live, so a run over the same inputs replays its
-/// verdict. A tool with nowhere to keep them passes none.
-pub trait VerdictCache {
-    /// A fixed-width digest of `parts`, stable across runs and machines for the same code. The
-    /// implementation frames the parts, so two splittings of the same bytes give two digests.
-    fn digest(&self, parts: &[&[u8]]) -> String;
-
-    /// The encoded findings saved under `key`, if any.
-    fn replay(&self, key: &str) -> Option<String>;
-
-    /// Save `encoded` under `key`. A store that cannot write says nothing: a verdict not saved
-    /// is a verdict recomputed next run, never a wrong one.
-    fn remember(&self, key: &str, encoded: &str);
-
-    /// Told of each lookup, for a cache that counts its hits. Counting nothing is the default.
-    fn tally(&self, _hit: bool, _what: &str) {}
-}
+/// verdict: the one trait every check that replays shares. A tool with nowhere to keep them
+/// passes none.
+pub use mockspace_verdicts::VerdictCache;
 
 /// `<root>/target`, where what the registry generates and its scratch copies are kept.
 pub(crate) fn target_dir(root: &Path) -> PathBuf {
@@ -184,6 +171,42 @@ struct DeclaredRefs {
     roots: BTreeMap<String, RefRoot>,
 }
 
+/// Where a project is and where its `mockspace.toml` is read from, found from its mock directory.
+pub struct Located {
+    /// The project root, which `docs/` hangs off and paths in the config are relative to.
+    pub repo_root: PathBuf,
+    /// The config file: the one in the mock directory where there is one (in place, the historical
+    /// location), else the one at the root. Where neither is there it names the one in the mock
+    /// directory, which then reads as a project that declares nothing.
+    pub config:    PathBuf,
+}
+
+/// Finds the project of `mock_dir`: the one place that says where a project's root and config are,
+/// for the engine and for a tool without it, so the two read the same file of the same tree.
+///
+/// The root is the nearest directory at or above the mock directory that holds `.git`, because in a
+/// clone that is the root by definition. Where none does it is the nearest that holds a
+/// `mockspace.toml`, because a tree with no `.git` is ordinary: an export, a tarball, a vendored
+/// copy, a build container handed the sources and not the history. Without that second marker such
+/// a tree finds no root, looks for the config in the mock directory, reads the empty string where
+/// it is at the root, and reports no rows in no namespaces with nothing said. Where neither marker
+/// is found the root is the mock directory itself.
+///
+/// Two passes over the ancestry and not one checking both markers at each level, so a `.git`
+/// further up still wins over a `mockspace.toml` nearer: a tree that has `.git` resolves the same
+/// with or without the second marker.
+pub fn locate(mock_dir: &Path) -> Located {
+    let above = |marker: &str| mock_dir.ancestors().find(|d| d.join(marker).exists()).map(Path::to_path_buf);
+    let repo_root = above(".git").or_else(|| above("mockspace.toml")).unwrap_or_else(|| mock_dir.to_path_buf());
+    let in_mock = mock_dir.join("mockspace.toml");
+    let at_root = repo_root.join("mockspace.toml");
+    let config = if !in_mock.is_file() && at_root.is_file() { at_root } else { in_mock };
+    Located {
+        repo_root,
+        config,
+    }
+}
+
 impl Env {
     /// The environment of the declarations given: the built-in namespaces and roots first, then
     /// the project's own, so a project may repoint a built-in root and never has to declare one.
@@ -215,17 +238,15 @@ impl Env {
         }
     }
 
-    /// The environment of the project whose mock directory is `mock_dir`, read from its
-    /// `mockspace.toml`: the one in the mock directory, else the one at the repository root. The
-    /// repository root is the nearest directory above that holds `.git`, else the nearest that
-    /// holds a `mockspace.toml`, else the mock directory. No config file is a project that
-    /// declares nothing; one that does not parse is an error, since reading it as empty would
-    /// pass every check over a registry that was never opened.
+    /// The environment of the project whose mock directory is `mock_dir`, read from the
+    /// `mockspace.toml` that [`locate`] finds. No config file is a project that declares nothing;
+    /// one that does not parse is an error, since reading it as empty would pass every check over a
+    /// registry that was never opened.
     pub fn from_dir(mock_dir: &Path) -> Result<Self, String> {
-        let above = |marker: &str| mock_dir.ancestors().find(|d| d.join(marker).exists()).map(Path::to_path_buf);
-        let repo_root = above(".git").or_else(|| above("mockspace.toml")).unwrap_or_else(|| mock_dir.to_path_buf());
-        let in_mock = mock_dir.join("mockspace.toml");
-        let path = if in_mock.is_file() { in_mock } else { repo_root.join("mockspace.toml") };
+        let Located {
+            repo_root,
+            config: path,
+        } = locate(mock_dir);
         let text = std::fs::read_to_string(&path).unwrap_or_default();
         let declared: Declared = toml_edit::de::from_str(&text)
             .map_err(|e| format!("{} does not parse, so nothing in it was read: {e}", path.display()))?;

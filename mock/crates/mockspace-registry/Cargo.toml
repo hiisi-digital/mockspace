@@ -9,9 +9,11 @@ publish = false
 workspace = "../../.."
 
 # Usable without the mockspace engine: a tool that keeps a registry depends on this crate and on
-# nothing else of mockspace but the store it writes through.
+# nothing else of mockspace but the store it writes through and the trait saved verdicts are kept by.
 [dependencies]
 mockspace-store = { path = "../mockspace-store" }
+# The seam saved verdicts are plugged in by, shared with whatever else replays a check.
+mockspace-verdicts = { path = "../../../verdicts" }
 regex = { version = "1", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 toml_edit = { version = "0.22", features = ["serde"] }

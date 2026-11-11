@@ -13,6 +13,8 @@ description = "AST lint rules for mockspace workspaces"
 # document: it read a multi-line array as an absent key, which is a silent
 # false negative in exactly the direction that lint exists to catch.
 toml = { version = "0.8", default-features = false, features = ["parse"] }
+# The seam saved verdicts are plugged in by, which has no dependency of its own.
+mockspace-verdicts = { path = "../verdicts" }
 tree-sitter = "0.24"
 tree-sitter-rust = "0.23"
 
