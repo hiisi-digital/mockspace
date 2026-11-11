@@ -20,7 +20,8 @@ fn remote_notes(w: &World) -> String {
 /// The calls of `commit`'s own, each told apart from the call of the same name the copy of the
 /// edit makes: the commit's index is the store's, its message is the ref's, and it moves the ref
 /// and not the copy.
-const COMMIT_STEPS: [&str; 5] = [
+const COMMIT_STEPS: [&str; 6] = [
+    "hash-object mockspace-store",
     "write-tree mockspace-store",
     "commit-tree data: research",
     "update-ref !mock-backup",
@@ -30,7 +31,7 @@ const COMMIT_STEPS: [&str; 5] = [
 
 /// The calls of the copy that `commit` makes of the edit first.
 const COPY_STEPS: [&str; 4] =
-    ["write-tree mockspace-backup", "commit-tree backup of", "update-ref mock-backup", "hash-object -w --no-filters --stdin-paths"];
+    ["write-tree mockspace-backup", "commit-tree backup of", "update-ref mock-backup", "hash-object -w --no-filters --stdin-paths idx=$"];
 
 /// A commit with the step `fail` failing: the step is reached, the edit is on disk after it, and
 /// the commit made again (with `update` first where the commit landed and the local ref did not
@@ -70,7 +71,7 @@ fn a_commit_that_fails_at_any_of_its_own_steps_keeps_the_edit_and_the_retry_comm
         // a failure of the push or of the fetch before it may be one the store takes back, so only
         // a step past the push is asked to be said
         let ok = commit_failing_at(step);
-        if matches!(step, "write-tree mockspace-store" | "commit-tree data: research") {
+        if matches!(step, "hash-object mockspace-store" | "write-tree mockspace-store" | "commit-tree data: research") {
             assert!(!ok, "{step}: the commit was told to fail and said it succeeded");
         }
     }

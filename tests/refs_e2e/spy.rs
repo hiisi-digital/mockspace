@@ -11,7 +11,7 @@ pub struct Spy {
     /// A failed call is logged again behind `INJECTED`, so a test can tell the step was reached.
     pub log:  PathBuf,
     /// Lines naming the calls to fail: a subcommand, then optionally a text the logged call must
-    /// hold, or with a leading `!` must not.
+    /// hold, or with a leading `!` must not, or with a trailing `$` must end with.
     pub fail: PathBuf,
     /// The ordinal, counted from the last [`Spy::fail_at`], of the one call to fail.
     at:       PathBuf,
@@ -53,6 +53,7 @@ if [ -f '{fail}' ]; then
     case "$rest" in
       "") hit=1 ;;
       "!"*) case "$line" in *"${{rest#!}}"*) ;; *) hit=1 ;; esac ;;
+      *'$') case "$line" in *"${{rest%?}}") hit=1 ;; esac ;;
       *) case "$line" in *"$rest"*) hit=1 ;; esac ;;
     esac
     if [ -n "$hit" ]; then

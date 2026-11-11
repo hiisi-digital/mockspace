@@ -209,25 +209,23 @@ impl RefStore {
             .git
             .must(&["rev-parse", "--absolute-git-dir"], &[], None)?
             .text();
-        let index = PathBuf::from(git_dir).join(format!("mockspace-store-{}.idx", unique()));
+        let index = PathBuf::from(&git_dir).join(format!("mockspace-store-{}.idx", unique()));
         let _guard = RemoveOnDrop(index.clone());
         let index_s = index.to_string_lossy().into_owned();
         let env = [("GIT_INDEX_FILE", index_s.as_str())];
         if let Some(tip) = tip {
             self.git.must(&["read-tree", tip], &env, None)?;
         }
+        let puts: Vec<(&str, &[u8])> = edit.entries().filter_map(|(p, b)| b.map(|b| (p, b))).collect();
+        let blobs = self.write_blobs(&git_dir, &puts, &env)?;
         let mut lines = String::new();
+        for ((path, _), blob) in puts.iter().zip(&blobs) {
+            let mode = crate::ids::Mode::of(edit.is_exec(path)).git();
+            lines.push_str(&format!("{mode} {blob}\t{path}\0"));
+        }
         for (path, bytes) in edit.entries() {
-            match bytes {
-                Some(bytes) => {
-                    let blob = self
-                        .git
-                        .must(&["hash-object", "-w", "--stdin"], &[], Some(bytes))?
-                        .text();
-                    let mode = crate::ids::Mode::of(edit.is_exec(path)).git();
-                    lines.push_str(&format!("{mode} {blob}\t{path}\0"));
-                },
-                None => lines.push_str(&format!("0 {ZERO_OID}\t{path}\0")),
+            if bytes.is_none() {
+                lines.push_str(&format!("0 {ZERO_OID}\t{path}\0"));
             }
         }
         // NUL-terminated, so a path git would read as C-quoted (one that begins with `"`) is a path
@@ -271,5 +269,49 @@ impl RefStore {
         }
         args.extend(["-m", message]);
         Ok(Some(self.git.must(&args, &ident, None)?.text()))
+    }
+
+    /// Writes each of `puts` as a blob and gives their ids in order, in one git process for all
+    /// of them: the bytes go to files of a directory in `git_dir` that is removed after, and git
+    /// hashes those with no filter, so each blob holds the bytes exactly as `--stdin` would. `env`
+    /// names the commit's own index, which the call does not read, so it is told apart from a
+    /// copy's blob write.
+    fn write_blobs(&self, git_dir: &str, puts: &[(&str, &[u8])], env: &[(&str, &str)]) -> Result<Vec<String>, StoreError> {
+        if puts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let dir = PathBuf::from(git_dir).join(format!("mockspace-store-{}.blobs", unique()));
+        let _guard = RemoveDirOnDrop(dir.clone());
+        let io = |e: std::io::Error| {
+            StoreError::Git {
+                command: "hash-object -w --stdin-paths".to_owned(),
+                detail:  format!("staging the bytes in {}: {e}", dir.display()),
+            }
+        };
+        std::fs::create_dir(&dir).map_err(io)?;
+        let mut input = String::new();
+        for (n, (_, bytes)) in puts.iter().enumerate() {
+            let file = dir.join(n.to_string());
+            std::fs::write(&file, bytes).map_err(io)?;
+            input.push_str(&file.display().to_string());
+            input.push('\n');
+        }
+        let out = self.git.must(&["hash-object", "-w", "--no-filters", "--stdin-paths"], env, Some(input.as_bytes()))?;
+        let blobs: Vec<String> = out.text().lines().map(str::to_owned).collect();
+        if blobs.len() != puts.len() {
+            return Err(StoreError::Git {
+                command: "hash-object -w --stdin-paths".to_owned(),
+                detail:  format!("{} ids for {} files", blobs.len(), puts.len()),
+            });
+        }
+        Ok(blobs)
+    }
+}
+
+struct RemoveDirOnDrop(PathBuf);
+
+impl Drop for RemoveDirOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
