@@ -58,7 +58,8 @@ fn edits_on_both_sides_of_the_ref_and_the_branch_meet_through_pull_and_update() 
 // Mutation: let `update` write the tip over a file edited here, or `commit` push over a tip it was
 // not built on; one person's text is then nowhere. This also pins that the tools give no way through
 // a file changed on both sides: `commit` names `update`, which refuses the same file, and the person
-// sets the edit aside by hand. How that conflict is resolved is a question for op.
+// sets the edit aside by hand. How that conflict is resolved is op's call, asked in question ticket
+// `a_ref_file_changed_in_two_clones_has_no_engine_way_through`.
 #[test]
 fn one_ref_file_edited_by_two_people_keeps_both_edits_and_is_resolved_by_hand() {
     let (w, base) = migrated();

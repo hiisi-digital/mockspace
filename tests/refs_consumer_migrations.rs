@@ -165,7 +165,9 @@ fn a_rewrite_keeps_the_line_ends_a_file_was_written_with() {
 }
 
 // Mutation: let the move read a filtered file from the index instead of the disk; the instance
-// then holds the pointer where the person had the bytes.
+// then holds the pointer where the person had the bytes. Whether a ref should hold the bytes or the
+// pointer is op's call, asked in question ticket
+// `a_data_ref_holds_a_filtered_file_as_its_full_bytes_not_the_p`.
 #[test]
 fn a_file_under_a_filter_is_held_as_the_bytes_the_person_has() {
     let s = consumer::ODD;
@@ -200,7 +202,8 @@ fn a_link_the_branch_keeps_beside_a_moved_directory_stays_a_link() {
 // `data-refs commit` the run names as the next step is refused by the lints, which read the rewrite
 // as a doc edit outside the DOC phase. Nothing is lost: the rewrite stays on disk as an edit and
 // the ref keeps what it had. Whether the mechanical rewrite should pass the phase gates is op's
-// call; the day it does, this test says so.
+// call, asked in question ticket `the_references_rewrite_of_ref_held_templates_is_refused_by_a`;
+// the day it does, this test says so.
 #[test]
 fn in_a_round_whose_doc_changelist_is_locked_the_rewritten_templates_wait_on_disk() {
     let s = consumer::ELSEWHERE;

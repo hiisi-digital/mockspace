@@ -91,7 +91,8 @@ fn history_holds_at(c: &refs_e2e::Clone, ns: &str, name: &str, text: &[u8]) -> b
 // the old commit declares no ref, so no copy holds it. Where an engine command saw it on `dev`, the
 // copy of edits keeps it, but only in the history of the backup ref: nothing names it after the
 // forced way back, and `restore` writes the base's bytes. Which of the hook, the engine at an old
-// commit or the copy closes it is op's call; the day one does, this test says so.
+// commit or the copy closes it is op's call, asked in question ticket
+// `the_way_back_from_a_pre_migration_commit_drops_an_edit_carri`; the day one does, this test says so.
 #[test]
 fn the_forced_way_back_from_a_commit_from_before_the_migration_drops_an_edit_carried_there() {
     for (way, looked) in [(&["checkout", "-q", "-f", "dev"][..], false), (&["reset", "-q", "--hard", "dev"], false), (&["checkout", "-q", "-f", "dev"], true)] {
@@ -268,7 +269,8 @@ fn gc_keeps_every_copy_of_an_edit_git_wrote_over() {
 // copy, and the next look fails rather than say the file is safe.
 //
 // Mutation for the rest: refuse every `commit` while the file names a copy that is gone, with no way
-// past; the clone then never commits the ref again and never copies a later edit.
+// past; the clone then never commits the ref again and never copies a later edit. The way past is
+// provisional, asked in question ticket `the_way_past_a_copy_a_git_gc_pruned_is_provisional`.
 #[test]
 fn gc_that_prunes_at_once_takes_a_copy_no_engine_command_has_taken_yet() {
     let w = refs_e2e::World::new();
