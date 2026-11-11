@@ -110,4 +110,12 @@ impl Git {
         self.program = program.into();
         self
     }
+
+    /// The same program run in `dir` instead.
+    pub(crate) fn in_dir(&self, dir: PathBuf) -> Self {
+        Self {
+            dir,
+            program: self.program.clone(),
+        }
+    }
 }

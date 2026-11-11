@@ -109,6 +109,9 @@ fn the_manifest_names_every_durable_hook_and_quotes_the_path() {
             "{event}: {text}"
         );
     }
+    // where git-shook holds the key, the hand-over to the repository's own hook that copies the
+    // files of a data ref's instance is one of the gate's entries, or nothing runs that hook
+    assert!(text.contains("[hooks.reference-transaction]\n"), "{text}");
 }
 
 #[test]

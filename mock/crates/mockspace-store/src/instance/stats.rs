@@ -56,7 +56,7 @@ pub(super) fn now() -> i64 {
 
 struct Entry {
     stamp: Stamp,
-    id:    String,
+    id:    Oid,
     at:    i64,
 }
 
@@ -69,18 +69,18 @@ pub(super) struct Stats {
 impl Stats {
     /// The blob id recorded for `path`, where the file still has the stamp it had and was old
     /// enough when hashed.
-    pub(super) fn trusted(&self, path: &str, stamp: &Stamp) -> Option<&str> {
+    pub(super) fn trusted(&self, path: &str, stamp: &Stamp) -> Option<&Oid> {
         let e = self.entries.get(path)?;
         let old_enough = stamp.mtime.0 + MARGIN <= e.at && stamp.ctime.0 + MARGIN <= e.at;
-        (e.stamp == *stamp && old_enough).then_some(e.id.as_str())
+        (e.stamp == *stamp && old_enough).then_some(&e.id)
     }
 
-    pub(super) fn put(&mut self, path: &str, stamp: Stamp, id: &str, at: i64) {
+    pub(super) fn put(&mut self, path: &str, stamp: Stamp, id: Oid, at: i64) {
         self.entries.insert(
             path.to_owned(),
             Entry {
                 stamp,
-                id: id.to_owned(),
+                id,
                 at,
             },
         );
@@ -125,8 +125,8 @@ fn parse(text: &str) -> Stats {
         let f: Vec<&str> = line.splitn(9, '\t').collect();
         let [id, size, ms, mn, cs, cn, ino, at, path] = f[..] else { continue };
         let num = |s: &str| s.parse::<i64>().ok();
-        let (Some(size), Some(ms), Some(mn), Some(cs), Some(cn), Some(ino), Some(at)) =
-            (num(size), num(ms), num(mn), num(cs), num(cn), num(ino), num(at))
+        let (Ok(id), Some(size), Some(ms), Some(mn), Some(cs), Some(cn), Some(ino), Some(at)) =
+            (Oid::parse(id), num(size), num(ms), num(mn), num(cs), num(cn), num(ino), num(at))
         else {
             continue;
         };
@@ -139,7 +139,7 @@ fn parse(text: &str) -> Stats {
                     ctime: (cs, cn),
                     ino:   ino as u64,
                 },
-                id: id.to_owned(),
+                id,
                 at,
             },
         );
@@ -196,3 +196,4 @@ impl Instance<'_> {
 }
 
 use crate::error::StoreError;
+use crate::ids::Oid;

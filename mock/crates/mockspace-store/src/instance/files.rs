@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::Instance;
 use crate::error::StoreError;
+use crate::ids::{FileId, Mode, Oid};
 use crate::ref_history::BATCH;
 
 impl Instance<'_> {
@@ -87,7 +88,7 @@ impl Instance<'_> {
             return Err(self.fail("was not made by `materialize`", Vec::new()));
         };
         std::fs::create_dir_all(&self.dir).map_err(|e| self.io("creating", e))?;
-        let ids = self.store.tree_ids(&base)?;
+        let ids = self.ids_of(&base)?;
         self.check_held(&ids)?;
         let missing: Vec<&String> = ids
             .keys()
@@ -99,9 +100,9 @@ impl Instance<'_> {
             return Err(self.fail("holds files in the way of the base", in_the_way));
         }
         for chunk in missing.chunks(BATCH) {
-            let wanted: Vec<&str> = chunk.iter().map(|p| ids[*p].as_str()).collect();
+            let wanted: Vec<&Oid> = chunk.iter().map(|p| &ids[*p].blob).collect();
             for (path, bytes) in chunk.iter().zip(self.store.blobs(&wanted)?) {
-                self.write(path, &bytes, crate::ref_history::split_id(&ids[*path]).1)?;
+                self.write(path, &bytes, ids[*path].mode.is_exec())?;
             }
         }
         self.exclude()?;
@@ -117,10 +118,8 @@ impl Instance<'_> {
             return Ok((here.into_iter().collect(), BTreeSet::new()));
         }
         let delta = self.delta()?;
-        // every look the engine takes at the instance keeps a copy of what is edited in it
-        self.snapshot_of(&delta)?;
-        let mut held: BTreeSet<String> = self.store.tree_ids(&delta.base)?.into_keys().collect();
-        held.extend(self.walk()?);
+        let mut held: BTreeSet<String> = delta.base_ids.into_keys().collect();
+        held.extend(delta.here.into_keys());
         Ok((held, delta.sent.into_keys().collect()))
     }
 
@@ -128,7 +127,7 @@ impl Instance<'_> {
     /// no instance was made.
     pub fn present(&self) -> Result<(usize, usize), StoreError> {
         let Some(base) = self.base()? else { return Ok((0, 0)) };
-        let ids = self.store.tree_ids(&base)?;
+        let ids = self.ids_of(&base)?;
         let here = ids.keys().filter(|p| self.dir.join(p.as_str()).is_file()).count();
         Ok((here, ids.len()))
     }
@@ -141,10 +140,6 @@ impl Instance<'_> {
                 break;
             }
         }
-    }
-
-    pub(super) fn is_file(&self, rel: &str) -> bool {
-        self.dir.join(rel).is_file()
     }
 
     /// Write `bytes` at `rel` with the executable bit as given: set on the owner, group and
@@ -199,71 +194,6 @@ impl Instance<'_> {
         Ok(on)
     }
 
-    /// The regular files under the directory, as `/`-separated paths, sorted. Every regular file
-    /// is data, whatever a `.gitignore` says: a ref holds the files its patterns match. A cache
-    /// directory (one with a `CACHEDIR.TAG` that carries the standard signature, which is what
-    /// cargo writes into a `target`) is a build's output and is not read, unless the base, or the
-    /// local tip where there is no record, holds a file under it.
-    pub(super) fn walk(&self) -> Result<Vec<String>, StoreError> {
-        let known: BTreeSet<String> = match self.base()?.or(self.store.local_tip()?) {
-            Some(commit) => self.store.tree_ids(&commit)?.into_keys().collect(),
-            None => BTreeSet::new(),
-        };
-        let mut out = Vec::new();
-        self.walk_into(&self.dir, "", &known, &mut out)?;
-        Ok(out)
-    }
-
-    /// Whether the directory at `at` is a cache directory, by the signature the cache directory
-    /// tag specification names.
-    fn is_cache_dir(at: &Path) -> bool {
-        use std::io::Read;
-        const SIGNATURE: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
-        let mut head = [0u8; SIGNATURE.len()];
-        std::fs::File::open(at.join("CACHEDIR.TAG")).and_then(|mut f| f.read_exact(&mut head)).is_ok() && head == *SIGNATURE
-    }
-
-    fn walk_into(
-        &self,
-        dir: &Path,
-        prefix: &str,
-        known: &BTreeSet<String>,
-        out: &mut Vec<String>,
-    ) -> Result<(), StoreError> {
-        let mut entries = std::fs::read_dir(dir)
-            .map_err(|e| self.io("reading", e))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| self.io("reading", e))?;
-        entries.sort_by_key(|e| e.file_name());
-        for entry in entries {
-            let Ok(name) = entry.file_name().into_string() else {
-                return Err(self.fail("holds a file name that is not text", Vec::new()));
-            };
-            let rel = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
-            let kind = entry.file_type().map_err(|e| self.io("reading", e))?;
-            if kind.is_dir() {
-                let below = format!("{rel}/");
-                let holds_some = known.range(below.clone()..).next().is_some_and(|k| k.starts_with(&below));
-                if self.held.as_ref().is_some_and(|h| !h.may_hold_under(&rel)) {
-                    // nothing of the patterns can be in there
-                } else if !holds_some && Self::is_cache_dir(&entry.path()) {
-                    // a build's output: not data, and not named a loss because it is not read
-                } else {
-                    self.walk_into(&entry.path(), &rel, known, out)?;
-                }
-            } else if !self.holds(&rel) {
-                // the branch's own: not this instance's to read or to refuse
-            } else if kind.is_symlink() {
-                return Err(self.fail("holds a symlink", vec![rel]));
-            } else if kind.is_file() {
-                out.push(rel);
-            } else {
-                return Err(self.fail("holds something that is not a regular file", vec![rel]));
-            }
-        }
-        Ok(())
-    }
-
     /// The blob id each of `paths` would have if committed as it is, by path. A path that is not
     /// a file here has no entry. The executable bit is the file's own where `core.fileMode` is
     /// on, and else the one `modes` holds for the path (ids of the base or the tip), none for a
@@ -273,9 +203,9 @@ impl Instance<'_> {
     pub(super) fn local_ids<S: AsRef<str>>(
         &self,
         paths: &[S],
-        modes: &BTreeMap<String, String>,
+        modes: &BTreeMap<String, FileId>,
         whole: bool,
-    ) -> Result<BTreeMap<String, String>, StoreError> {
+    ) -> Result<BTreeMap<String, FileId>, StoreError> {
         use std::os::unix::fs::PermissionsExt;
         let trust_mode = self.file_mode()?;
         let mut stats = self.load_stats();
@@ -289,12 +219,12 @@ impl Instance<'_> {
             let exec = if trust_mode {
                 meta.permissions().mode() & 0o100 != 0
             } else {
-                modes.get(path).is_some_and(|id| crate::ref_history::split_id(id).1)
+                modes.get(path).is_some_and(|id| id.mode.is_exec())
             };
             let stamp = super::stats::Stamp::of(&meta);
             match stats.trusted(path, &stamp) {
                 Some(id) => {
-                    ids.insert(path.to_owned(), with_mode(id, exec));
+                    ids.insert(path.to_owned(), FileId { blob: id.clone(), mode: Mode::of(exec) });
                 },
                 None => hashed.push((path, stamp, exec)),
             }
@@ -320,8 +250,9 @@ impl Instance<'_> {
                 });
             }
             for ((path, stamp, exec), id) in chunk.iter().zip(found) {
-                stats.put(path, *stamp, id, at);
-                ids.insert((*path).to_owned(), with_mode(id, *exec));
+                let id = Oid::parse(id)?;
+                stats.put(path, *stamp, id.clone(), at);
+                ids.insert((*path).to_owned(), FileId { blob: id, mode: Mode::of(*exec) });
             }
         }
         if whole {
@@ -330,9 +261,4 @@ impl Instance<'_> {
         self.save_stats(&stats);
         Ok(ids)
     }
-}
-
-/// `id` with the executable marker the ids of a tree carry, where `exec`.
-fn with_mode(id: &str, exec: bool) -> String {
-    if exec { format!("{id}{}", crate::ref_history::EXEC) } else { id.to_owned() }
 }

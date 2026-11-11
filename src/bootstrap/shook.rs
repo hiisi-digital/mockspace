@@ -13,7 +13,7 @@
 //! durable hooks' absolute path is per machine and a tracked `shook.toml` would
 //! carry one machine's home directory to every other.
 
-use mockspace_manifest::gate::{FOLLOW_UP_HOOKS, HOOK_NAMES};
+use mockspace_manifest::gate::{CHAIN_HOOKS, FOLLOW_UP_HOOKS, HOOK_NAMES};
 
 use super::*;
 
@@ -44,7 +44,7 @@ fn manifest_path(repo_root: &Path) -> PathBuf {
 }
 
 fn events() -> impl Iterator<Item = &'static str> {
-    HOOK_NAMES.iter().chain(FOLLOW_UP_HOOKS).copied()
+    HOOK_NAMES.iter().chain(FOLLOW_UP_HOOKS).chain(CHAIN_HOOKS).copied()
 }
 
 fn quote(s: &str) -> String {

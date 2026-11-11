@@ -195,3 +195,36 @@ fn paired_survives_a_rehouse_in_the_clone_that_held_the_old_hash() {
     w.remote_git(&["update-ref", "refs/heads/mock/research", &new]);
     a.ok(&["data-refs", "paired", "HEAD"]);
 }
+
+// Mutation: hand the base of an instance of a ref not born yet to the pairing as a commit; the
+// landing then cannot be paired at all until somebody commits to a ref that has nothing to hold.
+#[test]
+fn a_ref_not_born_yet_has_no_line_and_pairing_skips_it() {
+    let w = refs_e2e::World::new();
+    let a = w.first_clone("a");
+    fixture::build_tracked(&a);
+    fixture::migrate_one(&a, "research", "research", &[]);
+    let cfg = String::from_utf8(a.read("mock/mockspace.toml")).unwrap();
+    a.write("mock/mockspace.toml", format!("{cfg}\n[[data_ref]]\nnamespace = \"extra\"\npath = \"extra\"\n").as_bytes());
+    a.git(&["add", "-f", "--", "mock/mockspace.toml"]);
+    a.commit_all("chore: declare `extra`");
+    a.push();
+    a.ok(&["data-refs", "instantiate", "extra"]);
+    let o = a.ok(&["data-refs", "trailers"]);
+    let lines: Vec<&str> = o.stdout.lines().collect();
+    assert_eq!(lines.len(), 1, "one line, for the ref that is born: {}", o.all());
+    assert!(lines[0].starts_with(&format!("Mock-Ref: research {} ", tip(&w, "research"))), "{}", lines[0]);
+    land(&a, &o.stdout);
+    let p = a.ok(&["data-refs", "paired", "HEAD"]);
+    assert!(p.all().contains("extra") && p.all().contains("not born"), "the skip is said: {}", p.all());
+    // once the ref is born, a landing made after it carries its line and is held to it
+    a.write("mock/extra/first.md", b"first\n");
+    a.ok(&["data-refs", "commit", "extra"]);
+    let born = a.ok(&["data-refs", "trailers"]).stdout;
+    assert_eq!(born.lines().count(), 2, "{born}");
+    land(&a, "");
+    let o = a.fails(&["data-refs", "paired", "HEAD"]);
+    assert!(o.all().contains("extra"), "a landing after the birth with no line passed: {}", o.all());
+    // and the landing made before the birth still pairs, though the ref has commits now
+    a.ok(&["data-refs", "paired", "HEAD~1"]);
+}

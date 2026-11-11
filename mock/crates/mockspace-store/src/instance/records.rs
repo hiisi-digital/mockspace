@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::Instance;
 use crate::error::StoreError;
+use crate::ids::Base;
 
 /// The directory of the common git directory that holds one record for each instance.
 const RECORDS: &str = "mock-instances";
@@ -21,7 +22,7 @@ impl Instance<'_> {
     /// The base this instance was last brought to, or `None` when no record exists. A record
     /// that names another ref or directory is an error: the name is an id of the pair, so it
     /// means the file was changed by hand.
-    pub(super) fn read_record(&self) -> Result<Option<String>, StoreError> {
+    pub(super) fn read_record(&self) -> Result<Option<Base>, StoreError> {
         let text = match std::fs::read_to_string(self.record_file()?) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -32,19 +33,20 @@ impl Instance<'_> {
             (Some(base), Some(local), Some(dir))
                 if local == self.store.pair().local() && dir == self.dir_text() =>
             {
-                Ok(Some(base.to_owned()))
+                Base::from_record(base).map(Some).ok_or_else(|| self.fail("has a record whose base is no commit", vec![base.to_owned()]))
             },
             _ => Err(self.fail("has a record that is not its own", Vec::new())),
         }
     }
 
     /// Records `base` as the commit the files of the directory were brought to.
-    pub(super) fn record(&self, base: &str) -> Result<(), StoreError> {
+    pub(super) fn record(&self, base: &Base) -> Result<(), StoreError> {
         let file = self.record_file()?;
         let Some(parent) = file.parent() else { return Ok(()) };
         std::fs::create_dir_all(parent).map_err(|e| self.io("creating the records of", e))?;
         let line = format!(
-            "{base}\t{}\t{}\n",
+            "{}\t{}\t{}\n",
+            base.record_text(),
             self.store.pair().local(),
             self.dir_text()
         );

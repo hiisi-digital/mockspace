@@ -3,21 +3,9 @@
 use std::collections::BTreeMap;
 
 use crate::error::StoreError;
+use crate::ids::{FileId, Mode, Oid};
 use crate::reader::Reader;
 use crate::ref_store::RefStore;
-
-/// What follows a blob id in an id map when the file is executable (mode 100755). A plain file's
-/// id is the bare blob id, so one comparison of two ids compares content and mode together.
-pub(crate) const EXEC: &str = "+x";
-
-/// The blob id and whether the file is executable, from an id of the maps `tree_ids` and
-/// `local_ids` give.
-pub(crate) fn split_id(id: &str) -> (&str, bool) {
-    match id.strip_suffix(EXEC) {
-        Some(blob) => (blob, true),
-        None => (id, false),
-    }
-}
 
 /// How many paths or ids go to one git process, so that neither pipe fills while the other is
 /// being written.
@@ -35,13 +23,13 @@ impl RefStore {
     /// The files of `commit`, read without a checkout. `commit` is an object id, and anything
     /// that git would take for an option or a path is refused.
     pub fn reader_of(&self, commit: &str) -> Result<impl Reader, StoreError> {
-        if commit.is_empty() || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(StoreError::InvalidRef {
-                name: commit.to_owned(),
-                why:  "not an object id",
-            });
-        }
-        Ok(self.reader_at(Some(commit.to_owned())))
+        let oid = Oid::parse(commit)?;
+        Ok(self.reader_at(Some(oid.as_str().to_owned())))
+    }
+
+    /// The local tip as an object id, or `None` where there is no local ref.
+    pub(crate) fn local_oid(&self) -> Result<Option<Oid>, StoreError> {
+        self.local_tip()?.map(|t| Oid::parse(&t)).transpose()
     }
 
     /// Every commit reachable from the local ref, newest first, and none when there is no local
@@ -91,12 +79,18 @@ impl RefStore {
     /// The blob id of each file of `commit`, by path. A tree entry that is not a regular file
     /// (a symbolic link, a submodule) or whose name is not text is refused, because each would
     /// be read as a file it is not, or as another file of the same lossy name.
-    pub(crate) fn tree_ids(&self, commit: &str) -> Result<BTreeMap<String, String>, StoreError> {
-        // the base of an instance of a ref not born yet holds no file
-        if commit == crate::instance::UNBORN {
-            return Ok(BTreeMap::new());
+    pub(crate) fn tree_ids(&self, commit: &Oid) -> Result<BTreeMap<String, FileId>, StoreError> {
+        self.tree_ids_under(commit, None)
+    }
+
+    /// [`RefStore::tree_ids`] of the entries under `prefix` alone, a directory of the tree named
+    /// with its trailing `/`; the paths keep the prefix.
+    pub(crate) fn tree_ids_under(&self, commit: &Oid, prefix: Option<&str>) -> Result<BTreeMap<String, FileId>, StoreError> {
+        let mut args = vec!["ls-tree", "-r", "-z", commit.as_str()];
+        if let Some(prefix) = prefix {
+            args.extend(["--", prefix]);
         }
-        let out = self.git.must(&["ls-tree", "-r", "-z", commit], &[], None)?;
+        let out = self.git.must(&args, &[], None)?;
         let mut ids = BTreeMap::new();
         for entry in out.stdout.split(|b| *b == 0).filter(|e| !e.is_empty()) {
             // `<mode> SP <type> SP <object> TAB <path>`
@@ -116,29 +110,26 @@ impl RefStore {
                     why:  "is not text",
                 }
             })?;
-            match meta.split(' ').collect::<Vec<_>>()[..] {
-                ["100644", "blob", id] => {
-                    ids.insert(path.to_owned(), id.to_owned());
-                },
-                ["100755", "blob", id] => {
-                    ids.insert(path.to_owned(), format!("{id}{EXEC}"));
-                },
-                _ => {
-                    return Err(StoreError::InvalidPath {
-                        path: path.to_owned(),
-                        why:  "is not a regular file (a symbolic link or a submodule)",
-                    });
-                },
-            }
+            let file = match meta.split(' ').collect::<Vec<_>>()[..] {
+                [mode, "blob", id] => Mode::from_git(mode).map(|mode| (mode, id)),
+                _ => None,
+            };
+            let Some((mode, id)) = file else {
+                return Err(StoreError::InvalidPath {
+                    path: path.to_owned(),
+                    why:  "is not a regular file (a symbolic link or a submodule)",
+                });
+            };
+            ids.insert(path.to_owned(), FileId { blob: Oid::parse(id)?, mode });
         }
         Ok(ids)
     }
 
     /// The bytes of each blob in `ids`, in the order given.
-    pub(crate) fn blobs(&self, ids: &[&str]) -> Result<Vec<Vec<u8>>, StoreError> {
+    pub(crate) fn blobs(&self, ids: &[&Oid]) -> Result<Vec<Vec<u8>>, StoreError> {
         let mut input = String::new();
         for id in ids {
-            input.push_str(split_id(id).0);
+            input.push_str(id.as_str());
             input.push('\n');
         }
         let out = self
@@ -174,12 +165,11 @@ impl RefStore {
     /// Every file of `commit` with its bytes, by path, in one pass of a few git processes rather
     /// than two for each file. A tree too large to hold in memory is not what this is for.
     pub fn files_of(&self, commit: &str) -> Result<BTreeMap<String, Vec<u8>>, StoreError> {
-        let _checked = self.reader_of(commit)?;
-        let ids = self.tree_ids(commit)?;
+        let ids = self.tree_ids(&Oid::parse(commit)?)?;
         let paths: Vec<&String> = ids.keys().collect();
         let mut files = BTreeMap::new();
         for chunk in paths.chunks(BATCH) {
-            let wanted: Vec<&str> = chunk.iter().map(|p| ids[*p].as_str()).collect();
+            let wanted: Vec<&Oid> = chunk.iter().map(|p| &ids[*p].blob).collect();
             for (path, bytes) in chunk.iter().zip(self.blobs(&wanted)?) {
                 files.insert((*path).clone(), bytes);
             }

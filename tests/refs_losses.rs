@@ -1,6 +1,6 @@
 //! Losses a review of the data-ref branch found: git writing over an edited instance file in a
-//! merge, a file a `.gitignore` matches that never reaches the ref, and a sparse block that hides
-//! a tracked file.
+//! merge, build output that never reaches the ref, a mode a filesystem makes up, and a sparse
+//! block that hides a tracked file.
 
 #[path = "common/ambient.rs"]
 mod ambient;
@@ -48,12 +48,19 @@ fn a_star_pattern_does_not_hide_a_branch_file_in_a_subdirectory() {
 
 // ---- what the engine keeps of an edit, so git writing over it loses nothing ----
 
-const BACKUP_NOTES: &str = "refs/mock-backup/research:20261001_alpha/NOTES.md";
+/// Every copy the local backup ref holds of the notes, by content: the ref keeps the copies of each
+/// worktree's instance apart, so the path of one is not known here, only that it ends in the notes.
+fn backup_of(c: &refs_e2e::Clone) -> Vec<String> {
+    let tree = c.git_out(&["ls-tree", "-r", "--name-only", "refs/mock-backup/research"]);
+    tree.stdout
+        .lines()
+        .filter(|p| p.ends_with("20261001_alpha/NOTES.md"))
+        .map(|p| c.git(&["show", &format!("refs/mock-backup/research:{p}")]))
+        .collect()
+}
 
-/// What the local backup ref holds of the notes, where it holds any.
-fn backup_of(c: &refs_e2e::Clone) -> Option<String> {
-    let o = c.git_out(&["show", BACKUP_NOTES]);
-    o.ok.then_some(o.stdout)
+fn backup_holds(c: &refs_e2e::Clone, text: &str) -> bool {
+    backup_of(c).iter().any(|t| t == text)
 }
 
 // Mutation: leave the `reference-transaction` hook out, so nothing copies the edit before the merge
@@ -63,7 +70,7 @@ fn a_merge_overwrites_the_file_and_the_edit_is_in_the_backup_ref() {
     let w = World::new();
     let a = dirty_instance_and_an_old_branch(&w);
     let _ = a.git_out(&["merge", "--no-edit", "feat"]);
-    assert_eq!(backup_of(&a).as_deref(), Some("DIRTY instance edit\n"), "the backup ref holds the edit");
+    assert!(backup_holds(&a, "DIRTY instance edit\n"), "the backup ref holds the edit: {:?}", backup_of(&a));
 }
 
 // Mutation: none; this pins that git refuses a plain rebase over the edit, since the old branch
@@ -92,7 +99,7 @@ fn an_autostashed_rebase_of_an_old_branch_leaves_the_edit_somewhere() {
     let stashed = std::fs::read_to_string(state.trim())
         .map(|id| a.git_out(&["show", id.trim()]).stdout.contains("DIRTY instance edit"))
         .unwrap_or(false);
-    let backed_up = backup_of(&a).as_deref() == Some("DIRTY instance edit\n");
+    let backed_up = backup_holds(&a, "DIRTY instance edit\n");
     assert!(on_disk || stashed || backed_up, "the edit is in the file, the stash and the backup ref: nowhere");
 }
 
@@ -105,7 +112,7 @@ fn a_cherry_pick_straight_after_an_edit_is_the_window_no_hook_covers() {
     let a = dirty_instance_and_an_old_branch(&w);
     let o = a.git_out(&["cherry-pick", "feat"]);
     assert_ne!(a.read(NOTES), b"DIRTY instance edit\n", "the cherry-pick no longer overwrites ({})", o.all());
-    assert_eq!(backup_of(&a), None, "a copy exists now: the window is closed, so remove this test");
+    assert_eq!(backup_of(&a), Vec::<String>::new(), "a copy exists now: the window is closed, so remove this test");
 }
 
 // Mutation: snapshot only from the hook; an engine run between the edit and the cherry-pick would
@@ -117,7 +124,7 @@ fn an_engine_run_between_the_edit_and_the_cherry_pick_closes_that_window() {
     let s = a.ok(&["data-refs", "status", "research"]);
     assert!(s.stdout.ends_with("changed\n"), "{}", s.all());
     let _ = a.git_out(&["cherry-pick", "feat"]);
-    assert_eq!(backup_of(&a).as_deref(), Some("DIRTY instance edit\n"));
+    assert!(backup_holds(&a, "DIRTY instance edit\n"), "{:?}", backup_of(&a));
 }
 
 // Mutation: write a new backup commit on every run; a gated run on every command would then fill
@@ -144,14 +151,20 @@ fn a_clean_instance_makes_no_backup() {
     assert!(!a.git_out(&["rev-parse", "--verify", "-q", "refs/mock-backup/research"]).ok);
 }
 
+/// The repository's own `reference-transaction` hook, which git runs directly or through the gate's.
+fn own_hook(c: &refs_e2e::Clone) -> std::path::PathBuf {
+    let common = c.git(&["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    std::path::Path::new(common.trim()).join("hooks/reference-transaction")
+}
+
 // Mutation: let `verify` pass where the hook that copies an edit before git writes over it is gone.
 #[test]
 fn verify_names_a_worktree_with_no_backup_hook_and_instantiate_repairs_it() {
     let w = fixture::migrated_remote();
     let a = fixture::seat(&w, "a");
     a.ok(&["data-refs", "verify"]);
-    let hook = a.git(&["rev-parse", "--path-format=absolute", "--git-path", "hooks/reference-transaction"]);
-    std::fs::remove_file(hook.trim()).unwrap();
+    let hook = own_hook(&a);
+    std::fs::remove_file(&hook).unwrap();
     let o = a.fails(&["data-refs", "verify"]);
     assert!(o.all().contains("reference-transaction") && o.all().contains("instantiate"), "{}", o.all());
     let _ = a.run(&["data-refs", "instantiate"]);
@@ -163,11 +176,11 @@ fn verify_names_a_worktree_with_no_backup_hook_and_instantiate_repairs_it() {
 fn a_reference_transaction_hook_of_the_persons_own_is_refused_and_kept() {
     let w = fixture::migrated_remote();
     let a = fixture::seat(&w, "a");
-    let hook = a.git(&["rev-parse", "--path-format=absolute", "--git-path", "hooks/reference-transaction"]);
-    std::fs::write(hook.trim(), "#!/bin/sh\n# my own\nexit 0\n").unwrap();
+    let hook = own_hook(&a);
+    std::fs::write(&hook, "#!/bin/sh\n# my own\nexit 0\n").unwrap();
     let o = a.fails(&["data-refs", "instantiate"]);
     assert!(o.all().contains("reference-transaction"), "{}", o.all());
-    assert_eq!(std::fs::read_to_string(hook.trim()).unwrap(), "#!/bin/sh\n# my own\nexit 0\n", "the hook is as it was");
+    assert_eq!(std::fs::read_to_string(&hook).unwrap(), "#!/bin/sh\n# my own\nexit 0\n", "the hook is as it was");
     let v = a.fails(&["data-refs", "verify"]);
     assert!(v.all().contains("reference-transaction"), "{}", v.all());
 }
@@ -209,21 +222,6 @@ fn a_directory_with_glob_characters_is_protected_as_itself() {
 
 // ---- what a ref holds is what its patterns match ----
 
-// Mutation: read a `.gitignore` of the branch, as the first version did.
-#[test]
-fn a_new_file_a_gitignore_matches_is_data_and_reaches_the_ref() {
-    let w = fixture::migrated_remote();
-    let a = fixture::seat(&w, "a");
-    a.write(".gitignore", b"*.pdf\n");
-    a.commit_all("chore: ignore pdfs");
-    a.write("mock/research/paper.pdf", b"%PDF a fetched paper\n");
-    let s = a.ok(&["data-refs", "status", "research"]);
-    assert!(s.stdout.trim_end().ends_with("changed"), "{}", s.all());
-    a.ok(&["data-refs", "commit", "research"]);
-    let listing = w.remote_git(&["ls-tree", "-r", "--name-only", "refs/heads/mock/research"]);
-    assert!(listing.contains("paper.pdf"), "the ref does not hold the paper: {listing}");
-}
-
 // Mutation: read every file of a cargo build directory as data, so `target/` of a sketch fills the ref.
 #[test]
 fn a_cache_directory_is_not_data_though_no_gitignore_names_it() {
@@ -240,18 +238,22 @@ fn a_cache_directory_is_not_data_though_no_gitignore_names_it() {
     assert!(!listing.contains("probe/build"), "build output reached the ref: {listing}");
 }
 
-// Mutation: skip every directory named `target`, as the ignore rule did; a directory of data that
-// happens to be so named was dropped without a word.
+// Mutation: skip every directory named `target` without a word; a directory of data that happens to
+// be so named, which the `.gitignore` the engine keeps matches, is then gone from the ref and nobody
+// is told.
 #[test]
-fn a_directory_named_target_with_no_cache_tag_is_data() {
+fn a_directory_named_target_with_no_cache_tag_is_named_as_ignored() {
     let w = fixture::migrated_remote();
     let a = fixture::seat(&w, "a");
     a.write("mock/research/target/keep.md", b"findings about a target\n");
     let s = a.ok(&["data-refs", "status", "research"]);
-    assert!(s.stdout.trim_end().ends_with("changed"), "{}", s.all());
-    a.ok(&["data-refs", "commit", "research"]);
-    let listing = w.remote_git(&["ls-tree", "-r", "--name-only", "refs/heads/mock/research"]);
-    assert!(listing.contains("target/keep.md"), "{listing}");
+    assert!(s.stdout.contains("research: ignored, not held: target/\n"), "{}", s.all());
+    // the control: a cache directory beside it is a build's, and is not named
+    a.write("mock/research/sketch/target/CACHEDIR.TAG", fixture::CACHE_TAG);
+    a.write("mock/research/sketch/target/debug/x", b"x\n");
+    let s = a.ok(&["data-refs", "status", "research"]);
+    assert!(!s.stdout.contains("sketch/target"), "{}", s.all());
+    assert_eq!(a.read("mock/research/target/keep.md"), b"findings about a target\n");
 }
 
 // ---- modes ----

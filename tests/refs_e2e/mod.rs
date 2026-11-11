@@ -16,11 +16,12 @@ pub mod world;
 pub use check::{strays, Held, Manifest, content_only, held_on_remote, instance_matches, no_loss};
 pub use world::{Clone, Out, World};
 
-/// The state word of `status` for one namespace: `clean`, `changed`, and so on.
+/// The state line of `status` for one namespace, which ends in `clean` or `changed`. It is the last
+/// line of the namespace, after any that name a file.
 pub fn status_of(c: &Clone, ns: &str) -> String {
     let out = c.run(&["data-refs", "status", ns]);
     assert!(out.ok, "status {ns}: {}", out.all());
-    out.stdout.lines().find(|l| l.starts_with(&format!("{ns}:"))).unwrap_or_default().to_string()
+    out.stdout.lines().filter(|l| l.starts_with(&format!("{ns}:"))).last().unwrap_or_default().to_string()
 }
 
 /// The commit a ref is at on the remote.

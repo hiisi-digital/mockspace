@@ -10,11 +10,13 @@
 //! Two things are done against that. A sparse checkout: a path the patterns leave out is not
 //! written, and one that is there and differs from the commit is left in place with a warning,
 //! never replaced. So each worktree carries a managed block of patterns, one set for every declared
-//! ref, written from the same lines as the exclude file. And a `reference-transaction` hook: a merge
-//! that conflicts on a path the migration took off the branch writes the branch's bytes whatever the
-//! patterns say, but git moves `ORIG_HEAD` first (a merge, a rebase and a reset all do), and the hook
-//! copies the edited files into a backup ref before it lets that through. `instantiate`, `commit` and
-//! the migration write both; `verify` checks both and names a block whose declaration is gone.
+//! ref, written from the same lines as the exclude file; per-worktree config is turned on for it,
+//! with a bare clone's `core.bare` moved where only the clone itself reads it. And the
+//! `reference-transaction` hook of `hook`: a merge that conflicts on a path the migration took off
+//! the branch writes the branch's bytes whatever the patterns say, but git moves `ORIG_HEAD` first,
+//! and the hook copies the files of every instance into its backup ref, so the next engine command
+//! names what git wrote over and `restore` brings it back. `instantiate`, `commit` and the
+//! migration write both; `verify` checks both and names a block whose declaration is gone.
 
 use std::path::{Path, PathBuf};
 
@@ -24,29 +26,6 @@ use crate::config::Config;
 
 const BEGIN: &str = "# mockspace data refs: the instances git must not write over (managed, do not edit)";
 const END: &str = "# end mockspace data refs";
-
-/// The line that marks the hook as the one this writes.
-const HOOK_MARK: &str = "# mockspace data refs: copies an edited instance file before git writes over it (managed, do not edit)";
-
-fn hook_text() -> String {
-    format!(
-        "#!/bin/sh\n{HOOK_MARK}\n\
-         [ \"$1\" = prepared ] || exit 0\n\
-         [ -z \"$MOCKSPACE_SNAPSHOT\" ] || exit 0\n\
-         moves=$(cat)\n\
-         printf '%s\\n' \"$moves\" | grep ' ORIG_HEAD$' >/dev/null || exit 0\n\
-         if command -v mock >/dev/null 2>&1; then launcher=mock\n\
-         elif command -v cargo-mock >/dev/null 2>&1; then launcher=cargo-mock\n\
-         else\n\
-         \x20   echo 'mockspace: no launcher on PATH, so an edited instance file is not copied before this write' >&2\n\
-         \x20   exit 0\n\
-         fi\n\
-         MOCKSPACE_SNAPSHOT=1 \"$launcher\" data-refs snapshot >&2 || {{\n\
-         \x20   echo 'mockspace: the edited instance files could not be copied, so nothing was written' >&2\n\
-         \x20   exit 1\n\
-         }}\n"
-    )
-}
 
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
     Git::new(repo.to_path_buf()).must(args, &[], None).map(|o| o.text()).map_err(|e| e.to_string())
@@ -126,7 +105,7 @@ pub fn install(cfg: &Config) -> Result<(), String> {
         return Ok(());
     }
     let repo = &cfg.repo_root;
-    git(repo, &["config", "extensions.worktreeConfig", "true"])?;
+    worktree_config(cfg)?;
     git(repo, &["config", "--worktree", "core.sparseCheckout", "true"])?;
     git(repo, &["config", "--worktree", "core.sparseCheckoutCone", "false"])?;
     let text = compose(&existing, &lines);
@@ -141,7 +120,7 @@ pub fn install(cfg: &Config) -> Result<(), String> {
     if std::fs::read_to_string(&held).ok().as_deref() != Some(declared.as_str()) {
         std::fs::write(&held, declared).map_err(|e| format!("writing {}: {e}", held.display()))?;
     }
-    install_hook(cfg)
+    super::hook::install(cfg)
 }
 
 /// Where this worktree keeps the declarations it last installed.
@@ -157,43 +136,6 @@ pub fn remembered(cfg: &Config) -> Vec<super::DataRefDecl> {
         .and_then(|f| std::fs::read_to_string(f).ok())
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
-}
-
-/// What stands where the hook belongs.
-enum Hook {
-    Absent,
-    Ours(String),
-    Foreign,
-}
-
-fn hook_state(cfg: &Config) -> Result<(PathBuf, Hook), String> {
-    let path = path_of(cfg, "hooks/reference-transaction")?;
-    let state = match std::fs::read_to_string(&path) {
-        Ok(text) if text.contains(HOOK_MARK) => Hook::Ours(text),
-        Ok(_) => Hook::Foreign,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Hook::Absent,
-        Err(e) => return Err(format!("reading {}: {e}", path.display())),
-    };
-    Ok((path, state))
-}
-
-fn install_hook(cfg: &Config) -> Result<(), String> {
-    let (path, state) = hook_state(cfg)?;
-    match state {
-        Hook::Foreign => Err(format!(
-            "{} is a hook of your own, and the copy of an edited instance file before a merge or a rebase writes over \
-             it needs a `reference-transaction` hook: have its `prepared` case run `mock data-refs snapshot` when a \
-             line of its input ends in ` ORIG_HEAD`, or move it aside and run `cargo mock data-refs instantiate`",
-            path.display()
-        )),
-        Hook::Ours(text) if text == hook_text() => Ok(()),
-        Hook::Ours(_) | Hook::Absent => {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| format!("creating {}: {e}", parent.display()))?;
-            }
-            mockspace_manifest::write_executable(&path, hook_text()).map_err(|e| format!("writing {}: {e}", path.display()))
-        },
-    }
 }
 
 /// Whether this worktree is protected: the sparse checkout is on for it, its file holds the block as
@@ -221,18 +163,31 @@ pub fn check(cfg: &Config) -> Result<(), String> {
                     the migration would overwrite them); `cargo mock data-refs instantiate` sets that up"
             .to_string());
     }
-    let (path, state) = hook_state(cfg)?;
-    match state {
-        Hook::Ours(text) if text == hook_text() => Ok(()),
-        Hook::Foreign => Err(format!(
-            "{} is a hook of your own that does not copy an edited instance file before a merge or a rebase writes over it; \
-             see `cargo mock data-refs instantiate`",
-            path.display()
-        )),
-        _ => Err(format!(
-            "this worktree has no `reference-transaction` hook that copies an edited instance file before a merge or a \
-             rebase writes over it ({}); `cargo mock data-refs instantiate` installs it",
-            path.display()
-        )),
+    super::hook::check(cfg)
+}
+
+/// Turns on per-worktree config, which the sparse checkout of one worktree needs. With it on, git
+/// reads `core.bare` and `core.worktree` of the common config as every worktree's own, so a bare
+/// clone's linked worktrees would read themselves as bare; where either is set there it first
+/// moves into the config of the main worktree alone, as `git sparse-checkout init` does.
+fn worktree_config(cfg: &Config) -> Result<(), String> {
+    let repo = Git::new(cfg.repo_root.clone());
+    let run = |args: &[&str]| repo.run(args, &[], None).map_err(|e| e.to_string());
+    if run(&["config", "--type=bool", "--get", "extensions.worktreeConfig"])?.text() == "true" {
+        return Ok(());
     }
+    let common = PathBuf::from(git(&cfg.repo_root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?);
+    let (shared, main) = (common.join("config"), common.join("config.worktree"));
+    let (shared, main) = (shared.to_string_lossy(), main.to_string_lossy());
+    for key in ["core.bare", "core.worktree"] {
+        let value = run(&["config", "--file", &shared, "--get", key])?;
+        // `core.bare = false` is every worktree's answer anyway, and stays where it is
+        if !value.ok() || (key == "core.bare" && value.text() != "true") {
+            continue;
+        }
+        git(&cfg.repo_root, &["config", "--file", &main, key, &value.text()])?;
+        git(&cfg.repo_root, &["config", "--file", &shared, "--unset", key])?;
+    }
+    git(&cfg.repo_root, &["config", "extensions.worktreeConfig", "true"])?;
+    Ok(())
 }

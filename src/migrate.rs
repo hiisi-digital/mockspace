@@ -380,6 +380,10 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
         lines.push(format!("make the ref of `{ns}` from {} file(s) and push it", tracked.len()));
         steps.push(Step::Seed(decl, tracked.clone()));
     }
+    // a file a `.gitignore` matches stays where it is and out of the ref, as it stayed out of the branch
+    let ignored = inst.ignored().map_err(|e| vec![format!("migrate: {e}")])?;
+    let from_root = |p: &str| if lead.is_empty() { p.to_owned() } else { format!("{lead}/{p}") };
+    lines.extend(ignored.iter().map(|p| format!("leave {}: ignored, not held", from_root(p))));
     if !declared {
         lines.push(format!("append to {}:", cfg.config_path.display()));
         lines.extend(table.lines().map(|l| format!("  {l}")));
