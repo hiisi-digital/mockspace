@@ -20,12 +20,14 @@
 //! Nothing here guards a file saved by another process in the instant between the comparison
 //! and the write of [`Instance::update`]; an instance is not edited while that runs.
 
+mod held;
 mod records;
 mod tracking;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
+pub use held::Held;
 use tracking::Tracking;
 
 use crate::edit::Edit;
@@ -39,6 +41,7 @@ use crate::store::{Applied, Freshness, Store};
 pub struct Instance<'a> {
     store: &'a RefStore,
     dir:   PathBuf,
+    held:  Option<Held>,
 }
 
 /// What the directory held against the base: the edit, the base it is against, and the blob id
@@ -65,6 +68,7 @@ impl<'a> Instance<'a> {
         let this = Self {
             store,
             dir: resolved(&absolute),
+            held: None,
         };
         match this.dir.to_str() {
             Some(text) if !text.chars().any(char::is_control) => Ok(this),
@@ -72,9 +76,32 @@ impl<'a> Instance<'a> {
         }
     }
 
+    /// The same instance holding only the files `held` matches. The directory may then hold
+    /// files of the branch as well: they are not read, written, removed or excluded, and a
+    /// tip that holds a file the patterns do not match is refused before anything is written.
+    pub fn holding(mut self, held: Held) -> Self {
+        self.held = Some(held);
+        self
+    }
+
     /// The directory, absolute.
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    fn holds(&self, rel: &str) -> bool {
+        self.held.as_ref().is_none_or(|h| h.holds(rel))
+    }
+
+    /// Refuses a tree of the ref that holds a path this instance does not: written here it
+    /// would be a file the branch sees and no later edit of the instance could name.
+    fn check_held(&self, ids: &BTreeMap<String, String>) -> Result<(), StoreError> {
+        let outside: Vec<String> = ids.keys().filter(|p| !self.holds(p)).cloned().collect();
+        if outside.is_empty() {
+            Ok(())
+        } else {
+            Err(self.fail("is of a ref that holds files outside its patterns", outside))
+        }
     }
 
     /// The commit the files of the directory were last brought to, or `None` where no instance
@@ -97,9 +124,16 @@ impl<'a> Instance<'a> {
         };
         let existed = self.dir.exists();
         if existed {
-            let mut entries = std::fs::read_dir(&self.dir).map_err(|e| self.io("reading", e))?;
-            if entries.next().is_some() {
-                return Err(self.fail("is not an empty directory", Vec::new()));
+            if self.held.is_some() {
+                let here = self.walk()?;
+                if !here.is_empty() {
+                    return Err(self.fail("already holds files its patterns match", here));
+                }
+            } else {
+                let mut entries = std::fs::read_dir(&self.dir).map_err(|e| self.io("reading", e))?;
+                if entries.next().is_some() {
+                    return Err(self.fail("is not an empty directory", Vec::new()));
+                }
             }
             if let Some(base) = self.base()? {
                 if !self.store.tree_ids(&base)?.is_empty() {
@@ -110,13 +144,25 @@ impl<'a> Instance<'a> {
                 }
             }
         }
+        let ids = self.store.tree_ids(&tip)?;
+        self.check_held(&ids)?;
         let made = self
             .fill(&tip)
             .and_then(|()| self.exclude())
             .and_then(|()| self.record(&tip));
         if made.is_err() {
             self.forget();
-            if existed {
+            if self.held.is_some() {
+                // the directory holds the branch's files too, so only what the fill wrote goes
+                for path in ids.keys() {
+                    if std::fs::remove_file(self.dir.join(path)).is_ok() {
+                        self.prune(path);
+                    }
+                }
+                if !existed {
+                    let _ = std::fs::remove_dir(&self.dir);
+                }
+            } else if existed {
                 for entry in std::fs::read_dir(&self.dir).into_iter().flatten().flatten() {
                     let path = entry.path();
                     let _ = if path.is_dir() {
@@ -275,6 +321,7 @@ impl<'a> Instance<'a> {
             return Ok(());
         }
         let (from, to) = (self.store.tree_ids(&base)?, self.store.tree_ids(&tip)?);
+        self.check_held(&to)?;
         let moved: Vec<String> = from
             .keys()
             .chain(to.keys())
@@ -329,6 +376,13 @@ impl<'a> Instance<'a> {
             for (path, bytes) in chunk.iter().zip(self.store.blobs(&wanted)?) {
                 // what stands at a path to be written holds no file, or `in_the_way` refused
                 if self.dir.join(path.as_str()).is_dir() {
+                    if self.held.is_some() {
+                        // it holds no file of the instance, so what it holds is the branch's
+                        return Err(self.fail(
+                            "has a directory of the branch where the tip has a file",
+                            vec![(*path).clone()],
+                        ));
+                    }
                     std::fs::remove_dir_all(self.dir.join(path.as_str()))
                         .map_err(|e| self.io("removing", e))?;
                 }
@@ -420,10 +474,14 @@ impl<'a> Instance<'a> {
             };
             let rel = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
             let kind = entry.file_type().map_err(|e| self.io("reading", e))?;
-            if kind.is_symlink() {
+            if kind.is_dir() {
+                if self.held.as_ref().is_none_or(|h| h.may_hold_under(&rel)) {
+                    self.walk_into(&entry.path(), &rel, out)?;
+                }
+            } else if !self.holds(&rel) {
+                // the branch's own, or a build's: not this instance's to read or to refuse
+            } else if kind.is_symlink() {
                 return Err(self.fail("holds a symlink", vec![rel]));
-            } else if kind.is_dir() {
-                self.walk_into(&entry.path(), &rel, out)?;
             } else if kind.is_file() {
                 out.push(rel);
             } else {

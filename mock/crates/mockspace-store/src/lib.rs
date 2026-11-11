@@ -44,7 +44,7 @@ pub use dir::DirStore;
 pub use edit::Edit;
 pub use error::StoreError;
 pub use identity::Identity;
-pub use instance::Instance;
+pub use instance::{Held, Instance};
 pub use merge::{MergeHook, MergeRefusal, Reapply, Refuse};
 pub use path::validate_path;
 pub use reader::Reader;

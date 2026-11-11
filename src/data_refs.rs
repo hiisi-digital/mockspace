@@ -40,6 +40,11 @@ pub struct DataRefDecl {
     pub remote:    Option<String>,
     /// `branch` (the default) or `ref`, as for a registry store.
     pub form:      Option<String>,
+    /// The files of `path` the ref holds, as patterns relative to it (`**/*.md.tmpl`, `*/**`).
+    /// Absent, the ref holds every file of the directory and the directory is the ref's alone.
+    /// Given, it holds only the files a pattern matches, and the branch keeps the others, so a
+    /// crate's templates leave the tree while its sources stay.
+    pub include:   Option<Vec<String>>,
 }
 
 impl DataRefDecl {
@@ -61,7 +66,10 @@ impl DataRefDecl {
 }
 
 /// The first components of a path that belong to a store of their own and are never a data ref's.
-const OWN_STORES: [&str; 3] = ["registry", "design_rounds", "test-history"];
+const OWN_STORES: [&str; 3] = ["registry", ROUNDS, "test-history"];
+
+/// The directory of the design rounds under the mock directory.
+const ROUNDS: &str = "design_rounds";
 
 /// Whether directories `a` and `b` (relative, trimmed of `/`) are the same or one holds the other.
 fn nested(a: &str, b: &str) -> bool {
@@ -105,8 +113,25 @@ pub fn validate_against(decls: &[DataRefDecl], taken: &[String]) -> Result<(), V
                     why.push(format!("{at}: path `{p}` {bad}"));
                 } else {
                     let p = p.trim_matches('/');
-                    if let Some(own) = OWN_STORES.iter().find(|s| nested(p, s)) {
-                        why.push(format!("{at}: path `{p}` is under `{own}`, which has a store of its own"));
+                    match OWN_STORES.iter().find(|s| nested(p, s)) {
+                        // The closed rounds are directories of `design_rounds` and belong to no
+                        // branch, where the flat files of an open round are the branch's own. A
+                        // ref may hold the first by patterns that reach only into a directory.
+                        Some(&ROUNDS) if p == ROUNDS && d.include.is_some() => {
+                            for pat in d.include.iter().flatten() {
+                                let first = pat.split('/').next().unwrap_or("");
+                                if !pat.contains('/') || first == "**" {
+                                    why.push(format!(
+                                        "{at}: pattern `{pat}` could hold a flat file of `{ROUNDS}`, which is an open \
+                                         round's and stays on its branch"
+                                    ));
+                                }
+                            }
+                        },
+                        Some(own) => {
+                            why.push(format!("{at}: path `{p}` is under `{own}`, which has a store of its own"));
+                        },
+                        None => {},
                     }
                     for (j, o) in decls.iter().enumerate().take(i) {
                         let Some(other) = o.path.as_deref().map(|o| o.trim_matches('/')) else {
@@ -118,6 +143,17 @@ pub fn validate_against(decls: &[DataRefDecl], taken: &[String]) -> Result<(), V
                     }
                 }
             },
+        }
+        if let Some(patterns) = d.include.as_deref() {
+            if let Err(e) = mockspace_store::Held::new(patterns) {
+                why.push(format!("{at}: `include` {e}"));
+            }
+            if d.instance.is_some() {
+                why.push(format!(
+                    "{at}: `instance` and `include` are both given, and files held by pattern stay where the \
+                     branch's own files are"
+                ));
+            }
         }
         if let Some(inst) = d.instance.as_deref() {
             if let Some(bad) = path_problem(inst) {
@@ -156,6 +192,19 @@ impl DataRefDecl {
         let rel = self.instance.as_deref().or(self.path.as_deref()).unwrap_or("").trim_matches('/');
         rel.split('/').fold(mock_dir.to_path_buf(), |p, part| p.join(part))
     }
+
+    /// The instance of this ref over `store`, holding the files `include` names where it is given.
+    pub fn instance<'a>(
+        &self,
+        store: &'a RefStore,
+        mock_dir: &Path,
+    ) -> Result<mockspace_store::Instance<'a>, String> {
+        let inst = mockspace_store::Instance::new(store, self.instance_dir(mock_dir)).map_err(|e| e.to_string())?;
+        match self.include.as_deref() {
+            None => Ok(inst),
+            Some(patterns) => Ok(inst.holding(mockspace_store::Held::new(patterns).map_err(|e| e.to_string())?)),
+        }
+    }
 }
 
 /// `cargo mock data-refs <status|verify|instantiate|commit> [namespace]`. Prints one line per ref it
@@ -163,7 +212,7 @@ impl DataRefDecl {
 pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode {
     use std::process::ExitCode;
 
-    use mockspace_store::{Instance, Refuse, Store};
+    use mockspace_store::{Refuse, Store};
 
     let Some((verb, rest)) = args.split_first() else {
         eprintln!("data-refs: status, verify, instantiate or commit [namespace]");
@@ -187,8 +236,7 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
         let ns = d.namespace();
         let outcome = (|| -> Result<String, String> {
             let store = d.open(&cfg.repo_root)?;
-            let dir = d.instance_dir(&cfg.mock_dir);
-            let inst = Instance::new(&store, &dir).map_err(|e| e.to_string())?;
+            let inst = d.instance(&store, &cfg.mock_dir)?;
             match *verb {
                 "status" => {
                     let tip = store.local_tip().map_err(|e| e.to_string())?;

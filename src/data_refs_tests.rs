@@ -65,6 +65,44 @@ fn a_path_under_a_store_of_its_own_is_refused() {
     assert_eq!(validate(&[decl("a", "registry_old")]), Ok(()));
 }
 
+fn held(ns: &str, path: &str, include: &[&str]) -> DataRefDecl {
+    DataRefDecl {
+        include: Some(include.iter().map(|p| (*p).to_string()).collect()),
+        ..decl(ns, path)
+    }
+}
+
+#[test]
+fn a_ref_may_hold_the_files_of_a_directory_that_patterns_name() {
+    assert_eq!(validate(&[held("templates", "crates", &["**/*.md.tmpl"])]), Ok(()));
+    let why = validate(&[held("templates", "crates", &["what?"])]).unwrap_err().join("\n");
+    assert!(why.contains("`include`") && why.contains("what?"), "{why}");
+    let why = validate(&[held("templates", "crates", &[])]).unwrap_err().join("\n");
+    assert!(why.contains("no pattern is given"), "{why}");
+    // files held by pattern lie among the branch's, so they cannot be placed elsewhere
+    let mut moved = held("templates", "crates", &["**/*.md.tmpl"]);
+    moved.instance = Some("elsewhere".into());
+    let why = validate(&[moved]).unwrap_err().join("\n");
+    assert!(why.contains("`instance` and `include` are both given"), "{why}");
+}
+
+#[test]
+fn the_closed_rounds_may_go_to_a_ref_and_a_flat_round_file_may_not() {
+    assert_eq!(validate(&[held("rounds", "design_rounds", &["*/**"])]), Ok(()));
+    for flat in ["*.md", "**", "**/*.md", "topic.md"] {
+        let why = validate(&[held("rounds", "design_rounds", &[flat])]).unwrap_err().join("\n");
+        assert!(why.contains("open") && why.contains(flat), "{flat}: {why}");
+    }
+    // the control: without patterns the directory is refused whole, as it was
+    let why = validate(&[decl("rounds", "design_rounds")]).unwrap_err().join("\n");
+    assert!(why.contains("has a store of its own"), "{why}");
+    // and patterns do not open the registry or a directory inside the rounds
+    for p in ["registry", "design_rounds/202611010000"] {
+        let why = validate(&[held("a", p, &["*/**"])]).unwrap_err().join("\n");
+        assert!(why.contains("has a store of its own"), "{p}: {why}");
+    }
+}
+
 #[test]
 fn two_refs_may_not_place_their_instances_over_each_other() {
     let mut b = decl("b", "other");
@@ -125,6 +163,24 @@ mod verbs {
         assert!(!b.mock_dir.join("research").exists(), "the control: b holds nothing before it instantiates");
         assert_eq!(run(&b, &["instantiate"]), ExitCode::SUCCESS);
         assert_eq!(std::fs::read_to_string(b.mock_dir.join("research/note.md")).unwrap(), "findings\n");
+    }
+
+    #[test]
+    fn templates_held_by_pattern_travel_and_the_sources_beside_them_do_not() {
+        let w = World::new();
+        let mut a = w.clone_of("a", false);
+        a.data_refs = vec![held("templates", "crates", &["**/*.md.tmpl"])];
+        std::fs::create_dir_all(a.mock_dir.join("crates/one/src")).unwrap();
+        std::fs::write(a.mock_dir.join("crates/one/src/lib.rs"), "pub fn one() {}\n").unwrap();
+        std::fs::write(a.mock_dir.join("crates/one/DESIGN.md.tmpl"), "design of one\n").unwrap();
+        assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
+        assert_eq!(run(&a, &["verify"]), ExitCode::SUCCESS, "a source beside the template is no change");
+
+        let mut b = w.clone_of("b", false);
+        b.data_refs = a.data_refs.clone();
+        assert_eq!(run(&b, &["instantiate"]), ExitCode::SUCCESS);
+        assert_eq!(std::fs::read_to_string(b.mock_dir.join("crates/one/DESIGN.md.tmpl")).unwrap(), "design of one\n");
+        assert!(!b.mock_dir.join("crates/one/src/lib.rs").exists(), "the control: a source came out of a data ref");
     }
 
     #[test]
