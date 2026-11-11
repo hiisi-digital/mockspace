@@ -87,6 +87,33 @@ fn a_ref_may_hold_the_files_of_a_directory_that_patterns_name() {
 }
 
 #[test]
+fn one_ref_may_hold_the_rest_of_the_mock_directory_by_patterns_that_name_where_they_reach() {
+    let rest = ["research/**", "benches/**", "design_rounds/*/**", "crates/**/*.md.tmpl", "*.md.tmpl", "catalogue.md"];
+    assert_eq!(validate(&[held("mock", ".", &rest)]), Ok(()));
+    for (pattern, word) in [
+        ("**/*.md", "wildcard"),
+        ("*/notes.md", "wildcard"),
+        ("registry/**", "store of its own"),
+        ("test-history/x/**", "store of its own"),
+        ("design_rounds/**", "open round"),
+        ("design_rounds/*.md", "open round"),
+        ("*.toml", "mockspace.toml"),
+        ("mockspace.toml", "mockspace.toml"),
+    ] {
+        let why = validate(&[held("mock", ".", &[pattern])]).unwrap_err().join("\n");
+        assert!(why.contains(word) && why.contains(pattern), "{pattern}: {why}");
+    }
+    // the whole directory with no pattern is the branch's tree gone, and is not a ref
+    let why = validate(&[decl("mock", ".")]).unwrap_err().join("\n");
+    assert!(why.contains("only by `include`"), "{why}");
+    // and it lies around every other ref
+    let why = validate(&[held("mock", ".", &["research/**"]), decl("benches", "benches")]).unwrap_err().join("\n");
+    assert!(why.contains("overlaps"), "{why}");
+    let why = validate(&[decl("benches", "benches"), held("mock", ".", &["research/**"])]).unwrap_err().join("\n");
+    assert!(why.contains("overlaps"), "{why}");
+}
+
+#[test]
 fn the_closed_rounds_may_go_to_a_ref_and_a_flat_round_file_may_not() {
     assert_eq!(validate(&[held("rounds", "design_rounds", &["*/**"])]), Ok(()));
     for flat in ["*.md", "**", "**/*.md", "topic.md"] {

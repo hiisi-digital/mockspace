@@ -225,6 +225,7 @@ mod tests {
             invocation:  None,
             canon_paths: &canon,
             open_panels: &panels,
+            ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    &Default::default(),
             verdicts:    None,
         })

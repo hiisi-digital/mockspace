@@ -260,6 +260,7 @@ pub fn repo_lint(
             invocation:  None,
             canon_paths: &[],
             open_panels: &[],
+            ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    &registry,
             verdicts:    None,
         };

@@ -173,6 +173,27 @@ impl SrcLayout {
     }
 }
 
+/// The files of the mock directory that a data ref holds, as the engine read them off the
+/// instances, each a path relative to the mock directory.
+///
+/// Git does not know these files: the branch does not track them and the exclude file hides
+/// them, so its three views say nothing true about one. What changed among them is the
+/// difference between the directory and the commit their instance is at, which only the engine
+/// can read, and it is handed over here.
+#[derive(Debug, Default)]
+pub struct RefFiles {
+    /// Every file a ref holds, on disk or at the commit its instance is at.
+    pub held:    std::collections::BTreeSet<String>,
+    /// Of those, the ones that differ from that commit: added, changed or removed here.
+    pub changed: std::collections::BTreeSet<String>,
+}
+
+/// No file held by any ref, which is every project that declares no data ref.
+pub static NO_REF_FILES: RefFiles = RefFiles {
+    held:    std::collections::BTreeSet::new(),
+    changed: std::collections::BTreeSet::new(),
+};
+
 /// Every path under the layout that differs from `HEAD`, with how it differs.
 ///
 /// Staged, unstaged and untracked, in that order, first mention winning, which
@@ -183,11 +204,16 @@ impl SrcLayout {
 pub fn changed_files(
     mock_dir: &Path,
     layout: &SrcLayout,
+    refs: &RefFiles,
     keep: impl Fn(&str) -> bool,
 ) -> Vec<(String, String)> {
     if layout.is_empty() {
         return Vec::new();
     }
+    // A file a ref holds is judged by its instance and never by git, whose view of it is the
+    // branch letting go of the file, or nothing at all.
+    let keep_held = keep;
+    let keep = |file: &str| !refs.held.contains(file) && keep_held(file);
     let specs = layout.pathspecs();
 
     let mut files: Vec<(String, String)> = Vec::new();
@@ -259,6 +285,12 @@ pub fn changed_files(
     let merge = merge::Merge::detect(mock_dir);
     if merge.in_progress() {
         files.retain(|(file, source)| source != "staged" || !merge.inherited(mock_dir, file));
+    }
+
+    for file in &refs.changed {
+        if keep_held(file) {
+            files.push((file.clone(), "changed on its ref".to_string()));
+        }
     }
 
     files
@@ -386,7 +418,7 @@ mod merge_walk_tests {
         }
 
         fn walk(&self) -> Vec<(String, String)> {
-            changed_files(&self.mock(), &self.layout(), |_| true)
+            changed_files(&self.mock(), &self.layout(), &NO_REF_FILES, |_| true)
         }
     }
 
@@ -626,7 +658,7 @@ mod tests {
         // the real repo is this checkout, so a walk that ignored the guard would
         // return a great many files rather than none
         let cwd = std::env::current_dir().unwrap();
-        assert!(changed_files(&cwd, &l, |_| true).is_empty());
+        assert!(changed_files(&cwd, &l, &NO_REF_FILES, |_| true).is_empty());
     }
 
     #[test]

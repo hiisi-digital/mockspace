@@ -130,6 +130,8 @@ pub struct Config {
     pub registry_stores:        Vec<crate::registry::RefDecl>,
     /// The `[[data_ref]]` declarations. Empty means every directory of the mock directory is in the tree.
     pub data_refs:              Vec<crate::data_refs::DataRefDecl>,
+    /// The namespaces the registry stores and the test history write, which no data ref may share.
+    pub data_ref_taken:         Vec<String>,
     /// Whether to also emit a single document containing every deep dive.
     ///
     /// Off by default. Each deep dive already renders as a sibling of its
@@ -1103,6 +1105,7 @@ impl Config {
             registry_namespaces: registry_env.namespaces,
             registry_stores: registry_env.stores,
             data_refs: raw.data_refs.clone(),
+            data_ref_taken: taken,
             deep_dive_index: raw.deep_dive_index.unwrap_or(false),
             ordered_docs: raw.ordered_docs.unwrap_or(false),
             primary_docs: raw.primary_docs,

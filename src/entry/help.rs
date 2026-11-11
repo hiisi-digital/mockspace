@@ -301,11 +301,20 @@ const COMMANDS: &[Cmd] = &[
     },
     Cmd {
         name:    "migrate",
-        summary: "migrate this repo to the current mockspace conventions",
+        summary: "make one named change of this repo's shape",
         args:    &[],
-        help:    "Renames legacy YYYY-MM-DD_*.md design-round filenames to the \
-                  compact timestamp format this repo's convention now expects. \
-                  Accepts --auto-commit.",
+        help:    "Takes the name of a migration and its flags, and `--dry-run`. Nothing is \
+                  inferred from the tree: a call names what it does, a migration refuses a \
+                  tree it was not written for and says why, and the plan it prints names \
+                  every path it would change. `--dry-run` prints the plan and stops. \
+                  `directory-to-ref --namespace <ns> --path <dir> [--include <pattern>]... \
+                  [--form branch|ref] [--remote <name>]` declares a `[[data_ref]]`, makes \
+                  its ref from the files the branch tracks there, pushes it, and takes \
+                  those files out of the index, leaving them on disk as the instance; the \
+                  config and the removals are then committed on the branch. \
+                  `round-filenames` renames design-round files that carry a legacy \
+                  `YYYY-MM-DD_` prefix to the compact timestamp form. With no name it \
+                  lists the migrations.",
     },
     Cmd {
         name:    "activate",

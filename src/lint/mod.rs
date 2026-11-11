@@ -282,6 +282,8 @@ pub fn run_lints(
     // lives in the engine, so a lint has no route to either.
     canon_paths: &[String],
     open_panels: &[String],
+    // The files a data ref holds and which of them changed, read off the instances by the caller.
+    ref_files: &mockspace_lint_rules::src_layout::RefFiles,
     primitive_introductions: &std::collections::BTreeMap<String, Vec<String>>,
     pack: &LintPack,
 ) -> usize {
@@ -401,6 +403,7 @@ pub fn run_lints(
         invocation: None,
         canon_paths,
         open_panels,
+        ref_files,
         registry,
         verdicts: saved,
     };

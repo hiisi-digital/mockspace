@@ -74,7 +74,7 @@ impl RepoLint for ChangelistRequired {
             // is verbatim the failure `src_layout` was written to end. Wants an
             // extension set per source directory, or a language key carrying
             // one. Catalogued at `a_source_gate_guards_the_extensions_the_project_writes`.
-            src_layout::changed_files(workspace_root, &layout, |f| {
+            src_layout::changed_files(workspace_root, &layout, ctx.ref_files, |f| {
                 layout.holds(f) && f.ends_with(".rs")
             }),
         );
@@ -275,6 +275,7 @@ mod tests {
                 invocation:  None,
                 canon_paths: &[],
                 open_panels: &[],
+                ref_files: &crate::src_layout::NO_REF_FILES,
                 registry:    &Default::default(),
                 verdicts:    None,
             })
@@ -401,6 +402,7 @@ mod fmt_only_exemption {
             invocation:  None,
             canon_paths: &[],
             open_panels: &[],
+            ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    &Default::default(),
             verdicts:    None,
         };
@@ -524,6 +526,7 @@ mod fmt_only_judges_the_committed_content {
             invocation:  None,
             canon_paths: &[],
             open_panels: &[],
+            ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    &Default::default(),
             verdicts:    None,
         })

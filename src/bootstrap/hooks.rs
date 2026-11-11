@@ -497,6 +497,28 @@ MOCK_DIR="{mock_rel}"
 # can read it (a here-string keeps the loop in this shell so its vars persist).
 PREPUSH_STDIN=$(cat)
 
+# The store pushes a data ref with `MOCKSPACE_DATA_REF` naming the ref it
+# writes. Such a push carries the engine's own commits of data and no commit of
+# a branch, and this gate is a branch's, so it stands down. It does so only when
+# every ref being pushed is the one named: a branch pushed beside it is gated.
+# Anyone can set the variable by hand, which skips this gate as `--no-verify` does and no further.
+if [ -n "${{MOCKSPACE_DATA_REF:-}}" ]; then
+    MS_DATA_ANY=""
+    MS_DATA_ONLY=1
+    while IFS=' ' read -r _ ms_data_sha ms_data_remote _; do
+        if [ -z "$ms_data_sha" ]; then
+            continue
+        fi
+        MS_DATA_ANY=1
+        if [ "$ms_data_remote" != "$MOCKSPACE_DATA_REF" ]; then
+            MS_DATA_ONLY=""
+        fi
+    done <<< "$PREPUSH_STDIN"
+    if [ -n "$MS_DATA_ANY" ] && [ -n "$MS_DATA_ONLY" ]; then
+        exit 0
+    fi
+fi
+
 # Generated files the merge driver kept one side of, with nothing having
 # regenerated them since, are a stale document, and a push would publish it.
 {KEPT_OURS_SHELL}
@@ -1195,6 +1217,32 @@ mod byline_hook_tests {
             !h.contains("co-authored-by"),
             "policy must not be baked into the hook"
         );
+    }
+
+    #[test]
+    fn a_push_of_nothing_but_the_stores_data_ref_is_not_gated() {
+        // With no launcher on PATH the gate fails closed, so an exit of 0 here is the hook
+        // standing down and nothing else.
+        let (repo, sha) = repo_with_commit("data: mock\n");
+        let zero = "0".repeat(40);
+        let data = "refs/heads/mock/research";
+        let hook = gen_pre_push("mock", &HookLayout::of(&["crates"]), std::path::Path::new("/dev/null"));
+        let run = |marker: Option<&str>, stdin: &str| {
+            let script = match marker {
+                Some(m) => hook.replacen('\n', &format!("\nexport {}={m}\n", mockspace_store::DATA_REF_ENV), 1),
+                None => hook.clone(),
+            };
+            run_script(&script, &[], stdin, Some(&repo), Some(&launcher_free_path()))
+        };
+        let only_data = format!("{sha} {sha} {data} {zero}\n");
+        assert_eq!(run(Some(data), &only_data), 0, "the store's own push was gated");
+        // the controls: the same push unmarked, a branch beside the data ref, another ref named
+        assert_ne!(run(None, &only_data), 0, "an unmarked push of that ref passed ungated");
+        let with_branch = format!("{only_data}refs/heads/main {sha} refs/heads/main {zero}\n");
+        assert_ne!(run(Some(data), &with_branch), 0, "a branch pushed beside the data ref passed ungated");
+        assert_ne!(run(Some("refs/heads/mock/other"), &only_data), 0);
+        assert_ne!(run(Some(data), ""), 0, "a push of no ref passed ungated");
+        let _ = std::fs::remove_dir_all(&repo);
     }
 
     #[test]

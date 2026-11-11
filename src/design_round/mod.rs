@@ -62,7 +62,13 @@ fn refuse_an_empty_lock(dr: &Path, cl: &ParsedChangelist) -> Option<ExitCode> {
 /// so they would be stranded: reverted, or carried through a deprecation and a
 /// second doc changelist, for want of one commit made first.
 fn refuse_uncommitted_templates(cfg: &Config) -> Option<ExitCode> {
-    let pending = lint_rules::pending_doc_templates(&cfg.mock_dir, &cfg.src_dirs);
+    let pending = match crate::data_refs::ref_files(cfg) {
+        Ok(refs) => lint_rules::pending_doc_templates(&cfg.mock_dir, &cfg.src_dirs, &refs),
+        Err(why) => {
+            eprintln!("error: {why}");
+            return Some(ExitCode::FAILURE);
+        },
+    };
     if pending.is_empty() {
         return None;
     }
@@ -576,73 +582,36 @@ pub fn cmd_archive(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     )
 }
 
-pub fn cmd_migrate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
+/// The design-round files that carry a legacy `YYYY-MM-DD_` prefix, each with the name the compact
+/// timestamp form gives it, both as paths from the repository root. A file whose new name is
+/// taken is a refusal, since renaming over it would lose one of the two.
+pub fn legacy_renames(cfg: &Config) -> Result<Vec<(String, String)>, String> {
     let dr = design_rounds_dir(cfg);
-
-    if !dr.is_dir() {
-        eprintln!("error: no design_rounds/ at {}", dr.display());
-        eprintln!("  create it, or point --dir at the mock workspace that has one");
-        return ExitCode::FAILURE;
-    }
-
-    let entries: Vec<_> = fs::read_dir(&dr)
-        .expect("can't read design_rounds")
+    let entries = fs::read_dir(&dr).map_err(|e| format!("no design_rounds/ at {}: {e}", dr.display()))?;
+    let lead = dr
+        .strip_prefix(&cfg.repo_root)
+        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+        .map_err(|_| format!("{} is outside the repository", dr.display()))?;
+    let mut names: Vec<String> = entries
         .flatten()
         .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n != "README.md" && n.ends_with(".md"))
         .collect();
-
-    let mut touched = Vec::new();
-    let mut renamed = 0u32;
-    let mut skipped = 0u32;
-
-    for entry in &entries {
-        let name = entry.file_name().to_string_lossy().to_string();
-
-        // Skip README.md and non-.md files.
-        if name == "README.md" || !name.ends_with(".md") {
+    names.sort();
+    let mut out = Vec::new();
+    for name in names {
+        let Some(new_name) = legacy_to_new_filename(&name) else {
             continue;
-        }
-
-        // Skip files already in new format (12-digit prefix).
-        if !is_legacy_filename(&name) {
-            skipped += 1;
-            continue;
-        }
-
-        let new_name = match legacy_to_new_filename(&name) {
-            Some(n) => n,
-            None => {
-                eprintln!("  skip (unrecognized): {name}");
-                skipped += 1;
-                continue;
-            },
         };
-
-        let old_path = entry.path();
-        let new_path = dr.join(&new_name);
-
-        if new_path.exists() {
-            eprintln!("  skip (target exists): {name} → {new_name}");
-            skipped += 1;
-            continue;
+        if dr.join(&new_name).exists() {
+            return Err(format!("{lead}/{name} would be renamed to {new_name}, which exists"));
         }
-
-        fs::rename(&old_path, &new_path)
-            .unwrap_or_else(|e| panic!("failed to rename {name} → {new_name}: {e}"));
-
-        eprintln!("  {name} → {new_name}");
-        touched.push(old_path);
-        touched.push(new_path);
-        renamed += 1;
+        let to = format!("{lead}/{new_name}");
+        if let Some((other, _)) = out.iter().find(|(_, taken)| *taken == to) {
+            return Err(format!("{other} and {lead}/{name} would both be renamed to {new_name}"));
+        }
+        out.push((format!("{lead}/{name}"), format!("{lead}/{new_name}")));
     }
-
-    if renamed == 0 {
-        eprintln!("nothing to migrate ({skipped} files already in new format or skipped)");
-        return ExitCode::SUCCESS;
-    }
-
-    eprintln!("migrated {renamed} file(s), skipped {skipped}");
-    let msg = subjects::migrate(renamed);
-    commit_or_suggest(cfg, opts, &touched, &msg);
-    ExitCode::SUCCESS
+    Ok(out)
 }

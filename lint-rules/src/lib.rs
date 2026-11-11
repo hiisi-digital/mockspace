@@ -1533,6 +1533,9 @@ pub struct RepoContext<'a> {
     /// The slugs of every panel presently open, computed by the engine because
     /// the panel ledger lives there. Empty where none is.
     pub open_panels: &'a [String],
+    /// The files of the mock directory that a data ref holds, read off the instances by the engine.
+    /// Empty where the project declares no data ref.
+    pub ref_files:   &'a crate::src_layout::RefFiles,
     /// The project's registry, flattened, with the reverse edges computed.
     ///
     /// Empty where the project declares no registry, which is legitimate and
@@ -2466,6 +2469,7 @@ pub fn check_repo_with_extra(
             invocation:  ctx.invocation,
             canon_paths: ctx.canon_paths,
             open_panels: ctx.open_panels,
+            ref_files: ctx.ref_files,
             registry:    ctx.registry,
             verdicts:    salted.as_ref().map(|s| s as &dyn verdict::VerdictCache),
         };
@@ -2715,6 +2719,7 @@ mod pack_configuration_tests {
             invocation:  None,
             canon_paths: &[],
             open_panels: &[],
+            ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    Box::leak(Box::new(Default::default())),
             verdicts:    None,
         }
@@ -2946,6 +2951,7 @@ mod repo_lint_tests {
             invocation:  None,
             canon_paths: &[],
             open_panels: &[],
+            ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    &Default::default(),
             verdicts:    None,
         };
@@ -3064,6 +3070,7 @@ mod repo_lint_tests {
             invocation:  None,
             canon_paths: &[],
             open_panels: &[],
+            ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    &Default::default(),
             verdicts:    None,
         };

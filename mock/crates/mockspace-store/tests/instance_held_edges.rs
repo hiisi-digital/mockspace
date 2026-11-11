@@ -233,3 +233,33 @@ fn an_update_does_not_write_through_a_file_that_is_a_symlink() {
     ib.update().unwrap();
     assert_eq!(std::fs::read_to_string(dir_b.join("one/DESIGN.md.tmpl")).unwrap(), "second\n");
 }
+
+#[test]
+fn a_directory_a_stopped_seed_left_is_taken_as_the_instance_only_while_it_is_the_tip() {
+    let w = World::new();
+    let (a, dir) = seeded(&w);
+    let i = Instance::new(&a, &dir).unwrap().holding(held(TEMPLATES));
+    let tip = a.local_tip().unwrap().unwrap();
+    assert!(!i.is_the_tip().unwrap(), "the control: a recorded directory is not asked to be adopted");
+    // as a seed stopped after its push leaves it: the ref made, no record of the directory
+    std::fs::remove_dir_all(clone_path(&w, "a").join(".git/mock-instances")).unwrap();
+    assert_eq!(i.base().unwrap(), None);
+
+    // a held file changed since: not the tip, and nothing is recorded
+    write(&dir, "one/DESIGN.md.tmpl", "changed since\n");
+    assert!(!i.is_the_tip().unwrap());
+    assert!(why(i.adopt().unwrap_err()).contains("does not hold exactly"));
+    assert_eq!(i.base().unwrap(), None);
+    // a held file more than the tip has: the same
+    write(&dir, "one/DESIGN.md.tmpl", "design of one\n");
+    write(&dir, "two/EXTRA.md.tmpl", "extra\n");
+    assert!(!i.is_the_tip().unwrap());
+    std::fs::remove_file(dir.join("two/EXTRA.md.tmpl")).unwrap();
+
+    // a file of the branch beside them changes nothing
+    write(&dir, "one/src/lib.rs", "pub fn changed() {}\n");
+    assert!(i.is_the_tip().unwrap());
+    assert_eq!(i.adopt().unwrap(), tip);
+    assert_eq!(i.base().unwrap(), Some(tip));
+    assert!(!i.is_dirty().unwrap());
+}

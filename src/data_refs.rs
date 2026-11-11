@@ -104,13 +104,30 @@ pub fn validate_against(decls: &[DataRefDecl], taken: &[String]) -> Result<(), V
         let place = |d: &DataRefDecl| d.instance.as_deref().or(d.path.as_deref()).map(|p| p.trim_matches('/').to_string());
         if let (Some(mine), true) = (place(d), d.instance.as_deref().is_none_or(|p| path_problem(p).is_none())) {
             for (j, o) in decls.iter().enumerate().take(i) {
-                if place(o).is_some_and(|theirs| nested(&mine, &theirs)) {
+                // a ref over the whole mock directory lies around every other
+                if place(o).is_some_and(|theirs| mine == WHOLE || theirs == WHOLE || nested(&mine, &theirs)) {
                     why.push(format!("{at}: its instance `{mine}` overlaps the instance of [[data_ref]] #{}", j + 1));
                 }
             }
         }
         match d.path.as_deref() {
             None => why.push(format!("{at}: `path` is missing, so the ref holds nothing")),
+            Some(WHOLE) => {
+                match d.include.as_deref() {
+                    None => {
+                        why.push(format!(
+                            "{at}: path `.` is the mock directory itself, which a ref holds files of only by `include`"
+                        ));
+                    },
+                    Some(patterns) => {
+                        for pat in patterns {
+                            if let Some(bad) = whole_pattern_problem(pat) {
+                                why.push(format!("{at}: pattern `{pat}` {bad}"));
+                            }
+                        }
+                    },
+                }
+            },
             Some(p) => {
                 if let Some(bad) = path_problem(p) {
                     why.push(format!("{at}: path `{p}` {bad}"));
@@ -174,6 +191,32 @@ pub fn validate_against(decls: &[DataRefDecl], taken: &[String]) -> Result<(), V
     if why.is_empty() { Ok(()) } else { Err(why) }
 }
 
+/// The `path` that names the mock directory itself. A ref may hold files of it only by pattern.
+const WHOLE: &str = ".";
+
+/// What is wrong with `pat` as a pattern of a ref over the whole mock directory, if anything. Such
+/// a ref lies among everything the branch and the engine keep there, so each pattern names where
+/// it reaches: a file of the mock directory itself, or a path under a directory named in full.
+fn whole_pattern_problem(pat: &str) -> Option<String> {
+    let mut parts = pat.split('/');
+    let first = parts.next().unwrap_or("");
+    let rest: Vec<&str> = parts.collect();
+    if rest.is_empty() {
+        let config = mockspace_store::Held::new(&[pat]).is_ok_and(|h| h.holds("mockspace.toml"));
+        return config.then(|| "could hold `mockspace.toml`, which a clone reads before it has any ref".to_string());
+    }
+    if first.contains('*') {
+        return Some("starts with a wildcard, and so could reach into any directory; name the directory".to_string());
+    }
+    if first == ROUNDS {
+        let into_a_directory = rest.len() >= 2 && rest[0] != "**";
+        return (!into_a_directory).then(|| {
+            format!("could hold a flat file of `{ROUNDS}`, which is an open round's and stays on its branch")
+        });
+    }
+    OWN_STORES.contains(&first).then(|| format!("is under `{first}`, which has a store of its own"))
+}
+
 /// What is wrong with `p` as a path under the mock directory, if anything.
 fn path_problem(p: &str) -> Option<&'static str> {
     let t = p.trim_matches('/');
@@ -193,6 +236,9 @@ impl DataRefDecl {
     /// The directory the instance is placed in: `instance` if given, else `path`, under `mock_dir`.
     pub fn instance_dir(&self, mock_dir: &Path) -> std::path::PathBuf {
         let rel = self.instance.as_deref().or(self.path.as_deref()).unwrap_or("").trim_matches('/');
+        if rel == WHOLE {
+            return mock_dir.to_path_buf();
+        }
         rel.split('/').fold(mock_dir.to_path_buf(), |p, part| p.join(part))
     }
 
@@ -300,74 +346,11 @@ impl DataRefDecl {
     }
 }
 
-/// The `Mock-Ref` trailer of each declared ref (or of `wanted` alone), naming the commit its
-/// instance here is at. A landing made in this clone was gated against exactly those files, so
-/// these are the lines its commit carries. Refused over an instance with changes the ref does not
-/// hold, since the gate then read files no commit names.
-pub fn trailer_lines(cfg: &crate::config::Config, wanted: Option<&str>) -> Result<Vec<String>, String> {
-    let mut out = Vec::new();
-    for d in cfg.data_refs.iter().filter(|d| wanted.is_none_or(|w| d.namespace() == w)) {
-        let ns = d.namespace();
-        let store = d.open(&cfg.repo_root).map_err(|e| format!("{ns}: {e}"))?;
-        let inst = d.instance(&store, &cfg.mock_dir).map_err(|e| format!("{ns}: {e}"))?;
-        let Some(base) = inst.base().map_err(|e| format!("{ns}: {e}"))? else {
-            return Err(format!("{ns}: has no instance, so `instantiate` it"));
-        };
-        if inst.is_dirty().map_err(|e| format!("{ns}: {e}"))? {
-            return Err(format!("{ns}: has changes the ref does not, so `commit` them before the landing is paired"));
-        }
-        let pairing = crate::pairing_ref::pairing_of(&store, Some(&base)).map_err(|e| format!("{ns}: {e}"))?;
-        out.push(crate::pairing::Trailer::new(ns, pairing).map_err(|e| format!("{ns}: {e}"))?.render());
-    }
-    Ok(out)
-}
-
-/// Checks that the commit `rev` carries a `Mock-Ref` trailer for every declared ref and that each
-/// names a commit the ref holds, by hash or, where the hash is gone, by time and digest.
-fn paired(cfg: &crate::config::Config, rev: &str) -> Result<Vec<String>, Vec<String>> {
-    use crate::pairing::Resolution;
-    let message = std::process::Command::new("git")
-        .arg("-C")
-        .arg(&cfg.repo_root)
-        .args(["log", "-1", "--format=%B", "--end-of-options", rev, "--"])
-        .output()
-        .map_err(|e| vec![format!("running git log: {e}")])?;
-    if !message.status.success() {
-        return Err(vec![format!("`{rev}` is not a commit here: {}", String::from_utf8_lossy(&message.stderr).trim())]);
-    }
-    let trailers = crate::pairing::trailers(&String::from_utf8_lossy(&message.stdout)).map_err(|e| vec![e])?;
-    let (mut ok, mut why) = (Vec::new(), Vec::new());
-    for d in &cfg.data_refs {
-        let ns = d.namespace();
-        let Some(trailer) = trailers.iter().find(|t| t.name() == ns) else {
-            why.push(format!("{ns}: `{rev}` carries no `Mock-Ref` line for it"));
-            continue;
-        };
-        let found = d
-            .open(&cfg.repo_root)
-            .and_then(|store| {
-                // a commit made elsewhere since the last fetch is on the remote and not here yet
-                mockspace_store::Store::refresh(&store).map_err(|e| e.to_string())?;
-                crate::pairing_ref::resolve(&store, trailer.pairing(), crate::pairing::DEFAULT_WINDOW_SECS)
-            });
-        match found {
-            Ok(Resolution::ByHash(c)) => ok.push(format!("{ns}: paired with {c}")),
-            Ok(Resolution::ByTimeAndDigest(c)) => ok.push(format!("{ns}: paired with {c}, found by time and digest")),
-            Ok(Resolution::Ambiguous(hits)) => {
-                why.push(format!("{ns}: the recorded hash is gone and {} commits hold the same files", hits.len()));
-            },
-            Ok(Resolution::Mismatch { .. }) => {
-                why.push(format!("{ns}: the commit `{}` does not hold the files the trailer records", trailer.pairing().hash()));
-            },
-            Ok(Resolution::Missing) => why.push(format!("{ns}: no commit of the ref holds the files the trailer records")),
-            Ok(Resolution::Truncated) => {
-                why.push(format!("{ns}: not found in the history fetched, which is cut short; fetch more of the ref"));
-            },
-            Err(e) => why.push(format!("{ns}: {e}")),
-        }
-    }
-    if why.is_empty() { Ok(ok) } else { Err(why) }
-}
+mod gate;
+mod landing;
+pub use gate::{repo_lints_pass, run_gated};
+use landing::paired;
+pub use landing::trailer_lines;
 
 /// `cargo mock data-refs <status|verify|instantiate|restore|commit|trailers> [namespace]` and
 /// `cargo mock data-refs paired <commit>`. Prints one line per ref it
@@ -494,3 +477,21 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
 #[cfg(test)]
 #[path = "data_refs_tests.rs"]
 mod tests;
+
+/// The files the declared refs hold, and which of them differ from the commit their instance is
+/// at, each as a path relative to the mock directory. The phase gates judge these files by it,
+/// since git tracks none of them and so says nothing of what changed.
+pub fn ref_files(cfg: &crate::config::Config) -> Result<mockspace_lint_rules::src_layout::RefFiles, String> {
+    let mut out = mockspace_lint_rules::src_layout::RefFiles::default();
+    for d in &cfg.data_refs {
+        let ns = d.namespace();
+        let store = d.open(&cfg.repo_root).map_err(|e| format!("the data ref `{ns}`: {e}"))?;
+        let inst = d.instance(&store, &cfg.mock_dir).map_err(|e| format!("the data ref `{ns}`: {e}"))?;
+        let (held, changed) = inst.files().map_err(|e| format!("the data ref `{ns}`: {e}"))?;
+        let rel = d.instance.as_deref().or(d.path.as_deref()).unwrap_or("").trim_matches('/');
+        let lead = if rel == WHOLE || rel.is_empty() { String::new() } else { format!("{rel}/") };
+        out.held.extend(held.into_iter().map(|p| format!("{lead}{p}")));
+        out.changed.extend(changed.into_iter().map(|p| format!("{lead}{p}")));
+    }
+    Ok(out)
+}
