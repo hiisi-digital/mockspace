@@ -280,7 +280,12 @@ impl RefStore {
         if puts.is_empty() {
             return Ok(Vec::new());
         }
-        let dir = PathBuf::from(git_dir).join(format!("mockspace-store-{}.blobs", unique()));
+        let dir = staging_dir(std::path::Path::new(git_dir)).map_err(|e| {
+            StoreError::Git {
+                command: "hash-object -w --stdin-paths".to_owned(),
+                detail:  format!("making a directory in {git_dir} to stage the bytes in: {e}"),
+            }
+        })?;
         let _guard = RemoveDirOnDrop(dir.clone());
         let io = |e: std::io::Error| {
             StoreError::Git {
@@ -288,7 +293,6 @@ impl RefStore {
                 detail:  format!("staging the bytes in {}: {e}", dir.display()),
             }
         };
-        std::fs::create_dir(&dir).map_err(io)?;
         let mut input = String::new();
         for (n, (_, bytes)) in puts.iter().enumerate() {
             let file = dir.join(n.to_string());
@@ -308,6 +312,13 @@ impl RefStore {
     }
 }
 
+
+/// Makes a directory of its own in `git_dir` for the bytes of one blob write.
+fn staging_dir(git_dir: &std::path::Path) -> std::io::Result<PathBuf> {
+    let dir = git_dir.join(format!("mockspace-store-{}.blobs", unique()));
+    std::fs::create_dir(&dir)?;
+    Ok(dir)
+}
 struct RemoveDirOnDrop(PathBuf);
 
 impl Drop for RemoveDirOnDrop {
@@ -315,3 +326,7 @@ impl Drop for RemoveDirOnDrop {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+
+#[cfg(test)]
+#[path = "ref_ops_tests.rs"]
+mod tests;
