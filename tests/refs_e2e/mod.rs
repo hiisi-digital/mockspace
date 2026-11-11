@@ -11,6 +11,7 @@ mod ambient;
 
 pub mod check;
 pub mod consumer;
+pub mod daily;
 pub mod fixture;
 pub mod spy;
 pub mod whole;
