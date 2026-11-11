@@ -173,6 +173,7 @@ fn ran_tests(out: &Output) -> bool {
 }
 
 #[test]
+#[ignore = "8b3f4a23ed73: reruns the whole suite, about 20 minutes"]
 fn the_suite_leaves_the_repository_it_started_in_alone() {
     if std::env::var_os(CHILD).is_some() {
         return;

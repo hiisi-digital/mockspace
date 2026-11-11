@@ -128,7 +128,7 @@ fn a_pairing_that_is_not_three_fields_of_the_right_kind_is_refused() {
 fn a_trailer_carries_the_name_of_the_ref_and_reads_back() {
     let t = Trailer {
         name:    "registry".to_owned(),
-        pairing: pairing(),
+        against: Against::Commit(pairing()),
     };
     let line = t.render();
     assert_eq!(
@@ -139,7 +139,7 @@ fn a_trailer_carries_the_name_of_the_ref_and_reads_back() {
     for name in ["rest", "a", "9", "mock-rest_2"] {
         let t = Trailer {
             name:    name.to_owned(),
-            pairing: pairing(),
+            against: Against::Commit(pairing()),
         };
         assert_eq!(Trailer::parse(&t.render()).unwrap(), t, "{name}");
     }
@@ -168,15 +168,15 @@ fn a_trailer_with_a_bad_name_a_bad_key_or_no_pairing_is_refused() {
 fn the_trailers_of_a_message_are_found_among_its_other_lines() {
     let a = Trailer {
         name:    "registry".to_owned(),
-        pairing: pairing(),
+        against: Against::Commit(pairing()),
     };
     let b = Trailer {
         name:    "rest".to_owned(),
-        pairing: Pairing {
+        against: Against::Commit(Pairing {
             hash:   H2.to_owned(),
             time:   T + 60,
             digest: D2.to_owned(),
-        },
+        }),
     };
     let message = format!(
         "fix: a thing\n\nBody text that mentions Mock-Ref in the middle of a line.\n\n{}\n{}\n",
@@ -191,7 +191,7 @@ fn the_trailers_of_a_message_are_found_among_its_other_lines() {
 fn a_malformed_trailer_and_a_ref_named_twice_are_errors_and_never_skipped() {
     let ok = Trailer {
         name:    "registry".to_owned(),
-        pairing: pairing(),
+        against: Against::Commit(pairing()),
     }
     .render();
     assert!(
@@ -473,7 +473,7 @@ fn a_pairing_is_only_made_of_a_real_hash_a_real_digest_and_a_time_that_has_a_yea
 
 #[test]
 fn a_trailer_is_only_made_for_a_name_a_ref_can_have() {
-    let p = Pairing::new(H1, T, D1).unwrap();
+    let p = Against::Commit(Pairing::new(H1, T, D1).unwrap());
     assert!(Trailer::new("registry", p.clone()).is_ok());
     for bad in ["", "Registry", "a b", "a//b", "/a", "a/", ".a", "a/.b", "a..b", "a.lock", "a/b.lock/c"] {
         assert!(Trailer::new(bad, p.clone()).is_err(), "{bad:?}");
@@ -485,5 +485,17 @@ fn a_trailer_is_only_made_for_a_name_a_ref_can_have() {
     // one validator: a name is taken here exactly when the store makes a ref of it
     for name in ["registry", "a-b_c9", "-x", "a..b", "A", "a/b.lock"] {
         assert_eq!(is_ref_name(name), mockspace_store::RefPair::branch_form(name).is_ok(), "{name}");
+    }
+}
+
+// Mutation: write no line for a ref not born yet, so that the pairing has to guess from the times
+// of two machines whether the ref had a commit when the landing was made.
+#[test]
+fn a_trailer_for_a_ref_not_born_yet_says_so_and_reads_back() {
+    let t = Trailer::new("extra", Against::Unborn).unwrap();
+    assert_eq!(t.render(), "Mock-Ref: extra unborn");
+    assert_eq!(Trailer::parse(&t.render()).unwrap(), t);
+    for bad in ["Mock-Ref: extra Unborn", "Mock-Ref: extra unborn ", "Mock-Ref: extra unborn x"] {
+        assert!(Trailer::parse(bad).is_err(), "{bad}");
     }
 }

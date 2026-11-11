@@ -23,8 +23,7 @@ use serde::Deserialize;
 use crate::registry::RefDecl;
 
 /// One `[[data_ref]]` of `mockspace.toml`.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-#[cfg_attr(test, derive(serde::Serialize))]
+#[derive(Debug, Clone, Default, Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct DataRefDecl {
     /// The ref namespace: the ref is `refs/heads/mock/<namespace>` in the branch form and
@@ -298,168 +297,18 @@ impl DataRefDecl {
 }
 
 mod gate;
+mod hook;
 mod landing;
+mod sparse;
 mod standing;
 pub use gate::{repo_lints_pass, run_gated};
-use landing::paired;
+pub use sparse::install as keep_git_off_the_instances;
 pub use standing::standing;
 pub use landing::trailer_lines;
 
-/// `cargo mock data-refs <status|verify|instantiate|update|restore|commit|trailers> [namespace]` and
-/// `cargo mock data-refs paired <commit>`. Prints one line per ref it
-/// touched, and a refusal on stderr; exits non-zero when any ref could not be done.
-pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode {
-    use std::process::ExitCode;
-
-    use mockspace_store::{Refuse, Store};
-
-    let Some((verb, rest)) = args.split_first() else {
-        eprintln!("data-refs: status, verify, instantiate, update, restore, commit or trailers [namespace], or paired <commit>");
-        return ExitCode::FAILURE;
-    };
-    match *verb {
-        "trailers" => {
-            return match trailer_lines(cfg, rest.first().copied()) {
-                Ok(lines) => {
-                    lines.iter().for_each(|l| println!("{l}"));
-                    ExitCode::SUCCESS
-                },
-                Err(why) => {
-                    eprintln!("{why}");
-                    ExitCode::FAILURE
-                },
-            };
-        },
-        "paired" => {
-            let Some(rev) = rest.first() else {
-                eprintln!("data-refs: `paired` takes the commit to check");
-                return ExitCode::FAILURE;
-            };
-            return match paired(cfg, rev) {
-                Ok(lines) => {
-                    lines.iter().for_each(|l| println!("{l}"));
-                    ExitCode::SUCCESS
-                },
-                Err(why) => {
-                    why.iter().for_each(|l| eprintln!("{l}"));
-                    ExitCode::FAILURE
-                },
-            };
-        },
-        "status" | "verify" | "instantiate" | "update" | "restore" | "commit" => {},
-        _ => {
-            eprintln!("data-refs: `{verb}` is none of status, verify, instantiate, update, restore, commit, trailers or paired");
-            return ExitCode::FAILURE;
-        },
-    }
-    let wanted = rest.first().copied();
-    let decls: Vec<&DataRefDecl> = cfg.data_refs.iter().filter(|d| wanted.is_none_or(|w| d.namespace() == w)).collect();
-    if decls.is_empty() {
-        match wanted {
-            Some(w) => eprintln!("data-refs: no [[data_ref]] has the namespace `{w}`"),
-            None => println!("data-refs: no [[data_ref]] is declared"),
-        }
-        return if wanted.is_some() { ExitCode::FAILURE } else { ExitCode::SUCCESS };
-    }
-    let mut failed = false;
-    for d in decls {
-        let ns = d.namespace();
-        let outcome = (|| -> Result<String, String> {
-            let store = d.open(&cfg.repo_root)?;
-            let inst = d.instance(&store, &cfg.mock_dir)?;
-            match *verb {
-                "status" => {
-                    let tip = store.local_tip().map_err(|e| e.to_string())?;
-                    let Some(base) = inst.base().map_err(|e| e.to_string())? else {
-                        return Err("has no instance, so `instantiate` it".into());
-                    };
-                    // a clean of the work tree, or a worktree made again at the same path, takes the
-                    // files and leaves the record; said apart from an edit, since the two are mended apart
-                    if let (0, held) = inst.present().map_err(|e| e.to_string())? {
-                        if held > 0 {
-                            return Err(format!("has none of its {held} file(s), so `restore` it"));
-                        }
-                    }
-                    let dirty = inst.is_dirty().map_err(|e| e.to_string())?;
-                    Ok(format!(
-                        "tip {} base {base} {}",
-                        tip.as_deref().unwrap_or("none"),
-                        if dirty { "changed" } else { "clean" }
-                    ))
-                },
-                "verify" => {
-                    let tip = store.local_tip().map_err(|e| e.to_string())?;
-                    let base = inst.base().map_err(|e| e.to_string())?;
-                    let Some(base) = base else {
-                        return Err("has no instance, so `instantiate` it".into());
-                    };
-                    if inst.is_dirty().map_err(|e| e.to_string())? {
-                        return Err("has changes the ref does not, so `commit` them".into());
-                    }
-                    if tip.as_deref() != Some(base.as_str()) {
-                        return Err(format!("is at {base} and the ref is at {}", tip.as_deref().unwrap_or("none")));
-                    }
-                    Ok(format!("clean at {base}"))
-                },
-                "instantiate" => {
-                    store.refresh().map_err(|e| e.to_string())?;
-                    let tip = inst.materialize().map_err(|e| e.to_string())?;
-                    Ok(format!("instantiated at {tip}"))
-                },
-                "update" => {
-                    if inst.base().map_err(|e| e.to_string())?.is_none() {
-                        return Err("has no instance, so `instantiate` it".into());
-                    }
-                    inst.update().map_err(|e| e.to_string())?;
-                    let tip = store.local_tip().map_err(|e| e.to_string())?;
-                    Ok(format!("at {}", tip.as_deref().unwrap_or("none")))
-                },
-                "restore" => {
-                    let written = inst.restore().map_err(|e| e.to_string())?;
-                    Ok(format!("{written} file(s) written again"))
-                },
-                _ => {
-                    let message = format!("data: {ns}");
-                    let first = inst.base().map_err(|e| e.to_string())?.is_none()
-                        && store.local_tip().map_err(|e| e.to_string())?.is_none();
-                    let applied = if first { inst.seed(&message, &Refuse) } else { inst.apply(&message, &Refuse) }
-                        .map_err(|e| e.to_string())?;
-                    Ok(match applied.commit {
-                        Some(c) if applied.changed => format!("committed {c}"),
-                        _ => "nothing changed".to_string(),
-                    })
-                },
-            }
-        })();
-        match outcome {
-            Ok(line) => println!("{ns}: {line}"),
-            Err(why) => {
-                eprintln!("{ns}: {why}");
-                failed = true;
-            },
-        }
-    }
-    if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS }
-}
+mod verbs;
+pub use verbs::{ref_files, run};
 
 #[cfg(test)]
 #[path = "data_refs_tests.rs"]
 mod tests;
-
-/// The files the declared refs hold, and which of them differ from the commit their instance is
-/// at, each as a path relative to the mock directory. The phase gates judge these files by it,
-/// since git tracks none of them and so says nothing of what changed.
-pub fn ref_files(cfg: &crate::config::Config) -> Result<mockspace_lint_rules::src_layout::RefFiles, String> {
-    let mut out = mockspace_lint_rules::src_layout::RefFiles::default();
-    for d in &cfg.data_refs {
-        let ns = d.namespace();
-        let store = d.open(&cfg.repo_root).map_err(|e| format!("the data ref `{ns}`: {e}"))?;
-        let inst = d.instance(&store, &cfg.mock_dir).map_err(|e| format!("the data ref `{ns}`: {e}"))?;
-        let (held, changed) = inst.files().map_err(|e| format!("the data ref `{ns}`: {e}"))?;
-        let rel = d.instance.as_deref().or(d.path.as_deref()).unwrap_or("").trim_matches('/');
-        let lead = if rel == WHOLE || rel.is_empty() { String::new() } else { format!("{rel}/") };
-        out.held.extend(held.into_iter().map(|p| format!("{lead}{p}")));
-        out.changed.extend(changed.into_iter().map(|p| format!("{lead}{p}")));
-    }
-    Ok(out)
-}

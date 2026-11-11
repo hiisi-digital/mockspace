@@ -292,7 +292,7 @@ fn a_run_stopped_after_the_ref_was_made_is_finished_by_the_same_call() {
     assert_eq!(run(&cfg, &RESEARCH), ExitCode::SUCCESS);
     // as it stands where the config step failed: the ref made here, no table, the files tracked
     std::fs::write(&cfg.config_path, &before).unwrap();
-    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    git(&cfg.repo_root, &["add", "--sparse", "-f", "--", "mock/research"]);
     let again = Config::from_dir(&cfg.mock_dir);
     assert!(again.data_refs.is_empty());
 
@@ -306,9 +306,9 @@ fn a_run_stopped_after_the_ref_was_made_is_finished_by_the_same_call() {
 
     // the control: a directory changed since the ref was made is not finished over
     std::fs::write(&cfg.config_path, &before).unwrap();
-    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    git(&cfg.repo_root, &["add", "--sparse", "-f", "--", "mock/research"]);
     write(&cfg, "research/note.md", "changed since\n");
-    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    git(&cfg.repo_root, &["add", "--sparse", "-f", "--", "mock/research"]);
     git(&cfg.repo_root, &["commit", "-q", "-m", "changed since"]);
     let why = plan(&Config::from_dir(&cfg.mock_dir), &RESEARCH).unwrap_err().join("\n");
     assert!(why.contains("changed since"), "{why}");
@@ -323,7 +323,7 @@ fn a_run_stopped_inside_the_seed_is_finished_by_the_same_call() {
     // as it stands where the seed pushed and was stopped before it recorded the directory: the
     // ref made, no record, no table, the files tracked
     std::fs::write(&cfg.config_path, &before).unwrap();
-    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    git(&cfg.repo_root, &["add", "--sparse", "-f", "--", "mock/research"]);
     std::fs::remove_dir_all(cfg.repo_root.join(".git/mock-instances")).unwrap();
     let again = Config::from_dir(&cfg.mock_dir);
 
@@ -337,10 +337,10 @@ fn a_run_stopped_inside_the_seed_is_finished_by_the_same_call() {
 
     // the control: the same stop, and the branch's files are not the ref's any more
     std::fs::write(&cfg.config_path, &before).unwrap();
-    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    git(&cfg.repo_root, &["add", "--sparse", "-f", "--", "mock/research"]);
     std::fs::remove_dir_all(cfg.repo_root.join(".git/mock-instances")).unwrap();
     write(&cfg, "research/note.md", "changed since\n");
-    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    git(&cfg.repo_root, &["add", "--sparse", "-f", "--", "mock/research"]);
     git(&cfg.repo_root, &["commit", "-q", "-m", "changed since"]);
     let why = plan(&Config::from_dir(&cfg.mock_dir), &RESEARCH).unwrap_err().join("\n");
     assert!(why.contains("do not hold what the branch tracks"), "{why}");

@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::Instance;
 use crate::error::StoreError;
+use crate::ids::{FileId, Mode, Oid};
 use crate::ref_history::BATCH;
 
 impl Instance<'_> {
@@ -87,7 +88,7 @@ impl Instance<'_> {
             return Err(self.fail("was not made by `materialize`", Vec::new()));
         };
         std::fs::create_dir_all(&self.dir).map_err(|e| self.io("creating", e))?;
-        let ids = self.store.tree_ids(&base)?;
+        let ids = self.ids_of(&base)?;
         self.check_held(&ids)?;
         let missing: Vec<&String> = ids
             .keys()
@@ -99,9 +100,9 @@ impl Instance<'_> {
             return Err(self.fail("holds files in the way of the base", in_the_way));
         }
         for chunk in missing.chunks(BATCH) {
-            let wanted: Vec<&str> = chunk.iter().map(|p| ids[*p].as_str()).collect();
+            let wanted: Vec<&Oid> = chunk.iter().map(|p| &ids[*p].blob).collect();
             for (path, bytes) in chunk.iter().zip(self.store.blobs(&wanted)?) {
-                self.write(path, &bytes)?;
+                self.write(path, &bytes, ids[*path].mode.is_exec())?;
             }
         }
         self.exclude()?;
@@ -117,8 +118,8 @@ impl Instance<'_> {
             return Ok((here.into_iter().collect(), BTreeSet::new()));
         }
         let delta = self.delta()?;
-        let mut held: BTreeSet<String> = self.store.tree_ids(&delta.base)?.into_keys().collect();
-        held.extend(self.walk()?);
+        let mut held: BTreeSet<String> = delta.base_ids.into_keys().collect();
+        held.extend(delta.here.into_keys());
         Ok((held, delta.sent.into_keys().collect()))
     }
 
@@ -126,7 +127,7 @@ impl Instance<'_> {
     /// no instance was made.
     pub fn present(&self) -> Result<(usize, usize), StoreError> {
         let Some(base) = self.base()? else { return Ok((0, 0)) };
-        let ids = self.store.tree_ids(&base)?;
+        let ids = self.ids_of(&base)?;
         let here = ids.keys().filter(|p| self.dir.join(p.as_str()).is_file()).count();
         Ok((here, ids.len()))
     }
@@ -141,69 +142,97 @@ impl Instance<'_> {
         }
     }
 
-    pub(super) fn is_file(&self, rel: &str) -> bool {
-        self.dir.join(rel).is_file()
-    }
-
-    pub(super) fn write(&self, rel: &str, bytes: &[u8]) -> Result<(), StoreError> {
+    /// Write `bytes` at `rel` with the executable bit as given: set on the owner, group and
+    /// other classes that can read, cleared on all of them otherwise.
+    pub(super) fn write(&self, rel: &str, bytes: &[u8], exec: bool) -> Result<(), StoreError> {
         let path = self.dir.join(rel);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| self.io("creating", e))?;
         }
-        std::fs::write(&path, bytes).map_err(|e| self.io("writing", e))
+        std::fs::write(&path, bytes).map_err(|e| self.io("writing", e))?;
+        self.set_exec(&path, exec)
     }
 
-    /// The regular files under the directory, as `/`-separated paths, sorted.
-    pub(super) fn walk(&self) -> Result<Vec<String>, StoreError> {
-        let mut out = Vec::new();
-        self.walk_into(&self.dir, "", &mut out)?;
-        Ok(out)
-    }
-
-    pub(super) fn walk_into(&self, dir: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), StoreError> {
-        let mut entries = std::fs::read_dir(dir)
-            .map_err(|e| self.io("reading", e))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| self.io("reading", e))?;
-        entries.sort_by_key(|e| e.file_name());
-        for entry in entries {
-            let Ok(name) = entry.file_name().into_string() else {
-                return Err(self.fail("holds a file name that is not text", Vec::new()));
-            };
-            let rel = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
-            let kind = entry.file_type().map_err(|e| self.io("reading", e))?;
-            if kind.is_dir() {
-                if self.held.as_ref().is_none_or(|h| h.may_hold_under(&rel)) {
-                    self.walk_into(&entry.path(), &rel, out)?;
-                }
-            } else if !self.holds(&rel) {
-                // the branch's own, or a build's: not this instance's to read or to refuse
-            } else if kind.is_symlink() {
-                return Err(self.fail("holds a symlink", vec![rel]));
-            } else if kind.is_file() {
-                out.push(rel);
-            } else {
-                return Err(self.fail("holds something that is not a regular file", vec![rel]));
-            }
+    /// Give the file at `path` the executable bit or take it away, leaving the other bits.
+    fn set_exec(&self, path: &Path, exec: bool) -> Result<(), StoreError> {
+        use std::os::unix::fs::PermissionsExt;
+        let meta = std::fs::metadata(path).map_err(|e| self.io("reading", e))?;
+        let mode = meta.permissions().mode();
+        let want = if exec { mode | ((mode & 0o444) >> 2) } else { mode & !0o111 };
+        if want != mode {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(want))
+                .map_err(|e| self.io("setting the mode of", e))?;
         }
         Ok(())
     }
 
-    /// The blob id each of `paths` would have if committed as it is, by path. A path that is
-    /// not a file here has no entry.
+    /// Whether the file at `rel` has the executable bit for its owner, as git reads it.
+    pub(super) fn is_exec(&self, rel: &str) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(self.dir.join(rel)).is_ok_and(|m| m.permissions().mode() & 0o100 != 0)
+    }
+
+    /// Whether the executable bit of a file here means anything: git's `core.fileMode`, true where
+    /// it is not set. Where it is off the filesystem reports a mode that is not the file's own (a
+    /// mount that makes every file executable), and the bit is taken from the base instead.
+    pub(super) fn file_mode(&self) -> Result<bool, StoreError> {
+        if let Some(on) = self.file_mode.get() {
+            return Ok(*on);
+        }
+        let out = self.store.git.run(&["config", "--type=bool", "--get", "core.fileMode"], &[], None)?;
+        let on = match out.code {
+            Some(0) => out.text() != "false",
+            Some(1) => true,
+            _ => {
+                return Err(StoreError::Git {
+                    command: "config --get core.fileMode".to_owned(),
+                    detail:  out.stderr,
+                });
+            },
+        };
+        let _ = self.file_mode.set(on);
+        Ok(on)
+    }
+
+    /// The blob id each of `paths` would have if committed as it is, by path. A path that is not
+    /// a file here has no entry. The executable bit is the file's own where `core.fileMode` is
+    /// on, and else the one `modes` holds for the path (ids of the base or the tip), none for a
+    /// path it does not hold. A file whose size, times and inode are what they were when it was
+    /// hashed, and that was already old enough then for a later write to show, is not hashed
+    /// again; `whole` says `paths` is every file of the directory, so the cache forgets the rest.
     pub(super) fn local_ids<S: AsRef<str>>(
         &self,
         paths: &[S],
-    ) -> Result<BTreeMap<String, String>, StoreError> {
-        let present: Vec<&str> = paths
-            .iter()
-            .map(AsRef::as_ref)
-            .filter(|p| self.is_file(p))
-            .collect();
+        modes: &BTreeMap<String, FileId>,
+        whole: bool,
+    ) -> Result<BTreeMap<String, FileId>, StoreError> {
+        use std::os::unix::fs::PermissionsExt;
+        let trust_mode = self.file_mode()?;
+        let mut stats = self.load_stats();
         let mut ids = BTreeMap::new();
-        for chunk in present.chunks(BATCH) {
+        let mut hashed: Vec<(&str, super::stats::Stamp, bool)> = Vec::new();
+        for path in paths.iter().map(AsRef::as_ref) {
+            let Ok(meta) = std::fs::metadata(self.dir.join(path)) else { continue };
+            if !meta.is_file() {
+                continue;
+            }
+            let exec = if trust_mode {
+                meta.permissions().mode() & 0o100 != 0
+            } else {
+                modes.get(path).is_some_and(|id| id.mode.is_exec())
+            };
+            let stamp = super::stats::Stamp::of(&meta);
+            match stats.trusted(path, &stamp) {
+                Some(id) => {
+                    ids.insert(path.to_owned(), FileId { blob: id.clone(), mode: Mode::of(exec) });
+                },
+                None => hashed.push((path, stamp, exec)),
+            }
+        }
+        let at = super::stats::now();
+        for chunk in hashed.chunks(BATCH) {
             let mut input = String::new();
-            for path in chunk {
+            for (path, ..) in chunk {
                 input.push_str(&self.dir.join(path).display().to_string());
                 input.push('\n');
             }
@@ -220,10 +249,16 @@ impl Instance<'_> {
                     detail:  format!("{} ids for {} paths", found.len(), chunk.len()),
                 });
             }
-            for (path, id) in chunk.iter().zip(found) {
-                ids.insert((*path).to_owned(), id.to_owned());
+            for ((path, stamp, exec), id) in chunk.iter().zip(found) {
+                let id = Oid::parse(id)?;
+                stats.put(path, *stamp, id.clone(), at);
+                ids.insert((*path).to_owned(), FileId { blob: id, mode: Mode::of(*exec) });
             }
         }
+        if whole {
+            stats.retain(|p| ids.contains_key(p));
+        }
+        self.save_stats(&stats);
         Ok(ids)
     }
 }

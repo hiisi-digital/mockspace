@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::Instance;
 use crate::error::StoreError;
+use crate::ids::Base;
 
 /// The directory of the common git directory that holds one record for each instance.
 const RECORDS: &str = "mock-instances";
@@ -21,7 +22,7 @@ impl Instance<'_> {
     /// The base this instance was last brought to, or `None` when no record exists. A record
     /// that names another ref or directory is an error: the name is an id of the pair, so it
     /// means the file was changed by hand.
-    pub(super) fn read_record(&self) -> Result<Option<String>, StoreError> {
+    pub(super) fn read_record(&self) -> Result<Option<Base>, StoreError> {
         let text = match std::fs::read_to_string(self.record_file()?) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -32,19 +33,20 @@ impl Instance<'_> {
             (Some(base), Some(local), Some(dir))
                 if local == self.store.pair().local() && dir == self.dir_text() =>
             {
-                Ok(Some(base.to_owned()))
+                Base::from_record(base).map(Some).ok_or_else(|| self.fail("has a record whose base is no commit", vec![base.to_owned()]))
             },
             _ => Err(self.fail("has a record that is not its own", Vec::new())),
         }
     }
 
     /// Records `base` as the commit the files of the directory were brought to.
-    pub(super) fn record(&self, base: &str) -> Result<(), StoreError> {
+    pub(super) fn record(&self, base: &Base) -> Result<(), StoreError> {
         let file = self.record_file()?;
         let Some(parent) = file.parent() else { return Ok(()) };
         std::fs::create_dir_all(parent).map_err(|e| self.io("creating the records of", e))?;
         let line = format!(
-            "{base}\t{}\t{}\n",
+            "{}\t{}\t{}\n",
+            base.record_text(),
             self.store.pair().local(),
             self.dir_text()
         );
@@ -62,12 +64,16 @@ impl Instance<'_> {
 
     /// Drops the record, if there is one. Used to undo a `materialize` that did not finish.
     pub(super) fn forget(&self) {
+        self.forget_stats();
         if let Ok(file) = self.record_file() {
             let _ = std::fs::remove_file(file);
         }
     }
 
-    fn record_file(&self) -> Result<PathBuf, StoreError> {
+    pub(super) fn record_file(&self) -> Result<PathBuf, StoreError> {
+        if let Some(file) = self.record_at.get() {
+            return Ok(file.clone());
+        }
         let common = self.store.git.must(
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
             &[],
@@ -78,7 +84,9 @@ impl Instance<'_> {
             .store
             .git
             .must(&["hash-object", "--stdin"], &[], Some(key.as_bytes()))?;
-        Ok(PathBuf::from(common.text()).join(RECORDS).join(id.text()))
+        let file = PathBuf::from(common.text()).join(RECORDS).join(id.text());
+        let _ = self.record_at.set(file.clone());
+        Ok(file)
     }
 
     /// Adds the directory to the exclude file the repository shares between its work trees, when
@@ -103,25 +111,9 @@ impl Instance<'_> {
         if rel.is_empty() && self.held.is_none() {
             return Ok(());
         }
-        let mut lead = String::new();
-        for c in rel.chars() {
-            if "\\*?[]!# ".contains(c) {
-                lead.push('\\');
-            }
-            lead.push(c);
-        }
-        if !lead.is_empty() {
-            lead.insert(0, '/');
-        }
         // the whole directory, or each pattern under it: a pattern is checked to hold nothing the
         // exclude file reads otherwise than the instance does
-        let lines: Vec<String> = match &self.held {
-            None => vec![format!("{lead}/")],
-            // an exclude pattern matches a directory as well as a file, and an excluded directory is
-            // never looked into, so each pattern is followed by the line that takes directories
-            // back out of it: what is left excluded is the files, which is what the instance holds
-            Some(held) => held.patterns().flat_map(|p| [format!("{lead}/{p}"), format!("!{lead}/{p}/")]).collect(),
-        };
+        let lines = super::lines::exclude_lines(rel, self.held.as_ref());
         let out = self.store.git.must(
             &["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
             &[],

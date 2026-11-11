@@ -63,7 +63,7 @@ pub struct Plan {
 #[derive(Debug)]
 enum Step {
     /// Make the ref of `decl` from the files its directory holds and push it.
-    Seed(DataRefDecl),
+    Seed(DataRefDecl, Vec<String>),
     /// Record the directory of `decl` as the instance of the ref an earlier run made from it.
     Adopt(DataRefDecl),
     /// Append `text` to the config file.
@@ -118,17 +118,32 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
+    // the declared instance is now what git would write over on a checkout of an older commit
+    if plan.steps.iter().any(|s| matches!(s, Step::Untrack(_))) {
+        let declared = Config::from_dir(&cfg.mock_dir);
+        if let Err(why) = crate::data_refs::keep_git_off_the_instances(&declared) {
+            eprintln!("migrate: the migration is made, and the sparse checkout that keeps git from writing over the instance is not set: {why}");
+            return ExitCode::FAILURE;
+        }
+    }
     println!("done: {}", plan.after);
     ExitCode::SUCCESS
 }
 
 fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
     match step {
-        Step::Seed(decl) => {
+        Step::Seed(decl, tracked) => {
             let store = decl.open(&cfg.repo_root)?;
             let inst = decl.instance(&store, &cfg.mock_dir)?;
             let message = format!("data: {}", decl.namespace());
-            inst.seed(&message, &mockspace_store::Refuse).map(|_| ()).map_err(|e| e.to_string())
+            // the ref is made from what the branch tracks; a file that only sits in the directory is
+            // left there, and reads as added against the ref
+            let lead = tracked_lead(cfg, inst.dir());
+            let keep: std::collections::BTreeSet<String> = tracked
+                .iter()
+                .filter_map(|p| p.strip_prefix(lead.as_str()).map(|r| r.trim_start_matches('/').to_owned()))
+                .collect();
+            inst.seed_tracked(&keep, &message, &mockspace_store::Refuse).map(|_| ()).map_err(|e| e.to_string())
         },
         Step::Adopt(decl) => {
             let store = decl.open(&cfg.repo_root)?;
@@ -341,7 +356,7 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
                 } else {
                     return Err(vec![format!(
                         "migrate: the ref of `{ns}` already has commits and they do not hold what the branch tracks, \
-                         so it was made elsewhere; `git rm --cached` the files the branch still tracks and `cargo \
+                         so it was made elsewhere; `git rm --cached --sparse` the files the branch still tracks and `cargo \
                          mock data-refs instantiate {ns}` on a branch that declares it"
                     )]);
                 }
@@ -363,8 +378,12 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
         steps.push(Step::Adopt(decl));
     } else {
         lines.push(format!("make the ref of `{ns}` from {} file(s) and push it", tracked.len()));
-        steps.push(Step::Seed(decl));
+        steps.push(Step::Seed(decl, tracked.clone()));
     }
+    // a file a `.gitignore` matches stays where it is and out of the ref, as it stayed out of the branch
+    let ignored = inst.ignored().map_err(|e| vec![format!("migrate: {e}")])?;
+    let from_root = |p: &str| if lead.is_empty() { p.to_owned() } else { format!("{lead}/{p}") };
+    lines.extend(ignored.iter().map(|p| format!("leave {}: ignored, not held", from_root(p))));
     if !declared {
         lines.push(format!("append to {}:", cfg.config_path.display()));
         lines.extend(table.lines().map(|l| format!("  {l}")));
