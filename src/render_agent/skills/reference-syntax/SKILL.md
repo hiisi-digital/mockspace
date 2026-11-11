@@ -55,7 +55,7 @@ run or one that leaves that file alone, so a row can be retired before every
 citation of it is gone. A template citing a row is scoped the same way, to the
 template. A slug that is not a slug, and every other finding, gates every run.
 
-**A field per target namespace (`bevy`, `ikiuni`, `canon`) is wrong.** It turns
+**A field per target namespace (`bevy`, `engine`, `canon`) is wrong.** It turns
 the schema into a list of places a relation may be written, lets one relation be
 written twice, and asks for a new field every time a namespace is added. A field
 typed as a namespace is for a field that is by its nature one namespace's, such
