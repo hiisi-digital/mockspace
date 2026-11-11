@@ -205,16 +205,16 @@ pub fn validate_row_references(
             // which is an arbitrary difference for an author to run into.
             for item in raw.split(", ").map(str::trim) {
                 if !is_valid_slug(item) {
-                    let hint = match item.split_once("::") {
-                        Some((ns, slug)) if ns == target => {
+                    let hint = match crate::names(item).ok().as_deref() {
+                        Some(&[ns, slug]) if ns == target => {
                             format!(" Write `{slug}`: the field's type already says `{target}`.")
                         },
-                        Some((ns, _)) => {
+                        Some(&[ns, _]) => {
                             format!(
                                 " It names namespace `{ns}`, but this field is typed `{target}`; a field references one namespace and the type is where that is stated."
                             )
                         },
-                        None => String::new(),
+                        _ => String::new(),
                     };
                     out.push(malformed_slug(row, name, item, hint));
                     continue;
@@ -280,7 +280,7 @@ fn nearest(reg: &Registry, namespace: &str, slug: &str) -> String {
     }
     let best = ids
         .iter()
-        .filter_map(|q| q.split_once("::").map(|(_, s)| s))
+        .filter_map(|q| crate::names(q).ok().and_then(|n| n.get(1).copied()))
         .map(|s| (edit_distance(slug, s), s))
         .min_by_key(|(d, _)| *d);
     match best {

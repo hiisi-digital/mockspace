@@ -50,17 +50,21 @@ pub fn validate_provenance(
                 if super::link_target(item, &keys).is_some() {
                     continue;
                 }
-                let Some(p) = FileRef::parse(item) else {
-                    out.push(RegistryFinding {
-                    kind: "malformed-provenance",
-                    message: format!(
-                        "{}: `{item}` is not `root::path::line`. Unparsed, it points nowhere while looking like a citation.",
-                        row.qualified()
-                    ),
-                    source: Some(row.source.clone()),
-                    gate:   GateScope::Always,
-                });
-                    continue;
+                let p = match FileRef::read(item) {
+                    Ok(p) => p,
+                    Err(why) => {
+                        out.push(RegistryFinding {
+                            kind:    "malformed-provenance",
+                            message: format!(
+                                "{}: {} Unparsed, it points nowhere while looking like a citation.",
+                                row.qualified(),
+                                why.say(item)
+                            ),
+                            source:  Some(row.source.clone()),
+                            gate:    GateScope::Always,
+                        });
+                        continue;
+                    },
                 };
                 let Some(root_rel) = roots.get(&p.root) else {
                     out.push(RegistryFinding {
@@ -77,9 +81,9 @@ pub fn validate_provenance(
                 });
                     continue;
                 };
-                let target = match resolve_cited_path(&repo_root.join(root_rel), &p.path) {
-                    PathResolution::Found(t) => t,
-                    PathResolution::Missing => {
+                let target = match p.locate(&repo_root.join(root_rel)) {
+                    Location::Found(t) => t,
+                    Location::Missing => {
                         out.push(RegistryFinding {
                             kind:    "unresolvable-provenance",
                             message: format!(
@@ -93,11 +97,11 @@ pub fn validate_provenance(
                         });
                         continue;
                     },
-                    PathResolution::Ambiguous(names) => {
+                    Location::Ambiguous(names) => {
                         out.push(RegistryFinding {
                         kind: "ambiguous-provenance",
                         message: format!(
-                            "{}: `{}` matches several files ({}). Give the extension: picking one silently would point the citation somewhere you did not choose.",
+                            "{}: `{}` matches several files ({}). No spelling tells them apart, since extensions are never written: rename or remove all but one, because picking one silently would point the citation somewhere you did not choose.",
                             row.qualified(),
                             p.render(),
                             names.join(", ")
@@ -108,7 +112,7 @@ pub fn validate_provenance(
                         continue;
                     },
                 };
-                if matches!(p.anchor, Anchor::Line(_)) && !frozen.contains(&p.root) {
+                if matches!(p.anchor(), Anchor::Lines(..)) && !frozen.contains(&p.root) {
                     out.push(RegistryFinding {
                     kind: "fragile-line-citation",
                     message: format!(
@@ -121,26 +125,26 @@ pub fn validate_provenance(
                     gate:   GateScope::Always,
                 });
                 }
-                match resolve_anchor(&target, &p.anchor) {
+                match resolve_anchor(&target, &p.anchor()) {
                     Some(_) => {},
                     None => {
                         out.push(RegistryFinding {
-                        kind: match p.anchor {
+                        kind: match p.anchor() {
                             Anchor::Heading(_) => "unresolvable-heading",
-                            Anchor::Line(_) => "unresolvable-provenance",
+                            Anchor::Lines(..) => "unresolvable-provenance",
                         },
-                        message: match &p.anchor {
+                        message: match p.anchor() {
                             Anchor::Heading(h) => format!(
                                 "{}: `{}` names heading `{h}`, which {} does not contain. A renamed heading fails here rather than silently pointing elsewhere, which is why headings are preferred over line numbers.",
                                 row.qualified(),
                                 p.render(),
-                                p.path
+                                p.path_text()
                             ),
-                            Anchor::Line(n) => format!(
+                            Anchor::Lines(n, _) => format!(
                                 "{}: `{}` points past the end of {} ({n} requested). Line citations only stay true in a root that does not change; declare the root frozen or cite a heading.",
                                 row.qualified(),
                                 p.render(),
-                                p.path
+                                p.path_text()
                             ),
                         },
                         source: Some(row.source.clone()),
@@ -724,7 +728,7 @@ mod tests;
 fn unquoted_times(namespaces: &[RegistryNamespace], reg: &Registry) -> Vec<RegistryFinding> {
     let mut out = Vec::new();
     for u in &reg.unquoted_times {
-        let Some((ns_key, _)) = u.row.split_once("::") else {
+        let Some(ns_key) = crate::names(&u.row).ok().and_then(|n| n.first().copied()) else {
             continue;
         };
         let Some(field) = namespaces

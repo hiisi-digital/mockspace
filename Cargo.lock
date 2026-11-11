@@ -204,6 +204,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
+name = "letkajenkka"
+version = "0.0.1"
+source = "git+ssh://git@github.com/orgrinrt/letkajenkka.git?branch=dev#7cc8cfa14f6f3097c4aed33787d907d95ddfc946"
+
+[[package]]
 name = "libc"
 version = "0.2.183"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -317,6 +322,7 @@ dependencies = [
 name = "mockspace-registry"
 version = "0.1.0"
 dependencies = [
+ "letkajenkka",
  "mockspace-manifest",
  "mockspace-store",
  "mockspace-verdicts",

@@ -28,9 +28,9 @@ fn an_item_of_two_segments_naming_a_namespace_is_a_link() {
 /// returns every item split on the first separator.
 #[test]
 fn a_file_citation_is_not_a_link() {
-    assert_eq!(link_target("slot::DESIGN::12", &keys(&["slot"])), None);
+    assert_eq!(link_target("slot::design::12", &keys(&["slot"])), None);
     assert_eq!(
-        link_target("research::dir::file::#heading", &keys(&["research"])),
+        link_target("research::dir::file::heading", &keys(&["research"])),
         None
     );
 }
@@ -65,14 +65,19 @@ fn a_link_naming_no_row_is_reported() {
     );
 }
 
+// Mutation: reading an item by its first separator (the reader before the standard) makes
+// `slot::Not-A-Slug` a link of a bad slug, so the link check reports it and the citation check
+// never sees it; this fails on the second assertion.
 #[test]
-fn a_link_with_a_bad_slug_is_reported_as_malformed() {
+fn a_link_with_a_bad_slug_is_no_link_and_the_citation_check_names_the_rule() {
     let nss = [ns("slot", &[]), ns("answer", &[("related", "ref[]")])];
     let r =
         reg(&[("slot", "display", &[]), ("answer", "niri", &[("related", "slot::Not-A-Slug")])]);
-    assert_eq!(kinds(&validate_links(&r, &nss)), [
-        "malformed-row-reference"
-    ]);
+    assert!(validate_links(&r, &nss).is_empty());
+    let found = validate_provenance(Path::new("/nonexistent"), &BTreeMap::new(), &BTreeSet::new(), &r, &nss);
+    assert_eq!(kinds(&found), ["malformed-provenance"], "{found:?}");
+    assert!(found[0].message.contains("uppercase"), "{}", found[0].message);
+    assert!(found[0].message.contains(crate::MIGRATION), "{}", found[0].message);
 }
 
 #[test]
@@ -174,7 +179,7 @@ fn a_citation_in_a_link_field_is_no_edge() {
     let nss = [ns("slot", &[]), ns("answer", &[("related", "ref[]")])];
     let r = reg(&[
         ("slot", "display", &[]),
-        ("answer", "niri", &[("related", "slot::DESIGN::#display")]),
+        ("answer", "niri", &[("related", "slot::design::display")]),
     ]);
     assert!(referrers(&r, &nss, "slot::display").is_empty());
 }
@@ -264,11 +269,11 @@ fn a_link_cell_renders_as_the_slug_of_the_row_it_names() {
 #[test]
 fn a_citation_cell_stays_text() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("related", "ref[]")])];
-    let r = reg(&[("answer", "niri", &[("related", "mock::DESIGN::12")])]);
+    let r = reg(&[("answer", "niri", &[("related", "mock::design::12")])]);
     let mut cfg = crate::Env::from_dir(Path::new("/nonexistent")).unwrap();
     cfg.namespaces = nss.clone();
     let table = render_table(&nss[1], &r, &cfg);
-    assert!(table.contains("| mock::DESIGN::12 |"), "{table}");
+    assert!(table.contains("| mock::design::12 |"), "{table}");
     assert!(!table.contains("{{"), "{table}");
 }
 
@@ -340,7 +345,7 @@ fn a_cell_with_a_link_and_two_citations_keeps_the_link_and_the_public_citation()
         ("slot", "display", &[]),
         ("answer", "niri", &[(
             "related",
-            "seed::notes::niri::#tiling, slot::display, mock::DESIGN::12",
+            "seed::notes::niri::tiling, slot::display, mock::design::12",
         )]),
     ]);
     let mut cfg = crate::Env::from_dir(Path::new("/nonexistent")).unwrap();
@@ -357,7 +362,7 @@ fn a_cell_with_a_link_and_two_citations_keeps_the_link_and_the_public_citation()
         &cfg,
     );
     assert!(
-        rendered.contains("| display, mock::DESIGN::12 |"),
+        rendered.contains("| display, mock::design::12 |"),
         "{rendered}"
     );
     assert!(!rendered.contains("seed::"), "{rendered}");
@@ -373,7 +378,7 @@ fn an_internal_root_filter_does_not_eat_a_link() {
         ("slot", "display", &[]),
         ("answer", "niri", &[(
             "related",
-            "slot::display, slot::notes::x::#h",
+            "slot::display, slot::notes::x::h",
         )]),
     ]);
     let mut cfg = crate::Env::from_dir(Path::new("/nonexistent")).unwrap();
