@@ -54,28 +54,9 @@ pub(crate) const FOLLOW_UP_SUBJECT_REBASE: &str = "chore: regenerate generated f
 
 const NOTE: &str = "# mockspace: generated documents merge by regeneration, see the merge driver";
 
-/// A repository-relative path as a `.gitattributes` pattern: `/` separated,
-/// anchored at the root, and with what a pattern reads as syntax escaped.
-pub(crate) fn pattern(rel: &str) -> String {
-    let mut out = String::from("/");
-    for c in rel.chars() {
-        if matches!(c, ' ' | '#' | '!' | '*' | '?' | '[' | ']' | '\\') {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
-}
-
-pub(crate) fn relative(repo_root: &Path, path: &Path) -> Option<String> {
-    let rel = path.strip_prefix(repo_root).ok()?;
-    Some(
-        rel.components()
-            .map(|c| c.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/"),
-    )
-}
+/// A path of the repository as `.gitattributes` writes one: the one copy, in the store crate,
+/// which the registry's own attribute line is made with too.
+pub(crate) use mockspace_store::attributes::{pattern, relative};
 
 /// The one attribute line: every top-level file of the documents directory goes
 /// to the driver. Subdirectories are not matched, which is right, since nothing

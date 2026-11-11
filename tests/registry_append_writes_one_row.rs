@@ -8,6 +8,8 @@
 //! does, and hands the step to a delegate a workspace placed above the repository, which can
 //! take it whole, decline it, or be skipped with `--local`.
 
+#[path = "common/ambient.rs"]
+mod ambient;
 mod common;
 
 use std::fs;

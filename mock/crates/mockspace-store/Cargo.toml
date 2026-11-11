@@ -13,6 +13,13 @@ workspace = "../../.."
 # protocol. The workspace's v2 core links gix for local ref work; fetch and push
 # are the part gix is not built for here.
 [dependencies]
+tempfile = { version = "3", optional = true }
+
+# The bare remote and its clones that the tests of a store on a ref share, for the crates that
+# test against one.
+[features]
+test-support = ["dep:tempfile"]
 
 [dev-dependencies]
+mockspace-manifest = { path = "../../../mockspace-manifest" }
 tempfile = "3"

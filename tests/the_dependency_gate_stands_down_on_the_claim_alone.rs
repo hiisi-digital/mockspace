@@ -24,6 +24,8 @@
 
 use std::process::Output;
 
+#[path = "common/ambient.rs"]
+mod ambient;
 mod common;
 use common::{BIN, Repo, write};
 

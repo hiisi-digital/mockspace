@@ -20,28 +20,11 @@
 
 use crate::{Level, LintConfig, LintContext, LintError, Severity};
 
-/// Where saved verdicts live. Implemented by the engine.
-pub trait VerdictCache {
-    /// A fixed-width digest of `parts`, stable across runs and machines for the same engine.
-    ///
-    /// The implementation frames the parts (a length before each) so two splittings of the same
-    /// bytes give two digests, and mixes in what identifies the code that produced the verdict:
-    /// the engine and every loaded pack. A rebuilt lint therefore finds nothing saved by the old.
-    fn digest(&self, parts: &[&[u8]]) -> String;
-
-    /// The encoded findings saved under `key`, if any.
-    fn replay(&self, key: &str) -> Option<String>;
-
-    /// Save `encoded` under `key`. A store that cannot write says nothing: a verdict not saved
-    /// is a verdict recomputed next run, never a wrong one.
-    fn remember(&self, key: &str, encoded: &str);
-
-    /// Note that the lint named `lint` was answered from the store (`hit`) or judged again. The
-    /// engine implements it to feed its timing report; it is a method here and not a call into the
-    /// timing table because a lint pack carries its own copy of this crate, whose table the engine
-    /// never prints.
-    fn tally(&self, _hit: bool, _lint: &str) {}
-}
+/// Where saved verdicts live, implemented by the engine: the one trait every check that replays
+/// shares. The engine's `tally` feeds its timing report; it is a method of the trait and not a call
+/// into the timing table because a lint pack carries its own copy of this crate, whose table the
+/// engine never prints.
+pub use mockspace_verdicts::VerdictCache;
 
 /// A store that mixes one lint's behaviour material into every digest it makes, so a verdict a repo
 /// lint saves through [`crate::RepoContext::remembered`] is keyed on how that lint was configured

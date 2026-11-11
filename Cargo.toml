@@ -4,6 +4,7 @@ members = [
     "cargo-mock",
     "mockspace-manifest",
     "lint-rules",
+    "verdicts",
     "bench-core",
     "bench-harness",
     "bench-macro",
@@ -15,6 +16,7 @@ members = [
     # workspace of its own, and a path dependency below this root is a member of this one, so the
     # crate is not a member of `mock/`.
     "mock/crates/mockspace-store",
+    "mock/crates/mockspace-registry",
 ]
 
 [package]
@@ -64,6 +66,7 @@ mockspace-lint-rules = { path = "lint-rules" }
 mockspace-bench-harness = { path = "bench-harness" }
 mockspace-manifest = { path = "mockspace-manifest" }
 mockspace-store = { path = "mock/crates/mockspace-store" }
+mockspace-registry = { path = "mock/crates/mockspace-registry" }
 libloading = "0.8"
 # The one place a time type's pattern is applied in Rust: `registry::bounds`
 # holds a closed set's listed values to the same pattern the schema holds rows to.
@@ -82,6 +85,8 @@ serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 
 [dev-dependencies]
+mockspace-store = { path = "mock/crates/mockspace-store", features = ["test-support"] }
+mockspace-registry = { path = "mock/crates/mockspace-registry", features = ["test-support"] }
 tempfile = "3"
 # Read by `tests/a_publishing_crate_has_no_git_dependency.rs`, which parses every
 # manifest in the tree. Already a normal dependency, so this adds nothing to

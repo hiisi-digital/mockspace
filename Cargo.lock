@@ -245,6 +245,7 @@ dependencies = [
  "mockspace-bench-harness",
  "mockspace-lint-rules",
  "mockspace-manifest",
+ "mockspace-registry",
  "mockspace-store",
  "regex",
  "serde",
@@ -296,6 +297,7 @@ name = "mockspace-lint-rules"
 version = "0.0.0"
 dependencies = [
  "mockspace-manifest",
+ "mockspace-verdicts",
  "tempfile",
  "toml",
  "tree-sitter",
@@ -312,11 +314,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "mockspace-registry"
+version = "0.1.0"
+dependencies = [
+ "mockspace-manifest",
+ "mockspace-store",
+ "mockspace-verdicts",
+ "regex",
+ "serde",
+ "tempfile",
+ "toml_edit",
+]
+
+[[package]]
 name = "mockspace-store"
 version = "0.1.0"
 dependencies = [
+ "mockspace-manifest",
  "tempfile",
 ]
+
+[[package]]
+name = "mockspace-verdicts"
+version = "0.0.0"
 
 [[package]]
 name = "multiply-xor"

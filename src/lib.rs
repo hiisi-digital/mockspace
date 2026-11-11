@@ -48,8 +48,6 @@ pub mod parse;
 pub mod pdf;
 pub mod registry;
 mod append_merge;
-mod registry_append;
-mod registry_merge;
 pub mod render;
 pub mod render_agent;
 pub mod render_design;
@@ -111,6 +109,3 @@ pub use mockspace_lint_rules::{
     WorkspaceLint,
 };
 
-/// A bare repository and its clones, for the tests of stores kept on a git ref.
-#[cfg(test)]
-pub(crate) mod test_remote;

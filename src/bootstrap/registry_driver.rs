@@ -7,7 +7,7 @@
 //!
 //! Two branches that each add a row to the same spot of a registry file touch
 //! the same lines and conflict as text, though they agree on everything that
-//! matters. `mock merge-registry` (see [`crate::registry_merge`]) merges by what
+//! matters. `mock merge-registry` (see [`crate::registry::merge`]) merges by what
 //! a row is, and this wires git to call it for every `*.toml` under
 //! `<mock>/registry/`, at any depth, since the loader reads them all by their
 //! `[[namespace]]` key and never by what the file is called.
@@ -26,21 +26,11 @@
 
 use super::*;
 
-/// The driver's name, as `.gitattributes` and the clone's config both spell it.
-pub(crate) const REGISTRY_DRIVER: &str = "mockspace-registry";
-
-pub(crate) const REGISTRY_NOTE: &str =
-    "# mockspace: registry rows merge by namespace and id, see the registry merge driver";
-
-/// The attribute line for the registry directory, `None` when it is outside
-/// the repository.
-pub(crate) fn registry_attributes_line(repo_root: &Path, registry_dir: &Path) -> Option<String> {
-    let rel = relative(repo_root, registry_dir).filter(|r| !r.is_empty())?;
-    Some(format!(
-        "{}/**/*.toml merge={REGISTRY_DRIVER}",
-        pattern(&rel)
-    ))
-}
+/// The driver's name, the note above its line and the line itself are the registry's own, so a
+/// tool that keeps a registry without this engine writes the same ones.
+pub(crate) use crate::registry::merge::{
+    ATTRIBUTES_NOTE as REGISTRY_NOTE, DRIVER as REGISTRY_DRIVER, attributes_line as registry_attributes_line,
+};
 
 /// What git runs for a conflicting registry file, with `launcher` the command
 /// that reaches the engine (`cargo mock`). `%L` is the conflict marker length git

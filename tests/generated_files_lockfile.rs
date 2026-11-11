@@ -7,6 +7,8 @@
 //! the lock that comes out holds both, written by the same hooks a developer runs: nothing here
 //! settles the lock by hand.
 
+#[path = "common/ambient.rs"]
+mod ambient;
 mod common;
 
 use std::process::Command;

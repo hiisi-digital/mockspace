@@ -1,0 +1,12 @@
+[package]
+name = "mockspace-verdicts"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MPL-2.0"
+description = "The seam a store of saved verdicts is plugged in by, for whatever checks and can replay what it found."
+repository = "https://github.com/hiisi-digital/mockspace"
+
+# No dependency, on purpose: a lint pack links this through the lint rules and a tool that keeps a
+# registry links it through the registry, and neither gains anything from the cache but the trait.
+[dependencies]

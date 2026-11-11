@@ -170,6 +170,7 @@ mod verbs {
     use std::process::ExitCode;
 
     use super::*;
+    use crate::registry::engine_world::EngineClone as _;
     use crate::registry::test_world::World;
 
     fn with_ref(w: &World, name: &str) -> crate::config::Config {

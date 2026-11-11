@@ -23,6 +23,7 @@
 //! files hold (the writer's), deleting or rewriting history, signing, and any
 //! knowledge of what a registry, a round or a test history is.
 
+pub mod attributes;
 mod commit_reader;
 mod dir;
 mod edit;
@@ -39,6 +40,8 @@ mod ref_store;
 mod refs;
 mod retry;
 mod store;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 
 pub use dir::DirStore;
 pub use edit::Edit;
@@ -53,3 +56,8 @@ pub use ref_store::{DATA_REF_ENV, RefStore};
 pub use refs::{RefPair, RemoteForm};
 pub use retry::RetryPolicy;
 pub use store::{Applied, Freshness, Store};
+
+/// What these tests take out of the environment before they run.
+#[cfg(test)]
+#[path = "../../../../tests/common/ambient.rs"]
+mod test_ambient;
