@@ -501,6 +501,7 @@ PREPUSH_STDIN=$(cat)
 # writes. Such a push carries the engine's own commits of data and no commit of
 # a branch, and this gate is a branch's, so it stands down. It does so only when
 # every ref being pushed is the one named: a branch pushed beside it is gated.
+# Anyone can set the variable by hand, which skips this gate as `--no-verify` does and no further.
 if [ -n "${{MOCKSPACE_DATA_REF:-}}" ]; then
     MS_DATA_ANY=""
     MS_DATA_ONLY=1

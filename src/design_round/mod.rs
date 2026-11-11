@@ -607,6 +607,10 @@ pub fn legacy_renames(cfg: &Config) -> Result<Vec<(String, String)>, String> {
         if dr.join(&new_name).exists() {
             return Err(format!("{lead}/{name} would be renamed to {new_name}, which exists"));
         }
+        let to = format!("{lead}/{new_name}");
+        if let Some((other, _)) = out.iter().find(|(_, taken)| *taken == to) {
+            return Err(format!("{other} and {lead}/{name} would both be renamed to {new_name}"));
+        }
         out.push((format!("{lead}/{name}"), format!("{lead}/{new_name}")));
     }
     Ok(out)

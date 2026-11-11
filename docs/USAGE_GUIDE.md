@@ -435,7 +435,7 @@ A landing is gated against the data as one clone held it, and the commit says wh
 ```bash
 cargo mock migrate directory-to-ref --namespace research --path research --dry-run
 cargo mock migrate directory-to-ref --namespace research --path research
-git add mock/mockspace.toml && git commit -m "chore: move `research` to its ref"
+git add mock/mockspace.toml && git commit -m 'chore: move `research` to its ref'
 ```
 
 ### Lints

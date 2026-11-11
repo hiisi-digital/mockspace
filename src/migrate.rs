@@ -56,6 +56,8 @@ pub struct Plan {
     /// One line for each thing the run changes, every path named. This is what a dry run prints.
     pub lines: Vec<String>,
     steps:     Vec<Step>,
+    /// What is left to the caller once the run is through.
+    after:     &'static str,
 }
 
 #[derive(Debug)]
@@ -110,10 +112,11 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     for step in &plan.steps {
         if let Err(why) = carry_out(cfg, step) {
             eprintln!("migrate: stopped, and the steps before this one stand: {why}");
+            eprintln!("migrate: the same call finishes it once what stopped it is out of the way");
             return ExitCode::FAILURE;
         }
     }
-    println!("done: commit the config and the removals on this branch");
+    println!("done: {}", plan.after);
     ExitCode::SUCCESS
 }
 
@@ -237,29 +240,39 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
     let ns = decl.namespace().to_string();
     let path = decl.path.clone().unwrap_or_default();
 
-    if cfg.data_refs.iter().any(|d| d.namespace() == ns || d.path.as_deref() == Some(path.as_str())) {
+    // A run that stopped part way is finished by the same call. What it left is read off what
+    // each step leaves behind: the seed leaves this clone an instance of the ref, the config
+    // step leaves the table, and the last step leaves nothing tracked.
+    let declared = cfg.data_refs.iter().any(|d| *d == decl);
+    if !declared && cfg.data_refs.iter().any(|d| d.namespace() == ns || d.path.as_deref() == Some(path.as_str())) {
         return Err(vec![format!(
-            "migrate: mockspace.toml already declares a `[[data_ref]]` for the namespace `{ns}` or the path `{path}`, \
-             so this migration was made here before"
+            "migrate: mockspace.toml already declares another `[[data_ref]]` for the namespace `{ns}` or the path \
+             `{path}`"
         )]);
     }
-    let mut all = cfg.data_refs.clone();
-    all.push(decl.clone());
-    if let Err(mut bad) = crate::data_refs::validate_against(&all, &cfg.data_ref_taken) {
-        bad.insert(0, "migrate: the declaration this would write is one the engine refuses:".to_string());
-        return Err(bad);
+    if !declared {
+        let mut all = cfg.data_refs.clone();
+        all.push(decl.clone());
+        if let Err(mut bad) = crate::data_refs::validate_against(&all, &cfg.data_ref_taken) {
+            bad.insert(0, "migrate: the declaration this would write is one the engine refuses:".to_string());
+            return Err(bad);
+        }
     }
 
     let tracked = decl.tracked(&cfg.repo_root, &cfg.mock_dir).map_err(|e| vec![format!("migrate: {e}")])?;
     if tracked.is_empty() {
-        return Err(vec![format!(
-            "migrate: the branch tracks no file under `{path}` that the ref would hold, so there is nothing to move \
-             and this is not a tree the migration was written for"
-        )]);
+        return Err(vec![if declared {
+            format!("migrate: mockspace.toml already declares this ref and the branch tracks none of its files, so this migration was made here before")
+        } else {
+            format!(
+                "migrate: the branch tracks no file under `{path}` that the ref would hold, so there is nothing to \
+                 move and this is not a tree the migration was written for"
+            )
+        }]);
     }
     // A held file that differs from what the branch has committed would reach the ref in a form
     // no commit of the branch ever held, and an untracked one would reach it unseen.
-    let mut pathspec = vec!["status", "--porcelain", "-z", "--untracked-files=all", "--"];
+    let mut pathspec = vec!["status", "--porcelain", "-z", "--no-renames", "--untracked-files=all", "--"];
     let dir = decl.instance_dir(&cfg.mock_dir);
     let dir_text = dir.to_string_lossy().into_owned();
     pathspec.push(&dir_text);
@@ -290,25 +303,56 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
         )]);
     }
     let store = decl.open(&cfg.repo_root).map_err(|e| vec![format!("migrate: {e}")])?;
-    match mockspace_store::Store::refresh(&store) {
-        Ok(mockspace_store::Freshness::Empty) => {},
-        Ok(_) => {
+    let inst = decl.instance(&store, &cfg.mock_dir).map_err(|e| vec![format!("migrate: {e}")])?;
+    let seeded = inst.base().map_err(|e| vec![format!("migrate: {e}")])?.is_some();
+    if seeded {
+        // the files are tracked and clean, so what the ref holds is what the branch holds, unless
+        // the directory was changed since
+        if inst.is_dirty().map_err(|e| vec![format!("migrate: {e}")])? {
             return Err(vec![format!(
-                "migrate: the ref of `{ns}` already has commits on the remote, so it was made elsewhere; take the \
-                 branch that declares it and `cargo mock data-refs instantiate {ns}`"
+                "migrate: an earlier run made the ref of `{ns}` and the directory has changed since; \
+                 `cargo mock data-refs commit {ns}` or put the files back, then run this again"
             )]);
-        },
-        Err(e) => return Err(vec![format!("migrate: the remote could not be asked about the ref of `{ns}`: {e}")]),
+        }
+    } else if declared {
+        return Err(vec![format!(
+            "migrate: mockspace.toml declares this ref and this clone has no instance of it, so it was made \
+             elsewhere; `git rm --cached` the files the branch still tracks and `cargo mock data-refs instantiate {ns}`"
+        )]);
+    } else {
+        match mockspace_store::Store::refresh(&store) {
+            Ok(mockspace_store::Freshness::Empty) => {},
+            Ok(_) => {
+                return Err(vec![format!(
+                    "migrate: the ref of `{ns}` already has commits on the remote, so it was made elsewhere; take \
+                     the branch that declares it and `cargo mock data-refs instantiate {ns}`"
+                )]);
+            },
+            Err(e) => {
+                return Err(vec![format!("migrate: the remote could not be asked about the ref of `{ns}`: {e}")]);
+            },
+        }
     }
 
     let table = table_of(&decl);
-    let mut lines = vec![format!("append to {}:", cfg.config_path.display())];
-    lines.extend(table.lines().map(|l| format!("  {l}")));
-    lines.push(format!("make the ref of `{ns}` from {} file(s) and push it", tracked.len()));
+    let (mut lines, mut steps) = (Vec::new(), Vec::new());
+    if seeded {
+        lines.push(format!("an earlier run of this migration made the ref of `{ns}`; finishing it"));
+    } else {
+        lines.push(format!("make the ref of `{ns}` from {} file(s) and push it", tracked.len()));
+        steps.push(Step::Seed(decl));
+    }
+    if !declared {
+        lines.push(format!("append to {}:", cfg.config_path.display()));
+        lines.extend(table.lines().map(|l| format!("  {l}")));
+        steps.push(Step::AppendConfig(table));
+    }
     lines.extend(tracked.iter().map(|p| format!("untrack {p}")));
+    steps.push(Step::Untrack(tracked));
     Ok(Plan {
         lines,
-        steps: vec![Step::Seed(decl), Step::AppendConfig(table), Step::Untrack(tracked)],
+        steps,
+        after: "commit the config and the removals on this branch",
     })
 }
 
@@ -362,6 +406,7 @@ fn plan_round_filenames(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String>
     Ok(Plan {
         lines,
         steps,
+        after: "commit the renames on this branch",
     })
 }
 

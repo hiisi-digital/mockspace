@@ -220,3 +220,88 @@ fn the_gates_are_told_which_held_files_changed() {
     assert!(files.held.contains("crates/one/NOTES.md.tmpl") && files.held.contains("crates/two/README.md.tmpl"));
     assert!(!files.held.contains("crates/one/src/lib.rs"), "a source is the branch's, and git judges it");
 }
+
+#[test]
+fn round_files_are_renamed_and_two_that_would_take_one_name_are_refused() {
+    let w = World::new();
+    let cfg = consumer(&w, "a");
+    // nothing legacy: not a tree it was written for
+    std::fs::create_dir_all(cfg.mock_dir.join("design_rounds")).unwrap();
+    let why = plan(&cfg, &["round-filenames"]).unwrap_err().join("\n");
+    assert!(why.contains("not a tree the migration was written for"), "{why}");
+
+    write(&cfg, "design_rounds/2026-03-07_changelist.md", "first changelist\n");
+    let planned = plan(&cfg, &["round-filenames"]).unwrap().lines.join("\n");
+    assert!(planned.contains("mock/design_rounds/2026-03-07_changelist.md"), "{planned}");
+
+    // a second file whose new name is the first one's: renaming both would lose one
+    write(&cfg, "design_rounds/2026-03-07_foo_changelist.md", "second changelist\n");
+    let why = plan(&cfg, &["round-filenames"]).unwrap_err().join("\n");
+    assert!(why.contains("would both be renamed"), "{why}");
+    assert_eq!(run(&cfg, &["round-filenames"]), ExitCode::FAILURE);
+    let dir = cfg.mock_dir.join("design_rounds");
+    assert_eq!(std::fs::read_to_string(dir.join("2026-03-07_changelist.md")).unwrap(), "first changelist\n");
+    assert_eq!(std::fs::read_to_string(dir.join("2026-03-07_foo_changelist.md")).unwrap(), "second changelist\n");
+
+    // the control: alone again, the first is renamed and keeps its text
+    std::fs::remove_file(dir.join("2026-03-07_foo_changelist.md")).unwrap();
+    assert_eq!(run(&cfg, &["round-filenames"]), ExitCode::SUCCESS);
+    assert!(!dir.join("2026-03-07_changelist.md").exists());
+    let renamed: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().is_file()).collect();
+    assert_eq!(renamed.len(), 1);
+    assert_eq!(std::fs::read_to_string(renamed[0].path()).unwrap(), "first changelist\n");
+}
+
+#[test]
+fn a_run_stopped_after_the_config_was_written_is_finished_by_the_same_call() {
+    let w = World::new();
+    let cfg = consumer(&w, "a");
+    // a held index stops the last step: the ref is pushed, the table written, the files tracked
+    let lock = cfg.repo_root.join(".git/index.lock");
+    std::fs::write(&lock, "").unwrap();
+    assert_eq!(run(&cfg, &RESEARCH), ExitCode::FAILURE);
+    std::fs::remove_file(&lock).unwrap();
+    let again = Config::from_dir(&cfg.mock_dir);
+    assert_eq!(again.data_refs.len(), 1, "the control: the run got as far as the config");
+    assert!(tracked(&again).iter().any(|p| p.starts_with("mock/research/")), "the control: and no further");
+
+    let finishing = plan(&again, &RESEARCH).unwrap().lines.join("\n");
+    assert!(finishing.contains("finishing") && !finishing.contains("[[data_ref]]"), "{finishing}");
+    assert_eq!(run(&again, &RESEARCH), ExitCode::SUCCESS);
+    assert!(!tracked(&again).iter().any(|p| p.starts_with("mock/research/")));
+    let done = Config::from_dir(&cfg.mock_dir);
+    assert_eq!(done.data_refs.len(), 1, "the table was written twice");
+    assert_eq!(crate::data_refs::standing(&done), Ok(()));
+    // and finished, it is not done a third time
+    assert!(plan(&done, &RESEARCH).unwrap_err().join("\n").contains("already"));
+}
+
+#[test]
+fn a_run_stopped_after_the_ref_was_made_is_finished_by_the_same_call() {
+    let w = World::new();
+    let cfg = consumer(&w, "a");
+    let before = std::fs::read_to_string(&cfg.config_path).unwrap();
+    assert_eq!(run(&cfg, &RESEARCH), ExitCode::SUCCESS);
+    // as it stands where the config step failed: the ref made here, no table, the files tracked
+    std::fs::write(&cfg.config_path, &before).unwrap();
+    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    let again = Config::from_dir(&cfg.mock_dir);
+    assert!(again.data_refs.is_empty());
+
+    let finishing = plan(&again, &RESEARCH).unwrap().lines.join("\n");
+    assert!(finishing.contains("finishing") && finishing.contains("[[data_ref]]"), "{finishing}");
+    assert_eq!(run(&again, &RESEARCH), ExitCode::SUCCESS);
+    let done = Config::from_dir(&cfg.mock_dir);
+    assert_eq!(done.data_refs.len(), 1);
+    assert_eq!(crate::data_refs::standing(&done), Ok(()));
+    assert_eq!(crate::data_refs::run(&done, &["verify"]), ExitCode::SUCCESS);
+
+    // the control: a directory changed since the ref was made is not finished over
+    std::fs::write(&cfg.config_path, &before).unwrap();
+    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    write(&cfg, "research/note.md", "changed since\n");
+    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    git(&cfg.repo_root, &["commit", "-q", "-m", "changed since"]);
+    let why = plan(&Config::from_dir(&cfg.mock_dir), &RESEARCH).unwrap_err().join("\n");
+    assert!(why.contains("changed since"), "{why}");
+}
