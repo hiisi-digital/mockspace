@@ -43,6 +43,26 @@ fn is_git_name(part: &str) -> bool {
 
 /// Whether `path` is the entry `prefix` or lies under it. The empty prefix
 /// matches everything.
+/// Each of `paths`, and each directory above one of them, that is a symlink under `dir`, every one
+/// named once in the order met. A write or a removal at such a path goes through the link to
+/// wherever it points, outside `dir`. A path that does not exist is not a symlink.
+pub fn symlinks_on<S: AsRef<str>>(dir: &std::path::Path, paths: &[S]) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut links = Vec::new();
+    for path in paths {
+        let path = path.as_ref();
+        for i in path.match_indices('/').map(|(i, _)| i).chain([path.len()]) {
+            let above = &path[.. i];
+            if seen.insert(above.to_owned())
+                && std::fs::symlink_metadata(dir.join(above)).is_ok_and(|m| m.is_symlink())
+            {
+                links.push(above.to_owned());
+            }
+        }
+    }
+    links
+}
+
 pub fn under(path: &str, prefix: &str) -> bool {
     let prefix = prefix.trim_end_matches('/');
     prefix.is_empty()
@@ -89,5 +109,23 @@ mod tests {
         assert!(under("a/b", ""));
         assert!(!under("ab/c", "a"));
         assert!(under("a/b/c", "a/b/"));
+    }
+
+    // A link is named where it is the path and where it is a directory above one, once however
+    // many paths pass through it; a plain file, a plain directory and a path that is not there are
+    // no links.
+    //
+    // Mutation: asking `metadata` instead of `symlink_metadata` follows each link and names none.
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_on_names_each_link_at_or_above_a_path_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("plain")).unwrap();
+        std::fs::write(dir.path().join("plain/file"), "").unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("linked")).unwrap();
+        std::os::unix::fs::symlink(outside.path().join("f"), dir.path().join("plain/link")).unwrap();
+        let paths = ["plain/file", "linked/a", "linked/b/c", "plain/link", "nowhere/x"];
+        assert_eq!(symlinks_on(dir.path(), &paths), ["linked", "plain/link"]);
     }
 }

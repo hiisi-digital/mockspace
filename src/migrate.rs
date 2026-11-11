@@ -206,7 +206,13 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
         Step::Write {
             path,
             text,
-        } => std::fs::write(cfg.repo_root.join(path), text).map_err(|e| format!("writing {path}: {e}")),
+        } => {
+            // the plan refused it; a link made since would still take the write out of the tree
+            if let Some(why) = crate::migrate_refs::symlinks_on(&cfg.repo_root, [path.as_str()].into_iter()).pop() {
+                return Err(why);
+            }
+            std::fs::write(cfg.repo_root.join(path), text).map_err(|e| format!("writing {path}: {e}"))
+        },
         Step::WriteRegistry(files) => {
             mockspace_registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
             let stores =

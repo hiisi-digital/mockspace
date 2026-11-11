@@ -115,6 +115,34 @@ fn a_run_rewrites_templates_and_registry_data_and_nothing_else_of_them() {
     assert!(data.contains(r#"why = "{{ seed::DESIGN::3\t}}""#), "{data}");
 }
 
+// A file to rewrite that is a symlink, or lies in a directory that is one, would be written through
+// the link outside the repository, so the run refuses before it writes anything, the files of the
+// tree as well, as a data ref refuses a write below a symlink.
+//
+// Mutation: writing each file with `fs::write` as it stands rewrites both files outside.
+#[cfg(unix)]
+#[test]
+fn a_file_to_rewrite_at_or_below_a_symlink_is_refused_and_nothing_is_written() {
+    let r = repo();
+    let outside = tempfile::tempdir().unwrap();
+    let (out_doc, out_rows) = (outside.path().join("OUT.md.tmpl"), outside.path().join("rows/more.toml"));
+    let rows = "[[ruling]]\nid = \"fourth\"\nprovenance = [\"seed::DESIGN::3\"]\n";
+    std::fs::write(&out_doc, TEMPLATE).unwrap();
+    std::fs::create_dir_all(out_rows.parent().unwrap()).unwrap();
+    std::fs::write(&out_rows, rows).unwrap();
+    std::os::unix::fs::symlink(&out_doc, r.cfg.repo_root.join("docs/LINKED.md.tmpl")).unwrap();
+    std::os::unix::fs::symlink(out_rows.parent().unwrap(), r.cfg.mock_dir.join("registry/linked")).unwrap();
+    git_in(&r.cfg.repo_root, &["add", "-A"]);
+    let before = read(&r.cfg, "docs/DOC.md.tmpl");
+    let why = plan_of(&r.cfg, &[NAME]).unwrap_err().join("\n");
+    assert!(why.contains("docs/LINKED.md.tmpl is a symlink"), "{why}");
+    assert!(why.contains("registry/linked is a symlink"), "{why}");
+    assert_ne!(run(&r.cfg, &[NAME]), ExitCode::SUCCESS);
+    assert_eq!(std::fs::read_to_string(&out_doc).unwrap(), TEMPLATE);
+    assert_eq!(std::fs::read_to_string(&out_rows).unwrap(), rows);
+    assert_eq!(read(&r.cfg, "docs/DOC.md.tmpl"), before);
+}
+
 // Mutation: writing before the plan is shown, or ignoring `--dry-run`, changes a file here.
 #[test]
 fn a_dry_run_names_each_rewrite_and_each_reference_left_and_changes_nothing() {

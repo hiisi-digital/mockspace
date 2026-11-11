@@ -133,6 +133,9 @@ pub(crate) fn plan(cfg: &Config) -> Result<Planned, Vec<String>> {
         }
     }
 
+    // A file to rewrite that is a symlink, or lies below one, would be written through the link to
+    // wherever it points, so the run refuses it before it writes anything, as a data ref does.
+    why.extend(symlinks_on(&cfg.repo_root, writes.iter().map(|(rel, _)| rel.as_str())));
     if !why.is_empty() {
         return Err(why);
     }
@@ -162,6 +165,20 @@ pub(crate) fn plan(cfg: &Config) -> Result<Planned, Vec<String>> {
         on_refs,
         instance_written,
     })
+}
+
+/// The refusal of each of `paths`, from the repository root, that is a symlink or lies below one.
+pub(crate) fn symlinks_on<'a>(repo_root: &Path, paths: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let paths: Vec<&str> = paths.collect();
+    mockspace_store::symlinks_on(repo_root, &paths)
+        .into_iter()
+        .map(|link| {
+            format!(
+                "migrate: {link} is a symlink, so a file at or below it would be written to wherever it points; \
+                 nothing is written"
+            )
+        })
+        .collect()
 }
 
 /// Every config file the loaders read for the preset shorthands that exists, the one this run loaded

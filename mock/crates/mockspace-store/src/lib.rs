@@ -49,7 +49,7 @@ pub use error::StoreError;
 pub use identity::Identity;
 pub use instance::{Held, Instance};
 pub use merge::{MergeHook, MergeRefusal, Reapply, Refuse};
-pub use path::validate_path;
+pub use path::{symlinks_on, validate_path};
 pub use reader::Reader;
 pub use ref_history::CommitInfo;
 pub use ref_store::{DATA_REF_ENV, RefStore};
