@@ -3,6 +3,7 @@ use std::process::ExitCode;
 
 use super::*;
 use crate::config::Config;
+use crate::registry::engine_world::EngineClone as _;
 use crate::registry::test_world::World;
 
 fn git(dir: &Path, args: &[&str]) -> String {
