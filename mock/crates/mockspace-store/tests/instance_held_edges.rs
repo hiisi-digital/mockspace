@@ -204,3 +204,32 @@ fn files_a_clean_removed_are_written_again_from_the_base() {
     assert_eq!(ia.restore().unwrap(), 0);
     assert_eq!(std::fs::read_to_string(dir.join("one/DESIGN.md.tmpl")).unwrap(), "changed here\n");
 }
+
+#[cfg(unix)]
+#[test]
+fn an_update_does_not_write_through_a_file_that_is_a_symlink() {
+    let w = World::new();
+    let (a, dir) = seeded(&w);
+    let b = store(&w, "b");
+    b.refresh().unwrap();
+    let dir_b = clone_path(&w, "b").join("crates");
+    let ib = Instance::new(&b, &dir_b).unwrap().holding(held(TEMPLATES));
+    ib.materialize().unwrap();
+    // the file becomes a link to one outside that holds the same text, so it reads as unchanged
+    let outside = w.dir.path().join("outside.txt");
+    std::fs::write(&outside, "design of one\n").unwrap();
+    std::fs::remove_file(dir_b.join("one/DESIGN.md.tmpl")).unwrap();
+    std::os::unix::fs::symlink(&outside, dir_b.join("one/DESIGN.md.tmpl")).unwrap();
+
+    write(&dir, "one/DESIGN.md.tmpl", "second\n");
+    Instance::new(&a, &dir).unwrap().holding(held(TEMPLATES)).apply("edit", &Refuse).unwrap();
+
+    let refused = why(ib.update().unwrap_err());
+    assert!(refused.contains("symlink") && refused.contains("one/DESIGN.md.tmpl"), "{refused}");
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "design of one\n", "the update wrote through the link");
+    // the control: a regular file there again, the same update lands
+    std::fs::remove_file(dir_b.join("one/DESIGN.md.tmpl")).unwrap();
+    write(&dir_b, "one/DESIGN.md.tmpl", "design of one\n");
+    ib.update().unwrap();
+    assert_eq!(std::fs::read_to_string(dir_b.join("one/DESIGN.md.tmpl")).unwrap(), "second\n");
+}

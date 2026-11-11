@@ -290,8 +290,8 @@ mod verbs {
         head_message(&a.repo_root, &format!("land a thing\n\n{}\n", lines[0]));
         assert_eq!(run(&a, &["paired", "HEAD"]), ExitCode::SUCCESS);
         // the control: a namespace no ref can carry is refused where it is declared
-        let why = validate(&[decl("-x", "research")]).unwrap_err().join("\n");
-        assert!(why.contains("`-x`"), "{why}");
+        let why = validate(&[decl("a..b", "research")]).unwrap_err().join("\n");
+        assert!(why.contains("`a..b`"), "{why}");
     }
 
     #[test]
