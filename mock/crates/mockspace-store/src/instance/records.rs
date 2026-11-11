@@ -117,7 +117,10 @@ impl Instance<'_> {
         // exclude file reads otherwise than the instance does
         let lines: Vec<String> = match &self.held {
             None => vec![format!("{lead}/")],
-            Some(held) => held.patterns().map(|p| format!("{lead}/{p}")).collect(),
+            // an exclude pattern matches a directory as well as a file, and an excluded directory is
+            // never looked into, so each pattern is followed by the line that takes directories
+            // back out of it: what is left excluded is the files, which is what the instance holds
+            Some(held) => held.patterns().flat_map(|p| [format!("{lead}/{p}"), format!("!{lead}/{p}/")]).collect(),
         };
         let out = self.store.git.must(
             &["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],

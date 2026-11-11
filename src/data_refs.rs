@@ -90,6 +90,9 @@ pub fn validate_against(decls: &[DataRefDecl], taken: &[String]) -> Result<(), V
         match d.namespace.as_deref() {
             None | Some("") => why.push(format!("{at}: `namespace` is missing or empty")),
             Some(ns) => {
+                if !crate::pairing::is_ref_name(ns) {
+                    why.push(format!("{at}: the namespace `{ns}` is not one a ref and a `Mock-Ref` line can be named by"));
+                }
                 if decls.iter().take(i).any(|o| o.namespace.as_deref() == Some(ns)) {
                     why.push(format!("{at}: the namespace `{ns}` is declared twice"));
                 }
@@ -223,6 +226,17 @@ pub fn standing(cfg: &crate::config::Config) -> Result<(), Vec<String>> {
                     d.instance_dir(&cfg.mock_dir).display()
                 )));
             }
+            // a clean of the work tree takes the files and leaves the record, and the directory then
+            // reads as one with nothing in it
+            if let (0, held) = inst.present().map_err(|e| e.to_string())? {
+                if held > 0 {
+                    return Ok(Some(format!(
+                        "the data ref `{ns}` has none of its {held} file(s) at {}, so `cargo mock data-refs restore {ns}` \
+                         writes them again",
+                        d.instance_dir(&cfg.mock_dir).display()
+                    )));
+                }
+            }
             let tracked = d.tracked(&cfg.repo_root, &cfg.mock_dir)?;
             if tracked.is_empty() {
                 return Ok(None);
@@ -246,20 +260,14 @@ pub fn standing(cfg: &crate::config::Config) -> Result<(), Vec<String>> {
 }
 
 impl DataRefDecl {
-    /// The files under this ref's `path` that the index of the branch holds and the ref would hold
+    /// The files under this ref's instance directory that the index of the branch holds and the ref would hold
     /// too, as paths from the repository root.
     pub fn tracked(&self, repo_root: &Path, mock_dir: &Path) -> Result<Vec<String>, String> {
-        let dir = self
-            .path
-            .as_deref()
-            .unwrap_or("")
-            .trim_matches('/')
-            .split('/')
-            .fold(mock_dir.to_path_buf(), |p, part| p.join(part));
+        let dir = self.instance_dir(mock_dir);
         let out = std::process::Command::new("git")
             .arg("-C")
             .arg(repo_root)
-            .args(["ls-files", "-z", "--full-name", "--"])
+            .args(["--literal-pathspecs", "ls-files", "-z", "--full-name", "--"])
             .arg(&dir)
             .output()
             .map_err(|e| format!("running git ls-files: {e}"))?;
@@ -292,9 +300,6 @@ impl DataRefDecl {
     }
 }
 
-/// How far from a recorded author time a commit is still looked at when the recorded hash is gone.
-const PAIR_WINDOW_SECS: i64 = 24 * 60 * 60;
-
 /// The `Mock-Ref` trailer of each declared ref (or of `wanted` alone), naming the commit its
 /// instance here is at. A landing made in this clone was gated against exactly those files, so
 /// these are the lines its commit carries. Refused over an instance with changes the ref does not
@@ -324,7 +329,7 @@ fn paired(cfg: &crate::config::Config, rev: &str) -> Result<Vec<String>, Vec<Str
     let message = std::process::Command::new("git")
         .arg("-C")
         .arg(&cfg.repo_root)
-        .args(["log", "-1", "--format=%B", rev, "--"])
+        .args(["log", "-1", "--format=%B", "--end-of-options", rev, "--"])
         .output()
         .map_err(|e| vec![format!("running git log: {e}")])?;
     if !message.status.success() {
@@ -340,7 +345,11 @@ fn paired(cfg: &crate::config::Config, rev: &str) -> Result<Vec<String>, Vec<Str
         };
         let found = d
             .open(&cfg.repo_root)
-            .and_then(|store| crate::pairing_ref::resolve(&store, trailer.pairing(), PAIR_WINDOW_SECS));
+            .and_then(|store| {
+                // a commit made elsewhere since the last fetch is on the remote and not here yet
+                mockspace_store::Store::refresh(&store).map_err(|e| e.to_string())?;
+                crate::pairing_ref::resolve(&store, trailer.pairing(), crate::pairing::DEFAULT_WINDOW_SECS)
+            });
         match found {
             Ok(Resolution::ByHash(c)) => ok.push(format!("{ns}: paired with {c}")),
             Ok(Resolution::ByTimeAndDigest(c)) => ok.push(format!("{ns}: paired with {c}, found by time and digest")),
@@ -360,7 +369,8 @@ fn paired(cfg: &crate::config::Config, rev: &str) -> Result<Vec<String>, Vec<Str
     if why.is_empty() { Ok(ok) } else { Err(why) }
 }
 
-/// `cargo mock data-refs <status|verify|instantiate|commit> [namespace]`. Prints one line per ref it
+/// `cargo mock data-refs <status|verify|instantiate|restore|commit|trailers> [namespace]` and
+/// `cargo mock data-refs paired <commit>`. Prints one line per ref it
 /// touched, and a refusal on stderr; exits non-zero when any ref could not be done.
 pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode {
     use std::process::ExitCode;
@@ -368,7 +378,7 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
     use mockspace_store::{Refuse, Store};
 
     let Some((verb, rest)) = args.split_first() else {
-        eprintln!("data-refs: status, verify, instantiate, commit or trailers [namespace], or paired <commit>");
+        eprintln!("data-refs: status, verify, instantiate, restore, commit or trailers [namespace], or paired <commit>");
         return ExitCode::FAILURE;
     };
     match *verb {
@@ -400,9 +410,9 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
                 },
             };
         },
-        "status" | "verify" | "instantiate" | "commit" => {},
+        "status" | "verify" | "instantiate" | "restore" | "commit" => {},
         _ => {
-            eprintln!("data-refs: `{verb}` is none of status, verify, instantiate, commit, trailers or paired");
+            eprintln!("data-refs: `{verb}` is none of status, verify, instantiate, restore, commit, trailers or paired");
             return ExitCode::FAILURE;
         },
     }
@@ -452,6 +462,10 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
                     store.refresh().map_err(|e| e.to_string())?;
                     let tip = inst.materialize().map_err(|e| e.to_string())?;
                     Ok(format!("instantiated at {tip}"))
+                },
+                "restore" => {
+                    let written = inst.restore().map_err(|e| e.to_string())?;
+                    Ok(format!("{written} file(s) written again"))
                 },
                 _ => {
                     let message = format!("data: {ns}");

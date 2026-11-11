@@ -182,18 +182,19 @@ const COMMANDS: &[Cmd] = &[
         name:    "data-refs",
         summary: "keep a directory of the mock directory on a git ref",
         args:    &[],
-        help:    "Takes `status|verify|instantiate|commit [namespace]` over the `[[data_ref]]` \
-                  tables of mockspace.toml, each naming a ref namespace and the one directory \
-                  it holds. `status` prints the ref's tip, the instance's base and whether the \
+        help:    "Takes `status|verify|instantiate|restore|commit|trailers [namespace]` and \
+                  `paired <commit>` over the `[[data_ref]]` tables of mockspace.toml, each naming a \
+                  ref namespace and the directory whose files it holds. `status` prints the ref's tip, the instance's base and whether the \
                   directory changed; `verify` fails unless the instance is clean at the tip; \
-                  `instantiate` fetches the ref into the directory; `commit` writes the \
+                  `instantiate` fetches the ref into the directory; `restore` writes again the \
+                  files of the instance that are gone from disk; `commit` writes the \
                   directory's changes to the ref (the first commit seeds it from the files). \
                   A missing instance is an error in every verb but `instantiate`. With no \
                   `[[data_ref]]` declared the command says so and succeeds. A table with \
                   `include` holds only the files of its directory those patterns match \
                   (`**/*.md.tmpl`), and the branch keeps the rest. Every other command stops \
-                  first when a declared ref has no instance, or when the branch still tracks \
-                  a file a ref holds. `trailers` prints one `Mock-Ref` line for each ref, \
+                  first when a declared ref has no instance or none of its files on disk, or \
+                  when the branch still tracks a file a ref holds. `trailers` prints one `Mock-Ref` line for each ref, \
                   naming the commit its instance is at, for the message of a landing gated \
                   here; `paired <commit>` fails unless that commit carries such a line for \
                   every declared ref and each names files the ref holds.",
