@@ -461,7 +461,7 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
     let target_dir = bench_test_target_dir(
         &cfg.mock_dir,
         &extra,
-        crate::build_dir::inherited_target_dir().as_deref(),
+        crate::build_dir::build_target_dir(&cfg.mock_dir).as_deref(),
     );
 
     for manifest in &manifests {

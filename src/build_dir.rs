@@ -128,18 +128,61 @@ pub fn mark_target_root_of(artifact: &Path) -> Option<PathBuf> {
     Some(root)
 }
 
-/// Every environment spelling that already fixes where cargo builds.
+/// Every spelling that already fixes where cargo builds, as seen from `start`.
 ///
-/// Both are honoured on the pinned toolchain and either one is enough to
-/// decline. `.cargo/config.toml`'s `[build] target-dir` is a third mechanism
-/// and is NOT read here: it is resolved by walking up from each tool's own
-/// directory, so there is no single answer to read, and the cost of missing it
-/// is the duplication that was there before rather than a wrong build.
+/// The two environment variables first, then `[build] target-dir` in a cargo
+/// config file, which cargo reads from every `.cargo/` above the directory it
+/// runs in and then from `CARGO_HOME`. Any one is enough to decline. The config
+/// is read from `start` upward, the mock directory, because every tree this
+/// engine builds sits under it; a config further down, inside one tool, would
+/// apply to that tool alone and is not looked for. Missing the config was not
+/// harmless: a workspace whose root config puts every build in one `target/`
+/// had each worktree build its own bench and test trees beside it, several
+/// gigabytes a worktree.
+pub fn build_target_dir(start: &Path) -> Option<std::ffi::OsString> {
+    inherited_target_dir().or_else(|| configured_target_dir(start, cargo_home().as_deref()))
+}
+
+/// The two environment spellings alone. The lint store reads its answer as a path
+/// against the repository root, which a config file's relative `target-dir` is
+/// not, so it asks only these.
 pub fn inherited_target_dir() -> Option<std::ffi::OsString> {
     // `CARGO_TARGET_DIR` first, which is cargo's own precedence over the
     // config-backed spelling. Only presence is read, so the order changes
     // nothing here and is kept honest for the next reader.
     std::env::var_os("CARGO_TARGET_DIR").or_else(|| std::env::var_os("CARGO_BUILD_TARGET_DIR"))
+}
+
+fn cargo_home() -> Option<PathBuf> {
+    std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))
+}
+
+/// `[build] target-dir` from the first cargo config that sets it, walking up
+/// from `start` and then trying `cargo_home`, in cargo's own order. Both file
+/// names count, `config.toml` before the older `config`, as cargo reads them.
+/// A file that does not parse is passed over, since cargo would refuse it and
+/// say why, which is a better message than any this could give.
+pub fn configured_target_dir(start: &Path, cargo_home: Option<&Path>) -> Option<std::ffi::OsString> {
+    let dirs = start
+        .ancestors()
+        .map(|d| d.join(".cargo"))
+        .chain(cargo_home.map(Path::to_path_buf));
+    for dir in dirs {
+        for name in ["config.toml", "config"] {
+            let Ok(text) = fs::read_to_string(dir.join(name)) else { continue };
+            let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else { continue };
+            if let Some(v) = doc
+                .get("build")
+                .and_then(|b| b.get("target-dir"))
+                .and_then(|t| t.as_str())
+            {
+                return Some(v.into());
+            }
+        }
+    }
+    None
 }
 
 /// Whether this run may pass a `--target-dir` of its own.

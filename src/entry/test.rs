@@ -58,7 +58,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use crate::build_dir::{inherited_target_dir, may_pass_target_dir as may_share};
+use crate::build_dir::{build_target_dir, may_pass_target_dir as may_share};
 use crate::config::Config;
 use crate::custom_lints::store::{self, Generated};
 use crate::entry::test_benches;
@@ -443,7 +443,7 @@ fn shared_target_dir(cfg: &Config, trees: &[Tree], args: &[&str]) -> Option<Path
     // `mock/target/mockspace-test/` it never writes into, which is the split
     // `build_dir.rs` exists to keep clean.
     let wanted = trees.iter().any(|t| t.own_root);
-    let inherited = inherited_target_dir();
+    let inherited = build_target_dir(&cfg.mock_dir);
     (wanted && may_share(args, inherited.as_deref()))
         .then(|| crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-test"]))
 }
