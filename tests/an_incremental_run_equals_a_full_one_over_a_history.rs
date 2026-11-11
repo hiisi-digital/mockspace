@@ -24,6 +24,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "common/ambient.rs"]
+mod ambient;
+
 const WORKTREE: &str = "MOCKSPACE_HISTORY_WORKTREE";
 const LAUNCHER: &str = "MOCKSPACE_HISTORY_LAUNCHER";
 const COMMITS: &str = "MOCKSPACE_HISTORY_COMMITS";

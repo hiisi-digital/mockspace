@@ -10,6 +10,8 @@
 //! of another, a query that reaches the other namespace still warns, and the answer for a
 //! namespace is the same whether or not the others were read.
 
+#[path = "common/ambient.rs"]
+mod ambient;
 mod common;
 
 use common::{Repo, write};
