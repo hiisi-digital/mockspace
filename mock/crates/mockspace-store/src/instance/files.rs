@@ -101,7 +101,7 @@ impl Instance<'_> {
         for chunk in missing.chunks(BATCH) {
             let wanted: Vec<&str> = chunk.iter().map(|p| ids[*p].as_str()).collect();
             for (path, bytes) in chunk.iter().zip(self.store.blobs(&wanted)?) {
-                self.write(path, &bytes)?;
+                self.write(path, &bytes, crate::ref_history::split_id(&ids[*path]).1)?;
             }
         }
         self.exclude()?;
@@ -145,12 +145,34 @@ impl Instance<'_> {
         self.dir.join(rel).is_file()
     }
 
-    pub(super) fn write(&self, rel: &str, bytes: &[u8]) -> Result<(), StoreError> {
+    /// Write `bytes` at `rel` with the executable bit as given: set on the owner, group and
+    /// other classes that can read, cleared on all of them otherwise.
+    pub(super) fn write(&self, rel: &str, bytes: &[u8], exec: bool) -> Result<(), StoreError> {
         let path = self.dir.join(rel);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| self.io("creating", e))?;
         }
-        std::fs::write(&path, bytes).map_err(|e| self.io("writing", e))
+        std::fs::write(&path, bytes).map_err(|e| self.io("writing", e))?;
+        self.set_exec(&path, exec)
+    }
+
+    /// Give the file at `path` the executable bit or take it away, leaving the other bits.
+    fn set_exec(&self, path: &Path, exec: bool) -> Result<(), StoreError> {
+        use std::os::unix::fs::PermissionsExt;
+        let meta = std::fs::metadata(path).map_err(|e| self.io("reading", e))?;
+        let mode = meta.permissions().mode();
+        let want = if exec { mode | ((mode & 0o444) >> 2) } else { mode & !0o111 };
+        if want != mode {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(want))
+                .map_err(|e| self.io("setting the mode of", e))?;
+        }
+        Ok(())
+    }
+
+    /// Whether the file at `rel` has the executable bit for its owner, as git reads it.
+    pub(super) fn is_exec(&self, rel: &str) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(self.dir.join(rel)).is_ok_and(|m| m.permissions().mode() & 0o100 != 0)
     }
 
     /// The regular files under the directory, as `/`-separated paths, sorted.
@@ -221,7 +243,8 @@ impl Instance<'_> {
                 });
             }
             for (path, id) in chunk.iter().zip(found) {
-                ids.insert((*path).to_owned(), id.to_owned());
+                let id = if self.is_exec(path) { format!("{id}{}", crate::ref_history::EXEC) } else { id.to_owned() };
+                ids.insert((*path).to_owned(), id);
             }
         }
         Ok(ids)

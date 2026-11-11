@@ -205,7 +205,8 @@ impl RefStore {
                         .git
                         .must(&["hash-object", "-w", "--stdin"], &[], Some(bytes))?
                         .text();
-                    lines.push_str(&format!("100644 {blob}\t{path}\0"));
+                    let mode = if edit.is_exec(path) { "100755" } else { "100644" };
+                    lines.push_str(&format!("{mode} {blob}\t{path}\0"));
                 },
                 None => lines.push_str(&format!("0 {ZERO_OID}\t{path}\0")),
             }

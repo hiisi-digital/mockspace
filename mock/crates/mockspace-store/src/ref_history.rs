@@ -6,6 +6,19 @@ use crate::error::StoreError;
 use crate::reader::Reader;
 use crate::ref_store::RefStore;
 
+/// What follows a blob id in an id map when the file is executable (mode 100755). A plain file's
+/// id is the bare blob id, so one comparison of two ids compares content and mode together.
+pub(crate) const EXEC: &str = "+x";
+
+/// The blob id and whether the file is executable, from an id of the maps `tree_ids` and
+/// `local_ids` give.
+pub(crate) fn split_id(id: &str) -> (&str, bool) {
+    match id.strip_suffix(EXEC) {
+        Some(blob) => (blob, true),
+        None => (id, false),
+    }
+}
+
 /// How many paths or ids go to one git process, so that neither pipe fills while the other is
 /// being written.
 pub(crate) const BATCH: usize = 200;
@@ -95,8 +108,11 @@ impl RefStore {
                 }
             })?;
             match meta.split(' ').collect::<Vec<_>>()[..] {
-                ["100644" | "100755", "blob", id] => {
+                ["100644", "blob", id] => {
                     ids.insert(path.to_owned(), id.to_owned());
+                },
+                ["100755", "blob", id] => {
+                    ids.insert(path.to_owned(), format!("{id}{EXEC}"));
                 },
                 _ => {
                     return Err(StoreError::InvalidPath {
@@ -113,7 +129,7 @@ impl RefStore {
     pub(crate) fn blobs(&self, ids: &[&str]) -> Result<Vec<Vec<u8>>, StoreError> {
         let mut input = String::new();
         for id in ids {
-            input.push_str(id);
+            input.push_str(split_id(id).0);
             input.push('\n');
         }
         let out = self

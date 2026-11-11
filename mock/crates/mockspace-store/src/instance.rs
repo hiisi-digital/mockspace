@@ -188,7 +188,7 @@ impl<'a> Instance<'a> {
         for chunk in paths.chunks(BATCH) {
             let wanted: Vec<&str> = chunk.iter().map(|p| ids[*p].as_str()).collect();
             for (path, bytes) in chunk.iter().zip(self.store.blobs(&wanted)?) {
-                self.write(path, &bytes)?;
+                self.write(path, &bytes, crate::ref_history::split_id(&ids[*path]).1)?;
             }
         }
         Ok(())
@@ -219,7 +219,11 @@ impl<'a> Instance<'a> {
             if ids.get(path) != held.get(path) {
                 let bytes =
                     std::fs::read(self.dir.join(path)).map_err(|e| self.io("reading", e))?;
-                edit = edit.put(path.clone(), bytes);
+                edit = if ids.get(path).is_some_and(|i| crate::ref_history::split_id(i).1) {
+                    edit.put_exec(path.clone(), bytes)
+                } else {
+                    edit.put(path.clone(), bytes)
+                };
                 sent.insert(path.clone(), ids.get(path).cloned());
             }
         }
@@ -286,7 +290,7 @@ impl<'a> Instance<'a> {
         let mut edit = Edit::new();
         for path in &here {
             let bytes = std::fs::read(self.dir.join(path)).map_err(|e| self.io("reading", e))?;
-            edit = edit.put(path.clone(), bytes);
+            edit = if self.is_exec(path) { edit.put_exec(path.clone(), bytes) } else { edit.put(path.clone(), bytes) };
         }
         // The exclusion goes first: it is the step that can fail on a read-only checkout, and once
         // the ref has a tip a failure after it leaves a directory that neither `seed` (the ref has a
@@ -413,7 +417,7 @@ impl<'a> Instance<'a> {
                     std::fs::remove_dir_all(self.dir.join(path.as_str()))
                         .map_err(|e| self.io("removing", e))?;
                 }
-                self.write(path, &bytes)?;
+                self.write(path, &bytes, crate::ref_history::split_id(&to[*path]).1)?;
             }
         }
         self.record(&tip)

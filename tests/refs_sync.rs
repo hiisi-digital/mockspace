@@ -103,3 +103,53 @@ fn a_local_deletion_survives_an_update_and_goes_with_the_next_commit() {
     assert!(!c.exists(EMPTY));
     assert_eq!(c.read(SPACES), b"b's edit\n");
 }
+
+fn mode_of(c: &refs_e2e::Clone, rel: &str) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(c.path(rel)).unwrap().permissions().mode() & 0o111
+}
+
+fn set_exec(c: &refs_e2e::Clone, rel: &str, on: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let p = c.path(rel);
+    let mode = std::fs::metadata(&p).unwrap().permissions().mode();
+    std::fs::set_permissions(p, std::fs::Permissions::from_mode(if on { mode | 0o111 } else { mode & !0o111 })).unwrap();
+}
+
+// Mutation: compare content ids only, as before the mode was part of an id; the chmod below is then
+// not seen by `status`, and the second clone never gets it.
+#[test]
+fn a_mode_change_alone_is_seen_committed_and_round_trips_to_a_second_clone() {
+    let w = fixture::migrated_remote();
+    let (a, b) = (fixture::seat(&w, "a"), fixture::seat(&w, "b"));
+    let plain = "mock/research/crlf.txt";
+    let script = "mock/benches/hot/run.sh";
+    assert_eq!(mode_of(&b, plain), 0);
+    assert_ne!(mode_of(&b, script), 0, "an executable arrives executable");
+    set_exec(&a, plain, true);
+    set_exec(&a, script, false);
+    assert!(status_of(&a, "research").ends_with("changed"), "{}", status_of(&a, "research"));
+    assert!(status_of(&a, "benches").ends_with("changed"), "{}", status_of(&a, "benches"));
+    a.ok(&["data-refs", "commit"]);
+    let tree = w.remote_git(&["ls-tree", "refs/heads/mock/research", "crlf.txt"]);
+    assert!(tree.starts_with("100755"), "{tree}");
+    let tree = w.remote_git(&["ls-tree", "refs/heads/mock/benches", "hot/run.sh"]);
+    assert!(tree.starts_with("100644"), "{tree}");
+    b.ok(&["data-refs", "update"]);
+    assert_ne!(mode_of(&b, plain), 0, "the mode alone arrived");
+    assert_eq!(mode_of(&b, script), 0, "and the mode taken away arrived");
+    assert!(status_of(&b, "research").ends_with("clean"), "{}", status_of(&b, "research"));
+    let c = fixture::seat(&w, "c");
+    assert_ne!(mode_of(&c, plain), 0);
+}
+
+// Mutation: restore writes files with the default mode.
+#[test]
+fn restore_gives_a_file_back_its_executable_bit() {
+    let w = fixture::migrated_remote();
+    let a = fixture::seat(&w, "a");
+    let script = "mock/benches/hot/run.sh";
+    a.remove(script);
+    a.ok(&["data-refs", "restore", "benches"]);
+    assert_ne!(mode_of(&a, script), 0);
+}
