@@ -140,9 +140,18 @@ pub fn mark_target_root_of(artifact: &Path) -> Option<PathBuf> {
 /// had each worktree build its own bench and test trees beside it, several
 /// gigabytes a worktree.
 pub fn build_target_dir(start: &Path) -> Option<std::ffi::OsString> {
-    inherited_target_dir().or_else(|| {
-        configured_target_dir(start, cargo_home().as_deref()).map(PathBuf::into_os_string)
-    })
+    resolve_target_dir(inherited_target_dir(), start, cargo_home().as_deref())
+}
+
+/// `build_target_dir` with the environment's answer and the cargo home passed
+/// in, so the order between them is testable without touching the process's
+/// environment. The environment wins; a config file is asked only without it.
+fn resolve_target_dir(
+    env: Option<std::ffi::OsString>,
+    start: &Path,
+    cargo_home: Option<&Path>,
+) -> Option<std::ffi::OsString> {
+    env.or_else(|| configured_target_dir(start, cargo_home).map(PathBuf::into_os_string))
 }
 
 /// The two environment spellings alone. The lint store reads its answer as a path
@@ -434,5 +443,21 @@ mod tests {
             configured_target_dir(&start, Some(&home)),
             Some(tmp.path().join("user").join("shared"))
         );
+    }
+
+    #[test]
+    fn the_environment_wins_over_a_config_and_its_absence_falls_to_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let start = deep(tmp.path());
+        put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/from-config\"\n");
+        let env = std::ffi::OsString::from("/from-env");
+        assert_eq!(resolve_target_dir(Some(env.clone()), &start, None), Some(env));
+        assert_eq!(
+            resolve_target_dir(None, &start, None),
+            Some(std::ffi::OsString::from("/from-config"))
+        );
+        // control: neither set
+        let bare = tempfile::tempdir().unwrap();
+        assert_eq!(resolve_target_dir(None, &deep(bare.path()), None), None);
     }
 }
