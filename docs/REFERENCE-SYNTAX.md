@@ -338,8 +338,8 @@ the separator) is refused, and the refusal names the migration that rewrites it:
 `cargo mock migrate references-to-letkajenkka [--dry-run]`. It rewrites a reference
 only where the new spelling resolves to the file and line the old one did, and lists
 the rest. The same migration folds each preset shorthand of `extends` in the
-`[lints.<name>]` tables of `mockspace.toml` into this syntax's names (`stack-lints::no-heap`
-becomes `stack_lints::no_heap`), and it reads a registry kept on a ref through the
+`[lints.<name>]` tables of `lints.toml`, `mock/lints.toml` and `mockspace.toml` into
+this syntax's names (`stack-lints::no-heap` becomes `stack_lints::no_heap`), and it reads a registry kept on a ref through the
 registry's own stores and writes it back to that ref, never into the tree.
 
 ## What the syntax leaves to mockspace
