@@ -65,7 +65,7 @@ pub struct Plan {
     pub lines: Vec<String>,
     steps:     Vec<Step>,
     /// What is left to the caller once the run is through.
-    after:     &'static str,
+    after:     String,
 }
 
 #[derive(Debug)]
@@ -91,6 +91,14 @@ enum Step {
         path: String,
         text: String,
     },
+}
+
+impl Plan {
+    /// What is left to the caller once the run is through.
+    #[cfg(test)]
+    pub(crate) fn after(&self) -> &str {
+        &self.after
+    }
 }
 
 /// The plan of the migration `args` name, or every reason there is none.
@@ -419,7 +427,7 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
     Ok(Plan {
         lines,
         steps,
-        after: "commit the config and the removals on this branch",
+        after: "commit the config and the removals on this branch".to_string(),
     })
 }
 
@@ -473,21 +481,27 @@ fn plan_round_filenames(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String>
     Ok(Plan {
         lines,
         steps,
-        after: "commit the renames on this branch",
+        after: "commit the renames on this branch".to_string(),
     })
 }
 
 fn plan_references(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String>> {
     flags(args, &[])?;
-    let crate::migrate_refs::Planned { lines, writes, on_refs } = crate::migrate_refs::plan(cfg)?;
+    let crate::migrate_refs::Planned { lines, writes, on_refs, instance_written } = crate::migrate_refs::plan(cfg)?;
     let mut steps: Vec<Step> = writes.into_iter().map(|(path, text)| Step::Write { path, text }).collect();
     if !on_refs.is_empty() {
         steps.push(Step::WriteRegistry(on_refs));
     }
+    // A file of a data ref's instance is no part of any branch, so committing the branch leaves it.
+    let after = if instance_written {
+        "commit the rewritten files on this branch, and `cargo mock data-refs commit` for the ones a data ref holds"
+    } else {
+        "commit the rewritten files on this branch"
+    };
     Ok(Plan {
         lines,
         steps,
-        after: "commit the rewritten files on this branch",
+        after: after.to_string(),
     })
 }
 

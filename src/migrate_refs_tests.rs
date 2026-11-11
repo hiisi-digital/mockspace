@@ -42,6 +42,18 @@ why = "{{ seed::DESIGN::3\t}}"
 
 const TEMPLATE: &str = "# Doc\n\nSee {{ seed::DESIGN::#the-four-lanes }}, {{ pathof( seed::Crates::My-Crate::NOTES::3 ) }}.\n\n```\n{{ seed::DESIGN::12 }}\n```\n\n{{ project_name }} {{ ruling::first }}\n";
 
+fn git_in(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
 struct Repo {
     _dir: tempfile::TempDir,
     cfg:  Config,
@@ -64,6 +76,8 @@ fn repo_with(extra_config: &str) -> Repo {
     put(corpus.join("Crates/My-Crate/NOTES.md"), "# Notes\n\nline\n\nmore\n");
     put(cfg.mock_dir.join("registry/rulings.toml"), RULINGS);
     put(cfg.repo_root.join("docs/DOC.md.tmpl"), TEMPLATE);
+    git_in(dir.path(), &["init", "-q"]);
+    git_in(dir.path(), &["add", "-A"]);
     Repo {
         _dir: dir,
         cfg,
@@ -117,16 +131,23 @@ fn a_dry_run_names_each_rewrite_and_each_reference_left_and_changes_nothing() {
     assert_eq!(before, after);
 }
 
-// Mutation: a rewrite that is not a fixed point rewrites again on the second run, and a migration
-// that errors when it finds nothing is not safe to run twice.
+// A migration already made is refused with the reason, and moves nothing, per the design of named
+// migrations. A run stopped part way is finished by the same call.
+//
+// Mutation: a migration that reports success on a tree with nothing to rewrite is not refusing one
+// already made, and one that refuses whenever any reference was rewritten earlier cannot finish a
+// stopped run.
 #[test]
-fn a_second_run_changes_nothing_and_succeeds() {
+fn a_tree_already_migrated_is_refused_and_a_half_migrated_one_is_finished() {
     let r = repo();
-    assert_eq!(run(&r.cfg, &[NAME]), ExitCode::SUCCESS);
+    // stopped part way: the template was rewritten, the registry data was not
+    let half = read(&r.cfg, "docs/DOC.md.tmpl").replace("seed::DESIGN::#the-four-lanes", "seed::design::the_four_lanes");
+    std::fs::write(r.cfg.repo_root.join("docs/DOC.md.tmpl"), half).unwrap();
+    assert_eq!(run(&r.cfg, &[NAME]), ExitCode::SUCCESS, "the same call finishes it");
     let once: Vec<String> = [&*rel_of_rulings(&r.cfg), "docs/DOC.md.tmpl"].iter().map(|p| read(&r.cfg, p)).collect();
-    let again = plan_of(&r.cfg, &[NAME]).unwrap();
-    assert!(again.lines.iter().all(|l| !l.starts_with("rewrite ")), "{:?}", again.lines);
-    assert_eq!(run(&r.cfg, &[NAME]), ExitCode::SUCCESS);
+    let why = plan_of(&r.cfg, &[NAME]).unwrap_err().join("\n");
+    assert!(why.contains("already"), "{why}");
+    assert_eq!(run(&r.cfg, &[NAME]), ExitCode::FAILURE);
     let twice: Vec<String> = [&*rel_of_rulings(&r.cfg), "docs/DOC.md.tmpl"].iter().map(|p| read(&r.cfg, p)).collect();
     assert_eq!(once, twice);
 }
@@ -204,7 +225,7 @@ fn the_preset_shorthands_of_the_config_are_rewritten_and_the_one_that_cannot_be_
     assert!(config.contains("extends = \"stack-lints::9lives\""), "{config}");
     assert!(config.contains("extends = \"mockspace::already_folded\""), "{config}");
     assert!(config.starts_with(CONFIG), "the rest of the file is as written");
-    let said = plan_of(&r.cfg, &[NAME]).unwrap().lines.join("\n");
+    let said = plan_of(&r.cfg, &[NAME]).unwrap_err().join("\n");
     assert!(said.contains("left mockspace.toml: stack-lints::9lives"), "{said}");
     assert!(!said.contains("rewrite mockspace.toml"), "a second run rewrites nothing: {said}");
 }
@@ -266,6 +287,174 @@ fn a_registry_held_on_a_data_ref_is_rewritten_on_the_ref_and_not_in_the_tree() {
     let after = held(&remote);
     assert!(after.contains("seed::design::the_four_lanes"), "{after}");
     assert!(!cfg.mock_dir.join("registry/ruling/first.toml").exists(), "nothing is written into the tree");
-    let again = plan_of(&cfg, &[NAME]).unwrap();
-    assert!(again.lines.iter().all(|l| !l.starts_with("rewrite ")), "{:?}", again.lines);
+    let again = plan_of(&cfg, &[NAME]).unwrap_err().join("\n");
+    assert!(again.contains("already"), "{again}");
+}
+
+fn put_in(cfg: &Config, rel: &str, text: &str) {
+    let p = cfg.repo_root.join(rel);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(p, text).unwrap();
+}
+
+// The templates are what git lists of the repository, tracked or not yet added but not ignored, and
+// never what a walk of the directory tree finds: an ignored directory is not the repository's.
+//
+// Mutation: a walk of the tree rewrites the template in the ignored directory, and one that asks
+// git for the tracked files only misses the one not yet added.
+#[test]
+fn the_templates_are_the_ones_git_lists_and_an_ignored_directory_is_not_walked_into() {
+    let r = repo();
+    put_in(&r.cfg, ".gitignore", "scratch/\n");
+    put_in(&r.cfg, "scratch/X.md.tmpl", TEMPLATE);
+    put_in(&r.cfg, "docs/NEW.md.tmpl", TEMPLATE);
+    let said = plan_of(&r.cfg, &[NAME]).unwrap().lines.join("\n");
+    assert!(said.contains("rewrite docs/NEW.md.tmpl:"), "{said}");
+    assert!(!said.contains("scratch"), "{said}");
+    assert_eq!(run(&r.cfg, &[NAME]), ExitCode::SUCCESS);
+    assert_eq!(read(&r.cfg, "scratch/X.md.tmpl"), TEMPLATE, "an ignored file is left as it was");
+    assert!(read(&r.cfg, "docs/NEW.md.tmpl").contains("seed::design::the_four_lanes"));
+}
+
+// Without git there is no list of the repository's files, so the run says so and moves nothing.
+#[test]
+fn a_directory_that_is_no_repository_is_refused_naming_git() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("mockspace.toml"), CONFIG).unwrap();
+    std::fs::write(dir.path().join("A.md.tmpl"), TEMPLATE).unwrap();
+    let cfg = Config::from_dir(dir.path());
+    let why = plan_of(&cfg, &[NAME]).unwrap_err().join("\n");
+    assert!(why.contains("git"), "{why}");
+    assert_eq!(std::fs::read_to_string(dir.path().join("A.md.tmpl")).unwrap(), TEMPLATE);
+}
+
+const ARRAYS: &str = "[lints.a]\nextends = \"stack-lints::no-heap\"\n\n[lints.b]\nextends = [\"Mockspace::No-Bare-Numeric\", \"stack-lints::9lives\"]\n";
+
+// The v2 loader reads `lints.toml` and `mock/lints.toml` before `mockspace.toml`, so a spelling there
+// is read as surely as one in the config, and an array of presets is read item by item.
+//
+// Mutation: a migration of `mockspace.toml` alone leaves both files as they were, and one that
+// reads only string values leaves the array.
+#[test]
+fn every_file_the_loaders_read_for_presets_is_rewritten_and_an_array_of_them_item_by_item() {
+    let r = repo();
+    put_in(&r.cfg, "lints.toml", ARRAYS);
+    put_in(&r.cfg, "mock/lints.toml", ARRAYS);
+    git_in(&r.cfg.repo_root, &["add", "-A"]);
+    let said = plan_of(&r.cfg, &[NAME]).unwrap().lines.join("\n");
+    for file in ["lints.toml", "mock/lints.toml"] {
+        assert!(said.contains(&format!("rewrite {file}: stack-lints::no-heap -> stack_lints::no_heap")), "{said}");
+        assert!(said.contains(&format!("rewrite {file}: Mockspace::No-Bare-Numeric -> mockspace::no_bare_numeric")), "{said}");
+        assert!(said.contains(&format!("left {file}: stack-lints::9lives")), "{said}");
+    }
+    assert_eq!(run(&r.cfg, &[NAME]), ExitCode::SUCCESS);
+    for file in ["lints.toml", "mock/lints.toml"] {
+        let text = read(&r.cfg, file);
+        assert_eq!(
+            text,
+            "[lints.a]\nextends = \"stack_lints::no_heap\"\n\n[lints.b]\nextends = [\"mockspace::no_bare_numeric\", \"stack-lints::9lives\"]\n",
+            "{file}"
+        );
+    }
+}
+
+// The files read are the loader's own list, kept in one place here since the two cargo workspaces
+// share no crate: this fails when the loader's list changes and this one does not.
+#[test]
+fn the_files_read_are_the_ones_the_loader_names() {
+    let loader = include_str!("../mock/crates/mockspace-rs/src/config_loader.rs");
+    let at = loader.find("pub fn find_and_read_lints_toml").expect("the loader's finder");
+    let candidates = &loader[at ..][.. loader[at ..].find("for path in").expect("the loop over them")];
+    for file in CONFIG_FILES {
+        let written = file.split('/').fold("workspace_root".to_string(), |s, part| format!("{s}.join(\"{part}\")"));
+        assert!(candidates.contains(&written), "{file}: `{written}` is not in the loader's list");
+    }
+    assert_eq!(candidates.matches("workspace_root.join(").count(), CONFIG_FILES.len(), "the loader names a file this does not");
+}
+
+use crate::registry::engine_world::EngineClone as _;
+use crate::registry::test_world::World;
+
+// A data ref declared and not instantiated in this clone holds files the run cannot read, and a run
+// that skipped it would call the tree migrated with its templates and data untouched.
+//
+// Mutation: skipping a ref with no instance reports the rest as the whole.
+#[test]
+fn a_declared_data_ref_with_no_instance_in_the_clone_is_refused_naming_the_way_out() {
+    let w = World::new();
+    let cfg = w.clone_of("a", false);
+    let mut text = std::fs::read_to_string(&cfg.config_path).unwrap_or_default();
+    text.push_str(&format!("\n{CONFIG}\n[[data_ref]]\nnamespace = \"templates\"\npath = \"crates\"\ninclude = [\"**/*.md.tmpl\"]\n"));
+    std::fs::write(&cfg.config_path, text).unwrap();
+    let cfg = Config::from_dir(&cfg.mock_dir);
+    assert_eq!(cfg.data_refs.len(), 1);
+    let why = plan_of(&cfg, &[NAME]).unwrap_err().join("\n");
+    assert!(why.contains("templates") && why.contains("data-refs instantiate"), "{why}");
+}
+
+// Files held on a ref are written into its instance, which is no commit: the next step is the one that
+// makes it, and a run that touched no instance does not name it.
+#[test]
+fn a_rewrite_under_a_data_ref_instance_names_data_refs_commit_as_the_next_step() {
+    let w = World::new();
+    let cfg = w.clone_of("a", false);
+    put_in(&cfg, "mock/crates/one/DESIGN.md.tmpl", TEMPLATE);
+    put_in(&cfg, "mock/crates/one/src/lib.rs", "pub fn one() {}\n");
+    put_in(&cfg, "corpus/DESIGN.md", "# Design\n\n## The four lanes\n\ntext\n");
+    put_in(&cfg, "corpus/Crates/My-Crate/NOTES.md", "# Notes\n\nline\n\nmore\n");
+    let mut text = std::fs::read_to_string(&cfg.config_path).unwrap_or_default();
+    text.push_str(&format!("\n{CONFIG}\n"));
+    std::fs::write(&cfg.config_path, text).unwrap();
+    git_in(&cfg.repo_root, &["add", "-f", "--", "."]);
+    git_in(&cfg.repo_root, &["commit", "-q", "-m", "a consumer"]);
+    let cfg = Config::from_dir(&cfg.mock_dir);
+    assert_eq!(
+        crate::migrate::run(&cfg, &["directory-to-ref", "--namespace", "templates", "--path", "crates", "--include", "**/*.md.tmpl"]),
+        ExitCode::SUCCESS
+    );
+    let cfg = Config::from_dir(&cfg.mock_dir);
+    let plan = plan_of(&cfg, &[NAME]).unwrap();
+    assert!(plan.after().contains("data-refs commit"), "{}", plan.after());
+    assert_eq!(run(&cfg, &[NAME]), ExitCode::SUCCESS);
+    assert!(std::fs::read_to_string(cfg.mock_dir.join("crates/one/DESIGN.md.tmpl")).unwrap().contains("seed::design::the_four_lanes"));
+
+    // the control: a tree whose rewrites touch no instance says only to commit them
+    let r = repo();
+    assert!(!plan_of(&r.cfg, &[NAME]).unwrap().after().contains("data-refs"));
+}
+
+// What a dry run names is what the real run writes: the same paths and the same edits.
+//
+// Mutation: a plan whose lines and writes are built apart can name a file it does not write, or
+// write one it does not name; the set of files that changed is compared with the set named.
+#[test]
+fn the_dry_run_names_exactly_the_paths_and_edits_the_real_run_writes() {
+    let r = repo_with(LINTS);
+    put_in(&r.cfg, "lints.toml", ARRAYS);
+    put_in(&r.cfg, "docs/NEW.md.tmpl", TEMPLATE);
+    git_in(&r.cfg.repo_root, &["add", "-A"]);
+    let snapshot = |cfg: &Config| -> std::collections::BTreeMap<String, String> {
+        git_in(&cfg.repo_root, &["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .map(|p| (p.to_string(), std::fs::read_to_string(cfg.repo_root.join(p)).unwrap()))
+            .collect()
+    };
+    let before = snapshot(&r.cfg);
+    let named: Vec<String> = plan_of(&r.cfg, &[NAME]).unwrap().lines.iter().filter(|l| l.starts_with("rewrite ")).cloned().collect();
+    assert_eq!(run(&r.cfg, &[NAME, "--dry-run"]), ExitCode::SUCCESS);
+    assert_eq!(snapshot(&r.cfg), before, "a dry run writes nothing");
+    assert_eq!(run(&r.cfg, &[NAME]), ExitCode::SUCCESS);
+    let after = snapshot(&r.cfg);
+    let changed: std::collections::BTreeSet<&String> = before.keys().filter(|k| before[*k] != after[*k]).collect();
+    let said: std::collections::BTreeSet<String> = named
+        .iter()
+        .map(|l| l["rewrite ".len() ..].split(": ").next().unwrap().to_string())
+        .collect();
+    assert_eq!(changed.iter().map(|s| s.to_string()).collect::<std::collections::BTreeSet<_>>(), said);
+    for line in &named {
+        let (path, edit) = line["rewrite ".len() ..].split_once(": ").unwrap();
+        let new = edit.split(" -> ").nth(1).unwrap();
+        assert!(after[path].contains(new), "{line}");
+    }
 }

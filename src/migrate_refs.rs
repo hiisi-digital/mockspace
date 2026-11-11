@@ -30,6 +30,8 @@ pub(crate) struct Planned {
     /// `(path under the registry root, text)` for each registry file kept on a ref, which is written by
     /// the registry's own writer and not as a file.
     pub on_refs:  Vec<(String, String)>,
+    /// Whether a file of a data ref's instance is among the writes, which no branch commit carries.
+    pub instance_written: bool,
 }
 
 /// The lines a run prints, and the files it writes.
@@ -53,8 +55,12 @@ pub(crate) fn plan(cfg: &Config) -> Result<Planned, Vec<String>> {
     };
     let rel_of = |p: &Path| p.strip_prefix(&cfg.repo_root).unwrap_or(p).to_string_lossy().replace('\\', "/");
 
-    let mut templates = Vec::new();
-    walk(&cfg.repo_root, &mut |p| p.to_string_lossy().ends_with(".md.tmpl"), &mut templates);
+    // One listing of each directory a citation walks through, for the whole run.
+    let _scope = mockspace_registry::cache_scope();
+    let templates = match templates(cfg) {
+        Ok(t) => t,
+        Err(e) => return Err(vec![e]),
+    };
     for path in &templates {
         let rel = rel_of(path);
         let text = match fs::read_to_string(path) {
@@ -110,68 +116,154 @@ pub(crate) fn plan(cfg: &Config) -> Result<Planned, Vec<String>> {
         },
     }
 
-    // The preset shorthands of `mockspace.toml`.
-    let rel = rel_of(&cfg.config_path);
-    match fs::read_to_string(&cfg.config_path) {
-        Err(e) => why.push(format!("migrate: reading {rel}: {e}")),
-        Ok(text) => match in_config(&text) {
-            Err(e) => why.push(format!("migrate: {rel} is not read as TOML, so nothing in it is touched: {e}")),
-            Ok((new, found)) => {
-                report(&rel, &found, &mut lines);
-                if new != text {
-                    writes.push((rel, new));
-                }
+    // The preset shorthands, in every file the loaders read.
+    for path in config_files(cfg) {
+        let rel = rel_of(&path);
+        match fs::read_to_string(&path) {
+            Err(e) => why.push(format!("migrate: reading {rel}: {e}")),
+            Ok(text) => match in_config(&text) {
+                Err(e) => why.push(format!("migrate: {rel} is not read as TOML, so nothing in it is touched: {e}")),
+                Ok((new, found)) => {
+                    report(&rel, &found, &mut lines);
+                    if new != text {
+                        writes.push((rel, new));
+                    }
+                },
             },
-        },
+        }
     }
 
     if !why.is_empty() {
         return Err(why);
     }
-    if lines.is_empty() {
-        lines.push("no reference is in the spelling before the standard, so there is nothing to rewrite".to_string());
-    } else {
-        let left = lines.iter().filter(|l| l.starts_with("left ")).count();
-        lines.push(format!(
-            "{} file(s) rewritten{}, {left} reference(s) left as written and named above",
-            writes.len() + on_refs.len(),
-            if on_refs.is_empty() { String::new() } else { format!(" ({} of them on a registry ref)", on_refs.len()) }
-        ));
+    // A migration already made is refused. What it could not rewrite is named in the refusal.
+    if writes.is_empty() && on_refs.is_empty() {
+        let mut out = vec![
+            "migrate: no reference is in a spelling this migration rewrites, so the tree is already migrated"
+                .to_string(),
+        ];
+        out.extend(lines);
+        return Err(out);
     }
+    let left = lines.iter().filter(|l| l.starts_with("left ")).count();
+    lines.push(format!(
+        "{} file(s) rewritten{}, {left} reference(s) left as written and named above",
+        writes.len() + on_refs.len(),
+        if on_refs.is_empty() { String::new() } else { format!(" ({} of them on a registry ref)", on_refs.len()) }
+    ));
+    let instances = instance_dirs(cfg)?;
+    let instance_written = writes.iter().any(|(rel, _)| {
+        let abs = cfg.repo_root.join(rel);
+        instances.iter().any(|d| abs.starts_with(d))
+    });
     Ok(Planned {
         lines,
         writes,
         on_refs,
+        instance_written,
     })
 }
 
-/// The text of `mockspace.toml` with each `extends` of a `[lints.<name>]` written as the standard
-/// spells a preset, edited by span so the rest of the file stays as written.
+/// The files of the repository that the loaders read for the preset shorthands of `[lints.<name>]`,
+/// from the repository root. This is the loader's own list (`find_and_read_lints_toml`, which a test
+/// holds this to); the cargo workspaces share no crate to put it in.
+pub(crate) const CONFIG_FILES: &[&str] = &["lints.toml", "mock/lints.toml", "mockspace.toml"];
+
+/// Every config file that exists, the one this run loaded among them.
+fn config_files(cfg: &Config) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = CONFIG_FILES.iter().map(|f| cfg.repo_root.join(f)).filter(|p| p.is_file()).collect();
+    if cfg.config_path.is_file() && !out.contains(&cfg.config_path) {
+        out.push(cfg.config_path.clone());
+    }
+    out
+}
+
+/// The directories of the declared data refs' instances, every one of which must exist in this clone.
+fn instance_dirs(cfg: &Config) -> Result<Vec<PathBuf>, Vec<String>> {
+    let mut out = Vec::new();
+    let mut why = Vec::new();
+    for d in &cfg.data_refs {
+        let ns = d.namespace();
+        let held = d
+            .open(&cfg.repo_root)
+            .and_then(|store| d.instance(&store, &cfg.mock_dir).and_then(|inst| inst.base().map_err(|e| e.to_string())));
+        match held {
+            Ok(Some(_)) => out.push(d.instance_dir(&cfg.mock_dir)),
+            Ok(None) => {
+                why.push(format!(
+                    "migrate: the data ref `{ns}` has no instance in this clone, so the files it holds cannot be read \
+                     and a run would call the tree migrated without them; `cargo mock data-refs instantiate` makes it"
+                ));
+            },
+            Err(e) => why.push(format!("migrate: the data ref `{ns}` could not be read: {e}")),
+        }
+    }
+    if why.is_empty() { Ok(out) } else { Err(why) }
+}
+
+/// Every `*.md.tmpl` of the repository: what git lists of it, tracked or not yet added and not
+/// ignored, and the files the declared data refs hold, which no branch lists.
+fn templates(cfg: &Config) -> Result<Vec<PathBuf>, String> {
+    instance_dirs(cfg).map_err(|why| why.join("\n"))?;
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&cfg.repo_root)
+        .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.md.tmpl"])
+        .output()
+        .map_err(|e| format!("migrate: running git to list the templates: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "migrate: git does not list the files of {}, so the templates are not known: {}",
+            cfg.repo_root.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let mut found: BTreeSet<PathBuf> = String::from_utf8_lossy(&out.stdout)
+        .split('\0')
+        .filter(|p| !p.is_empty())
+        .map(|p| cfg.repo_root.join(p))
+        .collect();
+    let held = crate::data_refs::ref_files(cfg).map_err(|e| format!("migrate: the files of the data refs: {e}"))?;
+    found.extend(held.held.iter().filter(|p| p.ends_with(".md.tmpl")).map(|p| cfg.mock_dir.join(p)));
+    Ok(found.into_iter().filter(|p| p.is_file()).collect())
+}
+
+/// The text of a config file with each `extends` of a `[lints.<name>]` (a string, or an array of
+/// them) written as the standard spells a preset, edited by span so the rest of the file stays as
+/// written.
 fn in_config(text: &str) -> Result<(String, Vec<Found>), String> {
     let doc = ImDocument::parse(text.to_string()).map_err(|e| e.to_string())?;
     let (mut edits, mut found) = (Vec::new(), Vec::new());
     if let Some(lints) = doc.get("lints").and_then(Item::as_table) {
         for (_, lint) in lints.iter() {
-            let Some(Value::String(s)) = lint.get("extends").and_then(Item::as_value) else {
+            let Some(value) = lint.get("extends").and_then(Item::as_value) else {
                 continue;
             };
-            let (Some(span), old) = (s.span(), s.value()) else { continue };
-            let mut outcome = legacy_refs::preset_shorthand(old);
-            let raw = &text[span.clone()];
-            if let Outcome::Rewritten(new) = &outcome {
-                let quote = &raw[.. 1];
-                if raw.len() == old.len() + 2 && raw[1 .. raw.len() - 1] == *old && (quote == "\"" || quote == "'") {
-                    edits.push((span, format!("{quote}{new}{quote}")));
-                } else {
-                    outcome = Outcome::Left("it is written with escapes the rewrite does not read".to_string());
-                }
+            let mut strings = Vec::new();
+            match value {
+                Value::String(s) => strings.push(s),
+                Value::Array(a) => strings.extend(a.iter().filter_map(|v| if let Value::String(s) = v { Some(s) } else { None })),
+                _ => {},
             }
-            if outcome != Outcome::Same {
-                found.push(Found {
-                    token: old.clone(),
-                    old: old.clone(),
-                    outcome,
-                });
+            for s in strings {
+                let (Some(span), old) = (s.span(), s.value()) else { continue };
+                let mut outcome = legacy_refs::preset_shorthand(old);
+                let raw = &text[span.clone()];
+                if let Outcome::Rewritten(new) = &outcome {
+                    let quote = &raw[.. 1];
+                    if raw.len() == old.len() + 2 && raw[1 .. raw.len() - 1] == *old && (quote == "\"" || quote == "'") {
+                        edits.push((span, format!("{quote}{new}{quote}")));
+                    } else {
+                        outcome = Outcome::Left("it is written with escapes the rewrite does not read".to_string());
+                    }
+                }
+                if outcome != Outcome::Same {
+                    found.push(Found {
+                        token: old.clone(),
+                        old: old.clone(),
+                        outcome,
+                    });
+                }
             }
         }
     }
@@ -182,25 +274,6 @@ fn in_config(text: &str) -> Result<(String, Vec<Found>), String> {
     }
     ImDocument::parse(out.clone()).map_err(|e| format!("the rewrite would not read as TOML: {e}"))?;
     Ok((out, found))
-}
-
-/// Every file under `dir` the filter takes, in path order, leaving out what is not the repository's
-/// own: `.git`, a build directory, the worktrees, and any hidden directory.
-fn walk(dir: &Path, take: &mut dyn FnMut(&Path) -> bool, out: &mut Vec<PathBuf>) {
-    let Ok(read) = fs::read_dir(dir) else { return };
-    let mut entries: Vec<PathBuf> = read.filter_map(Result::ok).map(|e| e.path()).collect();
-    entries.sort();
-    for path in entries {
-        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let Ok(meta) = fs::symlink_metadata(&path) else { continue };
-        if meta.is_dir() {
-            if !name.starts_with('.') && name != "target" && name != "node_modules" {
-                walk(&path, take, out);
-            }
-        } else if meta.is_file() && take(&path) {
-            out.push(path);
-        }
-    }
 }
 
 /// A string of the data and where it stands in the file.
