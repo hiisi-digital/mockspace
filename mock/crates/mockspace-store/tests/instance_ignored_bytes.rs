@@ -25,8 +25,10 @@ fn two_names_with_one_lossy_reading_get_each_its_own_ignore_verdict() {
     std::fs::create_dir_all(dir.join("notes")).unwrap();
     std::fs::write(dir.join(std::ffi::OsStr::from_bytes(b"notes/a\xff.md")), "ignored\n").unwrap();
     std::fs::write(dir.join(std::ffi::OsStr::from_bytes(b"notes/a\xfe.md")), "not ignored\n").unwrap();
-    let ignored = i.ignored().unwrap();
-    assert_eq!(ignored.len(), 1, "one of the two is ignored: {ignored:?}");
     let err = i.edit().unwrap_err().to_string();
-    assert!(err.contains("not text") && err.contains("notes/a"), "the other is refused by name: {err}");
+    assert!(err.contains("not text") && err.contains("notes/a"), "the one git does not ignore is refused by name: {err}");
+    std::fs::remove_file(dir.join(std::ffi::OsStr::from_bytes(b"notes/a\xfe.md"))).unwrap();
+    let ignored = i.ignored().unwrap();
+    assert_eq!(ignored.len(), 1, "the one git ignores is named once, and left: {ignored:?}");
+    assert!(i.edit().unwrap().is_empty(), "nothing of it goes into an edit");
 }
