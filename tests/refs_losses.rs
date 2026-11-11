@@ -4,6 +4,8 @@
 
 #[path = "common/ambient.rs"]
 mod ambient;
+#[path = "common/exec.rs"]
+mod exec;
 mod refs_e2e;
 
 use refs_e2e::{World, fixture};
@@ -258,14 +260,15 @@ fn a_directory_named_target_with_no_cache_tag_is_named_as_ignored() {
 
 // ---- modes ----
 
-fn chmod_all(dir: &std::path::Path, mode: u32) {
-    use std::os::unix::fs::PermissionsExt;
+/// Writes every file under `dir` again as an executable, with the bytes it holds, through the one
+/// writer of an executable file.
+fn make_all_executable(dir: &std::path::Path) {
     for e in std::fs::read_dir(dir).unwrap().flatten() {
         let p = e.path();
         if p.is_dir() {
-            chmod_all(&p, mode);
+            make_all_executable(&p);
         } else {
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
+            exec::write_executable(&p, std::fs::read(&p).unwrap());
         }
     }
 }
@@ -277,7 +280,7 @@ fn core_filemode_false_reads_no_file_as_changed_for_its_mode() {
     let w = fixture::migrated_remote();
     let a = fixture::seat(&w, "a");
     a.git(&["config", "core.fileMode", "false"]);
-    chmod_all(&a.path("mock/research"), 0o755);
+    make_all_executable(&a.path("mock/research"));
     let s = a.ok(&["data-refs", "status", "research"]);
     assert!(s.stdout.trim_end().ends_with("clean"), "a mode alone is a change: {}", s.all());
     a.write(NOTES, b"one real edit\n");
@@ -292,7 +295,7 @@ fn core_filemode_false_reads_no_file_as_changed_for_its_mode() {
 fn core_filemode_true_reads_a_changed_executable_bit() {
     let w = fixture::migrated_remote();
     let a = fixture::seat(&w, "a");
-    chmod_all(&a.path("mock/research/20261001_alpha"), 0o755);
+    make_all_executable(&a.path("mock/research/20261001_alpha"));
     let s = a.ok(&["data-refs", "status", "research"]);
     assert!(s.stdout.trim_end().ends_with("changed"), "{}", s.all());
 }
