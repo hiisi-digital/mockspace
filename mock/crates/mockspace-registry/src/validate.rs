@@ -44,7 +44,7 @@ pub fn validate_provenance(
         let empty = Vec::new();
         let names = bearing.get(&row.namespace).unwrap_or(&empty);
         for raw in names.iter().filter_map(|n| row.fields.get(n)) {
-            for item in raw.split(", ").filter(|s| !s.trim().is_empty()) {
+            for item in crate::refpath::list(raw) {
                 // A link to a row shares the field with the file citations and
                 // is checked by `validate_links`, which resolves it against the
                 // rows rather than against a root.

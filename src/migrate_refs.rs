@@ -303,7 +303,7 @@ fn in_toml(
         let mut changes: Vec<(String, String)> = Vec::new();
         let mut here = legacy_refs::in_text(&h.value, ctx);
         if h.reference {
-            for part in h.value.split(", ") {
+            for part in mockspace_registry::list(&h.value) {
                 let outcome = legacy_refs::item(part, ctx);
                 if outcome != Outcome::Same && !part.contains("{{") {
                     here.push(Found {

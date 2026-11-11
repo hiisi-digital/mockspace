@@ -349,17 +349,14 @@ fn apply_methods(value: Resolved, methods: &[String]) -> Option<Resolved> {
 
             // List verbs.
             ("first", _) => {
-                Resolved::Field(v.as_scalar().split(", ").next().unwrap_or("").to_string())
+                Resolved::Field(crate::refpath::list(&v.as_scalar()).next().unwrap_or("").to_string())
             },
             ("last", _) => {
-                Resolved::Field(v.as_scalar().split(", ").last().unwrap_or("").to_string())
+                Resolved::Field(crate::refpath::list(&v.as_scalar()).last().unwrap_or("").to_string())
             },
             ("count", _) => {
                 Resolved::Count(
-                    v.as_scalar()
-                        .split(", ")
-                        .filter(|s| !s.trim().is_empty())
-                        .count(),
+                    crate::refpath::list(&v.as_scalar()).count(),
                 )
             },
             _ => return None,
@@ -437,9 +434,8 @@ fn resolve_sourcesof(
     }
     let row = reg.get(&format!("{}::{}", segs[0], segs[1]))?;
     let raw = row.fields.get("provenance")?;
-    let rendered: Vec<String> = raw
-        .split(", ")
-        .filter_map(|c| resolve_expr(c.trim(), by_key, reg, roots, repo_root, docs_dir, cfg))
+    let rendered: Vec<String> = crate::refpath::list(raw)
+        .filter_map(|c| resolve_expr(c, by_key, reg, roots, repo_root, docs_dir, cfg))
         .filter(|r| !r.is_empty())
         .collect();
     Some(rendered.join(", "))
@@ -676,9 +672,7 @@ pub fn resolve_typed(
                     {
                         let raw = row.fields.get(parts[3])?;
                         return Some(Resolved::List(
-                            raw.split(", ")
-                                .map(str::trim)
-                                .filter(|v| !v.is_empty())
+                            crate::refpath::list(raw)
                                 .map(|slug| {
                                     let expr = format!("{target}::{slug}");
                                     // A slug that resolves to nothing keeps its

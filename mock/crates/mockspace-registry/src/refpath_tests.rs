@@ -351,3 +351,17 @@ fn a_nested_scope_leaves_the_outer_cache_standing() {
     assert_eq!(dir_reads(), before, "still held");
     drop(outer);
 }
+
+// A list of references is split at the commas of its own level by the syntax, so a comma inside a set
+// is not a boundary and a list written without the space after the comma is still a list.
+//
+// Mutation: `split(", ")` reads `a::b,c::d` as one item and `{a, b}` as two broken ones.
+#[test]
+fn a_list_of_references_is_split_by_the_syntax() {
+    assert_eq!(list("a::b, c::d").collect::<Vec<_>>(), ["a::b", "c::d"]);
+    assert_eq!(list("a::b,c::d").collect::<Vec<_>>(), ["a::b", "c::d"]);
+    assert_eq!(list("a::{b, c}, d::e").collect::<Vec<_>>(), ["a::{b, c}", "d::e"]);
+    assert_eq!(list("  a::b  ").collect::<Vec<_>>(), ["a::b"]);
+    assert_eq!(list("").count(), 0);
+    assert_eq!(list(" , ,").count(), 0, "an empty item is no item");
+}

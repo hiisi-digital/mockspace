@@ -1622,10 +1622,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         // repo whose own config says "a project with no packages is ordinary",
         // over fifteen placeholders in one document. Found by running it against
         // a real consumer rather than a fixture.
-        // FIXME(b9b5b5a8ef74): this splits an unparsed placeholder on `::` by hand to tell a reference
-        // from a template placeholder; it reads through letkajenkka once the standard has a lenient
-        // parse that names the steps of a text it refuses.
-        let is_reference = |e: &String| e.trim_matches(|c| c == '{' || c == '}').contains("::");
+        // The steps are the syntax's own to find, since the text is one it may have refused.
+        let is_reference =
+            |e: &String| registry::raw_steps(e.trim_matches(|c| c == '{' || c == '}')).count() > 1;
         let refs_unresolved: usize = unresolved
             .iter()
             .map(|(_, v)| v.iter().filter(|e| is_reference(e)).count())
@@ -1646,11 +1645,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             // Only a reference into a declared namespace is a reference to a row. One naming
             // anything else (an undeclared namespace, a crate, a malformed root) is a defect of
             // the document itself and gates every run.
-            // FIXME(b9b5b5a8ef74): the root is cut off by hand with `split("::")`, for the same reason
-            // as `is_reference` above; a lenient letkajenkka parse of the first step replaces it.
             let is_row_ref = |e: &str| {
                 let root = e.trim_matches(|c: char| c == '{' || c == '}').trim();
-                root.split("::").next().is_some_and(|r| {
+                registry::raw_steps(root).next().is_some_and(|r| {
                     cfg.registry_namespaces.iter().any(|ns| ns.key == r)
                 })
             };

@@ -14,6 +14,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub use letkajenkka::raw_steps;
 use letkajenkka::{Query, Selector};
 
 /// The migration that rewrites a repository's references from the spelling before the standard.
@@ -84,6 +85,12 @@ pub fn operation<'a>(text: &'a str, name: &str) -> Option<&'a str> {
 #[must_use]
 pub fn fold(name: &str) -> Option<String> {
     letkajenkka::ident::fold(name).map(|f| f.to_string())
+}
+
+/// The items of a list of references as a row field writes it: split at the commas of its own level
+/// by the syntax, each trimmed, and an empty item no item.
+pub fn list(raw: &str) -> impl Iterator<Item = &str> {
+    letkajenkka::Arguments::of(raw).map(str::trim).filter(|s| !s.is_empty())
 }
 
 /// What a file or a directory is called in a reference: the whole name of a directory, and the name
