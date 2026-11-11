@@ -130,7 +130,7 @@ fn a_stopped_migration_is_finished_in_a_tree_that_has_build_output() {
     a.ok(&["migrate", RES[0], RES[1], RES[2], RES[3], RES[4]]);
     // stopped after the ref was pushed: the config is as it was and the branch tracks the files
     a.write("mock/mockspace.toml", &cfg);
-    a.git(&["add", "-f", "mock/research"]);
+    a.git(&["read-tree", "HEAD"]);
     let o = research(&a);
     assert!(o.ok, "the same call finishes it: {}", o.all());
     settled(&w, &a, &before);
@@ -147,7 +147,7 @@ fn a_stopped_migration_is_finished_by_the_steps_that_are_missing_and_no_other() 
     a.ok(&["migrate", RES[0], RES[1], RES[2], RES[3], RES[4]]);
     let t = tip(&w, "research");
     a.write("mock/mockspace.toml", &cfg);
-    a.git(&["add", "-f", "mock/research"]);
+    a.git(&["read-tree", "HEAD"]);
     let o = research(&a);
     assert!(o.ok, "{}", o.all());
     assert_eq!(tip(&w, "research"), t, "the ref is not made again");
@@ -165,7 +165,7 @@ fn a_stopped_migration_is_not_finished_over_a_directory_changed_since() {
     let cfg = a.read("mock/mockspace.toml");
     a.ok(&["migrate", RES[0], RES[1], RES[2], RES[3], RES[4]]);
     a.write("mock/mockspace.toml", &cfg);
-    a.git(&["add", "-f", "mock/research"]);
+    a.git(&["read-tree", "HEAD"]);
     a.write("mock/research/notes with spaces.md", b"changed since the ref was made\n");
     let o = research(&a);
     assert!(!o.ok, "{}", o.all());

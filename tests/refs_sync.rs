@@ -153,3 +153,18 @@ fn restore_gives_a_file_back_its_executable_bit() {
     a.ok(&["data-refs", "restore", "benches"]);
     assert_ne!(mode_of(&a, script), 0);
 }
+
+// Mutation: walk the instance without the ignore rules; build output written after the migration
+// would then be committed to the ref and `status` would call the instance changed.
+#[test]
+fn build_output_written_into_an_instance_is_neither_changed_nor_committed() {
+    let w = fixture::migrated_remote();
+    let a = fixture::seat(&w, "a");
+    fixture::add_ignored_output(&a);
+    assert!(status_of(&a, "research").ends_with("clean"), "{}", status_of(&a, "research"));
+    a.write(NOTES, b"an edit\n");
+    a.ok(&["data-refs", "commit", "research"]);
+    let listing = w.remote_git(&["ls-tree", "-r", "--name-only", "refs/heads/mock/research"]);
+    assert!(!listing.contains("target/"), "{listing}");
+    assert!(listing.contains("20261001_alpha/NOTES.md"));
+}

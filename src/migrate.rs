@@ -63,7 +63,7 @@ pub struct Plan {
 #[derive(Debug)]
 enum Step {
     /// Make the ref of `decl` from the files its directory holds and push it.
-    Seed(DataRefDecl),
+    Seed(DataRefDecl, Vec<String>),
     /// Record the directory of `decl` as the instance of the ref an earlier run made from it.
     Adopt(DataRefDecl),
     /// Append `text` to the config file.
@@ -124,11 +124,18 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
 
 fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
     match step {
-        Step::Seed(decl) => {
+        Step::Seed(decl, tracked) => {
             let store = decl.open(&cfg.repo_root)?;
             let inst = decl.instance(&store, &cfg.mock_dir)?;
             let message = format!("data: {}", decl.namespace());
-            inst.seed(&message, &mockspace_store::Refuse).map(|_| ()).map_err(|e| e.to_string())
+            // the ref is made from what the branch tracks, so a tracked file a `.gitignore` also
+            // matches goes in, and build output that only sits in the directory does not
+            let lead = tracked_lead(cfg, inst.dir());
+            let keep = tracked
+                .iter()
+                .filter_map(|p| p.strip_prefix(lead.as_str()).map(|r| r.trim_start_matches('/').to_owned()))
+                .collect();
+            inst.seed_keeping(&keep, &message, &mockspace_store::Refuse).map(|_| ()).map_err(|e| e.to_string())
         },
         Step::Adopt(decl) => {
             let store = decl.open(&cfg.repo_root)?;
@@ -363,7 +370,7 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
         steps.push(Step::Adopt(decl));
     } else {
         lines.push(format!("make the ref of `{ns}` from {} file(s) and push it", tracked.len()));
-        steps.push(Step::Seed(decl));
+        steps.push(Step::Seed(decl, tracked.clone()));
     }
     if !declared {
         lines.push(format!("append to {}:", cfg.config_path.display()));

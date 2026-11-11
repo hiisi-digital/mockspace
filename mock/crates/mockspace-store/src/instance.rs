@@ -277,13 +277,25 @@ impl<'a> Instance<'a> {
     /// committed with [`Instance::apply`]), where the ref has a tip (it is instantiated into an
     /// empty directory instead), and where the directory holds no files.
     pub fn seed(&self, message: &str, hook: &dyn MergeHook) -> Result<Applied, StoreError> {
+        self.seed_keeping(&BTreeSet::new(), message, hook)
+    }
+
+    /// [`Instance::seed`] where the files of `keep` go into the ref although a `.gitignore` also
+    /// matches them. The ref is made from the files of the directory a `.gitignore` does not
+    /// ignore, and those, never from build output.
+    pub fn seed_keeping(
+        &self,
+        keep: &BTreeSet<String>,
+        message: &str,
+        hook: &dyn MergeHook,
+    ) -> Result<Applied, StoreError> {
         if self.base()?.is_some() {
             return Err(self.fail("has a record already, so its changes go through apply", Vec::new()));
         }
         if self.store.local_tip()?.is_some() {
             return Err(self.fail("is not made from a ref that already has a tip, which is instantiated", Vec::new()));
         }
-        let here = self.walk()?;
+        let here = self.walk_keeping(keep)?;
         if here.is_empty() {
             return Err(self.fail("holds no files to seed the ref with", Vec::new()));
         }

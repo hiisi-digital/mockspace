@@ -175,11 +175,45 @@ impl Instance<'_> {
         std::fs::metadata(self.dir.join(rel)).is_ok_and(|m| m.permissions().mode() & 0o100 != 0)
     }
 
-    /// The regular files under the directory, as `/`-separated paths, sorted.
+    /// The regular files under the directory, as `/`-separated paths, sorted, without the ones a
+    /// `.gitignore` ignores (a build's output) unless the base, or the local tip where there is
+    /// no record, holds them. Those are the branch's ignored files, not the instance's.
     pub(super) fn walk(&self) -> Result<Vec<String>, StoreError> {
+        let known = match self.base()?.or(self.store.local_tip()?) {
+            Some(commit) => self.store.tree_ids(&commit)?.into_keys().collect(),
+            None => BTreeSet::new(),
+        };
+        self.walk_keeping(&known)
+    }
+
+    /// [`Self::walk`] with `keep`, paths that stay in even where a `.gitignore` ignores them.
+    pub(super) fn walk_keeping(&self, keep: &BTreeSet<String>) -> Result<Vec<String>, StoreError> {
         let mut out = Vec::new();
         self.walk_into(&self.dir, "", &mut out)?;
+        let ignored = self.ignored()?;
+        if !ignored.is_empty() {
+            out.retain(|p| keep.contains(p) || !ignored.iter().any(|i| p == i || (i.ends_with('/') && p.starts_with(i.as_str()))));
+        }
         Ok(out)
+    }
+
+    /// What the directory holds that a `.gitignore` of the branch ignores, as paths relative to
+    /// the directory, a wholly ignored directory as its path with a closing `/`. Only the
+    /// `.gitignore` files are asked: the clone's own exclusions list this instance's files.
+    fn ignored(&self) -> Result<Vec<String>, StoreError> {
+        if !self.dir.is_dir() {
+            return Ok(Vec::new());
+        }
+        let dir = self.dir.display().to_string();
+        let out = self.store.git.run(
+            &["-C", &dir, "ls-files", "-z", "--others", "--ignored", "--directory", "--exclude-per-directory=.gitignore"],
+            &[],
+            None,
+        )?;
+        if !out.ok() {
+            return Ok(Vec::new());
+        }
+        Ok(out.stdout.split(|b| *b == 0).filter(|e| !e.is_empty()).map(|e| String::from_utf8_lossy(e).into_owned()).collect())
     }
 
     pub(super) fn walk_into(&self, dir: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), StoreError> {
