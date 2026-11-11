@@ -822,7 +822,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 }
                 return pdf::cmd_pdf(&cfg.docs_dir, &cfg.repo_root, &extra);
             },
-            "lock" | "deprecate" | "unlock" | "close" | "archive" | "migrate" => {
+            "migrate" => return crate::migrate::run(&cfg, &subcommand_args(&args, "migrate")),
+            "lock" | "deprecate" | "unlock" | "close" | "archive" => {
                 let subcmd_opts = design_round::SubcmdOpts {
                     auto_commit: auto_commit_wanted(&args),
                 };
@@ -836,7 +837,6 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     "unlock" => design_round::cmd_unlock(&cfg, &subcmd_opts),
                     "close" => design_round::cmd_close_taking(&cfg, &subcmd_opts, &take_names(&args)),
                     "archive" => design_round::cmd_archive(&cfg, &subcmd_opts),
-                    "migrate" => design_round::cmd_migrate(&cfg, &subcmd_opts),
                     _ => unreachable!(),
                 };
             },
