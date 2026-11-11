@@ -121,3 +121,77 @@ fn nothing_done_is_nothing_seen() {
     assert!(before.git.hooks.keys().any(|k| k == b"pre-push"), "{:?}", before.git.hooks.keys());
     whole::kept(&c, &before, &whole::capture(&c), &Allowed::default()).unwrap();
 }
+
+#[test]
+fn a_core_hooks_path_of_the_persons_own_replaced_and_not_saved_is_seen() {
+    let w = World::new();
+    let c = committed(&w);
+    let own = w.base().join("own-hooks");
+    std::fs::create_dir_all(&own).unwrap();
+    c.git(&["config", "core.hooksPath", own.to_str().unwrap()]);
+    let before = whole::capture(&c);
+    // another directory, and nothing that puts the person's back
+    c.git(&["config", "core.hooksPath", w.base().join("elsewhere").to_str().unwrap()]);
+    seen(&c, &before, "core.hookspath");
+}
+
+// the gate taking the key and saving the person's value under its own key is how it comes back
+#[test]
+fn a_core_hooks_path_of_the_persons_own_saved_by_the_gate_is_kept() {
+    let w = World::new();
+    let c = committed(&w);
+    let own = w.base().join("own-hooks");
+    std::fs::create_dir_all(&own).unwrap();
+    c.git(&["config", "core.hooksPath", own.to_str().unwrap()]);
+    let before = whole::capture(&c);
+    c.git(&["config", "mockspace.previousHooksPath", own.to_str().unwrap()]);
+    c.git(&["config", "core.hooksPath", w.base().join("mock/target/hooks").to_str().unwrap()]);
+    whole::kept(&c, &before, &whole::capture(&c), &Allowed::default()).unwrap();
+}
+
+#[test]
+fn head_moved_ahead_on_its_branch_under_a_command_that_commits_nothing_is_seen() {
+    let w = World::new();
+    let c = committed(&w);
+    let before = whole::capture(&c);
+    c.git(&["commit", "-q", "--allow-empty", "-m", "chore: a commit nobody asked for"]);
+    seen(&c, &before, "HEAD");
+}
+
+// a commit the person makes is no loss, where the scenario says one is made
+#[test]
+fn head_moved_ahead_on_its_branch_where_a_commit_is_allowed_is_kept() {
+    let w = World::new();
+    let c = committed(&w);
+    let before = whole::capture(&c);
+    c.git(&["commit", "-q", "--allow-empty", "-m", "chore: the person's commit"]);
+    whole::kept(&c, &before, &whole::capture(&c), &Allowed { commits: true, ..Allowed::default() }).unwrap();
+}
+
+#[test]
+fn a_staged_object_left_only_at_another_path_is_seen() {
+    let w = World::new();
+    let c = committed(&w);
+    c.write("notes/staged.md", b"staged and never committed\n");
+    c.git(&["add", "notes/staged.md"]);
+    let before = whole::capture(&c);
+    // the same bytes staged at a path the person never chose; at their own path, nothing is staged
+    c.write("notes/other.md", b"staged and never committed\n");
+    c.git(&["add", "notes/other.md"]);
+    c.git(&["rm", "-q", "--cached", "notes/staged.md"]);
+    std::fs::remove_file(c.path("notes/other.md")).unwrap();
+    seen(&c, &before, "notes/staged.md");
+}
+
+#[test]
+fn a_text_reachable_from_a_reflog_alone_is_lost() {
+    let w = World::new();
+    let c = committed(&w);
+    let mut l = Ledger::default();
+    l.write(&c, "notes/draft.md", b"committed and then dropped\n");
+    c.commit_all("feat: a draft");
+    // a fixture's own history, taken back: only the reflogs still name the commit
+    c.git(&["reset", "-q", "--hard", "HEAD~1"]);
+    let e = l.kept(&w, &[&c]).expect_err("a text only a reflog holds is gone at the next expiry");
+    assert!(e.contains("notes/draft.md"), "{e}");
+}

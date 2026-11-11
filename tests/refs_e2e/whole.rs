@@ -169,6 +169,9 @@ pub struct Allowed {
     pub renamed:   Vec<(Vec<u8>, Vec<u8>)>,
     /// Written with other bytes, where the remote keeps the bytes from before.
     pub rewritten: BTreeSet<Vec<u8>>,
+    /// HEAD may move ahead on its branch: the scenario makes a commit between the two captures. A
+    /// command of the engine, a migration among them, commits nothing to the branch.
+    pub commits:   bool,
 }
 
 /// The id git gives `bytes` as a blob.
