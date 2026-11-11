@@ -50,8 +50,13 @@ impl RefStore {
         if self.local_tip()?.is_none() {
             return Ok(Vec::new());
         }
+        self.history_at(self.pair.local())
+    }
+
+    /// Every commit reachable from `tip`, newest first.
+    pub fn history_at(&self, tip: &str) -> Result<Vec<CommitInfo>, StoreError> {
         let out = self.git.must(
-            &["log", "--format=%H %at", self.pair.local(), "--"],
+            &["log", "--format=%H %at", tip, "--"],
             &[],
             None,
         )?;

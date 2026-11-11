@@ -51,9 +51,12 @@ pub(super) fn paired(cfg: &crate::config::Config, rev: &str) -> Result<Vec<Strin
         let found = d
             .open(&cfg.repo_root)
             .and_then(|store| {
-                // a commit made elsewhere since the last fetch is on the remote and not here yet
-                mockspace_store::Store::refresh(&store).map_err(|e| e.to_string())?;
-                crate::pairing_ref::resolve(&store, trailer.pairing(), crate::pairing::DEFAULT_WINDOW_SECS)
+                // the remote's tip as it is now, history rewritten or not, read without moving the
+                // instance's ref
+                match store.fetch_for_reading().map_err(|e| e.to_string())? {
+                    Some(tip) => crate::pairing_ref::resolve_at(&store, &tip, trailer.pairing(), crate::pairing::DEFAULT_WINDOW_SECS),
+                    None => Ok(Resolution::Missing),
+                }
             });
         match found {
             Ok(Resolution::ByHash(c)) => ok.push(format!("{ns}: paired with {c}")),

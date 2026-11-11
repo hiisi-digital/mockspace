@@ -59,6 +59,25 @@ impl RefStore {
             .any(|l| l.split('\t').nth(1) == Some(want)))
     }
 
+    /// The remote's tip as it is now, fetched into a ref of its own and given as a commit id, with
+    /// the local ref left where it is. For a check that only reads commits, which has to see a ref
+    /// whose history the remote rewrote, a thing [`RefStore::refresh`] refuses on purpose: the
+    /// instance never follows a rewrite, and this does not move it. `None` where the remote has
+    /// no such ref.
+    pub fn fetch_for_reading(&self) -> Result<Option<String>, StoreError> {
+        let side = format!("refs/mock-read/{}", self.pair.local().trim_start_matches("refs/"));
+        let spec = format!("+{}:{side}", self.pair.remote());
+        let out = self.git.run(&["fetch", "-q", self.remote.as_str(), spec.as_str()], &[], None)?;
+        if out.ok() {
+            return Ok(Some(self.git.must(&["rev-parse", "--verify", &side], &[], None)?.text()));
+        }
+        match self.remote_holds_ref() {
+            Ok(false) => Ok(None),
+            Ok(true) => Err(self.fetch_error(out.stderr)),
+            Err(ls) => Err(self.fetch_error(format!("{}; ls-remote: {ls}", out.stderr))),
+        }
+    }
+
     /// Bring the remote's ref into the local one. The remote may only have moved
     /// forward: a tip that does not descend from the one held here is an error and
     /// the local ref is put back, so a rewritten remote is never read as the data.
