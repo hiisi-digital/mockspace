@@ -182,24 +182,30 @@ const COMMANDS: &[Cmd] = &[
         name:    "data-refs",
         summary: "keep a directory of the mock directory on a git ref",
         args:    &[],
-        help:    "Takes `status|verify|instantiate|update|restore|commit|trailers [namespace]` and \
+        help:    "Takes `status|verify|instantiate|update|restore|commit|snapshot|trailers [namespace]`, \
+                  `restore <namespace> <path>...`, `commit [namespace] --accept-overwritten` and \
                   `paired <commit>` over the `[[data_ref]]` tables of mockspace.toml, each naming a \
                   ref namespace and the directory whose files it holds. `status` prints the ref's tip, the instance's base and whether the \
-                  directory changed; `verify` fails unless the instance is clean at the tip; \
-                  `instantiate` fetches the ref into the directory; `update` fetches the ref and brings an \
+                  directory changed, and names each file git wrote over; `verify` fails unless the instance is clean at the tip; \
+                  `instantiate` fetches the ref into the directory, or makes an instance of a declared ref the \
+                  remote has not got yet, whose first commit makes the ref; `update` fetches the ref and brings an \
                   instance to its tip, keeping a file changed here only and refusing one changed \
                   on both sides; `restore` writes again the \
-                  files of the instance that are gone from disk; `commit` writes the \
-                  directory's changes to the ref (the first commit seeds it from the files). \
-                  A missing instance is an error in every verb but `instantiate`. With no \
+                  files of the instance that are gone from disk, and `restore <namespace> <path>` writes back \
+                  the bytes a file held before git wrote over it, after copying what it holds now; `commit` writes the \
+                  directory's changes to the ref, where a ref with neither a tip nor an instance is made from the \
+                  files, and refuses a file git wrote over unless `--accept-overwritten` takes the bytes on disk. \
+                  `snapshot` copies every file of each instance into `refs/mock-backup/<namespace>`, which the \
+                  `reference-transaction` hook runs before git writes the work tree. Every verb but `instantiate`, \
+                  `snapshot` and a `commit` that makes the ref refuses a missing instance. With no \
                   `[[data_ref]]` declared the command says so and succeeds. A table with \
                   `include` holds only the files of its directory those patterns match \
                   (`**/*.md.tmpl`), and the branch keeps the rest. Every other command stops \
                   first when a declared ref has no instance or none of its files on disk, or \
                   when the branch still tracks a file a ref holds. `trailers` prints one `Mock-Ref` line for each ref, \
-                  naming the commit its instance is at, for the message of a landing gated \
+                  naming the commit its instance is at, or `unborn` for a ref not born yet, for the message of a landing gated \
                   here; `paired <commit>` fails unless that commit carries such a line for \
-                  every declared ref and each names files the ref holds.",
+                  every ref its own tree declares and each names files the ref holds or says it was not born.",
     },
     Cmd {
         name:    "registry-append",

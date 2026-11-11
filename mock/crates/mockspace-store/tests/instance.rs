@@ -33,7 +33,7 @@ fn materialize_writes_the_tip_records_the_base_and_the_branch_never_sees_it() {
     assert_eq!(Some(tip.clone()), a.local_tip().unwrap());
     assert_eq!(read(&dir, "ticket/t1.toml"), T1);
     assert_eq!(read(&dir, "ticket/t2.toml"), T2);
-    assert_eq!(i.base().unwrap(), Some(tip));
+    assert_eq!(i.base().unwrap().map(|b| b.to_string()), Some(tip));
     assert!(!i.is_dirty().unwrap());
     assert_eq!(
         git(&clone_path(&w, "a"), &["status", "--porcelain"]),
@@ -249,8 +249,10 @@ fn an_update_keeps_a_local_edit_the_tip_left_alone_and_refuses_a_file_both_chang
     assert_eq!(ib.base().unwrap(), base, "the base did not move");
 }
 
+// Mutation: read the repository's `info/exclude` as an ignore rule; the line that hides an instance
+// from its branch, or a pattern one person keeps there, then turns data into files no commit carries.
 #[test]
-fn a_file_an_ignore_pattern_matches_is_still_data() {
+fn a_pattern_of_the_exclude_file_does_not_keep_a_file_out() {
     let w = World::new();
     let a = seeded(&w);
     std::fs::write(clone_path(&w, "a").join(".git/info/exclude"), "*.log\n").unwrap();
@@ -258,12 +260,32 @@ fn a_file_an_ignore_pattern_matches_is_still_data() {
     let i = Instance::new(&a, &dir).unwrap();
     i.materialize().unwrap();
     std::fs::write(dir.join("ticket/run.log"), "x\n").unwrap();
-    assert!(
-        i.is_dirty().unwrap(),
-        "a name git would ignore is not ignored here"
-    );
+    assert!(i.is_dirty().unwrap(), "a name only the exclude file matches is data");
+    assert!(i.ignored().unwrap().is_empty());
     i.apply("log", &Reapply).unwrap();
     assert!(on_remote(&w).contains("ticket/run.log"));
+}
+
+// Mutation: read every file as data whatever a `.gitignore` says; a file the work tree keeps out of
+// every commit then reaches the ref.
+#[test]
+fn a_file_a_gitignore_matches_is_not_data_and_is_named() {
+    let w = World::new();
+    let a = seeded(&w);
+    std::fs::write(clone_path(&w, "a").join(".gitignore"), "*.log\n").unwrap();
+    let dir = inst_dir(&w, "a", "registry");
+    let i = Instance::new(&a, &dir).unwrap();
+    i.materialize().unwrap();
+    std::fs::write(dir.join("ticket/run.log"), "x\n").unwrap();
+    assert!(!i.is_dirty().unwrap(), "an ignored file read as an edit");
+    assert_eq!(i.ignored().unwrap(), vec!["ticket/run.log".to_string()]);
+    // the control: a file no pattern matches beside it is an edit
+    std::fs::write(dir.join("ticket/run.txt"), "x\n").unwrap();
+    assert!(i.is_dirty().unwrap());
+    i.apply("data", &Reapply).unwrap();
+    let held = on_remote(&w);
+    assert!(held.contains("ticket/run.txt") && !held.contains("ticket/run.log"), "{held}");
+    assert_eq!(read(&dir, "ticket/run.log"), "x\n", "the ignored file was touched");
 }
 
 #[test]
@@ -395,11 +417,11 @@ fn two_instances_of_one_ref_in_one_clone_keep_their_own_bases() {
     .unwrap();
     let second = i2.materialize().unwrap();
     assert_ne!(first, second);
-    assert_eq!(i1.base().unwrap(), Some(first));
-    assert_eq!(i2.base().unwrap(), Some(second.clone()));
+    assert_eq!(i1.base().unwrap().map(|b| b.to_string()), Some(first));
+    assert_eq!(i2.base().unwrap().map(|b| b.to_string()), Some(second.clone()));
     assert!(!i1.is_dirty().unwrap(), "behind the tip is not a change");
     i1.update().unwrap();
-    assert_eq!(i1.base().unwrap(), Some(second));
+    assert_eq!(i1.base().unwrap().map(|b| b.to_string()), Some(second));
     assert_eq!(read(&d1, "ticket/t3.toml"), "id = \"t3\"\n");
 }
 
@@ -427,7 +449,7 @@ fn seed_makes_the_first_commit_of_a_ref_from_the_files_of_a_directory_and_refuse
     let applied = i.seed("data: research", &mockspace_store::Refuse).unwrap();
     let tip = applied.commit.expect("a commit was made");
     assert_eq!(a.local_tip().unwrap(), Some(tip.clone()));
-    assert_eq!(i.base().unwrap(), Some(tip));
+    assert_eq!(i.base().unwrap().map(|b| b.to_string()), Some(tip));
     assert!(!i.is_dirty().unwrap(), "the directory is what the ref holds");
     assert_eq!(
         git(&clone_path(&w, "a"), &["status", "--porcelain"]),

@@ -247,7 +247,7 @@ mod verbs {
         assert!(why.contains("DESIGN.md.tmpl") && why.contains("tracked"), "{why}");
         assert!(!why.contains("lib.rs"), "a source is the branch's to track: {why}");
 
-        git(&a.repo_root, &["rm", "-q", "--cached", "--", "mock/crates/one/DESIGN.md.tmpl"]);
+        git(&a.repo_root, &["rm", "-q", "--cached", "--sparse", "--", "mock/crates/one/DESIGN.md.tmpl"]);
         assert_eq!(standing(&a), Ok(()), "the control: untracked, with the source still tracked, it stands");
     }
 
@@ -335,7 +335,7 @@ mod verbs {
         assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
         let why = standing(&a).unwrap_err().join("\n");
         assert!(why.contains("mock/notes/note.md") && why.contains("tracked"), "{why}");
-        git(&a.repo_root, &["rm", "-q", "--cached", "--", "mock/notes/note.md"]);
+        git(&a.repo_root, &["rm", "-q", "--cached", "--sparse", "--", "mock/notes/note.md"]);
         assert_eq!(standing(&a), Ok(()), "the control: untracked, it stands");
     }
 

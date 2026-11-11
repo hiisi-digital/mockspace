@@ -21,7 +21,8 @@
 //! The trailer a commit carries (`Mock-Ref: <name> <hash> <time> <digest>`) and a pin file are
 //! both this line, so neither can drift from the other. A [`Pairing`] and a [`Trailer`] can only
 //! be made through [`Pairing::new`] and [`Trailer::new`] or by parsing, and both check what
-//! [`Pairing::parse`] checks, so what `render` writes is always what `parse` reads.
+//! [`Pairing::parse`] checks, so what `render` writes is always what `parse` reads. A landing
+//! gated against a ref not born yet carries `Mock-Ref: <name> unborn` in place of the pairing.
 //!
 //! Nothing here runs git. The caller lists the candidate commits and gives a function that
 //! reads a commit's files; [`resolve`] decides.
@@ -51,11 +52,25 @@ pub struct Pairing {
     digest: String,
 }
 
-/// A pairing under the name of the data ref it is for, as a commit carries it.
+/// What a landing was gated against for one data ref.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Against {
+    /// A commit of the ref.
+    Commit(Pairing),
+    /// Nothing: the ref was not born yet, so its instance held no file a gate read.
+    Unborn,
+}
+
+/// The word a trailer carries in place of a pairing for a ref not born yet. Not hex, so no
+/// pairing reads as it.
+const UNBORN: &str = "unborn";
+
+/// What a landing was gated against for one data ref, under the ref's name, as a commit carries
+/// it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Trailer {
     name:    String,
-    pairing: Pairing,
+    against: Against,
 }
 
 impl Pairing {
@@ -139,7 +154,7 @@ impl Trailer {
     /// # Errors
     ///
     /// When the name is not one.
-    pub fn new(name: impl Into<String>, pairing: Pairing) -> Result<Self, String> {
+    pub fn new(name: impl Into<String>, against: Against) -> Result<Self, String> {
         let name = name.into();
         if !is_ref_name(&name) {
             return Err(format!(
@@ -149,7 +164,7 @@ impl Trailer {
         }
         Ok(Self {
             name,
-            pairing,
+            against,
         })
     }
 
@@ -158,22 +173,26 @@ impl Trailer {
         &self.name
     }
 
-    /// The pairing the trailer carries.
-    pub const fn pairing(&self) -> &Pairing {
-        &self.pairing
+    /// What the landing was gated against.
+    pub const fn against(&self) -> &Against {
+        &self.against
     }
 
-    /// The trailer line a commit message carries.
+    /// The trailer line a commit message carries: `Mock-Ref: <name> <pairing>`, or
+    /// `Mock-Ref: <name> unborn`.
     pub fn render(&self) -> String {
-        format!("{TRAILER_KEY}: {} {}", self.name, self.pairing.render())
+        match &self.against {
+            Against::Commit(pairing) => format!("{TRAILER_KEY}: {} {}", self.name, pairing.render()),
+            Against::Unborn => format!("{TRAILER_KEY}: {} {UNBORN}", self.name),
+        }
     }
 
     /// Reads one trailer line.
     ///
     /// # Errors
     ///
-    /// When the line does not start with the trailer key, the name is not a ref name, or the
-    /// pairing after it does not parse.
+    /// When the line does not start with the trailer key, the name is not a ref name, or what
+    /// follows it is neither a pairing that parses nor the one word of a ref not born yet.
     pub fn parse(line: &str) -> Result<Self, String> {
         let Some(rest) = line
             .strip_prefix(TRAILER_KEY)
@@ -184,7 +203,12 @@ impl Trailer {
         let (name, pairing) = rest
             .split_once(' ')
             .ok_or_else(|| format!("`{line}` names no pairing after the ref name"))?;
-        Self::new(name, Pairing::parse(pairing)?)
+        let against = if pairing == UNBORN {
+            Against::Unborn
+        } else {
+            Against::Commit(Pairing::parse(pairing)?)
+        };
+        Self::new(name, against)
     }
 }
 

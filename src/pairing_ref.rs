@@ -74,6 +74,31 @@ pub fn resolve(
     window_secs: i64,
 ) -> Result<Resolution, String> {
     let history = store.history().map_err(|e| e.to_string())?;
+    resolve_in(store, history, recorded, window_secs)
+}
+
+/// [`resolve`] over the history of `tip`, a commit fetched for reading, and not over the local
+/// ref. A ref the remote rewrote is found in the rewritten history.
+///
+/// # Errors
+///
+/// As [`resolve`].
+pub fn resolve_at(
+    store: &RefStore,
+    tip: &str,
+    recorded: &Pairing,
+    window_secs: i64,
+) -> Result<Resolution, String> {
+    let history = store.history_at(tip).map_err(|e| e.to_string())?;
+    resolve_in(store, history, recorded, window_secs)
+}
+
+fn resolve_in(
+    store: &RefStore,
+    history: Vec<mockspace_store::CommitInfo>,
+    recorded: &Pairing,
+    window_secs: i64,
+) -> Result<Resolution, String> {
     let candidates: Vec<Candidate<'_>> = history
         .iter()
         .map(|c| {

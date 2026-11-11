@@ -82,7 +82,7 @@ impl Held {
     }
 
     /// The patterns as written, for the exclude file.
-    pub(super) fn patterns(&self) -> impl Iterator<Item = String> + '_ {
+    pub fn patterns(&self) -> impl Iterator<Item = String> + '_ {
         self.patterns.iter().map(|p| p.join("/"))
     }
 }

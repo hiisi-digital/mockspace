@@ -101,7 +101,7 @@ const HOOK_NAMES: &[&str] = &["pre-commit", "pre-push", "commit-msg"];
 
 /// The hooks that follow an event and never block. See
 /// [`mockspace_manifest::gate::FOLLOW_UP_HOOKS`].
-use mockspace_manifest::gate::FOLLOW_UP_HOOKS;
+use mockspace_manifest::gate::{CHAIN_HOOKS, FOLLOW_UP_HOOKS};
 
 // ──────────────────────────────────────────────────────────────────────
 // Public API
