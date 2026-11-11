@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! The launcher installs the engine anonymously from the public repository, so no package in
 //! the engine's lockfiles may come from a `git+ssh` source: a fetch over ssh asks for a credential
 //! nobody supplies.
@@ -44,3 +49,7 @@ fn no_engine_lockfile_pulls_a_package_over_ssh() {
     }
     assert!(offenders.is_empty(), "the launcher installs anonymously: {offenders:#?}");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;
