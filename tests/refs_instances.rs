@@ -1,6 +1,8 @@
 //! The instance in the working tree: worktrees, vanished files, a clone with no instance, branch
 //! switches and rebases, a clean that wipes it.
 
+#[path = "common/ambient.rs"]
+mod ambient;
 mod refs_e2e;
 
 use refs_e2e::{Held, check, fixture, held_on_remote, instance_matches, status_of};

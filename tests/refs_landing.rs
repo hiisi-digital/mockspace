@@ -1,6 +1,8 @@
 //! Landing with `trailers` and `paired`, a push race between two clones, a remote that cannot be
 //! reached.
 
+#[path = "common/ambient.rs"]
+mod ambient;
 mod refs_e2e;
 
 use refs_e2e::{Held, check, fixture, held_on_remote, instance_matches, tip};

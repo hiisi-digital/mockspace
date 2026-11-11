@@ -4,6 +4,8 @@
 //! The instance is hidden by `.git/info/exclude`, so git treats its files as expendable. What the
 //! engine sets up against that is a sparse-checkout block per worktree (`data_refs/sparse.rs`).
 
+#[path = "common/ambient.rs"]
+mod ambient;
 mod refs_e2e;
 
 use refs_e2e::{Held, World, fixture, held_on_remote, instance_matches};

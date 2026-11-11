@@ -1,6 +1,8 @@
 //! A rebase across the migration commit, a symlink where `update` and `restore` write, a ref that
 //! takes the mock directory itself, and two clones making the same new ref at once.
 
+#[path = "common/ambient.rs"]
+mod ambient;
 mod refs_e2e;
 
 use refs_e2e::{Held, World, fixture, held_on_remote, instance_matches};

@@ -1,5 +1,7 @@
 //! A full migration of the generated consumer, through the real command entry.
 
+#[path = "common/ambient.rs"]
+mod ambient;
 mod refs_e2e;
 
 use refs_e2e::{check, content_only, fixture, held_on_remote, instance_matches, no_loss, World};

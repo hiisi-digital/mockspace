@@ -1,7 +1,7 @@
 //! A consumer repository shaped like a real one, generated deterministically: no checked-in data.
 
 use std::fs;
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::fs::symlink;
 
 use super::world::Clone;
 
@@ -18,9 +18,8 @@ pub fn bytes(seed: u64, len: usize) -> Vec<u8> {
 
 pub fn exec(c: &Clone, rel: &str) {
     let p = c.path(rel);
-    let mut perm = fs::metadata(&p).unwrap().permissions();
-    perm.set_mode(0o755);
-    fs::set_permissions(p, perm).unwrap();
+    let body = fs::read(&p).unwrap();
+    mockspace_manifest::write_executable(&p, body).unwrap();
 }
 
 pub const MANAGED_IGNORE: &str = "# === mockspace-managed build artifacts (do not edit) ===\n# Catch-all: every cargo build dir, including nested ones under benches/,\n# tests/, and research sketches. A leading-slash /target would miss those.\ntarget/\n# === end mockspace-managed build artifacts ===\n";

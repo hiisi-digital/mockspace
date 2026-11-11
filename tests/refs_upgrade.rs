@@ -1,5 +1,7 @@
 //! Clones that exist before the migration lands on `dev`, and pull it.
 
+#[path = "common/ambient.rs"]
+mod ambient;
 mod refs_e2e;
 
 use std::collections::BTreeMap;

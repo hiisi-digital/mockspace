@@ -1,6 +1,8 @@
 //! `directory-to-ref` from the states a real repository is in: stopped part way, run twice, dirty,
 //! carrying untracked files, a symlink, an unreachable remote.
 
+#[path = "common/ambient.rs"]
+mod ambient;
 mod refs_e2e;
 
 use refs_e2e::{Held, World, check, content_only, fixture, held_on_remote, no_loss, tip};

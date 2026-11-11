@@ -1,5 +1,7 @@
 //! Two clones following the same refs, through `data-refs update` and `commit`.
 
+#[path = "common/ambient.rs"]
+mod ambient;
 mod refs_e2e;
 
 use refs_e2e::{fixture, status_of, tip};
@@ -110,10 +112,15 @@ fn mode_of(c: &refs_e2e::Clone, rel: &str) -> u32 {
 }
 
 fn set_exec(c: &refs_e2e::Clone, rel: &str, on: bool) {
-    use std::os::unix::fs::PermissionsExt;
     let p = c.path(rel);
-    let mode = std::fs::metadata(&p).unwrap().permissions().mode();
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(if on { mode | 0o111 } else { mode & !0o111 })).unwrap();
+    let body = std::fs::read(&p).unwrap();
+    if on {
+        mockspace_manifest::write_executable(&p, body).unwrap();
+    } else {
+        // A file made new takes the plain mode, so nothing here sets one.
+        std::fs::remove_file(&p).unwrap();
+        std::fs::write(&p, body).unwrap();
+    }
 }
 
 // Mutation: compare content ids only, as before the mode was part of an id; the chmod below is then

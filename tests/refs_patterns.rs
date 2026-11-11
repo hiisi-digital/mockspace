@@ -1,6 +1,8 @@
 //! Include patterns changed after the fact, a file moved back to the branch, and two namespaces
 //! in one repository.
 
+#[path = "common/ambient.rs"]
+mod ambient;
 mod refs_e2e;
 
 use refs_e2e::{Held, check, fixture, held_on_remote, instance_matches, status_of, tip};
