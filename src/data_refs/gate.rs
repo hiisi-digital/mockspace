@@ -49,7 +49,7 @@ mod tests {
     #[test]
     fn commit_is_the_one_verb_the_lints_are_asked_before() {
         assert!(writes_a_data_ref(&["commit"]) && writes_a_data_ref(&["commit", "research"]));
-        for verb in ["status", "verify", "instantiate", "restore", "trailers", "paired"] {
+        for verb in ["status", "verify", "instantiate", "update", "restore", "trailers", "paired"] {
             assert!(!writes_a_data_ref(&[verb]), "`data-refs {verb}` was gated as a write");
         }
     }

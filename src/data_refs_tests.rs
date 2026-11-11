@@ -387,6 +387,65 @@ mod verbs {
     }
 
     #[test]
+    fn an_instance_follows_what_another_clone_committed_and_keeps_what_only_it_changed() {
+        let w = World::new();
+        let (a, b) = (with_ref(&w, "a"), with_ref(&w, "b"));
+        let note = |cfg: &crate::config::Config, name: &str| cfg.mock_dir.join("research").join(name);
+        std::fs::create_dir_all(a.mock_dir.join("research")).unwrap();
+        std::fs::write(note(&a, "note.md"), "findings\n").unwrap();
+        std::fs::write(note(&a, "other.md"), "other\n").unwrap();
+        assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
+        assert_eq!(run(&b, &["instantiate"]), ExitCode::SUCCESS);
+
+        std::fs::write(note(&a, "note.md"), "more findings\n").unwrap();
+        std::fs::write(note(&a, "new.md"), "new\n").unwrap();
+        assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
+        std::fs::write(note(&b, "other.md"), "b's own\n").unwrap();
+        assert_eq!(std::fs::read_to_string(note(&b, "note.md")).unwrap(), "findings\n", "the control: b is behind");
+
+        assert_eq!(run(&b, &["update"]), ExitCode::SUCCESS);
+        assert_eq!(std::fs::read_to_string(note(&b, "note.md")).unwrap(), "more findings\n");
+        assert_eq!(std::fs::read_to_string(note(&b, "new.md")).unwrap(), "new\n");
+        assert_eq!(std::fs::read_to_string(note(&b, "other.md")).unwrap(), "b's own\n", "a file changed here only stays");
+    }
+
+    #[test]
+    fn an_update_over_a_file_changed_on_both_sides_writes_nothing_and_fails() {
+        let w = World::new();
+        let (a, b) = (with_ref(&w, "a"), with_ref(&w, "b"));
+        std::fs::create_dir_all(a.mock_dir.join("research")).unwrap();
+        std::fs::write(a.mock_dir.join("research/note.md"), "findings\n").unwrap();
+        assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
+        assert_eq!(run(&b, &["instantiate"]), ExitCode::SUCCESS);
+        std::fs::write(a.mock_dir.join("research/note.md"), "a's\n").unwrap();
+        assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
+        std::fs::write(b.mock_dir.join("research/note.md"), "b's\n").unwrap();
+        assert_eq!(run(&b, &["update"]), ExitCode::FAILURE);
+        assert_eq!(std::fs::read_to_string(b.mock_dir.join("research/note.md")).unwrap(), "b's\n");
+    }
+
+    #[test]
+    fn an_update_without_an_instance_fails() {
+        let w = World::new();
+        let a = with_ref(&w, "a");
+        assert_eq!(run(&a, &["update"]), ExitCode::FAILURE);
+    }
+
+    #[test]
+    fn status_fails_where_the_record_stayed_and_every_file_went_until_they_are_restored() {
+        let w = World::new();
+        let a = with_ref(&w, "a");
+        std::fs::create_dir_all(a.mock_dir.join("research")).unwrap();
+        std::fs::write(a.mock_dir.join("research/note.md"), "findings\n").unwrap();
+        assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
+        assert_eq!(run(&a, &["status"]), ExitCode::SUCCESS, "the control: the files are there");
+        std::fs::remove_dir_all(a.mock_dir.join("research")).unwrap();
+        assert_eq!(run(&a, &["status"]), ExitCode::FAILURE, "an emptied instance is not an edited one");
+        assert_eq!(run(&a, &["restore"]), ExitCode::SUCCESS);
+        assert_eq!(run(&a, &["status"]), ExitCode::SUCCESS);
+    }
+
+    #[test]
     fn a_namespace_nothing_declares_is_a_failure_and_none_declared_is_not() {
         let w = World::new();
         let cfg = with_ref(&w, "a");

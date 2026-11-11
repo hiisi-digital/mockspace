@@ -421,6 +421,8 @@ Every command but `data-refs` and the recovery ones (`clean`, `activate`, `deact
 
 The files of a ref are judged by the phase gates as tracked files are: the gates are told which files the refs hold and which of them differ from the commit their instance is at. The generated pre-push hook gates branches. The engine pushes a data ref with `MOCKSPACE_DATA_REF` naming it, and the hook stands down for a push of that ref alone.
 
+A clone follows a ref with `cargo mock data-refs update`, which fetches it and brings the instance to its tip. A file changed in the clone only is kept and is still part of the next commit, and a file changed on both sides is refused, with nothing written. `status` says which state an instance is in: clean or changed, at the tip or behind it, never fetched, or left with none of its files, which happens to a worktree removed and made again at the same path.
+
 A landing is gated against the data as one clone held it, and the commit says which. `cargo mock data-refs trailers` prints a `Mock-Ref: <namespace> <hash> <author time> <digest>` line for each declared ref, naming the commit its instance is at, and refuses over an instance with changes the ref does not hold. The landing's message carries those lines. `cargo mock data-refs paired <commit>` fetches each ref and reads them back: it fails unless the commit has a line for every declared ref and each names a commit of the ref, by hash or, where the hash is gone after a rehouse, by the one commit within a day of the recorded time whose files give the recorded digest.
 
 ### Migrations
