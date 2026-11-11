@@ -11,7 +11,6 @@
 //! the temporary files. The summary itself is `gate_report`'s, tested there.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -62,8 +61,7 @@ fn run(env: &[(&str, &str)]) -> (Output, Vec<String>) {
 }
 
 fn write_stub(path: &Path) {
-    fs::write(path, STUB).unwrap();
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(path, STUB);
 }
 
 #[test]
