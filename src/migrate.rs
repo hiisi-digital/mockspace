@@ -81,6 +81,9 @@ enum Step {
     WriteRegistry(Vec<(String, String)>),
     /// Take these paths (from the repository root) out of the index, leaving the files.
     Untrack(Vec<String>),
+    /// Keep git from writing over the instances of every ref the config declares once the steps
+    /// before have run: the sparse checkout of this worktree and the hook that copies an edit.
+    KeepGitOff,
     /// Rename a file, both paths from the repository root.
     Rename {
         from: String,
@@ -139,14 +142,6 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         if let Err(why) = carry_out(cfg, step) {
             eprintln!("migrate: stopped, and the steps before this one stand: {why}");
             eprintln!("migrate: the same call finishes it once what stopped it is out of the way");
-            return ExitCode::FAILURE;
-        }
-    }
-    // the declared instance is now what git would write over on a checkout of an older commit
-    if plan.steps.iter().any(|s| matches!(s, Step::Untrack(_))) {
-        let declared = Config::from_dir(&cfg.mock_dir);
-        if let Err(why) = crate::data_refs::keep_git_off_the_instances(&declared) {
-            eprintln!("migrate: the migration is made, and the sparse checkout that keeps git from writing over the instance is not set: {why}");
             return ExitCode::FAILURE;
         }
     }
@@ -211,6 +206,10 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
                 Err(format!("git update-index: {}", String::from_utf8_lossy(&out.stderr).trim()))
             }
         },
+        // the declared instance is now what git would write over on a checkout of an older commit;
+        // the config is read again, since a step before may have appended the declaration
+        Step::KeepGitOff => crate::data_refs::keep_git_off_the_instances(&Config::from_dir(&cfg.mock_dir))
+            .map_err(|why| format!("keeping git from writing over the instance: {why}")),
         Step::Rename {
             from,
             to,
@@ -340,6 +339,17 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
     }
 
     let tracked = decl.tracked(&cfg.repo_root, &cfg.mock_dir).map_err(|e| vec![format!("migrate: {e}")])?;
+    // the last step left undone: everything is moved, and git is not kept off the instance yet
+    if declared && tracked.is_empty() && crate::data_refs::git_is_kept_off_the_instances(cfg).is_err() {
+        return Ok(Plan {
+            lines: vec![format!(
+                "an earlier run of this migration moved `{ns}` and did not keep git from writing over its instance; \
+                 finishing it"
+            )],
+            steps: vec![Step::KeepGitOff],
+            after: "commit the config and the removals on this branch".to_string(),
+        });
+    }
     if tracked.is_empty() {
         return Err(vec![if declared {
             format!("migrate: mockspace.toml already declares this ref and the branch tracks none of its files, so this migration was made here before")
@@ -449,6 +459,7 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
     }
     lines.extend(tracked.iter().map(|p| format!("untrack {p}")));
     steps.push(Step::Untrack(tracked));
+    steps.push(Step::KeepGitOff);
     Ok(Plan {
         lines,
         steps,
