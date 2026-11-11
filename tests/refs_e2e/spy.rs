@@ -16,6 +16,12 @@ pub struct Spy {
     /// The ordinal, counted from the last [`Spy::fail_at`], of the one call to fail.
     at:       PathBuf,
     count:    PathBuf,
+    /// There when the call at that ordinal kills the process that made it instead of failing.
+    kill:     PathBuf,
+    /// There while each call's argument and input bytes are counted into `sizes`.
+    measure:  PathBuf,
+    /// One line a call while measured: its subcommand, its argument bytes and its input bytes.
+    sizes:    PathBuf,
 }
 
 /// Puts the logging `git` first on the `PATH` of every command `w` runs.
@@ -26,6 +32,9 @@ pub fn install(w: &World) -> Spy {
         fail:  base.join("git.fail"),
         at:    base.join("git.fail-at"),
         count: base.join("git.count"),
+        kill:  base.join("git.kill"),
+        measure: base.join("git.measure"),
+        sizes: base.join("git.sizes"),
     };
     let real = w.sh(&base, "sh", &["-c", "command -v git"]).stdout.trim().to_string();
     let body = format!(
@@ -40,6 +49,11 @@ echo "$line" >> '{log}'
 if [ -f '{at}' ]; then
   n=$(( $(cat '{count}' 2>/dev/null || echo 0) + 1 ))
   echo $n > '{count}'
+  if [ "$(cat '{at}')" = "$n" ] && [ -f '{kill}' ]; then
+    echo "KILLED $line" >> '{log}'
+    kill -KILL $PPID
+    exit 137
+  fi
   if [ "$(cat '{at}')" = "$n" ]; then
     echo "INJECTED $line" >> '{log}'
     echo "injected failure of git $sub, call $n" >&2
@@ -63,12 +77,26 @@ if [ -f '{fail}' ]; then
     fi
   done < '{fail}'
 fi
+if [ -f '{measure}' ]; then
+  # what the call is handed: the bytes of its arguments and of its input, which grow with the files
+  # the caller names to it where the number of calls does not
+  args="$*"
+  tmp='{sizes}'.$$
+  cat > "$tmp"
+  echo "$sub ${{#args}} $(wc -c < "$tmp")" >> '{sizes}'
+  exec 3< "$tmp"
+  rm -f "$tmp"
+  exec '{real}' "$@" <&3 3<&-
+fi
 exec '{real}' "$@"
 "#,
         log = spy.log.display(),
         fail = spy.fail.display(),
         at = spy.at.display(),
         count = spy.count.display(),
+        kill = spy.kill.display(),
+        measure = spy.measure.display(),
+        sizes = spy.sizes.display(),
     );
     mockspace_manifest::write_executable(&base.join("shims/git"), body).unwrap();
     spy
@@ -86,11 +114,43 @@ impl Spy {
 
     /// Every process started as `git` since the last [`Spy::clear`].
     pub fn spawns(&self) -> usize {
-        self.text().lines().filter(|l| !l.starts_with("INJECTED ")).count()
+        self.text().lines().filter(|l| !l.starts_with("INJECTED ") && !l.starts_with("KILLED ")).count()
     }
 
     pub fn clear(&self) {
         std::fs::write(&self.log, "").unwrap();
+        std::fs::write(&self.sizes, "").unwrap();
+    }
+
+    /// Counts from now what every call is handed, which [`Spy::handed`] sums.
+    pub fn measure_input(&self) {
+        std::fs::write(&self.measure, "").unwrap();
+    }
+
+    /// The bytes of the arguments and of the input of every call since the last [`Spy::clear`],
+    /// while [`Spy::measure_input`] is on.
+    pub fn handed(&self) -> usize {
+        std::fs::read_to_string(&self.sizes)
+            .unwrap_or_default()
+            .lines()
+            .map(|l| l.split(' ').skip(1).map(|n| n.trim().parse::<usize>().unwrap()).sum::<usize>())
+            .sum()
+    }
+
+    /// The calls since the last [`Spy::clear`], each as its subcommand and the bytes it was handed,
+    /// the largest first, for a failure message.
+    pub fn handed_by_call(&self) -> Vec<(String, usize)> {
+        let mut out: Vec<(String, usize)> = std::fs::read_to_string(&self.sizes)
+            .unwrap_or_default()
+            .lines()
+            .map(|l| {
+                let mut f = l.split(' ');
+                let sub = f.next().unwrap_or_default().to_string();
+                (sub, f.map(|n| n.trim().parse::<usize>().unwrap()).sum())
+            })
+            .collect();
+        out.sort_by(|a, b| b.1.cmp(&a.1));
+        out
     }
 
     /// Fails the `n`th call from now, counting from one, and no other.
@@ -99,9 +159,17 @@ impl Spy {
         std::fs::write(&self.at, n.to_string()).unwrap();
     }
 
-    /// Ends every failure this spy was told to make.
+    /// Kills the process that makes the `n`th call from now, before the call runs, with a signal no
+    /// process handles; the call itself is not made.
+    pub fn kill_at(&self, n: usize) {
+        std::fs::write(&self.kill, "").unwrap();
+        self.fail_at(n);
+    }
+
+    /// Ends every failure and kill this spy was told to make.
     pub fn stop_failing(&self) {
         let _ = std::fs::remove_file(&self.at);
+        let _ = std::fs::remove_file(&self.kill);
         let _ = std::fs::remove_file(&self.fail);
     }
 

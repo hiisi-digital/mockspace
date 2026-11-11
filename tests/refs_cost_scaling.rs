@@ -1,8 +1,10 @@
 //! What the daily commands and each migration cost on a mock directory of hundreds of files and on
-//! one five times its size, counted in git processes started and objects written rather than in
-//! time. A command whose work is one edited file costs the same on both; a migration that moves a
-//! directory starts a process for each batch of the files it moves, never one for each file.
-//! A cost that grows with the tree where the change did not is a finding.
+//! one five times its size, its research, templates and registry rows grown alike, counted in git
+//! processes started, in the bytes those processes are handed as arguments and input, and in
+//! objects written, rather than in time. A command whose work is one edited file costs the same on
+//! both, in every count; a migration that moves a directory starts a process for each batch of the
+//! files it moves, never one for each file, and writes no blob the branch has. A cost that grows
+//! with the tree where the change did not is a finding.
 
 #[path = "common/ambient.rs"]
 mod ambient;
@@ -16,15 +18,19 @@ const SMALL: usize = 400;
 const LARGE: usize = 2000;
 const NOTES: &str = "mock/research/20261001_alpha/NOTES.md";
 
+/// A consumer of `bulk` research files, and a template and a row file for every four of them.
 fn shape(bulk: usize) -> Shape {
-    Shape { name: "scaling", bulk, ..consumer::LARGE }
+    Shape { name: "scaling", bulk, cites: bulk / 4, ..consumer::LARGE }
 }
 
 /// What one command cost.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Cost {
     spawns:  usize,
+    handed:  usize,
     objects: usize,
+    /// The calls by the bytes they were handed, the largest first, for the failure message.
+    largest: Vec<(String, usize)>,
 }
 
 fn measure(c: &Clone, spy: &Spy, args: &[&str]) -> Cost {
@@ -32,7 +38,9 @@ fn measure(c: &Clone, spy: &Spy, args: &[&str]) -> Cost {
     let before = loose_objects(&git_dir);
     spy.clear();
     c.ok(args);
-    Cost { spawns: spy.spawns(), objects: loose_objects(&git_dir).saturating_sub(before) }
+    let mut largest = spy.handed_by_call();
+    largest.truncate(3);
+    Cost { spawns: spy.spawns(), handed: spy.handed(), objects: loose_objects(&git_dir).saturating_sub(before), largest }
 }
 
 fn strs(a: &[String]) -> Vec<&str> {
@@ -57,6 +65,7 @@ fn daily_costs(bulk: usize) -> Vec<(&'static str, Cost)> {
         c.ok(&["data-refs", "status"]);
     }
     let spy = spy::install(&w);
+    spy.measure_input();
     let mut out = Vec::new();
     out.push(("status, nothing edited", measure(&a, &spy, &["data-refs", "status", "research"])));
     a.write(NOTES, b"one file edited\n");
@@ -69,20 +78,24 @@ fn daily_costs(bulk: usize) -> Vec<(&'static str, Cost)> {
     out
 }
 
-fn migration_costs(bulk: usize) -> Vec<(String, Cost)> {
+/// Each migration's cost, and the directories of `research` on the branch before it moved, the
+/// root of it counted.
+fn migration_costs(bulk: usize) -> (Vec<(String, Cost)>, usize) {
     let s = shape(bulk);
     let w = consumer::remote(&s);
     let c = w.clone_of("a");
     c.git(&["config", "gc.auto", "0"]);
     let _ = c.run(&["status"]);
     let spy = spy::install(&w);
+    spy.measure_input();
+    let dirs = 1 + c.git(&["ls-tree", "-r", "-d", "--name-only", "HEAD", "--", "mock/research"]).lines().count();
     let mut out = Vec::new();
     for args in s.calls() {
         let what = if args[1] == "directory-to-ref" { format!("directory-to-ref {}", args[3]) } else { args[1].clone() };
         out.push((what, measure(&c, &spy, &strs(&args))));
         c.commit_all("chore: a migration");
     }
-    out
+    (out, dirs)
 }
 
 /// The costs at both sizes side by side, for the failure message and the report.
@@ -90,13 +103,19 @@ fn table<K: std::fmt::Display>(small: &[(K, Cost)], large: &[(K, Cost)]) -> Stri
     small
         .iter()
         .zip(large)
-        .map(|((what, s), (_, l))| format!("{what}: spawns {} -> {}, objects {} -> {}", s.spawns, l.spawns, s.objects, l.objects))
+        .map(|((what, s), (_, l))| {
+            format!(
+                "{what}: spawns {} -> {}, handed {} -> {} bytes, objects {} -> {}; largest {:?}",
+                s.spawns, l.spawns, s.handed, l.handed, s.objects, l.objects, l.largest
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
 // Mutation: list the instance's files with a git call each, or hash every file on each look, or
-// write the whole tree's blobs on a commit of one file; the costs at the larger size then grow.
+// hand git every path of the tree on a look, or write the whole tree's blobs on a commit of one
+// file; the costs at the larger size then grow.
 #[test]
 fn a_command_on_one_edited_file_costs_the_same_on_a_tree_five_times_larger() {
     let (small, large) = (daily_costs(SMALL), daily_costs(LARGE));
@@ -104,9 +123,10 @@ fn a_command_on_one_edited_file_costs_the_same_on_a_tree_five_times_larger() {
     eprintln!("{shown}");
     for ((what, s), (_, l)) in small.iter().zip(&large) {
         assert_eq!(s.spawns, l.spawns, "{what}: git processes grow with the tree\n{shown}");
+        assert_eq!(s.handed, l.handed, "{what}: what git is handed grows with the tree\n{shown}");
         assert_eq!(s.objects, l.objects, "{what}: objects written grow with the tree\n{shown}");
     }
-    let (status, commit) = (large[1].1, large[3].1);
+    let (status, commit) = (&large[1].1, &large[3].1);
     // the copy: the blob, the trees of its directory, of `edit`, of the worktree and of the root,
     // and the commit
     assert!(status.objects <= 6, "a look at one edited file writes no more than its copy\n{shown}");
@@ -117,19 +137,25 @@ fn a_command_on_one_edited_file_costs_the_same_on_a_tree_five_times_larger() {
 const BATCH: usize = 200;
 
 // Mutation: write each moved file's blob with a git call of its own, or untrack the moved files
-// one call each; the migrations then start a process more for every file more.
+// one call each; the migrations then start a process more for every file more. Write the blobs of
+// the moved files again; the move of `research` then writes one object for every file.
 #[test]
 fn a_migration_starts_no_more_git_processes_on_a_tree_five_times_larger() {
-    let (small, large) = (migration_costs(SMALL), migration_costs(LARGE));
+    let ((small, _), (large, dirs)) = (migration_costs(SMALL), migration_costs(LARGE));
     let shown = table(&small, &large);
     eprintln!("{shown}");
     // a migration reads every file it moves, so a process for each batch of the extra files is
-    // its change; a process for each file is not
-    let batches = (LARGE - SMALL).div_ceil(BATCH);
+    // its change; a process for each file is not. The extra files are the research, the templates
+    // and the row files the larger tree has more of.
+    let extra = (LARGE - SMALL) + 2 * (shape(LARGE).cites - shape(SMALL).cites);
+    let batches = extra.div_ceil(BATCH);
     for ((what, s), (_, l)) in small.iter().zip(&large) {
         assert!(l.spawns <= s.spawns + batches, "{what}: git processes grow with each file\n{shown}");
     }
-    // the move of `research` writes nothing new: every blob it puts on the ref is the branch's
-    let research = large.iter().find(|(w, _)| w == "directory-to-ref research").unwrap().1;
-    assert!(research.objects <= 4 + 200, "the move writes trees, not blobs the branch has\n{shown}");
+    // the move of `research` writes nothing the branch has: one tree for each directory of it,
+    // as the ref holds it at its root, and the ref's commit; every blob it puts there is the
+    // branch's already
+    let research = &large.iter().find(|(w, _)| w == "directory-to-ref research").unwrap().1;
+    let bound = dirs + 1;
+    assert!(research.objects <= bound, "the move writes {dirs} trees and a commit, not blobs the branch has\n{shown}");
 }

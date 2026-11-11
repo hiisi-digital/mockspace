@@ -26,16 +26,19 @@ pub struct Shape {
     /// Whether it moves directories to data refs, or stays on the branch and takes the other
     /// migrations alone.
     pub refs:  bool,
+    /// Templates and registry row files added, each citing in the spelling before the standard, for
+    /// a project whose templates and rows grow with its research.
+    pub cites: usize,
 }
 
 /// Sources, rounds, templates and a registry, and no directory a data ref would take.
-pub const PLAIN: Shape = Shape { name: "plain", mock: "mock", data: false, bulk: 0, odd: false, refs: false };
+pub const PLAIN: Shape = Shape { name: "plain", mock: "mock", data: false, bulk: 0, odd: false, refs: false, cites: 0 };
 /// A mock directory of thousands of files.
-pub const LARGE: Shape = Shape { name: "large", mock: "mock", data: true, bulk: 3000, odd: false, refs: true };
+pub const LARGE: Shape = Shape { name: "large", mock: "mock", data: true, bulk: 3000, odd: false, refs: true, cites: 0 };
 /// A mock directory that is not called `mock`.
-pub const ELSEWHERE: Shape = Shape { name: "elsewhere", mock: "linux", data: true, bulk: 0, odd: false, refs: true };
+pub const ELSEWHERE: Shape = Shape { name: "elsewhere", mock: "linux", data: true, bulk: 0, odd: false, refs: true, cites: 0 };
 /// Every kind of file git keeps that is not plain text.
-pub const ODD: Shape = Shape { name: "odd", mock: "mock", data: true, bulk: 0, odd: true, refs: true };
+pub const ODD: Shape = Shape { name: "odd", mock: "mock", data: true, bulk: 0, odd: true, refs: true, cites: 0 };
 
 pub const SHAPES: [Shape; 4] = [PLAIN, LARGE, ELSEWHERE, ODD];
 
@@ -158,6 +161,10 @@ impl Shape {
         for rel in ["DESIGN.md.tmpl", "crates/alpha/README.md.tmpl", "crates/beta/README.md.tmpl", "registry/ruling/rows.toml"] {
             add(rel);
         }
+        for (t, r) in self.cited() {
+            add(&t);
+            add(&r);
+        }
         if self.odd {
             add("crates/alpha/CRLF.md.tmpl");
             add("registry/ruling/crlf.toml");
@@ -167,6 +174,11 @@ impl Shape {
             out.insert(b"mock/lints.toml".to_vec());
         }
         out
+    }
+
+    /// The templates and row files `cites` adds, under the mock directory.
+    fn cited(&self) -> Vec<(String, String)> {
+        (0 .. self.cites).map(|n| (format!("crates/alpha/docs/gen/t{n:05}.md.tmpl"), format!("registry/ruling/gen{n:05}.toml"))).collect()
     }
 
     /// The calls a consumer of this shape makes, in order: the rounds renamed, each directory
@@ -203,6 +215,10 @@ impl Shape {
             c.write(&m(&format!("{k}/src/main.rs")), b"fn main() {}\n");
         }
         c.write(&m("registry/ruling/rows.toml"), rows("\n").as_bytes());
+        for (n, (t, r)) in self.cited().into_iter().enumerate() {
+            c.write(&m(&t), template(&format!("generated {n}"), "\n").as_bytes());
+            c.write(&m(&r), rows("\n").replace("\"first\"", &format!("\"first_{n}\"")).replace("\"second\"", &format!("\"second_{n}\"")).as_bytes());
+        }
         c.commit_all("chore: the consumer");
 
         c.write(&m("design_rounds/202609010000/202609010000_topic.closed.md"), b"a closed round\n");
