@@ -73,10 +73,15 @@ fn a_checkout_of_a_commit_from_before_the_migration_keeps_the_edit_and_the_way_b
 
 /// Whether any copy in the history of the backup ref of `ns` holds `text`.
 fn history_holds(c: &refs_e2e::Clone, ns: &str, text: &[u8]) -> bool {
+    history_holds_at(c, ns, "NOTES.md", text)
+}
+
+/// Whether any copy in the history of the backup ref of `ns` holds `text` at a path ending in `name`.
+fn history_holds_at(c: &refs_e2e::Clone, ns: &str, name: &str, text: &[u8]) -> bool {
     let commits = c.git_out(&["rev-list", &format!("refs/mock-backup/{ns}")]);
     commits.stdout.lines().any(|commit| {
         let tree = c.git(&["ls-tree", "-r", "-z", "--name-only", commit]);
-        tree.split('\0').filter(|p| p.ends_with("NOTES.md")).any(|p| c.git(&["show", &format!("{commit}:{p}")]).as_bytes() == text)
+        tree.split('\0').filter(|p| p.ends_with(name)).any(|p| c.git(&["show", &format!("{commit}:{p}")]).as_bytes() == text)
     })
 }
 
@@ -220,4 +225,76 @@ fn a_clone_made_before_the_migration_pulls_it_with_an_edit_and_loses_nothing() {
     assert_eq!(fresh.read(NOTES), notes);
     assert_eq!(fresh.read(TMPL), tmpl);
     l.kept(&w, &[&old, &fresh]).unwrap();
+}
+
+/// A merge of a branch cut before the migration that writes over an edit no engine command saw,
+/// while the backup ref is locked, as the reftable backend always has it locked inside the hook: the
+/// copy is made as objects and named only by a file beside the instance's record.
+fn a_copy_named_by_a_file_only(w: &refs_e2e::World) -> refs_e2e::Clone<'_> {
+    let a = refs_e2e::fixture::dirty_instance_and_an_old_branch(w);
+    let common = a.git(&["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    let lock = std::path::Path::new(common.trim()).join("refs/mock-backup/research.lock");
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    std::fs::write(&lock, b"").unwrap();
+    let _ = a.git_out(&["merge", "--no-edit", "feat"]);
+    let _ = a.git_out(&["merge", "--abort"]);
+    std::fs::remove_file(&lock).unwrap();
+    assert!(!a.git_out(&["rev-parse", "-q", "--verify", "refs/mock-backup/research"]).ok, "the control: the ref took the copy");
+    a
+}
+
+const DIRTY: &[u8] = b"DIRTY instance edit\n";
+const IN_REF: &str = "20261001_alpha/NOTES.md";
+
+// Mutation: let `gc` prune the objects of a copy named by a file only; the edit git wrote over is
+// then in no copy. A copy in the backup ref is reachable and kept by any `gc`.
+#[test]
+fn gc_keeps_every_copy_of_an_edit_git_wrote_over() {
+    let w = refs_e2e::World::new();
+    let a = a_copy_named_by_a_file_only(&w);
+    a.git(&["gc", "-q"]);
+    a.ok(&["data-refs", "restore", "research", IN_REF]);
+    assert_eq!(a.read(refs_e2e::fixture::NOTES), DIRTY);
+    // the next look took the copy into the backup ref, which a prune of everything unreachable keeps
+    a.write(refs_e2e::fixture::NOTES, b"edited once more\n");
+    let _ = a.run(&["data-refs", "status"]);
+    a.git(&["gc", "-q", "--prune=now"]);
+    assert!(history_holds(&a, "research", DIRTY) && history_holds(&a, "research", b"edited once more\n"));
+}
+
+// Mutation: none; this pins the window the design names: until the next engine command the objects
+// of a copy named by a file only are named by nothing git reads, and a `gc` that prunes at once
+// (`--prune=now`, or a `gc.pruneExpire` of now) takes them. The edit git wrote over is then in no
+// copy, and the next look fails rather than say the file is safe.
+//
+// Mutation for the rest: refuse every `commit` while the file names a copy that is gone, with no way
+// past; the clone then never commits the ref again and never copies a later edit.
+#[test]
+fn gc_that_prunes_at_once_takes_a_copy_no_engine_command_has_taken_yet() {
+    let w = refs_e2e::World::new();
+    let a = a_copy_named_by_a_file_only(&w);
+    let mut l = Ledger::default();
+    l.write(&a, "mock/research/after.md", b"written after the merge\n");
+    a.git(&["gc", "-q", "--prune=now"]);
+    let s = a.run(&["data-refs", "status", "research"]);
+    let r = a.run(&["data-refs", "restore", "research", IN_REF]);
+    assert!(!r.ok, "the copy outlived the prune; drop this pin: {}", r.all());
+    let notes = refs_e2e::fixture::NOTES;
+    assert!(!a.exists(notes) || a.read(notes) != DIRTY);
+    let all = format!("{}\n{}", s.all(), r.all());
+    let gone = [DIRTY].iter().all(|t| !history_holds(&a, "research", t));
+    assert!(gone, "the edit is in the backup ref; drop this pin: {all}");
+    l.kept(&w, &[&a]).unwrap();
+    // the lost copy is said, and `commit` refuses until the person takes the bytes on disk, which the
+    // refusal names; after that the clone copies and commits again
+    assert!(all.contains("no longer holds"), "{all}");
+    let c = a.fails(&["data-refs", "commit", "research"]);
+    assert!(c.all().contains("--accept-overwritten"), "the refusal names the way past: {}", c.all());
+    a.ok(&["data-refs", "commit", "research", "--accept-overwritten"]);
+    l.write(&a, "mock/research/after.md", b"edited after the prune\n");
+    let s = a.ok(&["data-refs", "status", "research"]);
+    assert!(!s.all().contains("could not"), "{}", s.all());
+    assert!(history_holds_at(&a, "research", "after.md", b"edited after the prune\n"), "later edits are copied again");
+    a.ok(&["data-refs", "commit", "research"]);
+    l.kept(&w, &[&a]).unwrap();
 }
