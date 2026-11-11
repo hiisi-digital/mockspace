@@ -292,6 +292,74 @@ impl DataRefDecl {
     }
 }
 
+/// How far from a recorded author time a commit is still looked at when the recorded hash is gone.
+const PAIR_WINDOW_SECS: i64 = 24 * 60 * 60;
+
+/// The `Mock-Ref` trailer of each declared ref (or of `wanted` alone), naming the commit its
+/// instance here is at. A landing made in this clone was gated against exactly those files, so
+/// these are the lines its commit carries. Refused over an instance with changes the ref does not
+/// hold, since the gate then read files no commit names.
+pub fn trailer_lines(cfg: &crate::config::Config, wanted: Option<&str>) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for d in cfg.data_refs.iter().filter(|d| wanted.is_none_or(|w| d.namespace() == w)) {
+        let ns = d.namespace();
+        let store = d.open(&cfg.repo_root).map_err(|e| format!("{ns}: {e}"))?;
+        let inst = d.instance(&store, &cfg.mock_dir).map_err(|e| format!("{ns}: {e}"))?;
+        let Some(base) = inst.base().map_err(|e| format!("{ns}: {e}"))? else {
+            return Err(format!("{ns}: has no instance, so `instantiate` it"));
+        };
+        if inst.is_dirty().map_err(|e| format!("{ns}: {e}"))? {
+            return Err(format!("{ns}: has changes the ref does not, so `commit` them before the landing is paired"));
+        }
+        let pairing = crate::pairing_ref::pairing_of(&store, Some(&base)).map_err(|e| format!("{ns}: {e}"))?;
+        out.push(crate::pairing::Trailer::new(ns, pairing).map_err(|e| format!("{ns}: {e}"))?.render());
+    }
+    Ok(out)
+}
+
+/// Checks that the commit `rev` carries a `Mock-Ref` trailer for every declared ref and that each
+/// names a commit the ref holds, by hash or, where the hash is gone, by time and digest.
+fn paired(cfg: &crate::config::Config, rev: &str) -> Result<Vec<String>, Vec<String>> {
+    use crate::pairing::Resolution;
+    let message = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&cfg.repo_root)
+        .args(["log", "-1", "--format=%B", rev, "--"])
+        .output()
+        .map_err(|e| vec![format!("running git log: {e}")])?;
+    if !message.status.success() {
+        return Err(vec![format!("`{rev}` is not a commit here: {}", String::from_utf8_lossy(&message.stderr).trim())]);
+    }
+    let trailers = crate::pairing::trailers(&String::from_utf8_lossy(&message.stdout)).map_err(|e| vec![e])?;
+    let (mut ok, mut why) = (Vec::new(), Vec::new());
+    for d in &cfg.data_refs {
+        let ns = d.namespace();
+        let Some(trailer) = trailers.iter().find(|t| t.name() == ns) else {
+            why.push(format!("{ns}: `{rev}` carries no `Mock-Ref` line for it"));
+            continue;
+        };
+        let found = d
+            .open(&cfg.repo_root)
+            .and_then(|store| crate::pairing_ref::resolve(&store, trailer.pairing(), PAIR_WINDOW_SECS));
+        match found {
+            Ok(Resolution::ByHash(c)) => ok.push(format!("{ns}: paired with {c}")),
+            Ok(Resolution::ByTimeAndDigest(c)) => ok.push(format!("{ns}: paired with {c}, found by time and digest")),
+            Ok(Resolution::Ambiguous(hits)) => {
+                why.push(format!("{ns}: the recorded hash is gone and {} commits hold the same files", hits.len()));
+            },
+            Ok(Resolution::Mismatch { .. }) => {
+                why.push(format!("{ns}: the commit `{}` does not hold the files the trailer records", trailer.pairing().hash()));
+            },
+            Ok(Resolution::Missing) => why.push(format!("{ns}: no commit of the ref holds the files the trailer records")),
+            Ok(Resolution::Truncated) => {
+                why.push(format!("{ns}: not found in the history fetched, which is cut short; fetch more of the ref"));
+            },
+            Err(e) => why.push(format!("{ns}: {e}")),
+        }
+    }
+    if why.is_empty() { Ok(ok) } else { Err(why) }
+}
+
 /// `cargo mock data-refs <status|verify|instantiate|commit> [namespace]`. Prints one line per ref it
 /// touched, and a refusal on stderr; exits non-zero when any ref could not be done.
 pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode {
@@ -300,12 +368,43 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
     use mockspace_store::{Refuse, Store};
 
     let Some((verb, rest)) = args.split_first() else {
-        eprintln!("data-refs: status, verify, instantiate or commit [namespace]");
+        eprintln!("data-refs: status, verify, instantiate, commit or trailers [namespace], or paired <commit>");
         return ExitCode::FAILURE;
     };
-    if !matches!(*verb, "status" | "verify" | "instantiate" | "commit") {
-        eprintln!("data-refs: `{verb}` is none of status, verify, instantiate or commit");
-        return ExitCode::FAILURE;
+    match *verb {
+        "trailers" => {
+            return match trailer_lines(cfg, rest.first().copied()) {
+                Ok(lines) => {
+                    lines.iter().for_each(|l| println!("{l}"));
+                    ExitCode::SUCCESS
+                },
+                Err(why) => {
+                    eprintln!("{why}");
+                    ExitCode::FAILURE
+                },
+            };
+        },
+        "paired" => {
+            let Some(rev) = rest.first() else {
+                eprintln!("data-refs: `paired` takes the commit to check");
+                return ExitCode::FAILURE;
+            };
+            return match paired(cfg, rev) {
+                Ok(lines) => {
+                    lines.iter().for_each(|l| println!("{l}"));
+                    ExitCode::SUCCESS
+                },
+                Err(why) => {
+                    why.iter().for_each(|l| eprintln!("{l}"));
+                    ExitCode::FAILURE
+                },
+            };
+        },
+        "status" | "verify" | "instantiate" | "commit" => {},
+        _ => {
+            eprintln!("data-refs: `{verb}` is none of status, verify, instantiate, commit, trailers or paired");
+            return ExitCode::FAILURE;
+        },
     }
     let wanted = rest.first().copied();
     let decls: Vec<&DataRefDecl> = cfg.data_refs.iter().filter(|d| wanted.is_none_or(|w| d.namespace() == w)).collect();

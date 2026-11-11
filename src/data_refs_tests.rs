@@ -223,6 +223,48 @@ mod verbs {
         assert_eq!(standing(&a), Ok(()), "the control: untracked, with the source still tracked, it stands");
     }
 
+    fn head_message(dir: &std::path::Path, message: &str) {
+        git(dir, &["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", message]);
+    }
+
+    #[test]
+    fn a_commit_is_paired_with_the_data_it_was_made_against() {
+        let w = World::new();
+        let a = with_ref(&w, "a");
+        std::fs::create_dir_all(a.mock_dir.join("research")).unwrap();
+        std::fs::write(a.mock_dir.join("research/note.md"), "findings\n").unwrap();
+        assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
+
+        let lines = trailer_lines(&a, None).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("Mock-Ref: research "), "{lines:?}");
+
+        head_message(&a.repo_root, &format!("land a thing\n\n{}\n", lines[0]));
+        assert_eq!(run(&a, &["paired", "HEAD"]), ExitCode::SUCCESS);
+
+        // a commit that names no pairing for a declared ref is not paired
+        head_message(&a.repo_root, "land another thing\n");
+        assert_eq!(run(&a, &["paired", "HEAD"]), ExitCode::FAILURE, "the control: no trailer");
+
+        // and one whose trailer names files the ref never held is not either
+        let forged = lines[0].rsplit_once(' ').map(|(head, _)| format!("{head} {}", "0".repeat(64))).unwrap();
+        head_message(&a.repo_root, &format!("land a third\n\n{forged}\n"));
+        assert_eq!(run(&a, &["paired", "HEAD"]), ExitCode::FAILURE, "the control: a digest of other files");
+    }
+
+    #[test]
+    fn a_trailer_is_not_written_over_changes_the_ref_does_not_hold() {
+        let w = World::new();
+        let a = with_ref(&w, "a");
+        std::fs::create_dir_all(a.mock_dir.join("research")).unwrap();
+        std::fs::write(a.mock_dir.join("research/note.md"), "findings\n").unwrap();
+        assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
+        assert!(trailer_lines(&a, None).is_ok(), "the control: clean, it is written");
+        std::fs::write(a.mock_dir.join("research/note.md"), "changed\n").unwrap();
+        let why = trailer_lines(&a, None).unwrap_err();
+        assert!(why.contains("commit"), "{why}");
+    }
+
     #[test]
     fn verify_passes_on_a_clean_instance_and_names_what_is_wrong_otherwise() {
         let w = World::new();

@@ -419,6 +419,8 @@ Such a table takes no `instance`, since its files lie among the branch's own. `d
 
 Every command but `data-refs` and the recovery ones (`clean`, `activate`, `deactivate`, `status`, `migrate`, `registry-append`) stops before it reads the mock directory when a declared ref has no instance in this clone, and when the branch still tracks a file a ref holds. The first is answered by `cargo mock data-refs instantiate`, the second by `git rm --cached` on the files it names.
 
+A landing is gated against the data as one clone held it, and the commit says which. `cargo mock data-refs trailers` prints a `Mock-Ref: <namespace> <hash> <author time> <digest>` line for each declared ref, naming the commit its instance is at, and refuses over an instance with changes the ref does not hold. The landing's message carries those lines. `cargo mock data-refs paired <commit>` reads them back: it fails unless the commit has a line for every declared ref and each names a commit of the ref, by hash or, where the hash is gone after a rehouse, by the one commit within a day of the recorded time whose files give the recorded digest.
+
 ### Lints
 
 Per-lint severity per gate:

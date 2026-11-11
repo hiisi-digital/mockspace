@@ -193,7 +193,10 @@ const COMMANDS: &[Cmd] = &[
                   `include` holds only the files of its directory those patterns match \
                   (`**/*.md.tmpl`), and the branch keeps the rest. Every other command stops \
                   first when a declared ref has no instance, or when the branch still tracks \
-                  a file a ref holds.",
+                  a file a ref holds. `trailers` prints one `Mock-Ref` line for each ref, \
+                  naming the commit its instance is at, for the message of a landing gated \
+                  here; `paired <commit>` fails unless that commit carries such a line for \
+                  every declared ref and each names files the ref holds.",
     },
     Cmd {
         name:    "registry-append",
