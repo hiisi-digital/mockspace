@@ -410,7 +410,7 @@ fn a_provenance_finding_blocks_a_commit_staging_another_file() {
     let tmp = repo();
     write(
         &tmp.path().join("mock/registry/law.toml"),
-        "[[law]]\nid = \"one\"\nrests_on = [\"nosuchroot::DESIGN::1\"]\n",
+        "[[law]]\nid = \"one\"\nrests_on = [\"nosuchroot::design::1\"]\n",
     );
     common::git_in_dir(tmp.path(), &["add", "-A"]);
     common::git_in_dir(tmp.path(), &["commit", "-q", "-m", "chore: law"]);

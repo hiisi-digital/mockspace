@@ -574,7 +574,12 @@ pub fn resolve_typed(
         // build verifies.
         return resolve_crate_ref(parts[1], cfg, docs_dir).map(|link| {
             Resolved::Citation {
-                text: parts[1].to_string(),
+                // The crate as the project spells it, which the reference does not: it names the
+                // crate in the standard's character set, so `my_crate` shows as `my-crate`.
+                text: link
+                    .strip_prefix('[')
+                    .and_then(|l| l.split_once("]("))
+                    .map_or_else(|| parts[1].to_string(), |(shown, _)| shown.to_string()),
                 link: link
                     .rsplit_once('(')
                     .and_then(|(_, l)| l.strip_suffix(')'))

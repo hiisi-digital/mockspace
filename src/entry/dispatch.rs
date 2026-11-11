@@ -1673,12 +1673,26 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                         (Some(t), true) => registry::GateScope::WhenChanged(t.clone()),
                         _ => registry::GateScope::Always,
                     };
+                    // a text the standard refuses is most often a reference in the spelling before it
+                    let hint = if group.iter().any(|e| {
+                        registry::placeholder_exprs(e).iter().any(|(_, inner)| {
+                            matches!(registry::FileRef::read(inner), Err(registry::Refusal::Syntax(_)))
+                        })
+                    }) {
+                        format!(
+                            " Some are not references under the letkajenkka standard; `cargo mock \
+                             migrate {}` rewrites a repository written in the spelling before it.",
+                            registry::MIGRATION
+                        )
+                    } else {
+                        String::new()
+                    };
                     findings.push(registry::RegistryFinding {
                         kind: "dangling-reference",
                         message: format!(
                             "{file}: {} reference(s) resolved to nothing and were rendered \
                              literally ({}). A reference that resolves to nothing is worse than \
-                             prose, because it looks checked.",
+                             prose, because it looks checked.{hint}",
                             group.len(),
                             shown.join(", ")
                         ),

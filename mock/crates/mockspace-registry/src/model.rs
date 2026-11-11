@@ -16,7 +16,7 @@ pub const REGISTRY_ROOT: &str = "reg";
 ///
 /// The project's crate prefix is stable, so both the short name and the full
 /// directory name resolve: `crates::mechanism` and
-/// `crates::widget-mechanism` are the same crate. Writing the short
+/// `crates::widget_mechanism` are the same crate. Writing the short
 /// form everywhere keeps a rename of the prefix from touching every reference.
 pub const CRATE_ROOT: &str = "crates";
 
@@ -397,9 +397,9 @@ pub fn reference_fields(namespaces: &[RegistryNamespace]) -> BTreeMap<String, Ve
 /// Roots every project gets without declaring them.
 ///
 /// `reg` is the registry itself. `mock` is the mock directory, which is where
-/// a project's own design documents live, so `mock::DESIGN::12` works
+/// a project's own design documents live, so `mock::design::12` works
 /// everywhere without configuration. Deeper paths need no extra root because
-/// the path may have any number of segments: `mock::crates::numeric::DESIGN::12`
+/// the path may have any number of segments: `mock::crates::numeric::design::12`
 /// resolves the same way.
 ///
 /// Anything project-specific is declared rather than baked. Not every project

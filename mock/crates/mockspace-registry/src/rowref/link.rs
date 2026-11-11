@@ -13,7 +13,7 @@
 //!
 //! An item of such a field is one of two shapes that cannot be mistaken for each
 //! other. A file citation has a root, a path and an anchor, so three segments or
-//! more: `research::dir::file::#heading`. A row link has two, a declared
+//! more: `research::dir::file::heading`. A row link has two, a declared
 //! namespace and a slug: `tenet::engine_time`. The first segment of a link is
 //! checked against the declared namespaces, and `namespace-root-collision`
 //! keeps a root from carrying the same name, so a two-segment item is a link

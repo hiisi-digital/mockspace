@@ -1,6 +1,6 @@
 # Reference syntax
 
-A reference is `{{ root::selector }}`, written in any `*.md.tmpl` and in any
+A reference is `{{ root::step::step }}`, a path in the letkajenkka standard, written in any `*.md.tmpl` and in any
 registry field declared to hold one. The rule carries the syntax and this
 project's own roots and namespaces. This is the rest: fields that hold a row,
 the three functions that ask about a thing rather than render it, and how a
@@ -41,7 +41,7 @@ conventionally `related`, and every row it relates to goes in it, whichever
 namespace that row sits in:
 
 ```toml
-related = ["tenet::engine_time", "bevy::time_step", "research::202611010100_bevy-reference::NOTES::#time"]
+related = ["tenet::engine_time", "bevy::time_step", "research::bevy_reference::notes::time"]
 ```
 
 An item of two segments, a declared namespace and a slug, is a link to that row.
@@ -115,15 +115,20 @@ that worked.
 
 ## Addressing a citation
 
-A citation is `root::path::anchor`. The anchor is a heading (`#the-four-lanes`)
-or a line number, and **the heading is the one to prefer**. A line number fails
+A citation is `root::path::anchor`. The anchor is a heading (`the_four_lanes`),
+a line (`12`) or a span of lines (`12..20`), and **the heading is the one to prefer**. A line number fails
 silently: an edit above it shifts the target, the citation still resolves, and it
 now points at different content. A heading fails loudly when renamed, which is a
 report rather than a lie. Line numbers are honest only in a root declared frozen.
 
-A path may have any depth and the extension may be omitted, so `mock::DESIGN::12`
-finds `DESIGN.md.tmpl` without anybody tracking which form exists where. Two
-matches is an error rather than a guess.
+A path may have any depth. Every step is lowercase letters, digits and underscores,
+starting with a letter, and the host folds its own names into that: `mock::design::12`
+finds `DESIGN.md.tmpl`, `crates::my_crate` is the directory `my-crate`, and
+`the_four_lanes` is the heading a forge anchors as `the-four-lanes`. A name is never
+written with its extension, an uppercase letter, a hyphen or a dot, and the old
+spelling is refused with a pointer to `cargo mock migrate references-to-letkajenkka`.
+Two files folding to one name is an error rather than a guess, and a name that cannot
+fold (it opens on a digit, or holds a dot) cannot be cited.
 
 A namespace is addressed by its own name: `law::keys`, `vocab::xpbd`. There is no
 prefix, because slot zero is either a declared root or a declared namespace and

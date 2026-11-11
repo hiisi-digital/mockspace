@@ -43,6 +43,14 @@ pub const MIGRATIONS: &[Migration] = &[
         summary: "renames design-round files that carry a `YYYY-MM-DD_` prefix to the compact timestamp form",
         plan:    plan_round_filenames,
     },
+    Migration {
+        name:    "references-to-letkajenkka",
+        summary: "none: rewrites every reference of the spelling before the letkajenkka standard (uppercase and file \
+                  extensions in a name, `::#heading`, spaces beside a separator) in the `*.md.tmpl` files and the \
+                  registry data to the new spelling, where that reaches the same file and line, and names each \
+                  reference it leaves",
+        plan:    plan_references,
+    },
 ];
 
 /// The names of [`MIGRATIONS`].
@@ -74,6 +82,11 @@ enum Step {
     Rename {
         from: String,
         to:   String,
+    },
+    /// Write a file whole, its path from the repository root.
+    Write {
+        path: String,
+        text: String,
     },
 }
 
@@ -179,6 +192,10 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
             std::fs::rename(cfg.repo_root.join(from), cfg.repo_root.join(to))
                 .map_err(|e| format!("renaming {from} to {to}: {e}"))
         },
+        Step::Write {
+            path,
+            text,
+        } => std::fs::write(cfg.repo_root.join(path), text).map_err(|e| format!("writing {path}: {e}")),
     }
 }
 
@@ -430,6 +447,17 @@ fn plan_round_filenames(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String>
         lines,
         steps,
         after: "commit the renames on this branch",
+    })
+}
+
+fn plan_references(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String>> {
+    flags(args, &[])?;
+    let (lines, writes) = crate::migrate_refs::plan(cfg)?;
+    let steps = writes.into_iter().map(|(path, text)| Step::Write { path, text }).collect();
+    Ok(Plan {
+        lines,
+        steps,
+        after: "commit the rewritten files on this branch",
     })
 }
 

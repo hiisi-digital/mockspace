@@ -44,7 +44,7 @@
 //! One syntax, `root::selector...`, covers both kinds:
 //!
 //! - `reg::vocab::xpbd` selects a row; `reg::vocab::xpbd::what` selects a field.
-//! - `seed::DESIGN::844` selects a line in a file, under a declared root.
+//! - `seed::design::844` selects a line in a file, under a declared root.
 //!
 //! Both resolve at generation and both are checked, so a reference pointing
 //! nowhere is reported rather than rendered as something that looks fine.
@@ -65,7 +65,8 @@ mod env;
 mod load;
 pub mod merge;
 mod model;
-mod refpath;
+pub mod legacy_refs;
+pub mod refpath;
 mod refs;
 mod render;
 mod resolve;
