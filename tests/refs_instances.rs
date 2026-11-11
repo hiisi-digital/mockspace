@@ -96,10 +96,14 @@ fn a_clone_with_no_instance_runs_the_recovery_verbs_and_is_stopped_for_the_rest(
         let o = b.fails(args);
         assert!(o.all().contains("instantiate") || o.all().contains("instance"), "{args:?}: {}", o.all());
     }
-    for args in [&["status"][..], &["data-refs", "status"]] {
-        let o = b.run(args);
-        assert!(o.ok || o.all().contains("research"), "{args:?} is a recovery verb: {}", o.all());
-    }
+    let s = b.run(&["status"]);
+    assert!(s.ok, "`status` is a recovery verb and runs: {}", s.all());
+    let d = b.fails(&["data-refs", "status"]);
+    assert!(
+        d.all().contains("research") && d.all().contains("has no instance, so `instantiate` it"),
+        "`data-refs status` names the ref and the way on: {}",
+        d.all()
+    );
     assert!(!b.exists("mock/research") && !b.exists("mock/benches"), "nothing was made while stopped");
     b.ok(&["data-refs", "instantiate"]);
     b.ok(&["--generate-only"]);
@@ -153,11 +157,23 @@ fn a_rebase_onto_a_moved_dev_keeps_the_instance() {
 fn a_git_clean_that_wipes_the_instance_is_recovered_to_the_committed_state() {
     let w = fixture::migrated_remote();
     let a = fixture::seat(&w, "a");
+    let before = check::branch(&a);
     a.git(&["clean", "-q", "-f", "-d", "-x"]);
     assert!(!a.exists(NOTES));
     let o = a.fails(&["--generate-only"]);
     assert!(o.all().contains("restore"), "{}", o.all());
     a.ok(&["data-refs", "restore"]);
     instance_matches(&a, &held_on_remote(&w, &ALL), false).unwrap();
-    let _ = check::branch;
+    assert_eq!(check::branch(&a), before, "the branch is what it was before the clean and the restore");
+}
+
+// Mutation: let `update` fail for some other reason than the missing instance (a config error, a
+// panic turned into a refusal); the exit code alone would not tell.
+#[test]
+fn an_update_without_an_instance_says_to_instantiate() {
+    let w = fixture::migrated_remote();
+    let b = w.clone_of("b");
+    let o = b.fails(&["data-refs", "update", "research"]);
+    assert!(o.all().contains("research: has no instance, so `instantiate` it"), "{}", o.all());
+    assert!(!b.exists("mock/research"), "nothing was made while stopped");
 }

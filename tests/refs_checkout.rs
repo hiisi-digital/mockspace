@@ -18,6 +18,28 @@ const ALL: [Held; 4] = [
     Held { ns: "templates", path: "crates" },
 ];
 
+/// Checks out `branch` and says so when git refused or HEAD did not move there: a test of what
+/// survives a checkout means nothing where the checkout did not happen.
+fn switch(c: &refs_e2e::Clone, branch: &str) {
+    let o = c.git_out(&["checkout", "-q", branch]);
+    assert!(o.ok, "checkout of {branch} was refused: {}", o.all());
+    assert_eq!(c.git(&["rev-parse", "--abbrev-ref", "HEAD"]).trim(), branch, "HEAD is not on {branch}");
+}
+
+/// Leaves for `branch` where git may refuse to protect an edit: either the checkout happened and HEAD is on
+/// `branch`, or it was refused and HEAD stays where it was. Gives whether it happened.
+fn try_switch(c: &refs_e2e::Clone, branch: &str) -> bool {
+    let at = c.git(&["rev-parse", "HEAD"]);
+    let o = c.git_out(&["checkout", "-q", branch]);
+    if o.ok {
+        assert_eq!(c.git(&["rev-parse", "--abbrev-ref", "HEAD"]).trim(), branch, "HEAD is not on {branch}");
+    } else {
+        assert_eq!(c.git(&["rev-parse", "HEAD"]), at, "a refused checkout moved HEAD: {}", o.all());
+        assert!(o.all().contains("overwritten"), "refused for another reason: {}", o.all());
+    }
+    o.ok
+}
+
 /// A repository whose `old` branch was cut before the migration, with the migration on `dev`.
 fn migrated_with_an_old_branch(w: &World) -> refs_e2e::Clone<'_> {
     let a = w.first_clone("a");
@@ -35,10 +57,10 @@ fn a_checkout_of_a_commit_from_before_the_migration_keeps_an_uncommitted_edit() 
     let w = World::new();
     let a = migrated_with_an_old_branch(&w);
     a.write(NOTES, b"edited after the migration\n");
-    let _ = a.git_out(&["checkout", "-q", "old"]);
+    switch(&a, "old");
     assert_eq!(a.read(NOTES), b"edited after the migration\n", "on the old branch");
     // leaving it again must not take the edit either, whether git refuses or lets it be
-    let _ = a.git_out(&["checkout", "-q", "dev"]);
+    try_switch(&a, "dev");
     assert_eq!(a.read(NOTES), b"edited after the migration\n", "back on dev");
 }
 
@@ -49,9 +71,9 @@ fn a_file_newer_on_the_ref_than_the_old_commit_is_not_replaced_by_the_old_bytes(
     let a = migrated_with_an_old_branch(&w);
     a.write(NOTES, b"newer, committed to the ref\n");
     a.ok(&["data-refs", "commit", "research"]);
-    let _ = a.git_out(&["checkout", "-q", "old"]);
+    switch(&a, "old");
     assert_eq!(a.read(NOTES), b"newer, committed to the ref\n");
-    let _ = a.git_out(&["checkout", "-q", "dev"]);
+    try_switch(&a, "dev");
     assert_eq!(a.read(NOTES), b"newer, committed to the ref\n");
 }
 
@@ -82,7 +104,7 @@ fn a_worktree_made_after_the_migration_keeps_its_edit_through_the_same_checkout(
     let wt = a.at(path);
     wt.ok(&["data-refs", "instantiate"]);
     wt.write(NOTES, b"edited in the worktree\n");
-    let _ = wt.git_out(&["checkout", "-q", "old"]);
+    switch(&wt, "old");
     assert_eq!(wt.read(NOTES), b"edited in the worktree\n");
 }
 
@@ -127,7 +149,10 @@ fn a_forced_checkout_and_a_hard_reset_keep_the_edit_too() {
         let w = World::new();
         let a = migrated_with_an_old_branch(&w);
         a.write(NOTES, b"edited, not committed\n");
-        let _ = a.git_out(overwrite);
+        let o = a.git_out(overwrite);
+        assert!(o.ok, "{overwrite:?} was refused: {}", o.all());
+        let old = a.git(&["rev-parse", "old"]);
+        assert_eq!(a.git(&["rev-parse", "HEAD"]), old, "{overwrite:?} did not move HEAD to the old commit");
         assert_eq!(a.read(NOTES), b"edited, not committed\n", "{overwrite:?}");
     }
 }
