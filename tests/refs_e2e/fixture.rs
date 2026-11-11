@@ -33,8 +33,21 @@ pub const REFS: [(&str, &str, &[&str]); 4] = [
     ("templates", "crates", &["**/*.md.tmpl"]),
 ];
 
-/// Build the consumer in `c` over several commits and push `dev`.
+/// Build the consumer with its ignored build output, and push `dev`.
 pub fn build(c: &Clone) {
+    build_tracked(c);
+    add_ignored_output(c);
+}
+
+/// Ignored build output, nested inside the directories a migration holds. Never tracked.
+pub fn add_ignored_output(c: &Clone) {
+    c.write("mock/target/debug/junk.o", &bytes(4, 2048));
+    c.write("mock/benches/hot/target/release/out.bin", &bytes(5, 2048));
+    c.write("mock/research/sketches/probe/target/debug/x", &bytes(6, 512));
+}
+
+/// The consumer over several commits, pushed on `dev`, with nothing ignored on disk.
+pub fn build_tracked(c: &Clone) {
     // commit 1: the skeleton and the sources
     c.write(".gitignore", MANAGED_IGNORE.as_bytes());
     c.write("mock/mockspace.toml", b"project_name = \"fixture\"\ncrate_prefix = \"fixture\"\n");
@@ -87,11 +100,6 @@ pub fn build(c: &Clone) {
     c.write("mock/research/20261001_alpha/NOTES.md", b"findings on alpha, revised\n");
     c.commit_all("docs: revise the alpha notes");
 
-    // ignored build output, nested, never tracked
-    c.write("mock/target/debug/junk.o", &bytes(4, 2048));
-    c.write("mock/benches/hot/target/release/out.bin", &bytes(5, 2048));
-    c.write("mock/research/sketches/probe/target/debug/x", &bytes(6, 512));
-
     c.push();
 }
 
@@ -137,7 +145,7 @@ pub fn migrated_remote() -> super::world::World {
     let w = super::world::World::new();
     {
         let seed = w.first_clone("seed");
-        build(&seed);
+        build_tracked(&seed);
         migrate_all(&seed);
         seed.push();
     }
