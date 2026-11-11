@@ -121,6 +121,8 @@ fn an_unchanged_instance_is_not_hashed_again_on_the_next_run() {
     let (log, _fail) = counting_git(&w);
     let a = w.clone_of("a");
     a.ok(&["data-refs", "instantiate"]);
+    // an entry is trusted once the file was older than the margin when it was hashed
+    std::thread::sleep(std::time::Duration::from_millis(2100));
     let t0 = Instant::now();
     a.ok(&["data-refs", "status", "research"]);
     let first = t0.elapsed();

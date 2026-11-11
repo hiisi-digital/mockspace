@@ -117,6 +117,8 @@ impl Instance<'_> {
             return Ok((here.into_iter().collect(), BTreeSet::new()));
         }
         let delta = self.delta()?;
+        // every look the engine takes at the instance keeps a copy of what is edited in it
+        self.snapshot_of(&delta)?;
         let mut held: BTreeSet<String> = self.store.tree_ids(&delta.base)?.into_keys().collect();
         held.extend(self.walk()?);
         Ok((held, delta.sent.into_keys().collect()))
@@ -175,48 +177,59 @@ impl Instance<'_> {
         std::fs::metadata(self.dir.join(rel)).is_ok_and(|m| m.permissions().mode() & 0o100 != 0)
     }
 
-    /// The regular files under the directory, as `/`-separated paths, sorted, without the ones a
-    /// `.gitignore` ignores (a build's output) unless the base, or the local tip where there is
-    /// no record, holds them. Those are the branch's ignored files, not the instance's.
+    /// Whether the executable bit of a file here means anything: git's `core.fileMode`, true where
+    /// it is not set. Where it is off the filesystem reports a mode that is not the file's own (a
+    /// mount that makes every file executable), and the bit is taken from the base instead.
+    pub(super) fn file_mode(&self) -> Result<bool, StoreError> {
+        if let Some(on) = self.file_mode.get() {
+            return Ok(*on);
+        }
+        let out = self.store.git.run(&["config", "--type=bool", "--get", "core.fileMode"], &[], None)?;
+        let on = match out.code {
+            Some(0) => out.text() != "false",
+            Some(1) => true,
+            _ => {
+                return Err(StoreError::Git {
+                    command: "config --get core.fileMode".to_owned(),
+                    detail:  out.stderr,
+                });
+            },
+        };
+        let _ = self.file_mode.set(on);
+        Ok(on)
+    }
+
+    /// The regular files under the directory, as `/`-separated paths, sorted. Every regular file
+    /// is data, whatever a `.gitignore` says: a ref holds the files its patterns match. A cache
+    /// directory (one with a `CACHEDIR.TAG` that carries the standard signature, which is what
+    /// cargo writes into a `target`) is a build's output and is not read, unless the base, or the
+    /// local tip where there is no record, holds a file under it.
     pub(super) fn walk(&self) -> Result<Vec<String>, StoreError> {
-        let known = match self.base()?.or(self.store.local_tip()?) {
+        let known: BTreeSet<String> = match self.base()?.or(self.store.local_tip()?) {
             Some(commit) => self.store.tree_ids(&commit)?.into_keys().collect(),
             None => BTreeSet::new(),
         };
-        self.walk_keeping(&known)
-    }
-
-    /// [`Self::walk`] with `keep`, paths that stay in even where a `.gitignore` ignores them.
-    pub(super) fn walk_keeping(&self, keep: &BTreeSet<String>) -> Result<Vec<String>, StoreError> {
         let mut out = Vec::new();
-        self.walk_into(&self.dir, "", &mut out)?;
-        let ignored = self.ignored()?;
-        if !ignored.is_empty() {
-            out.retain(|p| keep.contains(p) || !ignored.iter().any(|i| p == i || (i.ends_with('/') && p.starts_with(i.as_str()))));
-        }
+        self.walk_into(&self.dir, "", &known, &mut out)?;
         Ok(out)
     }
 
-    /// What the directory holds that a `.gitignore` of the branch ignores, as paths relative to
-    /// the directory, a wholly ignored directory as its path with a closing `/`. Only the
-    /// `.gitignore` files are asked: the clone's own exclusions list this instance's files.
-    fn ignored(&self) -> Result<Vec<String>, StoreError> {
-        if !self.dir.is_dir() {
-            return Ok(Vec::new());
-        }
-        let dir = self.dir.display().to_string();
-        let out = self.store.git.run(
-            &["-C", &dir, "ls-files", "-z", "--others", "--ignored", "--directory", "--exclude-per-directory=.gitignore"],
-            &[],
-            None,
-        )?;
-        if !out.ok() {
-            return Ok(Vec::new());
-        }
-        Ok(out.stdout.split(|b| *b == 0).filter(|e| !e.is_empty()).map(|e| String::from_utf8_lossy(e).into_owned()).collect())
+    /// Whether the directory at `at` is a cache directory, by the signature the cache directory
+    /// tag specification names.
+    fn is_cache_dir(at: &Path) -> bool {
+        use std::io::Read;
+        const SIGNATURE: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
+        let mut head = [0u8; SIGNATURE.len()];
+        std::fs::File::open(at.join("CACHEDIR.TAG")).and_then(|mut f| f.read_exact(&mut head)).is_ok() && head == *SIGNATURE
     }
 
-    pub(super) fn walk_into(&self, dir: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), StoreError> {
+    fn walk_into(
+        &self,
+        dir: &Path,
+        prefix: &str,
+        known: &BTreeSet<String>,
+        out: &mut Vec<String>,
+    ) -> Result<(), StoreError> {
         let mut entries = std::fs::read_dir(dir)
             .map_err(|e| self.io("reading", e))?
             .collect::<Result<Vec<_>, _>>()
@@ -229,11 +242,17 @@ impl Instance<'_> {
             let rel = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
             let kind = entry.file_type().map_err(|e| self.io("reading", e))?;
             if kind.is_dir() {
-                if self.held.as_ref().is_none_or(|h| h.may_hold_under(&rel)) {
-                    self.walk_into(&entry.path(), &rel, out)?;
+                let below = format!("{rel}/");
+                let holds_some = known.range(below.clone()..).next().is_some_and(|k| k.starts_with(&below));
+                if self.held.as_ref().is_some_and(|h| !h.may_hold_under(&rel)) {
+                    // nothing of the patterns can be in there
+                } else if !holds_some && Self::is_cache_dir(&entry.path()) {
+                    // a build's output: not data, and not named a loss because it is not read
+                } else {
+                    self.walk_into(&entry.path(), &rel, known, out)?;
                 }
             } else if !self.holds(&rel) {
-                // the branch's own, or a build's: not this instance's to read or to refuse
+                // the branch's own: not this instance's to read or to refuse
             } else if kind.is_symlink() {
                 return Err(self.fail("holds a symlink", vec![rel]));
             } else if kind.is_file() {
@@ -245,21 +264,45 @@ impl Instance<'_> {
         Ok(())
     }
 
-    /// The blob id each of `paths` would have if committed as it is, by path. A path that is
-    /// not a file here has no entry.
+    /// The blob id each of `paths` would have if committed as it is, by path. A path that is not
+    /// a file here has no entry. The executable bit is the file's own where `core.fileMode` is
+    /// on, and else the one `modes` holds for the path (ids of the base or the tip), none for a
+    /// path it does not hold. A file whose size, times and inode are what they were when it was
+    /// hashed, and that was already old enough then for a later write to show, is not hashed
+    /// again; `whole` says `paths` is every file of the directory, so the cache forgets the rest.
     pub(super) fn local_ids<S: AsRef<str>>(
         &self,
         paths: &[S],
+        modes: &BTreeMap<String, String>,
+        whole: bool,
     ) -> Result<BTreeMap<String, String>, StoreError> {
-        let present: Vec<&str> = paths
-            .iter()
-            .map(AsRef::as_ref)
-            .filter(|p| self.is_file(p))
-            .collect();
+        use std::os::unix::fs::PermissionsExt;
+        let trust_mode = self.file_mode()?;
+        let mut stats = self.load_stats();
         let mut ids = BTreeMap::new();
-        for chunk in present.chunks(BATCH) {
+        let mut hashed: Vec<(&str, super::stats::Stamp, bool)> = Vec::new();
+        for path in paths.iter().map(AsRef::as_ref) {
+            let Ok(meta) = std::fs::metadata(self.dir.join(path)) else { continue };
+            if !meta.is_file() {
+                continue;
+            }
+            let exec = if trust_mode {
+                meta.permissions().mode() & 0o100 != 0
+            } else {
+                modes.get(path).is_some_and(|id| crate::ref_history::split_id(id).1)
+            };
+            let stamp = super::stats::Stamp::of(&meta);
+            match stats.trusted(path, &stamp) {
+                Some(id) => {
+                    ids.insert(path.to_owned(), with_mode(id, exec));
+                },
+                None => hashed.push((path, stamp, exec)),
+            }
+        }
+        let at = super::stats::now();
+        for chunk in hashed.chunks(BATCH) {
             let mut input = String::new();
-            for path in chunk {
+            for (path, ..) in chunk {
                 input.push_str(&self.dir.join(path).display().to_string());
                 input.push('\n');
             }
@@ -276,11 +319,20 @@ impl Instance<'_> {
                     detail:  format!("{} ids for {} paths", found.len(), chunk.len()),
                 });
             }
-            for (path, id) in chunk.iter().zip(found) {
-                let id = if self.is_exec(path) { format!("{id}{}", crate::ref_history::EXEC) } else { id.to_owned() };
-                ids.insert((*path).to_owned(), id);
+            for ((path, stamp, exec), id) in chunk.iter().zip(found) {
+                stats.put(path, *stamp, id, at);
+                ids.insert((*path).to_owned(), with_mode(id, *exec));
             }
         }
+        if whole {
+            stats.retain(|p| ids.contains_key(p));
+        }
+        self.save_stats(&stats);
         Ok(ids)
     }
+}
+
+/// `id` with the executable marker the ids of a tree carry, where `exec`.
+fn with_mode(id: &str, exec: bool) -> String {
+    if exec { format!("{id}{}", crate::ref_history::EXEC) } else { id.to_owned() }
 }

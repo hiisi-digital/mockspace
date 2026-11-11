@@ -62,12 +62,16 @@ impl Instance<'_> {
 
     /// Drops the record, if there is one. Used to undo a `materialize` that did not finish.
     pub(super) fn forget(&self) {
+        self.forget_stats();
         if let Ok(file) = self.record_file() {
             let _ = std::fs::remove_file(file);
         }
     }
 
-    fn record_file(&self) -> Result<PathBuf, StoreError> {
+    pub(super) fn record_file(&self) -> Result<PathBuf, StoreError> {
+        if let Some(file) = self.record_at.get() {
+            return Ok(file.clone());
+        }
         let common = self.store.git.must(
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
             &[],
@@ -78,7 +82,9 @@ impl Instance<'_> {
             .store
             .git
             .must(&["hash-object", "--stdin"], &[], Some(key.as_bytes()))?;
-        Ok(PathBuf::from(common.text()).join(RECORDS).join(id.text()))
+        let file = PathBuf::from(common.text()).join(RECORDS).join(id.text());
+        let _ = self.record_at.set(file.clone());
+        Ok(file)
     }
 
     /// Adds the directory to the exclude file the repository shares between its work trees, when
@@ -103,25 +109,9 @@ impl Instance<'_> {
         if rel.is_empty() && self.held.is_none() {
             return Ok(());
         }
-        let mut lead = String::new();
-        for c in rel.chars() {
-            if "\\*?[]!# ".contains(c) {
-                lead.push('\\');
-            }
-            lead.push(c);
-        }
-        if !lead.is_empty() {
-            lead.insert(0, '/');
-        }
         // the whole directory, or each pattern under it: a pattern is checked to hold nothing the
         // exclude file reads otherwise than the instance does
-        let lines: Vec<String> = match &self.held {
-            None => vec![format!("{lead}/")],
-            // an exclude pattern matches a directory as well as a file, and an excluded directory is
-            // never looked into, so each pattern is followed by the line that takes directories
-            // back out of it: what is left excluded is the files, which is what the instance holds
-            Some(held) => held.patterns().flat_map(|p| [format!("{lead}/{p}"), format!("!{lead}/{p}/")]).collect(),
-        };
+        let lines = super::lines::exclude_lines(rel, self.held.as_ref());
         let out = self.store.git.must(
             &["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
             &[],

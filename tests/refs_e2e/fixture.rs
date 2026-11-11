@@ -38,8 +38,16 @@ pub fn build(c: &Clone) {
     add_ignored_output(c);
 }
 
-/// Ignored build output, nested inside the directories a migration holds. Never tracked.
+/// What cargo writes into the top of a `target` directory, which is how a directory is told for a
+/// cache.
+pub const CACHE_TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55\n# This file is a cache directory tag created by cargo.\n";
+
+/// Ignored build output, nested inside the directories a migration holds, each `target` tagged as
+/// cargo tags it. Never tracked.
 pub fn add_ignored_output(c: &Clone) {
+    for t in ["mock/target", "mock/benches/hot/target", "mock/research/sketches/probe/target"] {
+        c.write(&format!("{t}/CACHEDIR.TAG"), CACHE_TAG);
+    }
     c.write("mock/target/debug/junk.o", &bytes(4, 2048));
     c.write("mock/benches/hot/target/release/out.bin", &bytes(5, 2048));
     c.write("mock/research/sketches/probe/target/debug/x", &bytes(6, 512));

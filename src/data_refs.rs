@@ -23,8 +23,7 @@ use serde::Deserialize;
 use crate::registry::RefDecl;
 
 /// One `[[data_ref]]` of `mockspace.toml`.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-#[cfg_attr(test, derive(serde::Serialize))]
+#[derive(Debug, Clone, Default, Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct DataRefDecl {
     /// The ref namespace: the ref is `refs/heads/mock/<namespace>` in the branch form and
@@ -316,7 +315,7 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
     use mockspace_store::{Refuse, Store};
 
     let Some((verb, rest)) = args.split_first() else {
-        eprintln!("data-refs: status, verify, instantiate, update, restore, commit or trailers [namespace], or paired <commit>");
+        eprintln!("data-refs: status, verify, instantiate, update, restore, commit, snapshot or trailers [namespace], or paired <commit>");
         return ExitCode::FAILURE;
     };
     match *verb {
@@ -348,20 +347,32 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
                 },
             };
         },
-        "status" | "verify" | "instantiate" | "update" | "restore" | "commit" => {},
+        "status" | "verify" | "instantiate" | "update" | "restore" | "commit" | "snapshot" => {},
         _ => {
-            eprintln!("data-refs: `{verb}` is none of status, verify, instantiate, update, restore, commit, trailers or paired");
+            eprintln!("data-refs: `{verb}` is none of status, verify, instantiate, update, restore, commit, snapshot, trailers or paired");
             return ExitCode::FAILURE;
         },
     }
     let wanted = rest.first().copied();
-    let decls: Vec<&DataRefDecl> = cfg.data_refs.iter().filter(|d| wanted.is_none_or(|w| d.namespace() == w)).collect();
+    // a branch cut before a migration declares none of the refs its worktree still holds, so the copy of
+    // an edit goes by the declarations this worktree last installed as well
+    let remembered = if *verb == "snapshot" { sparse::remembered(cfg) } else { Vec::new() };
+    let decls: Vec<&DataRefDecl> = cfg
+        .data_refs
+        .iter()
+        .chain(remembered.iter().filter(|r| !cfg.data_refs.iter().any(|d| d.namespace() == r.namespace())))
+        .filter(|d| wanted.is_none_or(|w| d.namespace() == w))
+        .collect();
     if decls.is_empty() {
-        match wanted {
-            Some(w) => eprintln!("data-refs: no [[data_ref]] has the namespace `{w}`"),
-            None => println!("data-refs: no [[data_ref]] is declared"),
+        if let Some(w) = wanted {
+            eprintln!("data-refs: no [[data_ref]] has the namespace `{w}`");
+            return ExitCode::FAILURE;
         }
-        return if wanted.is_some() { ExitCode::FAILURE } else { ExitCode::SUCCESS };
+        // nothing is declared, and a block left by a ref that was is taken out, or named
+        if *verb != "snapshot" {
+            println!("data-refs: no [[data_ref]] is declared");
+        }
+        return if protect(cfg, verb, false) { ExitCode::FAILURE } else { ExitCode::SUCCESS };
     }
     let mut failed = false;
     for d in decls {
@@ -369,7 +380,12 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
         let outcome = (|| -> Result<String, String> {
             let store = d.open(&cfg.repo_root)?;
             let inst = d.instance(&store, &cfg.mock_dir)?;
+            // an edit is copied before anything else is done with the instance
+            if *verb != "instantiate" {
+                inst.snapshot().map_err(|e| e.to_string())?;
+            }
             match *verb {
+                "snapshot" => Ok(String::new()),
                 "status" => {
                     let tip = store.local_tip().map_err(|e| e.to_string())?;
                     let Some(base) = inst.base().map_err(|e| e.to_string())? else {
@@ -425,7 +441,16 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
                     let first = inst.base().map_err(|e| e.to_string())?.is_none()
                         && store.local_tip().map_err(|e| e.to_string())?.is_none();
                     let applied = if first { inst.seed(&message, &Refuse) } else { inst.apply(&message, &Refuse) }
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| {
+                            let text = e.to_string();
+                            // the way on where the ref moved: also where this instance's own commit landed on
+                            // the remote and the local ref was not moved after it
+                            if text.contains("merge hook refused") {
+                                format!("{text}; `data-refs update` brings the instance to the ref, and a commit follows")
+                            } else {
+                                text
+                            }
+                        })?;
                     Ok(match applied.commit {
                         Some(c) if applied.changed => format!("committed {c}"),
                         _ => "nothing changed".to_string(),
@@ -434,6 +459,7 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
             }
         })();
         match outcome {
+            Ok(line) if *verb == "snapshot" => drop(line),
             Ok(line) => println!("{ns}: {line}"),
             Err(why) => {
                 eprintln!("{ns}: {why}");
@@ -441,16 +467,7 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
             },
         }
     }
-    // the instances are kept from git's own writes by the sparse checkout of this worktree: set up by
-    // `instantiate` and the first `commit`, and checked by `verify`
-    let sparse = match *verb {
-        "instantiate" => sparse::install(cfg),
-        "commit" if !failed => sparse::install(cfg),
-        "verify" if !failed => sparse::check(cfg),
-        _ => Ok(()),
-    };
-    if let Err(why) = sparse {
-        eprintln!("{why}");
+    if protect(cfg, verb, failed) {
         failed = true;
     }
     if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS }
@@ -476,4 +493,21 @@ pub fn ref_files(cfg: &crate::config::Config) -> Result<mockspace_lint_rules::sr
         out.changed.extend(changed.into_iter().map(|p| format!("{lead}{p}")));
     }
     Ok(out)
+}
+
+/// The instances are kept from git's own writes by the sparse checkout of this worktree and the hook
+/// that copies an edit: set up by `instantiate` and the first `commit`, and checked by `verify`.
+/// Says whether the run failed, `failed` being whether it already had.
+fn protect(cfg: &crate::config::Config, verb: &str, failed: bool) -> bool {
+    let done = match verb {
+        "instantiate" => sparse::install(cfg),
+        "commit" if !failed => sparse::install(cfg),
+        "verify" if !failed => sparse::check(cfg),
+        _ => Ok(()),
+    };
+    if let Err(why) = done {
+        eprintln!("{why}");
+        return true;
+    }
+    failed
 }

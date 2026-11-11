@@ -66,15 +66,34 @@ fn a_merge_overwrites_the_file_and_the_edit_is_in_the_backup_ref() {
     assert_eq!(backup_of(&a).as_deref(), Some("DIRTY instance edit\n"), "the backup ref holds the edit");
 }
 
-// Mutation: as above, for the rebase that replays the edit of the old branch.
+// Mutation: none; this pins that git refuses a plain rebase over the edit, since the old branch
+// tracks the file and the edit shows there as an unstaged change.
 #[test]
-fn a_rebase_of_an_old_branch_over_a_dirty_instance_leaves_the_edit_in_the_backup_ref() {
+fn a_rebase_of_an_old_branch_over_a_dirty_instance_is_refused_by_git_and_the_edit_stays() {
     let w = World::new();
     let a = dirty_instance_and_an_old_branch(&w);
     a.git(&["checkout", "-q", "feat"]);
-    let _ = a.git_out(&["rebase", "dev"]);
-    let _ = a.git_out(&["rebase", "--abort"]);
-    assert_eq!(backup_of(&a).as_deref(), Some("DIRTY instance edit\n"), "the backup ref holds the edit");
+    let rb = a.git_out(&["rebase", "dev"]);
+    assert!(!rb.ok && rb.all().contains("unstaged changes"), "{}", rb.all());
+    assert_eq!(a.read(NOTES), b"DIRTY instance edit\n");
+}
+
+// Mutation: leave the edit nowhere when an autostashed rebase writes the branch's bytes: it is in the
+// stash, the backup ref or the file.
+#[test]
+fn an_autostashed_rebase_of_an_old_branch_leaves_the_edit_somewhere() {
+    let w = World::new();
+    let a = dirty_instance_and_an_old_branch(&w);
+    a.git(&["checkout", "-q", "feat"]);
+    let _ = a.git_out(&["rebase", "--autostash", "dev"]);
+    let on_disk = a.exists(NOTES) && a.read(NOTES) == b"DIRTY instance edit\n";
+    // a rebase that stops keeps its autostash as a commit its own state file names
+    let state = a.git(&["rev-parse", "--path-format=absolute", "--git-path", "rebase-merge/autostash"]);
+    let stashed = std::fs::read_to_string(state.trim())
+        .map(|id| a.git_out(&["show", id.trim()]).stdout.contains("DIRTY instance edit"))
+        .unwrap_or(false);
+    let backed_up = backup_of(&a).as_deref() == Some("DIRTY instance edit\n");
+    assert!(on_disk || stashed || backed_up, "the edit is in the file, the stash and the backup ref: nowhere");
 }
 
 // Mutation: none; this pins the window that remains. `git cherry-pick` writes the file before it
@@ -143,13 +162,14 @@ fn verify_names_a_worktree_with_no_backup_hook_and_instantiate_repairs_it() {
 #[test]
 fn a_reference_transaction_hook_of_the_persons_own_is_refused_and_kept() {
     let w = fixture::migrated_remote();
-    let a = w.clone_of("a");
+    let a = fixture::seat(&w, "a");
     let hook = a.git(&["rev-parse", "--path-format=absolute", "--git-path", "hooks/reference-transaction"]);
-    std::fs::create_dir_all(std::path::Path::new(hook.trim()).parent().unwrap()).unwrap();
     std::fs::write(hook.trim(), "#!/bin/sh\n# my own\nexit 0\n").unwrap();
-    let o = a.run(&["data-refs", "instantiate"]);
-    assert!(!o.ok && o.all().contains("reference-transaction"), "{}", o.all());
-    assert_eq!(std::fs::read_to_string(hook.trim()).unwrap(), "#!/bin/sh\n# my own\nexit 0\n");
+    let o = a.fails(&["data-refs", "instantiate"]);
+    assert!(o.all().contains("reference-transaction"), "{}", o.all());
+    assert_eq!(std::fs::read_to_string(hook.trim()).unwrap(), "#!/bin/sh\n# my own\nexit 0\n", "the hook is as it was");
+    let v = a.fails(&["data-refs", "verify"]);
+    assert!(v.all().contains("reference-transaction"), "{}", v.all());
 }
 
 // ---- the sparse block follows the declarations ----
@@ -204,8 +224,6 @@ fn a_new_file_a_gitignore_matches_is_data_and_reaches_the_ref() {
     assert!(listing.contains("paper.pdf"), "the ref does not hold the paper: {listing}");
 }
 
-const CACHE_TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55\n# This file is a cache directory tag created by cargo.\n";
-
 // Mutation: read every file of a cargo build directory as data, so `target/` of a sketch fills the ref.
 #[test]
 fn a_cache_directory_is_not_data_though_no_gitignore_names_it() {
@@ -213,7 +231,7 @@ fn a_cache_directory_is_not_data_though_no_gitignore_names_it() {
     let a = fixture::seat(&w, "a");
     a.write(".gitignore", b"");
     a.commit_all("chore: no ignores");
-    a.write("mock/research/sketches/probe/build/CACHEDIR.TAG", CACHE_TAG);
+    a.write("mock/research/sketches/probe/build/CACHEDIR.TAG", fixture::CACHE_TAG);
     a.write("mock/research/sketches/probe/build/debug/x", &fixture::bytes(6, 512));
     let s = a.ok(&["data-refs", "status", "research"]);
     assert!(s.stdout.trim_end().ends_with("clean"), "{}", s.all());

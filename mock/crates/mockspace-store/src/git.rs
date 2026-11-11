@@ -7,12 +7,14 @@ use std::process::{Command, Stdio};
 use crate::error::StoreError;
 
 #[derive(Clone)]
-pub(crate) struct Git {
+/// `git` run in one directory, the same way every time.
+pub struct Git {
     dir:     PathBuf,
     program: std::ffi::OsString,
 }
 
-pub(crate) struct Out {
+/// What a `git` call printed and how it ended.
+pub struct Out {
     pub code:   Option<i32>,
     pub stdout: Vec<u8>,
     pub stderr: String,

@@ -1,7 +1,9 @@
 //! A directory that holds the files of a ref's tip, for the tools that read files.
 //!
 //! An instance is a view of a ref, not a checkout of it: nothing is staged, no index file is
-//! made, and git's ignore rules do not apply, so every regular file in the directory is data.
+//! made, and git's ignore rules do not apply, so every regular file in the directory is data. The
+//! one exception is a cache directory (a `CACHEDIR.TAG` with the standard signature, which cargo
+//! writes into a `target`), a build's output that the base holds nothing of.
 //! What the instance remembers is its base, the commit its files were last brought to, and that
 //! is kept in the repository's own directory, apart from the files. A change is the difference
 //! between the directory and the base, taken as an [`Edit`] (a put for each file added or
@@ -20,15 +22,19 @@
 //! Nothing here guards a file saved by another process in the instant between the comparison
 //! and the write of [`Instance::update`]; an instance is not edited while that runs.
 
+mod backup;
 mod files;
 mod held;
+mod lines;
 mod records;
+mod stats;
 mod tracking;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
 pub use held::Held;
+pub use lines::{exclude_lines, sparse_lines};
 use tracking::Tracking;
 
 use crate::edit::Edit;
@@ -43,6 +49,9 @@ pub struct Instance<'a> {
     store: &'a RefStore,
     dir:   PathBuf,
     held:  Option<Held>,
+    // asked of git once, since each is a process or two and several steps want it
+    record_at: std::sync::OnceLock<PathBuf>,
+    file_mode: std::sync::OnceLock<bool>,
 }
 
 /// What the directory held against the base: the edit, the base it is against, and the blob id
@@ -70,6 +79,8 @@ impl<'a> Instance<'a> {
             store,
             dir: resolved(&absolute),
             held: None,
+            record_at: std::sync::OnceLock::new(),
+            file_mode: std::sync::OnceLock::new(),
         };
         match this.dir.to_str() {
             Some(text) if !text.chars().any(char::is_control) => Ok(this),
@@ -213,7 +224,7 @@ impl<'a> Instance<'a> {
         // a base holding what the patterns do not would have those files read as removed here
         self.check_held(&held)?;
         let here = self.walk()?;
-        let ids = self.local_ids(&here)?;
+        let ids = self.local_ids(&here, &held, true)?;
         let (mut edit, mut sent) = (Edit::new(), BTreeMap::new());
         for path in &here {
             if ids.get(path) != held.get(path) {
@@ -277,15 +288,23 @@ impl<'a> Instance<'a> {
     /// committed with [`Instance::apply`]), where the ref has a tip (it is instantiated into an
     /// empty directory instead), and where the directory holds no files.
     pub fn seed(&self, message: &str, hook: &dyn MergeHook) -> Result<Applied, StoreError> {
-        self.seed_keeping(&BTreeSet::new(), message, hook)
+        self.seed_among(None, message, hook)
     }
 
-    /// [`Instance::seed`] where the files of `keep` go into the ref although a `.gitignore` also
-    /// matches them. The ref is made from the files of the directory a `.gitignore` does not
-    /// ignore, and those, never from build output.
-    pub fn seed_keeping(
+    /// [`Instance::seed`] from the files of `only` alone. A file of the directory that is not among
+    /// them is left where it is, and reads as added here against the ref that was made.
+    pub fn seed_tracked(
         &self,
-        keep: &BTreeSet<String>,
+        only: &BTreeSet<String>,
+        message: &str,
+        hook: &dyn MergeHook,
+    ) -> Result<Applied, StoreError> {
+        self.seed_among(Some(only), message, hook)
+    }
+
+    fn seed_among(
+        &self,
+        only: Option<&BTreeSet<String>>,
         message: &str,
         hook: &dyn MergeHook,
     ) -> Result<Applied, StoreError> {
@@ -295,14 +314,15 @@ impl<'a> Instance<'a> {
         if self.store.local_tip()?.is_some() {
             return Err(self.fail("is not made from a ref that already has a tip, which is instantiated", Vec::new()));
         }
-        let here = self.walk_keeping(keep)?;
+        let here: Vec<String> = self.walk()?.into_iter().filter(|p| only.is_none_or(|o| o.contains(p))).collect();
         if here.is_empty() {
             return Err(self.fail("holds no files to seed the ref with", Vec::new()));
         }
         let mut edit = Edit::new();
+        let trust_mode = self.file_mode()?;
         for path in &here {
             let bytes = std::fs::read(self.dir.join(path)).map_err(|e| self.io("reading", e))?;
-            edit = if self.is_exec(path) { edit.put_exec(path.clone(), bytes) } else { edit.put(path.clone(), bytes) };
+            edit = if trust_mode && self.is_exec(path) { edit.put_exec(path.clone(), bytes) } else { edit.put(path.clone(), bytes) };
         }
         // The exclusion goes first: it is the step that can fail on a read-only checkout, and once
         // the ref has a tip a failure after it leaves a directory that neither `seed` (the ref has a
@@ -332,7 +352,7 @@ impl<'a> Instance<'a> {
         let held = self.store.tree_ids(&tip)?;
         self.check_held(&held)?;
         let here = self.walk()?;
-        Ok(self.local_ids(&here)? == held)
+        Ok(self.local_ids(&here, &held, true)? == held)
     }
 
     /// Records the directory as an instance of the ref at its local tip, where
@@ -380,7 +400,13 @@ impl<'a> Instance<'a> {
             .filter(|p| from.get(*p) != to.get(*p) || sent.contains_key(*p))
             .cloned()
             .collect();
-        let here = self.local_ids(&moved)?;
+        // where the mode of a file is not read off the disk it is the one the base holds, and for a
+        // path the base does not hold the one of the tip
+        let mut modes = from.clone();
+        for (path, id) in &to {
+            modes.entry(path.clone()).or_insert_with(|| id.clone());
+        }
+        let here = self.local_ids(&moved, &modes, false)?;
         let mut plan = Vec::new();
         let mut conflicts = Vec::new();
         for path in &moved {

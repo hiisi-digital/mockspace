@@ -136,14 +136,14 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
             let store = decl.open(&cfg.repo_root)?;
             let inst = decl.instance(&store, &cfg.mock_dir)?;
             let message = format!("data: {}", decl.namespace());
-            // the ref is made from what the branch tracks, so a tracked file a `.gitignore` also
-            // matches goes in, and build output that only sits in the directory does not
+            // the ref is made from what the branch tracks; a file that only sits in the directory is
+            // left there, and reads as added against the ref
             let lead = tracked_lead(cfg, inst.dir());
-            let keep = tracked
+            let keep: std::collections::BTreeSet<String> = tracked
                 .iter()
                 .filter_map(|p| p.strip_prefix(lead.as_str()).map(|r| r.trim_start_matches('/').to_owned()))
                 .collect();
-            inst.seed_keeping(&keep, &message, &mockspace_store::Refuse).map(|_| ()).map_err(|e| e.to_string())
+            inst.seed_tracked(&keep, &message, &mockspace_store::Refuse).map(|_| ()).map_err(|e| e.to_string())
         },
         Step::Adopt(decl) => {
             let store = decl.open(&cfg.repo_root)?;
