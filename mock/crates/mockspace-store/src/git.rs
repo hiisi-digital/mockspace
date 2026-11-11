@@ -74,10 +74,23 @@ impl Git {
             }
         };
         let mut child = cmd.spawn().map_err(io)?;
-        if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
-            pipe.write_all(bytes).map_err(io)?;
-        }
-        let out = child.wait_with_output().map_err(io)?;
+        // the input is written beside the reading of the output, never before it: git answers a
+        // line of input with a line of output, and once more output waits than a pipe holds git
+        // stops reading, so a writer that wrote everything first would wait on git for good
+        let out = std::thread::scope(|scope| {
+            let writer = match (stdin, child.stdin.take()) {
+                (Some(bytes), Some(mut pipe)) => Some(scope.spawn(move || pipe.write_all(bytes))),
+                _ => None,
+            };
+            let out = child.wait_with_output();
+            let wrote = writer.map_or(Ok(()), |w| w.join().unwrap_or_else(|_| Err(std::io::Error::other("the writer panicked"))));
+            // a git that failed stopped reading, so its own words say more than the broken pipe
+            match (out, wrote) {
+                (Ok(out), Err(e)) if out.status.success() => Err(e),
+                (out, _) => out,
+            }
+        })
+        .map_err(io)?;
         Ok(Out {
             code:   out.status.code(),
             stdout: out.stdout,
