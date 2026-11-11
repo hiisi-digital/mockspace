@@ -117,9 +117,19 @@ fn the_comparison_sees_a_registry_that_differs() {
 
 #[test]
 fn the_kinds_the_engine_emits_itself_are_listed_once_and_emitted() {
-    let dispatch = include_str!("../entry/dispatch.rs");
+    // every file of the entry, since the dispatch hands its work to the modules beside it
+    let entry = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/entry");
+    let mut sources = String::new();
+    for file in std::fs::read_dir(&entry).unwrap() {
+        let path = file.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if name.ends_with(".rs") && !name.ends_with("_tests.rs") && name != "tests.rs" {
+            sources.push_str(&std::fs::read_to_string(&path).unwrap());
+        }
+    }
+    assert!(sources.contains(include_str!("../entry/dispatch.rs")), "the control: the dispatch is among the files read");
     for kind in super::RENDER_FINDING_KINDS {
-        assert!(dispatch.contains(&format!("kind: \"{kind}\"")), "`{kind}` is listed and the engine does not emit it");
+        assert!(sources.contains(&format!("kind: \"{kind}\"")), "`{kind}` is listed and the engine does not emit it");
         assert!(!super::FINDING_KINDS.contains(kind), "`{kind}` is in the registry crate's list too");
     }
 }
