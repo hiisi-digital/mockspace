@@ -243,3 +243,46 @@ fn the_push_scope_sees_a_merge_of_a_branch_a_remote_has() {
     };
     assert_eq!(paths, vec![root.join("cites.toml")]);
 }
+
+/// The gate each unresolved reference of a templated document takes, and whether its finding says
+/// how the older spelling is migrated: one row for each arm.
+fn dangling_of(found: &str) -> (GateScope, bool) {
+    let namespaces = std::collections::BTreeSet::from(["spike"]);
+    let out = dangling("DOC.md", &[found], Some(Path::new("/r/DOC.md.tmpl")), &namespaces);
+    assert_eq!(out.len(), 1, "{found}: {out:?}");
+    let hint = out[0].message.contains("`cargo mock migrate references-to-letkajenkka` rewrites");
+    (out[0].gate.clone(), hint)
+}
+
+// A reference to a row is scoped to its template, and a spelling the reference migration reads as a
+// row reference before the standard keeps that scope (provisional, in the design); any other text
+// the standard refuses gates every run. Both refused arms say how the older spelling is migrated,
+// and a reference the standard reads does not.
+//
+// Mutation: reading the root with the standard alone, as the gate did, gates the legacy row
+// reference on every run; reading it by cutting at the separator scopes `spike::No-Such`, which the
+// migration does not rewrite; dropping the hint leaves both refused arms silent on the way out.
+#[test]
+fn a_legacy_row_reference_keeps_the_template_scope_and_other_refused_text_gates_every_run() {
+    let template = when_changed("/r/DOC.md.tmpl");
+    let table: [(&str, GateScope, bool); 6] = [
+        ("{{ spike::no_such_row }}", template.clone(), false),
+        ("{{ spike :: no_such_row }}", template.clone(), true),
+        ("{{spike ::no_such_row}}", template.clone(), true),
+        ("{{ spike::No-Such }}", GateScope::Always, true),
+        ("{{ Nope :: x }}", GateScope::Always, true),
+        ("{{ crates::nope }}", GateScope::Always, false),
+    ];
+    for (found, gate, hint) in table {
+        assert_eq!(dangling_of(found), (gate, hint), "{found}");
+    }
+}
+
+// A computed document has no template to scope a row reference to, so every finding of it gates.
+#[test]
+fn a_computed_document_gates_every_reference() {
+    let namespaces = std::collections::BTreeSet::from(["spike"]);
+    let out = dangling("DOC.md", &["{{ spike::x }}", "{{ spike :: y }}", "{{ Nope :: z }}"], None, &namespaces);
+    assert!(out.iter().all(|f| f.gate == GateScope::Always), "{out:?}");
+    assert_eq!(out.len(), 2, "{out:?}");
+}

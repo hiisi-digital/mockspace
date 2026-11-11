@@ -35,7 +35,9 @@ pattern. Without them, a project with a root named `core` would silently link
 `core::mem::12`, and prose about code would be rewritten by accident.
 
 References inside code fences are never touched: an identifier in a fence is
-far more likely to be an example than a reference.
+far more likely to be an example than a reference. A fence is three or more
+backticks or three or more tildes, and it ends at a line of the same character at
+least as long.
 
 An expression that resolves to nothing is left exactly as written, braces and
 all, and reported. A reader sees an obviously unresolved reference rather than
@@ -232,8 +234,11 @@ naming no row is reported as `unknown-row-reference`, a slug that is not a slug 
 `malformed-row-reference`. Only the first is scoped: it gates the commit or push that
 changes the file holding the link, and is a warning on a plain run or one that leaves
 that file alone, so a row can be retired before every citation of it is gone. A
-template citing a row is scoped the same way, to the template. A slug that is not a
-slug, and every other finding, gates every run. A root cannot carry the name of a
+template citing a row is scoped the same way, to the template, and so is one written in
+the spelling before the letkajenkka standard that `cargo mock migrate
+references-to-letkajenkka` rewrites into a link, until it is rewritten. A slug that is
+not a slug, any other text the standard refuses, and every other finding gate every
+run. A root cannot carry the name of a
 namespace
 (`namespace-root-collision`), so a two-segment item is a link exactly when it names
 one. In a table cell a link gives the row's slug as plain text, as any reference to

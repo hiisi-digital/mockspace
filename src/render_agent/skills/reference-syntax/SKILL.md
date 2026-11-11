@@ -53,7 +53,10 @@ each other, and each is held to its own rule: a link naming no row is
 commit or push that changes the file holding the link, and is a warning on a plain
 run or one that leaves that file alone, so a row can be retired before every
 citation of it is gone. A template citing a row is scoped the same way, to the
-template. A slug that is not a slug, and every other finding, gates every run.
+template, and so is a link in the spelling before the standard that the
+`references-to-letkajenkka` migration rewrites, until it is rewritten. A slug that
+is not a slug, any other text the standard refuses, and every other finding gate
+every run.
 
 **A field per target namespace (`bevy`, `engine`, `canon`) is wrong.** It turns
 the schema into a list of places a relation may be written, lets one relation be

@@ -132,7 +132,7 @@ pub fn apply(text: &str, found: &[Found]) -> String {
 #[must_use]
 pub fn preset_shorthand(old: &str) -> Outcome {
     let s = old.trim();
-    let parts: Vec<&str> = s.split("::").map(str::trim).collect();
+    let parts = steps(s);
     if parts.len() != 2 {
         return Outcome::Left("a preset is a host and a name, `<host>::<name>`".to_string());
     }
@@ -148,6 +148,37 @@ pub fn preset_shorthand(old: &str) -> Outcome {
         }
     }
     same_or(old, folded.join("::"))
+}
+
+/// The namespace a row reference in the spelling before the standard names: `Some` where the
+/// standard refuses `old` and this migration rewrites it into a reference into one of
+/// `namespaces`, and `None` for every other text, one the standard reads among them.
+///
+/// A gate that finds such a reference resolving to nothing scopes it as it scoped a reference to a
+/// row before the standard, and every other text the standard refuses gates every run.
+#[must_use]
+pub fn legacy_row_namespace<'a>(old: &'a str, namespaces: &BTreeSet<&str>) -> Option<&'a str> {
+    let s = old.trim();
+    if letkajenkka::Query::parse(s).is_ok() {
+        return None;
+    }
+    let root = *steps(s).first()?;
+    if !namespaces.contains(root) {
+        return None;
+    }
+    // a reference into a namespace is read without the roots or the tree, so none are given
+    let ctx = Ctx {
+        repo_root: Path::new(""),
+        roots: &BTreeMap::new(),
+        namespaces,
+    };
+    matches!(expr(s, &ctx), Outcome::Rewritten(_)).then_some(root)
+}
+
+/// The steps of a reference in the spelling before the standard, which tolerated whitespace beside
+/// a separator: cut at each separator, each trimmed.
+fn steps(s: &str) -> Vec<&str> {
+    s.split("::").map(str::trim).collect()
 }
 
 fn expr(old: &str, ctx: &Ctx<'_>) -> Outcome {
@@ -168,7 +199,7 @@ fn expr(old: &str, ctx: &Ctx<'_>) -> Outcome {
             Outcome::Rewritten(new) => Outcome::Rewritten(format!("{op}({new}){chain}")),
         };
     }
-    let parts: Vec<&str> = s.split("::").map(str::trim).collect();
+    let parts = steps(s);
     if parts.len() == 1 {
         return Outcome::Same;
     }
