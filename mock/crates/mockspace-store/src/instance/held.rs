@@ -8,8 +8,9 @@
 //! A pattern is a path of `/`-separated segments, relative to the directory. A segment is
 //! literal text in which `*` stands for any run of characters, or it is `**`, which stands for
 //! any number of whole segments, none included. Nothing else is special, and a character git's
-//! ignore rules would read as special is refused, so a pattern means the same in the exclude
-//! file as it does here.
+//! ignore rules would read as special is refused. An exclude line matches a directory where a
+//! pattern here matches files only, so the exclude file gets each pattern followed by the line
+//! that takes directories back out of it.
 
 use crate::error::StoreError;
 

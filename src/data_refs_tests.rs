@@ -253,6 +253,75 @@ mod verbs {
     }
 
     #[test]
+    fn files_a_clean_took_stop_the_run_and_restore_writes_them_again() {
+        let w = World::new();
+        let a = with_ref(&w, "a");
+        std::fs::create_dir_all(a.mock_dir.join("research/deep")).unwrap();
+        std::fs::write(a.mock_dir.join("research/note.md"), "findings\n").unwrap();
+        std::fs::write(a.mock_dir.join("research/deep/er.md"), "more\n").unwrap();
+        assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
+        assert_eq!(standing(&a), Ok(()));
+
+        // what `git clean -fdx` does to an excluded directory: the files go, the record stays
+        std::fs::remove_dir_all(a.mock_dir.join("research")).unwrap();
+        let why = standing(&a).unwrap_err().join("\n");
+        assert!(why.contains("none of its 2 file(s)") && why.contains("data-refs restore research"), "{why}");
+        assert_eq!(run(&a, &["restore"]), ExitCode::SUCCESS);
+        assert_eq!(std::fs::read_to_string(a.mock_dir.join("research/deep/er.md")).unwrap(), "more\n");
+        assert_eq!(standing(&a), Ok(()));
+        assert_eq!(run(&a, &["verify"]), ExitCode::SUCCESS);
+
+        // the control: one file removed is an edit, and stops nothing
+        std::fs::remove_file(a.mock_dir.join("research/note.md")).unwrap();
+        assert_eq!(standing(&a), Ok(()));
+    }
+
+    #[test]
+    fn a_ref_whose_namespace_has_parts_is_paired_like_any_other() {
+        let w = World::new();
+        let mut a = w.clone_of("a", false);
+        a.data_refs = vec![decl("data/notes.v1", "research")];
+        assert_eq!(validate(&a.data_refs), Ok(()));
+        std::fs::create_dir_all(a.mock_dir.join("research")).unwrap();
+        std::fs::write(a.mock_dir.join("research/note.md"), "findings\n").unwrap();
+        assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
+        let lines = trailer_lines(&a, None).unwrap();
+        assert!(lines[0].starts_with("Mock-Ref: data/notes.v1 "), "{lines:?}");
+        head_message(&a.repo_root, &format!("land a thing\n\n{}\n", lines[0]));
+        assert_eq!(run(&a, &["paired", "HEAD"]), ExitCode::SUCCESS);
+        // the control: a namespace no ref can carry is refused where it is declared
+        let why = validate(&[decl("-x", "research")]).unwrap_err().join("\n");
+        assert!(why.contains("`-x`"), "{why}");
+    }
+
+    #[test]
+    fn a_file_tracked_where_the_instance_is_placed_is_found_there() {
+        let w = World::new();
+        let mut a = w.clone_of("a", false);
+        let mut d = decl("research", "research");
+        d.instance = Some("notes".into());
+        a.data_refs = vec![d];
+        std::fs::create_dir_all(a.mock_dir.join("notes")).unwrap();
+        std::fs::write(a.mock_dir.join("notes/note.md"), "findings\n").unwrap();
+        git(&a.repo_root, &["add", "-f", "--", "mock/notes/note.md"]);
+        assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
+        let why = standing(&a).unwrap_err().join("\n");
+        assert!(why.contains("mock/notes/note.md") && why.contains("tracked"), "{why}");
+        git(&a.repo_root, &["rm", "-q", "--cached", "--", "mock/notes/note.md"]);
+        assert_eq!(standing(&a), Ok(()), "the control: untracked, it stands");
+    }
+
+    #[test]
+    fn a_commit_given_as_a_flag_is_not_read_as_one() {
+        let w = World::new();
+        let a = with_ref(&w, "a");
+        let out = a.repo_root.join("written-by-a-flag");
+        let flag = format!("--output={}", out.display());
+        assert_eq!(run(&a, &["paired", &flag]), ExitCode::FAILURE);
+        assert!(!out.exists(), "the commit argument reached git as a flag");
+    }
+
+    #[test]
     fn a_trailer_is_not_written_over_changes_the_ref_does_not_hold() {
         let w = World::new();
         let a = with_ref(&w, "a");

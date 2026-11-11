@@ -134,8 +134,7 @@ impl Pairing {
 }
 
 impl Trailer {
-    /// A trailer for the data ref `name`: lowercase letters, digits, `_` and `-`, led by a
-    /// letter or a digit.
+    /// A trailer for the data ref `name`, which is one [`is_ref_name`] takes.
     ///
     /// # Errors
     ///
@@ -144,8 +143,8 @@ impl Trailer {
         let name = name.into();
         if !is_ref_name(&name) {
             return Err(format!(
-                "the ref name `{name}` is not lowercase letters, digits, `_` and `-`, led by a \
-                 letter or a digit"
+                "the ref name `{name}` is not `/`-separated parts of lowercase letters, digits, `-`, `_` and `.`, none \
+                 empty, led by `.` or `-`, or ending in `.lock`"
             ));
         }
         Ok(Self {
@@ -430,20 +429,34 @@ const fn is_hex(s: &str, lengths: &[usize]) -> bool {
     ok_len
 }
 
-/// Whether `s` is a data ref name, which is also what a trailer calls the ref: lowercase letters,
-/// digits, `_` and `-`, led by a letter or a digit.
+/// Whether `s` is a data ref name, which is also what a trailer calls the ref. It is what the
+/// store takes as a namespace: `/`-separated components of lowercase letters, digits, `-`, `_`
+/// and `.`, none empty, none led by a `.` or a `-` and none ending in `.lock`.
 pub const fn is_ref_name(s: &str) -> bool {
     let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let letter_or_digit = matches!(bytes[i], b'a'..=b'z' | b'0'..=b'9');
-        let inner = bytes[i] == b'_' || bytes[i] == b'-';
-        if !(letter_or_digit || (i > 0 && inner)) {
+    let (mut i, mut start) = (0, 0);
+    while i <= bytes.len() {
+        if i == bytes.len() || bytes[i] == b'/' {
+            let len = i - start;
+            if len == 0 || bytes[start] == b'.' || bytes[start] == b'-' {
+                return false;
+            }
+            if len >= 5
+                && bytes[i - 5] == b'.'
+                && bytes[i - 4] == b'l'
+                && bytes[i - 3] == b'o'
+                && bytes[i - 2] == b'c'
+                && bytes[i - 1] == b'k'
+            {
+                return false;
+            }
+            start = i + 1;
+        } else if !matches!(bytes[i], b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.') {
             return false;
         }
         i += 1;
     }
-    !bytes.is_empty()
+    true
 }
 
 fn hex(bytes: &[u8]) -> String {
