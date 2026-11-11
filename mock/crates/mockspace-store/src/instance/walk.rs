@@ -63,7 +63,7 @@ impl Instance<'_> {
             files:   Vec::new(),
             ignored: Vec::new(),
         };
-        self.walk_into(&self.dir, "", false, &known, &ignores, &mut walk)?;
+        self.walk_into(&self.dir, "", true, false, &known, &ignores, &mut walk)?;
         Ok(walk)
     }
 
@@ -116,10 +116,16 @@ impl Instance<'_> {
         std::fs::File::open(at.join("CACHEDIR.TAG")).and_then(|mut f| f.read_exact(&mut head)).is_ok() && head == *SIGNATURE
     }
 
+    /// `text` says whether `prefix` is the path as it is on disk. A name that is not UTF-8 is read
+    /// lossily, the way git's listing of what it ignores is, so the patterns, the ignore rules and
+    /// the cache tag decide about it as about any other, and it is refused, by that lossy name, only
+    /// where the instance would read it: a ref names its files as text and cannot hold it.
+    #[allow(clippy::too_many_arguments)]
     fn walk_into(
         &self,
         dir: &Path,
         prefix: &str,
+        text: bool,
         under_ignored: bool,
         known: &BTreeSet<String>,
         ignores: &Ignores,
@@ -131,10 +137,10 @@ impl Instance<'_> {
             .map_err(|e| self.io("reading", e))?;
         entries.sort_by_key(|e| e.file_name());
         for entry in entries {
-            let Ok(name) = entry.file_name().into_string() else {
-                return Err(self.fail("holds a file name that is not text", Vec::new()));
-            };
-            let rel = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
+            let raw = entry.file_name();
+            let text = text && raw.to_str().is_some();
+            let name = raw.to_string_lossy();
+            let rel = if prefix.is_empty() { name.into_owned() } else { format!("{prefix}/{name}") };
             let kind = entry.file_type().map_err(|e| self.io("reading", e))?;
             if kind.is_dir() {
                 let below = format!("{rel}/");
@@ -149,12 +155,14 @@ impl Instance<'_> {
                     // files of the ref, and is not named by it, so it is named here
                     out.ignored.push(below);
                 } else {
-                    self.walk_into(&entry.path(), &rel, ignored, known, ignores, out)?;
+                    self.walk_into(&entry.path(), &rel, text, ignored, known, ignores, out)?;
                 }
             } else if !self.holds(&rel) {
                 // the branch's own: not this instance's to read or to refuse
             } else if (under_ignored || ignores.files.contains(&rel)) && !known.contains(&rel) {
                 out.ignored.push(rel);
+            } else if !text {
+                return Err(self.fail("holds a file name that is not text, which a ref cannot hold; rename it", vec![rel]));
             } else if kind.is_symlink() {
                 return Err(self.fail("holds a symlink", vec![rel]));
             } else if kind.is_file() {
