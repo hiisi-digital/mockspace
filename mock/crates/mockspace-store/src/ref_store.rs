@@ -206,6 +206,24 @@ impl RefStore {
             if !refreshed {
                 match self.fetch_once() {
                     Ok(_) => {},
+                    // a fetch that failed for a reason that is not the network's (no such repository, a
+                    // refusal) is the same on the next try, so it is not tried again
+                    Err(e)
+                        if unconfirmed.is_empty()
+                            && matches!(&e, StoreError::Fetch { detail, .. } if !transient_push_output(detail)) =>
+                    {
+                        return Err(e);
+                    },
+                    Err(StoreError::Fetch {
+                        detail,
+                        ..
+                    }) if !transient_push_output(&detail) => {
+                        return Err(StoreError::OutcomeUnknown {
+                            remote_ref: self.pair.remote().to_owned(),
+                            commits: unconfirmed,
+                            detail,
+                        });
+                    },
                     Err(
                         e @ StoreError::Fetch {
                             ..
