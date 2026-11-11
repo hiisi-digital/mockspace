@@ -21,4 +21,5 @@ tempfile = { version = "3", optional = true }
 test-support = ["dep:tempfile"]
 
 [dev-dependencies]
+mockspace-manifest = { path = "../../../mockspace-manifest" }
 tempfile = "3"

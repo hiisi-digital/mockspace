@@ -187,3 +187,8 @@ pub fn cmd_query(cfg: &dyn RegistryEnv, expr: &str) -> std::process::ExitCode {
         },
     }
 }
+
+/// What these tests take out of the environment before they run.
+#[cfg(test)]
+#[path = "../../../../tests/common/ambient.rs"]
+mod test_ambient;

@@ -55,3 +55,8 @@ pub use ref_store::RefStore;
 pub use refs::{RefPair, RemoteForm};
 pub use retry::RetryPolicy;
 pub use store::{Applied, Freshness, Store};
+
+/// What these tests take out of the environment before they run.
+#[cfg(test)]
+#[path = "../../../../tests/common/ambient.rs"]
+mod test_ambient;
