@@ -174,3 +174,27 @@ fn a_ref_that_already_has_commits_is_not_seeded_over() {
     assert!(why.contains("already has commits"), "{why}");
     assert!(tracked(&b).iter().any(|p| p.starts_with("mock/research/")), "the refusal untracked files");
 }
+
+#[test]
+fn the_rest_of_the_mock_directory_moves_to_one_ref_and_the_sources_stay() {
+    let w = World::new();
+    let cfg = consumer(&w, "a");
+    write(&cfg, "catalogue.md", "the catalogue\n");
+    write(&cfg, "design_rounds/202611010000/topic.md", "closed\n");
+    write(&cfg, "design_rounds/202611110000_topic.open.md", "open\n");
+    git(&cfg.repo_root, &["add", "-f", "--", "."]);
+    git(&cfg.repo_root, &["commit", "-q", "-m", "more of a mock directory"]);
+    let call = [
+        "directory-to-ref", "--namespace", "mock", "--path", ".",
+        "--include", "research/**", "--include", "design_rounds/*/**",
+        "--include", "crates/**/*.md.tmpl", "--include", "catalogue.md",
+    ];
+    assert_eq!(run(&cfg, &call), ExitCode::SUCCESS);
+    let mut after = tracked(&cfg);
+    after.retain(|p| p.starts_with("mock/") && p != "mock/mockspace.toml");
+    assert_eq!(after, ["mock/crates/one/src/lib.rs", "mock/design_rounds/202611110000_topic.open.md"]);
+    let again = Config::from_dir(&cfg.mock_dir);
+    assert_eq!(crate::data_refs::standing(&again), Ok(()));
+    assert_eq!(crate::data_refs::run(&again, &["verify"]), ExitCode::SUCCESS);
+    assert!(cfg.mock_dir.join("catalogue.md").is_file() && cfg.mock_dir.join("research/deep/er.md").is_file());
+}

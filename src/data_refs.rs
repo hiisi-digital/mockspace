@@ -104,13 +104,30 @@ pub fn validate_against(decls: &[DataRefDecl], taken: &[String]) -> Result<(), V
         let place = |d: &DataRefDecl| d.instance.as_deref().or(d.path.as_deref()).map(|p| p.trim_matches('/').to_string());
         if let (Some(mine), true) = (place(d), d.instance.as_deref().is_none_or(|p| path_problem(p).is_none())) {
             for (j, o) in decls.iter().enumerate().take(i) {
-                if place(o).is_some_and(|theirs| nested(&mine, &theirs)) {
+                // a ref over the whole mock directory lies around every other
+                if place(o).is_some_and(|theirs| mine == WHOLE || theirs == WHOLE || nested(&mine, &theirs)) {
                     why.push(format!("{at}: its instance `{mine}` overlaps the instance of [[data_ref]] #{}", j + 1));
                 }
             }
         }
         match d.path.as_deref() {
             None => why.push(format!("{at}: `path` is missing, so the ref holds nothing")),
+            Some(WHOLE) => {
+                match d.include.as_deref() {
+                    None => {
+                        why.push(format!(
+                            "{at}: path `.` is the mock directory itself, which a ref holds files of only by `include`"
+                        ));
+                    },
+                    Some(patterns) => {
+                        for pat in patterns {
+                            if let Some(bad) = whole_pattern_problem(pat) {
+                                why.push(format!("{at}: pattern `{pat}` {bad}"));
+                            }
+                        }
+                    },
+                }
+            },
             Some(p) => {
                 if let Some(bad) = path_problem(p) {
                     why.push(format!("{at}: path `{p}` {bad}"));
@@ -174,6 +191,32 @@ pub fn validate_against(decls: &[DataRefDecl], taken: &[String]) -> Result<(), V
     if why.is_empty() { Ok(()) } else { Err(why) }
 }
 
+/// The `path` that names the mock directory itself. A ref may hold files of it only by pattern.
+const WHOLE: &str = ".";
+
+/// What is wrong with `pat` as a pattern of a ref over the whole mock directory, if anything. Such
+/// a ref lies among everything the branch and the engine keep there, so each pattern names where
+/// it reaches: a file of the mock directory itself, or a path under a directory named in full.
+fn whole_pattern_problem(pat: &str) -> Option<String> {
+    let mut parts = pat.split('/');
+    let first = parts.next().unwrap_or("");
+    let rest: Vec<&str> = parts.collect();
+    if rest.is_empty() {
+        let config = mockspace_store::Held::new(&[pat]).is_ok_and(|h| h.holds("mockspace.toml"));
+        return config.then(|| "could hold `mockspace.toml`, which a clone reads before it has any ref".to_string());
+    }
+    if first.contains('*') {
+        return Some("starts with a wildcard, and so could reach into any directory; name the directory".to_string());
+    }
+    if first == ROUNDS {
+        let into_a_directory = rest.len() >= 2 && rest[0] != "**";
+        return (!into_a_directory).then(|| {
+            format!("could hold a flat file of `{ROUNDS}`, which is an open round's and stays on its branch")
+        });
+    }
+    OWN_STORES.contains(&first).then(|| format!("is under `{first}`, which has a store of its own"))
+}
+
 /// What is wrong with `p` as a path under the mock directory, if anything.
 fn path_problem(p: &str) -> Option<&'static str> {
     let t = p.trim_matches('/');
@@ -193,6 +236,9 @@ impl DataRefDecl {
     /// The directory the instance is placed in: `instance` if given, else `path`, under `mock_dir`.
     pub fn instance_dir(&self, mock_dir: &Path) -> std::path::PathBuf {
         let rel = self.instance.as_deref().or(self.path.as_deref()).unwrap_or("").trim_matches('/');
+        if rel == WHOLE {
+            return mock_dir.to_path_buf();
+        }
         rel.split('/').fold(mock_dir.to_path_buf(), |p, part| p.join(part))
     }
 
