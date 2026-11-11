@@ -47,7 +47,12 @@ impl RegistryView {
     ) -> Self {
         let mut by_namespace: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for q in rows.keys() {
-            if let Some((ns, _)) = q.split_once("::") {
+            let ns = letkajenkka::Query::parse(q)
+                .ok()
+                .and_then(letkajenkka::Query::path)
+                .and_then(letkajenkka::Path::plain)
+                .and_then(|mut names| names.next());
+            if let Some(ns) = ns {
                 by_namespace
                     .entry(ns.to_string())
                     .or_default()
@@ -199,5 +204,28 @@ mod tests {
         assert_eq!(v.field("slot::display", "use"), Some("pixels"));
         assert_eq!(v.field("slot::display", "nosuch"), None);
         assert_eq!(v.field("slot::nosuch", "use"), None);
+    }
+}
+
+#[cfg(test)]
+mod namespace_of_a_key_tests {
+    use super::*;
+
+    // The namespace of `namespace::slug` is the first step the reference syntax reads, so a key the
+    // syntax refuses (a space beside the separator, an uppercase letter) is under no namespace
+    // instead of under whatever a hand split would have cut off.
+    //
+    // Mutation: `split_once("::")` files `Bad :: Key` under the namespace `Bad ` and `Slot::x` under
+    // `Slot`.
+    #[test]
+    fn a_key_is_filed_under_the_namespace_the_syntax_reads() {
+        let rows: BTreeMap<String, RowFields> =
+            ["slot::display", "slot::audio", "other::one", "Slot::x", "bad :: key"]
+                .into_iter()
+                .map(|k| (k.to_string(), RowFields::new()))
+                .collect();
+        let view = RegistryView::new(rows, BTreeMap::new());
+        assert_eq!(view.namespaces().collect::<Vec<_>>(), ["other", "slot"]);
+        assert_eq!(view.len(), 5, "no row is dropped for it");
     }
 }

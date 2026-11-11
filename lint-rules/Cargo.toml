@@ -17,6 +17,9 @@ toml = { version = "0.8", default-features = false, features = ["parse"] }
 mockspace-verdicts = { path = "../verdicts" }
 tree-sitter = "0.24"
 tree-sitter-rust = "0.23"
+# The one parser of a hierarchical reference path.
+# FIXME(02b7c73b2e63): private, so spelled over ssh, which the anonymous launcher install cannot fetch; becomes a crates.io version once the rc is published.
+letkajenkka = { git = "ssh://git@github.com/orgrinrt/letkajenkka.git", branch = "work/letkajenkka-refs" }
 
 [dev-dependencies]
 # The scrub of the environment a test runs in, the one copy of it.
