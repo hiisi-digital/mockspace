@@ -33,6 +33,39 @@ impl Instance<'_> {
     /// The commit of a copy the backup ref has not taken yet, where there is one. A file naming
     /// an object the database does not hold is an error, since that copy is then lost.
     pub(super) fn pending(&self) -> Result<Option<Oid>, StoreError> {
+        match self.pending_named()? {
+            None => Ok(None),
+            Some((_, commit, true)) => Ok(Some(commit)),
+            Some((file, _, false)) => {
+                Err(self.fail(
+                    "names a copy whose commit the repository no longer holds (a `git gc` pruned it before an engine \
+                     command took it)",
+                    vec![file.display().to_string()],
+                ))
+            },
+        }
+    }
+
+    /// Whether the file beside the record names a copy whose commit the repository no longer holds.
+    pub fn pending_is_lost(&self) -> Result<bool, StoreError> {
+        Ok(matches!(self.pending_named()?, Some((_, _, false))))
+    }
+
+    /// Forgets a copy whose commit the repository no longer holds, so the copies go on from the
+    /// backup ref; what git wrote over then is taken as the bytes on disk. Gives whether there was
+    /// one. A copy the repository holds is never forgotten here.
+    pub fn forget_lost_copy(&self) -> Result<bool, StoreError> {
+        match self.pending_named()? {
+            Some((file, _, false)) => {
+                std::fs::remove_file(&file).map_err(|e| self.io("forgetting the lost copy beside the record of", e))?;
+                Ok(true)
+            },
+            _ => Ok(false),
+        }
+    }
+
+    /// The file beside the record, the commit it names, and whether the repository holds it.
+    fn pending_named(&self) -> Result<Option<(PathBuf, Oid, bool)>, StoreError> {
         let file = self.pending_file()?;
         let text = match std::fs::read_to_string(&file) {
             Ok(text) => text,
@@ -40,11 +73,20 @@ impl Instance<'_> {
             Err(e) => return Err(self.io("reading the copy kept beside the record of", e)),
         };
         let commit = Oid::parse(text.trim())?;
-        let out = self.store.git.run(&["cat-file", "-e", &format!("{commit}^{{commit}}")], &[], None)?;
-        if !out.ok() {
-            return Err(self.fail("names a copy whose commit the repository no longer holds", vec![file.display().to_string()]));
-        }
-        Ok(Some(commit))
+        let out = self.store.git.run(&["cat-file", "-e", commit.as_str()], &[], None)?;
+        // `cat-file -e` says a missing object by exit 1 with nothing on stderr; anything else is git
+        // failing, which is no answer that the copy is gone
+        let held = match (out.code, out.stderr.is_empty()) {
+            (Some(0), _) => true,
+            (Some(1), true) => false,
+            _ => {
+                return Err(StoreError::Git {
+                    command: format!("cat-file -e {commit}"),
+                    detail:  out.stderr,
+                });
+            },
+        };
+        Ok(Some((file, commit, held)))
     }
 
     /// Names `commit` as the copy the backup ref has not taken yet, replacing any earlier one,
