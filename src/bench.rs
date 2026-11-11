@@ -550,9 +550,10 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
 }
 
 /// The `--target-dir` `mock bench test` passes every crate it builds: one of its
-/// own under `target/`, unless the environment or the caller already fixed where
-/// cargo builds, and then none. `inherited` is the environment's, passed in so
-/// the decision is testable without touching the process's.
+/// own under `target/`, unless the environment, a cargo config file or the
+/// caller already fixed where cargo builds, and then none. `inherited` is what
+/// the environment or a config file set, passed in so the decision is testable
+/// without touching the process's.
 fn bench_test_target_dir(
     mock_dir: &Path,
     extra: &[&str],
@@ -1762,7 +1763,7 @@ mod tests {
     fn bench_test_builds_where_the_environment_or_the_caller_said() {
         let tmp = tempfile::tempdir().unwrap();
         let mock = tmp.path();
-        // The environment's target directory, or the caller's own flag: none of ours.
+        // The environment's or a config file's target directory, or the caller's own flag: none of ours.
         assert_eq!(
             bench_test_target_dir(mock, &[], Some(OsStr::new("/shared"))),
             None

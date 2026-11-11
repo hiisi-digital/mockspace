@@ -140,7 +140,9 @@ pub fn mark_target_root_of(artifact: &Path) -> Option<PathBuf> {
 /// had each worktree build its own bench and test trees beside it, several
 /// gigabytes a worktree.
 pub fn build_target_dir(start: &Path) -> Option<std::ffi::OsString> {
-    inherited_target_dir().or_else(|| configured_target_dir(start, cargo_home().as_deref()))
+    inherited_target_dir().or_else(|| {
+        configured_target_dir(start, cargo_home().as_deref()).map(PathBuf::into_os_string)
+    })
 }
 
 /// The two environment spellings alone. The lint store reads its answer as a path
@@ -161,16 +163,23 @@ fn cargo_home() -> Option<PathBuf> {
 
 /// `[build] target-dir` from the first cargo config that sets it, walking up
 /// from `start` and then trying `cargo_home`, in cargo's own order. Both file
-/// names count, `config.toml` before the older `config`, as cargo reads them.
-/// A file that does not parse is passed over, since cargo would refuse it and
-/// say why, which is a better message than any this could give.
-pub fn configured_target_dir(start: &Path, cargo_home: Option<&Path>) -> Option<std::ffi::OsString> {
+/// names count; where a directory holds both, the one without the extension
+/// wins, which is what cargo's documentation says it does. A file that does not
+/// parse is passed over, since cargo would refuse it and say why, which is a
+/// better message than any this could give.
+///
+/// A relative value is resolved the way cargo resolves a path in a config file:
+/// against the parent of the directory holding the file, so `target` in
+/// `<repo>/.cargo/config.toml` is `<repo>/target`. The same holds for the file
+/// in `cargo_home`, whose parent is then the base. An absolute value is
+/// returned as it is.
+pub fn configured_target_dir(start: &Path, cargo_home: Option<&Path>) -> Option<PathBuf> {
     let dirs = start
         .ancestors()
         .map(|d| d.join(".cargo"))
         .chain(cargo_home.map(Path::to_path_buf));
     for dir in dirs {
-        for name in ["config.toml", "config"] {
+        for name in ["config", "config.toml"] {
             let Ok(text) = fs::read_to_string(dir.join(name)) else { continue };
             let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else { continue };
             if let Some(v) = doc
@@ -178,7 +187,8 @@ pub fn configured_target_dir(start: &Path, cargo_home: Option<&Path>) -> Option<
                 .and_then(|b| b.get("target-dir"))
                 .and_then(|t| t.as_str())
             {
-                return Some(v.into());
+                let base = dir.parent().unwrap_or(&dir);
+                return Some(base.join(v));
             }
         }
     }
@@ -187,9 +197,10 @@ pub fn configured_target_dir(start: &Path, cargo_home: Option<&Path>) -> Option<
 
 /// Whether this run may pass a `--target-dir` of its own.
 ///
-/// Split out from `shared_target_dir` in `entry/test.rs` with the environment passed in rather
-/// than read, so the decision is testable without a test mutating the process
-/// environment out from under every other arm running beside it.
+/// Split out from `shared_target_dir` in `entry/test.rs` with what the
+/// environment or a cargo config file set passed in rather than read, so the
+/// decision is testable without a test mutating the process environment out
+/// from under every other arm running beside it.
 pub fn may_pass_target_dir(args: &[&str], inherited: Option<&std::ffi::OsStr>) -> bool {
     // An inherited target directory already puts every build in one place, and
     // `--target-dir` overrides it, so passing ours would open a second build
@@ -306,5 +317,122 @@ mod tests {
         let absent = tmp.path().join("nope");
         mark(&absent);
         assert!(!absent.exists());
+    }
+
+    // `configured_target_dir`. Every tree is `<tmp>/work/deep`, with the configs
+    // placed by the case, and the answers are compared as paths under `<tmp>`.
+
+    fn put(dir: &Path, name: &str, text: &str) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join(name), text).unwrap();
+    }
+
+    fn deep(tmp: &Path) -> PathBuf {
+        let d = tmp.join("work").join("deep");
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn no_config_anywhere_finds_nothing() {
+        // control for every case below: a tree with no config and a cargo home
+        // with none returns `None`, so a `Some` elsewhere came from a file.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        assert_eq!(configured_target_dir(&deep(tmp.path()), Some(&home)), None);
+        assert_eq!(configured_target_dir(&deep(tmp.path()), None), None);
+    }
+
+    #[test]
+    fn the_deeper_cargo_dir_wins_over_an_ancestor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let start = deep(tmp.path());
+        put(&tmp.path().join("work/.cargo"), "config.toml", "[build]\ntarget-dir = \"/near\"\n");
+        put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/far\"\n");
+        assert_eq!(configured_target_dir(&start, None), Some(PathBuf::from("/near")));
+    }
+
+    #[test]
+    fn an_ancestor_without_the_key_is_walked_past() {
+        let tmp = tempfile::tempdir().unwrap();
+        let start = deep(tmp.path());
+        put(&tmp.path().join("work/.cargo"), "config.toml", "[net]\nretry = 1\n");
+        put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/far\"\n");
+        assert_eq!(configured_target_dir(&start, None), Some(PathBuf::from("/far")));
+    }
+
+    #[test]
+    fn cargo_home_is_tried_last() {
+        let tmp = tempfile::tempdir().unwrap();
+        let start = deep(tmp.path());
+        let home = tmp.path().join("home");
+        put(&home, "config.toml", "[build]\ntarget-dir = \"/home-wide\"\n");
+        assert_eq!(configured_target_dir(&start, Some(&home)), Some(PathBuf::from("/home-wide")));
+        // and an ancestor's wins over it
+        put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/tree\"\n");
+        assert_eq!(configured_target_dir(&start, Some(&home)), Some(PathBuf::from("/tree")));
+    }
+
+    #[test]
+    fn an_unparsable_file_is_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let start = deep(tmp.path());
+        put(&tmp.path().join("work/.cargo"), "config.toml", "[build\ntarget-dir = = \"/bad\"\n");
+        put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/good\"\n");
+        assert_eq!(configured_target_dir(&start, None), Some(PathBuf::from("/good")));
+    }
+
+    #[test]
+    fn a_dotted_key_is_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let start = deep(tmp.path());
+        put(&tmp.path().join(".cargo"), "config.toml", "build.target-dir = \"/dotted\"\n");
+        assert_eq!(configured_target_dir(&start, None), Some(PathBuf::from("/dotted")));
+    }
+
+    #[test]
+    fn a_non_string_value_is_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let start = deep(tmp.path());
+        put(&tmp.path().join("work/.cargo"), "config.toml", "[build]\ntarget-dir = 5\n");
+        put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/after\"\n");
+        assert_eq!(configured_target_dir(&start, None), Some(PathBuf::from("/after")));
+    }
+
+    #[test]
+    fn the_file_without_an_extension_wins_when_both_exist() {
+        // cargo's documentation: "If both files exist, Cargo will use the file
+        // without the extension."
+        let tmp = tempfile::tempdir().unwrap();
+        let start = deep(tmp.path());
+        let cargo = tmp.path().join(".cargo");
+        put(&cargo, "config", "[build]\ntarget-dir = \"/plain\"\n");
+        put(&cargo, "config.toml", "[build]\ntarget-dir = \"/toml\"\n");
+        assert_eq!(configured_target_dir(&start, None), Some(PathBuf::from("/plain")));
+    }
+
+    #[test]
+    fn a_relative_value_resolves_against_the_parent_of_the_cargo_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let start = deep(tmp.path());
+        put(&tmp.path().join("work/.cargo"), "config.toml", "[build]\ntarget-dir = \"out/t\"\n");
+        // not against `start`, and not against the `.cargo` directory itself
+        assert_eq!(
+            configured_target_dir(&start, None),
+            Some(tmp.path().join("work").join("out/t"))
+        );
+    }
+
+    #[test]
+    fn a_relative_value_in_cargo_home_resolves_against_its_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let start = deep(tmp.path());
+        let home = tmp.path().join("user").join(".cargo");
+        put(&home, "config.toml", "[build]\ntarget-dir = \"shared\"\n");
+        assert_eq!(
+            configured_target_dir(&start, Some(&home)),
+            Some(tmp.path().join("user").join("shared"))
+        );
     }
 }
