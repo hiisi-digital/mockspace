@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use super::world::{Clone, World};
@@ -35,8 +35,10 @@ pub fn disk(root: &Path) -> Disk {
 }
 
 fn walk(dir: &Path, rel: &mut Vec<u8>, out: &mut Disk) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for e in entries.flatten() {
+    // a directory that cannot be read is no empty directory: the check would pass over all of it
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("reading {}: {e}", dir.display()));
+    for e in entries {
+        let e = e.unwrap_or_else(|err| panic!("reading {}: {err}", dir.display()));
         let name = e.file_name();
         if rel.is_empty() && name == ".git" {
             continue;
@@ -68,10 +70,96 @@ pub struct Whole {
     pub disk:   Disk,
     pub local:  Refs,
     pub remote: Refs,
+    pub git:    Own,
+}
+
+/// What the person keeps in the repository beside the files and the references.
+#[derive(Debug)]
+pub struct Own {
+    /// What HEAD names, a branch or `detached`, and the commit it is at, empty where unborn.
+    pub head:   (String, String),
+    /// Each entry of the index, by path and stage, to its mode and object.
+    pub index:  BTreeMap<(Vec<u8>, String), (String, String)>,
+    /// Every key and value of the repository's own config and its worktree's, as often as set.
+    pub config: Vec<(String, String)>,
+    /// The hooks git reads from the repository's hooks directory, the samples left out.
+    pub hooks:  BTreeMap<Vec<u8>, Entry>,
+    /// The lines of the sparse checkout outside the engine's block, where it is on.
+    pub sparse: Option<Vec<String>>,
+}
+
+/// The config keys the engine sets for itself, each for a reason it says when it does: the gate's
+/// `core.hooksPath` (saved and put back by `deactivate`), the full pattern mode the instances need,
+/// and the two keys per-worktree config moves into the main worktree's own file, read the same there.
+const ENGINE_KEYS: [&str; 4] = ["core.hookspath", "core.sparsecheckoutcone", "core.bare", "core.worktree"];
+
+/// The start and end of the engine's block in a sparse-checkout file.
+const SPARSE_BLOCK: (&str, &str) = ("# mockspace data refs:", "# end mockspace data refs");
+
+fn raw(c: &Clone, args: &[&str]) -> Vec<u8> {
+    let o = c.w.command("git", &c.root).args(args).output().unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    o.stdout
+}
+
+fn text(c: &Clone, args: &[&str]) -> Option<String> {
+    let o = c.w.sh(&c.root, "git", args);
+    o.ok.then(|| o.stdout.trim().to_string())
+}
+
+pub fn own(c: &Clone) -> Own {
+    let head = (
+        text(c, &["symbolic-ref", "-q", "HEAD"]).unwrap_or_else(|| "detached".into()),
+        text(c, &["rev-parse", "-q", "--verify", "HEAD"]).unwrap_or_default(),
+    );
+    let mut index = BTreeMap::new();
+    for line in raw(c, &["ls-files", "-s", "-z"]).split(|b| *b == 0).filter(|l| !l.is_empty()) {
+        // `<mode> SP <object> SP <stage> TAB <path>`
+        let tab = line.iter().position(|b| *b == b'\t').unwrap();
+        let meta = String::from_utf8_lossy(&line[.. tab]).into_owned();
+        let mut parts = meta.split(' ').map(str::to_owned);
+        let (mode, object, stage) = (parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap());
+        index.insert((line[tab + 1 ..].to_vec(), stage), (mode, object));
+    }
+    let listing = c.w.sh(&c.root, "git", &["config", "--list", "--show-scope", "-z"]);
+    assert!(listing.ok, "{}", listing.all());
+    let mut fields = listing.stdout.split('\0');
+    let mut config = Vec::new();
+    while let (Some(scope), Some(pair)) = (fields.next(), fields.next()) {
+        if scope == "local" || scope == "worktree" {
+            let (k, v) = pair.split_once('\n').unwrap_or((pair, ""));
+            config.push((k.to_lowercase(), v.to_string()));
+        }
+    }
+    config.sort();
+    let common = PathBuf::from(text(c, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).unwrap());
+    let hooks_dir = common.join("hooks");
+    let hooks = if hooks_dir.exists() {
+        disk(&hooks_dir).into_iter().filter(|(p, _)| !p.ends_with(b".sample")).collect()
+    } else {
+        BTreeMap::new()
+    };
+    let on = text(c, &["config", "--type=bool", "core.sparseCheckout"]).as_deref() == Some("true");
+    let sparse = on.then(|| {
+        let file = PathBuf::from(text(c, &["rev-parse", "--path-format=absolute", "--git-path", "info/sparse-checkout"]).unwrap());
+        let mut inside = false;
+        let mut lines = Vec::new();
+        for l in std::fs::read_to_string(&file).unwrap_or_default().lines() {
+            if l.starts_with(SPARSE_BLOCK.0) {
+                inside = true;
+            } else if l == SPARSE_BLOCK.1 {
+                inside = false;
+            } else if !inside && !l.trim().is_empty() {
+                lines.push(l.to_string());
+            }
+        }
+        lines
+    });
+    Own { head, index, config, hooks, sparse }
 }
 
 pub fn capture(c: &Clone) -> Whole {
-    Whole { disk: disk(&c.root), local: refs(c.w, &c.root), remote: refs(c.w, &c.w.remote) }
+    Whole { disk: disk(&c.root), local: refs(c.w, &c.root), remote: refs(c.w, &c.w.remote), git: own(c) }
 }
 
 /// What a command may change on disk and still have lost nothing.
@@ -150,7 +238,66 @@ pub fn kept(c: &Clone, before: &Whole, after: &Whole, allowed: &Allowed) -> Resu
             }
         }
     }
+    kept_own(c, &before.git, &after.git, &mut || {
+        on_remote
+            .get_or_insert_with(|| {
+                let mut all = reachable(c.w, &c.w.remote);
+                all.extend(reachable(c.w, &c.root));
+                all
+            })
+            .clone()
+    }, &mut bad);
     if bad.is_empty() { Ok(()) } else { Err(bad.join("\n")) }
+}
+
+/// HEAD names the branch it named, at the commit it was at or one ahead of it; every staged object
+/// is staged still or held by a commit; every config value of the repository's own is set still,
+/// but the engine's own keys; every hook of the person's own is there as it was; and every line of a
+/// sparse checkout that was on is in it still.
+fn kept_own(c: &Clone, was: &Own, now: &Own, reachable: &mut dyn FnMut() -> BTreeSet<String>, bad: &mut Vec<String>) {
+    if was.head.0 != now.head.0 {
+        bad.push(format!("HEAD: named {}, now {}", was.head.0, now.head.0));
+    } else if was.head.1 != now.head.1
+        && !(was.head.1.is_empty() || c.w.sh(&c.root, "git", &["merge-base", "--is-ancestor", &was.head.1, &now.head.1]).ok)
+    {
+        bad.push(format!("HEAD: moved from {} to {}, which does not hold it", was.head.1, now.head.1));
+    }
+    let staged: BTreeSet<&str> = now.index.values().map(|(_, o)| o.as_str()).collect();
+    let mut ids: Option<BTreeSet<String>> = None;
+    for ((path, stage), (_, object)) in &was.index {
+        if now.index.get(&(path.clone(), stage.clone())).is_some_and(|(_, o)| o == object) || staged.contains(object.as_str()) {
+            continue;
+        }
+        if !ids.get_or_insert_with(&mut *reachable).contains(object) {
+            bad.push(format!("index {} stage {stage}: staged {object}, now in no commit and not staged", shown(path)));
+        }
+    }
+    let mut left = now.config.clone();
+    for (k, v) in &was.config {
+        match left.iter().position(|(nk, nv)| nk == k && nv == v) {
+            Some(i) => {
+                left.remove(i);
+            },
+            None if ENGINE_KEYS.contains(&k.as_str()) => {},
+            None => bad.push(format!("config {k}: was {v:?}, now {:?}", now.config.iter().filter(|(nk, _)| nk == k).map(|(_, v)| v).collect::<Vec<_>>())),
+        }
+    }
+    for (name, hook) in &was.hooks {
+        let engine = matches!(hook, Entry::File { bytes, .. } if String::from_utf8_lossy(bytes).contains("(managed, do not edit)"));
+        if !engine && now.hooks.get(name) != Some(hook) {
+            bad.push(format!("hook {}: {} became {}", shown(name), brief(hook), now.hooks.get(name).map_or("nothing".into(), brief)));
+        }
+    }
+    if let Some(lines) = &was.sparse {
+        match &now.sparse {
+            None => bad.push("sparse checkout: was on, now off".into()),
+            Some(now_lines) => {
+                for l in lines.iter().filter(|l| !now_lines.contains(l)) {
+                    bad.push(format!("sparse checkout: the line {l} is gone"));
+                }
+            },
+        }
+    }
 }
 
 /// What the engine writes for itself on a run that lints: its build directories and the taplo
@@ -168,35 +315,55 @@ fn brief(e: &Entry) -> String {
 }
 
 /// What a person wrote during a scenario. The check at the end is that every text is somewhere a
-/// person gets it back from: on the disk of a clone, or reachable from a reference or a reflog of a
-/// clone or of the remote. An object only a pending copy names, which `git gc` may take, is not.
+/// person gets it back from: at the path it was written to, or at one a step the scenario states
+/// moved it to, in any of the clones, or reachable from a reference or a reflog of a clone or of the
+/// remote. A text at some other path is not where anybody looks, and an object only a pending copy
+/// names, which `git gc` may take, is not either.
 #[derive(Default)]
 pub struct Ledger {
-    texts: Vec<(String, Vec<u8>)>,
+    texts: Vec<(String, String, Vec<u8>)>,
+    moves: Vec<(String, String)>,
 }
 
 impl Ledger {
     pub fn write(&mut self, c: &Clone, rel: &str, bytes: &[u8]) {
         c.write(rel, bytes);
-        self.texts.push((format!("{rel} in {}", c.root.file_name().unwrap().to_string_lossy()), bytes.to_vec()));
+        self.texts.push((c.root.file_name().unwrap().to_string_lossy().into_owned(), rel.to_string(), bytes.to_vec()));
+    }
+
+    /// A step of the scenario moves what is at `from` to `to`, as a migration says it does.
+    pub fn moved(&mut self, from: &str, to: &str) {
+        self.moves.push((from.to_string(), to.to_string()));
+    }
+
+    /// `rel` and every path the stated moves take it to.
+    fn places(&self, rel: &str) -> Vec<String> {
+        let mut out = vec![rel.to_string()];
+        let mut i = 0;
+        while i < out.len() {
+            for (f, t) in &self.moves {
+                if *f == out[i] && !out.contains(t) {
+                    out.push(t.clone());
+                }
+            }
+            i += 1;
+        }
+        out
     }
 
     pub fn kept(&self, w: &World, clones: &[&Clone]) -> Result<(), String> {
         let mut ids = reachable(w, &w.remote);
-        let mut on_disk = BTreeSet::new();
         for c in clones {
             ids.extend(reachable(w, &c.root));
-            for e in disk(&c.root).into_values() {
-                if let Entry::File { bytes, .. } = e {
-                    on_disk.insert(bytes);
-                }
-            }
         }
+        let at_its_place = |rel: &str, b: &[u8]| {
+            self.places(rel).iter().any(|p| clones.iter().any(|c| std::fs::read(c.path(p)).is_ok_and(|on| on == b)))
+        };
         let lost: Vec<String> = self
             .texts
             .iter()
-            .filter(|(_, b)| !on_disk.contains(b) && !ids.contains(&blob_of(w, b)))
-            .map(|(what, b)| format!("{what}: {:?}", String::from_utf8_lossy(b)))
+            .filter(|(_, rel, b)| !at_its_place(rel, b) && !ids.contains(&blob_of(w, b)))
+            .map(|(clone, rel, b)| format!("{rel} in {clone}: {:?}", String::from_utf8_lossy(b)))
             .collect();
         if lost.is_empty() { Ok(()) } else { Err(format!("written and now nowhere:\n{}", lost.join("\n"))) }
     }

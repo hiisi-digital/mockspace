@@ -269,6 +269,13 @@ impl Shape {
             c.write(&format!("{t}/debug/out.o"), &bytes(4, 1024));
         }
     }
+    /// What a person keeps in a clone of their own beside the files: the shape with every odd kind
+    /// of file also has a sparse checkout with a line of the person's, which the migration keeps.
+    pub fn add_own_setup(&self, c: &Clone) {
+        if self.odd {
+            c.git(&["sparse-checkout", "set", "--no-cone", "/*", "!/vendor/private/"]);
+        }
+    }
 }
 
 /// A remote holding a consumer of `shape` before any migration, built in a clone called `seed`.

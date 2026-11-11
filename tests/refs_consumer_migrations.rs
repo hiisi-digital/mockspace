@@ -55,6 +55,7 @@ fn migrate(s: &Shape) -> (refs_e2e::World, std::path::PathBuf) {
     {
         let c = w.clone_of("a");
         s.add_ignored_output(&c);
+        s.add_own_setup(&c);
         // the engine sets the clone up on its first run, in its own build directory, before any migration
         let _ = c.run(&["status"]);
         let renamed = s.renames().into_iter().map(|(f, t)| (bytes(&f), bytes(&t))).collect();
@@ -103,12 +104,11 @@ fn a_fresh_clone_has_every_file(s: &Shape) {
         b.ok(&["data-refs", "verify"]);
     }
     let theirs = whole::disk(&b.root);
-    // what the engine writes for itself beside the sources, untracked and in no ref, is no data
-    let made = w.command("git", &root).args(["ls-files", "-z", "--others", "--exclude-standard"]).output().unwrap().stdout;
-    let made: BTreeSet<&[u8]> = made.split(|b| *b == 0).filter(|p| !p.is_empty()).collect();
+    // what the engine writes for itself beside the sources, by name, and what the scenario put
+    // where a `.gitignore` keeps it out, is no data
     let ignored = |p: &[u8]| {
         let shown = whole::shown(p);
-        shown.contains("target/") || shown.ends_with("/.env") || made.contains(p)
+        whole::engine_output(p) || shown.ends_with("/.env")
     };
     let mut bad = Vec::new();
     for (p, e) in a.iter().filter(|(p, _)| !ignored(p)) {

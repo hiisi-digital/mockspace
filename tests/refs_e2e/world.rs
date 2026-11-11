@@ -175,6 +175,9 @@ pub struct Clone<'w> {
     pub root: PathBuf,
 }
 
+/// The `post-merge` hook every clone has of the person's own.
+pub const PERSONS_HOOK: &str = "#!/bin/sh\n# the person's own hook\nexit 0\n";
+
 impl Clone<'_> {
     fn configure(&self) {
         for kv in [
@@ -189,6 +192,8 @@ impl Clone<'_> {
         ] {
             self.git(&["config", kv[0], kv[1]]);
         }
+        // a hook of the person's own, which no command of the engine may take or rewrite
+        mockspace_manifest::write_executable(&self.root.join(".git/hooks/post-merge"), PERSONS_HOOK).unwrap();
     }
 
     /// The mock directory: what `mock_dir` of a `mockspace.toml` at the root names, as the

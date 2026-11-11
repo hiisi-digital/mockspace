@@ -94,3 +94,30 @@ fn a_text_only_at_another_path_than_its_own_is_lost() {
     let e = l.kept(&w, &[&c]).expect_err("a text at a path nothing named is not where the person finds it");
     assert!(e.contains("notes/draft.md"), "{e}");
 }
+
+#[test]
+fn a_text_at_a_path_a_stated_move_took_it_to_is_kept() {
+    let w = World::new();
+    let c = committed(&w);
+    let mut l = Ledger::default();
+    l.write(&c, "notes/draft.md", b"written and never committed\n");
+    std::fs::rename(c.path("notes/draft.md"), c.path("notes/elsewhere.md")).unwrap();
+    l.moved("notes/draft.md", "notes/elsewhere.md");
+    l.kept(&w, &[&c]).unwrap();
+}
+
+// the control of every test above: a tree with all of it, and nothing done to it, passes
+#[test]
+fn nothing_done_is_nothing_seen() {
+    let w = World::new();
+    let c = committed(&w);
+    c.git(&["config", "branch.dev.description", "the person's own words"]);
+    mockspace_manifest::write_executable(&c.root.join(".git/hooks/pre-push"), "#!/bin/sh\nexit 0\n").unwrap();
+    c.git(&["sparse-checkout", "set", "--no-cone", "/*", "!/vendor/private/"]);
+    c.write("notes/staged.md", b"staged and never committed\n");
+    c.git(&["add", "notes/staged.md"]);
+    let before = whole::capture(&c);
+    assert!(before.git.sparse.as_ref().is_some_and(|l| l.iter().any(|l| l == "!/vendor/private/")), "{:?}", before.git);
+    assert!(before.git.hooks.keys().any(|k| k == b"pre-push"), "{:?}", before.git.hooks.keys());
+    whole::kept(&c, &before, &whole::capture(&c), &Allowed::default()).unwrap();
+}
