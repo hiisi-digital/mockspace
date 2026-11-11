@@ -769,7 +769,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 return crate::registry_append::run(&cfg, &subcommand_args(&args, "registry-append"));
             },
             "data-refs" => {
-                return crate::data_refs::run(&cfg, &subcommand_args(&args, "data-refs"));
+                let verb_args = subcommand_args(&args, "data-refs");
+                return crate::data_refs::run_gated(&cfg, &verb_args, &crate::data_refs::repo_lints_pass);
             },
             "query" => {
                 // The argument after the subcommand, not a fixed position:
@@ -822,7 +823,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 }
                 return pdf::cmd_pdf(&cfg.docs_dir, &cfg.repo_root, &extra);
             },
-            "lock" | "deprecate" | "unlock" | "close" | "archive" | "migrate" => {
+            "migrate" => return crate::migrate::run(&cfg, &subcommand_args(&args, "migrate")),
+            "lock" | "deprecate" | "unlock" | "close" | "archive" => {
                 let subcmd_opts = design_round::SubcmdOpts {
                     auto_commit: auto_commit_wanted(&args),
                 };
@@ -836,7 +838,6 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     "unlock" => design_round::cmd_unlock(&cfg, &subcmd_opts),
                     "close" => design_round::cmd_close_taking(&cfg, &subcmd_opts, &take_names(&args)),
                     "archive" => design_round::cmd_archive(&cfg, &subcmd_opts),
-                    "migrate" => design_round::cmd_migrate(&cfg, &subcmd_opts),
                     _ => unreachable!(),
                 };
             },
@@ -1167,6 +1168,14 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             .filter(crate::panel::is_open)
             .map(|p| p.slug)
             .collect();
+        // Likewise the files a data ref holds: git does not know them, the instances do.
+        let ref_files = match crate::data_refs::ref_files(&cfg) {
+            Ok(files) => files,
+            Err(why) => {
+                eprintln!("BLOCKED: {why}");
+                return ExitCode::FAILURE;
+            },
+        };
 
         // The registry gate, on the lint path only, before the lints that read it.
         //
@@ -1237,6 +1246,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     &lint_registry_view,
                     &cfg.canon_paths,
                     &open_panels,
+                    &ref_files,
                     &cfg.primitive_introductions,
                     pack,
                 );
@@ -1278,6 +1288,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     &lint_registry_view,
                     &cfg.canon_paths,
                     &open_panels,
+                    &ref_files,
                     &cfg.primitive_introductions,
                     pack,
                 );
@@ -1303,6 +1314,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     &lint_registry_view,
                     &cfg.canon_paths,
                     &open_panels,
+                    &ref_files,
                     &cfg.primitive_introductions,
                     pack,
                 );

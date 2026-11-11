@@ -29,6 +29,10 @@ use crate::refs::RefPair;
 use crate::retry::{RetryPolicy, transient_push_output};
 use crate::store::{Applied, Freshness, Store};
 
+/// The variable a push of a data ref carries, holding the remote ref it writes. A repository's
+/// pre-push hook reads it to tell the store's push of data from a push of a branch.
+pub const DATA_REF_ENV: &str = "MOCKSPACE_DATA_REF";
+
 /// What this store knows of the remote.
 pub(crate) enum Seen {
     /// Nothing yet: no refresh and no write.
@@ -256,9 +260,12 @@ impl RefStore {
                 tip.as_deref().unwrap_or("")
             );
             let refspec = format!("{commit}:{}", self.pair.remote());
-            let out = self
-                .git
-                .run(&["push", "-q", &lease, &self.remote, &refspec], &[], None)?;
+            // a repository's pre-push gate is for its branches, and is told which ref this is
+            let out = self.git.run(
+                &["push", "-q", &lease, &self.remote, &refspec],
+                &[(DATA_REF_ENV, self.pair.remote())],
+                None,
+            )?;
             if out.ok() {
                 self.git
                     .must(&["update-ref", self.pair.local(), &commit], &[], None)?;

@@ -99,7 +99,7 @@ Transitions are subcommands, not manual renames:
 | `cargo mock deprecate`    | Deprecate the active CL; in `IMPL` also unlocks doc CL; a stub changelist (bare title) beside a locked one of its kind is retired instead, in any phase; otherwise prints the comparison the replacement owes the `deprecation-comparison` lint: the `## Comparison to deprecated changelist` section with a `###` subheader for each `##` header, and the names it must mention | `DOC`, `IMPL`, or any with a stub |
 | `cargo mock close`        | Archive the round into a `<round-id>/` subdir with `.meta` + `.history`; takes the changelists, the files carrying the id of one, the files one names, any flat file given as `--take <file>`, and lists the flat files it leaves; `--take` with no round open files the named flat topics under the newest closed round | `CLOSED`, or `--take` with no round open |
 | `cargo mock archive`      | Archive an abandoned round into a `<round-id>-abandoned/` subdir; with changelists it takes what `close` takes (without `--take`) and is named by their id, and in the TOPIC phase, with none, it takes every flat file and is named by the earliest | any                     |
-| `cargo mock migrate`      | Rename legacy `YYYY-MM-DD_*.md` files to the compact format       | any                     |
+| `cargo mock migrate <name>` | Make one named change of the repo's shape (see below)          | any                     |
 | `cargo mock round-id`     | Print a fresh round id, `YYYYMMDDHHMM-tttt`                       | any                     |
 | `cargo mock rename-round <old> [<new>]` | Give a round a new id: directory, files, `.meta`, local tags | any                     |
 
@@ -399,7 +399,7 @@ remote = "origin"        # optional
 form = "branch"          # optional: "branch" or "ref"
 ```
 
-A key the table does not read refuses the config, and so does a namespace declared twice or shared with a registry store or the test history, a `path` or `instance` that is, or lies inside or around, another's, and a `path` under `registry` or `test-history`, which have stores of their own. `design_rounds` is taken only by patterns, as below. A namespace is `/`-separated parts of lowercase letters, digits, `-`, `_` and `.`. `cargo mock data-refs status|verify|instantiate|restore|commit [namespace]` works the refs: `status` and `verify` read the ref as this clone last saw it and do not fetch, so run `instantiate` first to see a remote move; `instantiate` fetches a ref into its directory, `commit` writes the directory's changes back (the first one makes the ref from the files), and a directory with no instance is an error in all of them but `instantiate`. `restore` writes again the files of an instance that are gone from disk, from the commit the instance was at, and leaves a file that is there as it is.
+A key the table does not read refuses the config, and so does a namespace declared twice or shared with a registry store or the test history, a `path` or `instance` that is, or lies inside or around, another's, and a `path` under `registry` or `test-history`, which have stores of their own. `design_rounds` is taken only by patterns, as below. A namespace is `/`-separated parts of lowercase letters, digits, `-`, `_` and `.`. `cargo mock data-refs status|verify|instantiate|restore|commit [namespace]` works the refs: `status` and `verify` read the ref as this clone last saw it and do not fetch, so run `instantiate` first to see a remote move; `instantiate` fetches a ref into its directory, `commit` writes the directory's changes back (the first one makes the ref from the files) after the repository lints pass over the tree, and commits nothing where they refuse, and a directory with no instance is an error in all of them but `instantiate`. `restore` writes again the files of an instance that are gone from disk, from the commit the instance was at, and leaves a file that is there as it is.
 
 A table with `include` holds only some files of its directory, and the branch keeps the others. The patterns are relative to `path`, `*` stands for any run of characters inside one name and `**` for any number of whole directories, and nothing else is special:
 
@@ -415,11 +415,30 @@ path = "design_rounds"
 include = ["*/**"]           # the closed rounds; a flat file is an open round's and stays on its branch
 ```
 
-Such a table takes no `instance`, since its files lie among the branch's own. `design_rounds` is taken only this way, by patterns that reach into a directory. A ref whose tip holds a file no pattern matches is refused before anything is written, and so is a write below a symlink, and an update that a file of the branch stands in the way of.
+Such a table takes no `instance`, since its files lie among the branch's own. `design_rounds` is taken only this way, by patterns that reach into a directory. A ref whose tip holds a file no pattern matches is refused before anything is written, and so is a write below a symlink, and an update that a file of the branch stands in the way of. A table may take the mock directory itself, `path = "."`, with patterns that each name the directory they reach into (`research/**`, `crates/**/*.md.tmpl`); a pattern that could match the config, a file of the registry or the test history, or a flat file of `design_rounds` is refused, and no other `[[data_ref]]` is declared beside such a table, since it lies around every one.
 
 Every command but `data-refs` and the recovery ones (`clean`, `activate`, `deactivate`, `status`, `migrate`, `registry-append`) stops before it reads the mock directory when a declared ref has no instance in this clone, when an instance has none of its files on disk, and when the branch still tracks a file a ref holds. The first is answered by `cargo mock data-refs instantiate`, the second by `cargo mock data-refs restore`, the third by `git rm --cached` on the files it names.
 
+The files of a ref are judged by the phase gates as tracked files are: the gates are told which files the refs hold and which of them differ from the commit their instance is at. The generated pre-push hook gates branches. The engine pushes a data ref with `MOCKSPACE_DATA_REF` naming it, and the hook stands down for a push of that ref alone.
+
 A landing is gated against the data as one clone held it, and the commit says which. `cargo mock data-refs trailers` prints a `Mock-Ref: <namespace> <hash> <author time> <digest>` line for each declared ref, naming the commit its instance is at, and refuses over an instance with changes the ref does not hold. The landing's message carries those lines. `cargo mock data-refs paired <commit>` fetches each ref and reads them back: it fails unless the commit has a line for every declared ref and each names a commit of the ref, by hash or, where the hash is gone after a rehouse, by the one commit within a day of the recorded time whose files give the recorded digest.
+
+### Migrations
+
+`cargo mock migrate <name> [flags] [--dry-run]` makes one named change of a repository's shape. A call names the migration and gives it everything as flags, and nothing is read off the tree to decide what to do. A migration checks that the tree is the one it was written for and refuses with the reason when it is not. The plan is printed first and names every path that would change, and `--dry-run` stops there.
+
+| Migration | Flags | What it does |
+|---|---|---|
+| `directory-to-ref` | `--namespace <ns> --path <dir> [--include <pattern>]... [--form branch\|ref] [--remote <name>]` | Makes the ref from the files the branch tracks under the directory (or the ones the patterns match) and pushes it, appends the `[[data_ref]]` table to `mockspace.toml`, then takes those files out of the index. They stay on disk as the instance. |
+| `round-filenames` | none | Renames design-round files that carry a legacy `YYYY-MM-DD_` prefix to the compact timestamp form. |
+
+`directory-to-ref` refuses a directory the branch tracks no such file in, a held file that is changed or untracked, another declaration of the same namespace or path, a migration already made (the table is there and the branch tracks none of its files), and a ref whose commits do not hold what the branch tracks, which was made elsewhere and is instantiated and not made again. A run that was stopped part way is finished by the same call: it makes the steps that are missing and no other, and refuses where the directory was changed since the ref was made. After it the config and the removals are one commit on the branch:
+
+```bash
+cargo mock migrate directory-to-ref --namespace research --path research --dry-run
+cargo mock migrate directory-to-ref --namespace research --path research
+git add mock/mockspace.toml && git commit -m 'chore: move `research` to its ref'
+```
 
 ### Lints
 

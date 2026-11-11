@@ -40,10 +40,6 @@ pub(crate) fn unlock_round() -> String {
     "chore: unlock design round, deprecate src and unlock doc".to_string()
 }
 
-pub(crate) fn migrate(renamed: u32) -> String {
-    format!("chore: migrate {renamed} design round files to the new naming")
-}
-
 /// Names the new directory only: the old one carries the same tail, and both would not fit.
 pub(crate) fn rename_round(new: &str) -> String {
     format!("chore: rename design round to {new}")
@@ -107,7 +103,6 @@ mod tests {
             deprecate_doc(&cl("doc")),
             deprecate_src_and_unlock(&cl("src")),
             unlock_round(),
-            migrate(u32::MAX),
             rename_round(&format!("202610221530-ab12-abandoned-10")),
             rename_round(id),
         ];

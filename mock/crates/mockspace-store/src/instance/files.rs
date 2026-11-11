@@ -108,6 +108,20 @@ impl Instance<'_> {
         Ok(missing.len())
     }
 
+    /// The files the instance holds, on disk or at the base, and of those the ones that differ
+    /// from the base: added, changed or removed here. Both are what the directory holds where no
+    /// instance was made, with nothing changed.
+    pub fn files(&self) -> Result<(BTreeSet<String>, BTreeSet<String>), StoreError> {
+        if self.base()?.is_none() || !self.dir.is_dir() {
+            let here = if self.dir.is_dir() { self.walk()? } else { Vec::new() };
+            return Ok((here.into_iter().collect(), BTreeSet::new()));
+        }
+        let delta = self.delta()?;
+        let mut held: BTreeSet<String> = self.store.tree_ids(&delta.base)?.into_keys().collect();
+        held.extend(self.walk()?);
+        Ok((held, delta.sent.into_keys().collect()))
+    }
+
     /// How many files of the base are on disk, and how many the base holds. Both are zero where
     /// no instance was made.
     pub fn present(&self) -> Result<(usize, usize), StoreError> {
