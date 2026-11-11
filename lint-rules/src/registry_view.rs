@@ -50,7 +50,7 @@ impl RegistryView {
             let ns = letkajenkka::Query::parse(q)
                 .ok()
                 .and_then(letkajenkka::Query::path)
-                .and_then(letkajenkka::Path::plain)
+                .and_then(mockspace_refnames::plain)
                 .and_then(|mut names| names.next());
             if let Some(ns) = ns {
                 by_namespace

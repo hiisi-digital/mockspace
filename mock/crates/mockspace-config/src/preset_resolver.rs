@@ -303,7 +303,7 @@ mod tests {
 
         fn insert(mut self, host: &str, preset: PresetFile) -> Self {
             self.files
-                .insert(format!("{host}::{}", crate::fold_name(&preset.name).unwrap()), preset);
+                .insert(format!("{host}::{}", mockspace_refnames::fold(&preset.name).unwrap()), preset);
             self
         }
     }

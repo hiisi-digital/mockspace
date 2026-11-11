@@ -1622,9 +1622,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         // repo whose own config says "a project with no packages is ordinary",
         // over fifteen placeholders in one document. Found by running it against
         // a real consumer rather than a fixture.
-        // The steps are the syntax's own to find, since the text is one it may have refused.
-        let is_reference =
-            |e: &String| registry::raw_steps(e.trim_matches(|c| c == '{' || c == '}')).count() > 1;
+        // A text the standard refuses is still a reference here, so this asks only whether the
+        // separator is in it, and no step of it is read.
+        let is_reference = |e: &String| e.contains("::");
         let refs_unresolved: usize = unresolved
             .iter()
             .map(|(_, v)| v.iter().filter(|e| is_reference(e)).count())
@@ -1643,11 +1643,11 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             let changed = registry_scope::Changed::of_run(mode, &cfg.repo_root);
             let mut findings = Vec::new();
             // Only a reference into a declared namespace is a reference to a row. One naming
-            // anything else (an undeclared namespace, a crate, a malformed root) is a defect of
-            // the document itself and gates every run.
+            // anything else (an undeclared namespace, a crate, a reference the standard refuses)
+            // is a defect of the document itself and gates every run.
             let is_row_ref = |e: &str| {
-                let root = e.trim_matches(|c: char| c == '{' || c == '}').trim();
-                registry::raw_steps(root).next().is_some_and(|r| {
+                let text = e.trim_matches(|c: char| c == '{' || c == '}').trim();
+                registry::root(text).is_some_and(|r| {
                     cfg.registry_namespaces.iter().any(|ns| ns.key == r)
                 })
             };

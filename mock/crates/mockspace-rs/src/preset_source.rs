@@ -98,7 +98,7 @@ impl PresetSource for FirstPartyPresetSource {
         let Some((_, body)) = self
             .embedded
             .iter()
-            .find(|(n, _)| mockspace_config::fold_name(n).as_deref() == Some(preset_ref.name.as_str())) else {
+            .find(|(n, _)| mockspace_refnames::fold(n).is_some_and(|f| f == preset_ref.name.as_str())) else {
             return Err(PresetResolveError::NotFound {
                 host: preset_ref.host.clone(),
                 name: preset_ref.name.clone(),
@@ -123,7 +123,7 @@ impl PresetSource for FirstPartyPresetSource {
         // derives the key from the filename, so this catches a
         // preset author who renamed a file but forgot to update the
         // `name` field inside.
-        if mockspace_config::fold_name(&preset.name).as_deref() != Some(preset_ref.name.as_str()) {
+        if !mockspace_refnames::fold(&preset.name).is_some_and(|f| f == preset_ref.name.as_str()) {
             return Err(PresetResolveError::NotFound {
                 host: FIRST_PARTY_HOST.to_string(),
                 name: format!(
@@ -378,7 +378,7 @@ name = "broken
             "presets/*.toml should ship at least one entry; build.rs found none"
         );
         for name in src.names() {
-            let pref = parse_preset_shorthand(&format!("mockspace::{}", mockspace_config::fold_name(name).unwrap()))
+            let pref = parse_preset_shorthand(&format!("mockspace::{}", mockspace_refnames::fold(name).unwrap()))
                 .unwrap_or_else(|e| panic!("shorthand for `mockspace::{name}` failed: {e}"));
             let preset = src
                 .resolve(&pref)

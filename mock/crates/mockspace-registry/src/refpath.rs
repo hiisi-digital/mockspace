@@ -6,16 +6,17 @@
 //! The one reader of a hierarchical reference, `root::step::step`.
 //!
 //! The syntax is the `letkajenkka` standard and `letkajenkka` is its parser: nothing in this crate
-//! splits a reference on its separator. What this module adds is the host's half of the standard:
-//! the folding a host does at resolution (`mock::design` reaches `DESIGN.md.tmpl`, and
-//! `mock::design::the_four_lanes` reaches the heading a forge anchors as `the-four-lanes`), and
-//! the walk down a root that follows from it.
+//! splits a reference on its separator. The host's half of the standard, the fold of a name and
+//! the reading of a path as plain names, is `mockspace_refnames`. What this module adds is the
+//! resolution that follows from it: `mock::design` reaches `DESIGN.md.tmpl`, and
+//! `mock::design::the_four_lanes` reaches the heading a forge anchors as `the-four-lanes`, by the
+//! walk down a root.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub use letkajenkka::raw_steps;
 use letkajenkka::{Query, Selector};
+use mockspace_refnames::{Folded, fold};
 
 /// The migration that rewrites a repository's references from the spelling before the standard.
 pub const MIGRATION: &str = "references-to-letkajenkka";
@@ -57,7 +58,7 @@ impl Refusal {
 pub fn names(text: &str) -> Result<Vec<&str>, Refusal> {
     let query = Query::parse(text).map_err(Refusal::Syntax)?;
     let Some(path) = query.path() else { return Err(Refusal::NotPlain) };
-    path.plain().map(Iterator::collect).ok_or(Refusal::NotPlain)
+    mockspace_refnames::plain(path).map(Iterator::collect).ok_or(Refusal::NotPlain)
 }
 
 /// An operation `name(argument)` of exactly one argument, as the argument's text.
@@ -79,12 +80,16 @@ pub fn operation<'a>(text: &'a str, name: &str) -> Option<&'a str> {
     }
 }
 
-/// A name as the standard spells it, from what a filesystem or a document calls itself: case and
-/// hyphens folded. `None` where no folding makes an identifier of it (it opens on a digit, holds a
-/// dot, or holds a character outside the set).
+/// The name a text opens on, where it parses as a path whose first step is a name: the namespace or
+/// the root of a reference. `None` for a text the standard refuses, and for one opening on anything
+/// but a name, since neither says what it reaches.
 #[must_use]
-pub fn fold(name: &str) -> Option<String> {
-    letkajenkka::ident::fold(name).map(|f| f.to_string())
+pub fn root(text: &str) -> Option<&str> {
+    let path = Query::parse(text).ok()?.path()?;
+    match path.steps().next()?.selector {
+        Selector::Ident(name) => Some(name),
+        _ => None,
+    }
 }
 
 /// The items of a list of references as a row field writes it: split at the commas of its own level
@@ -95,7 +100,7 @@ pub fn list(raw: &str) -> impl Iterator<Item = &str> {
 
 /// What a file or a directory is called in a reference: the whole name of a directory, and the name
 /// up to its first dot for a file, so the extensions are never written.
-fn fold_entry(name: &str, is_dir: bool) -> Option<String> {
+fn fold_entry(name: &str, is_dir: bool) -> Option<Folded<'_>> {
     if is_dir {
         fold(name)
     } else {
@@ -122,7 +127,7 @@ pub fn forge_slug(title: &str) -> String {
 /// A heading as a reference names it: its forge slug, folded.
 #[must_use]
 pub fn heading_name(title: &str) -> Option<String> {
-    fold(&forge_slug(title))
+    fold(&forge_slug(title)).map(|f| f.to_string())
 }
 
 /// What a citation points at within a file.
@@ -340,7 +345,7 @@ fn listing(dir: &Path) -> std::rc::Rc<[Entry]> {
 fn walk(dir: &Path, names: &[String], out: &mut Vec<PathBuf>) {
     let Some((name, rest)) = names.split_first() else { return };
     for entry in listing(dir).iter() {
-        if fold_entry(&entry.name, entry.is_dir).as_deref() != Some(name.as_str()) {
+        if !fold_entry(&entry.name, entry.is_dir).is_some_and(|f| f == name.as_str()) {
             continue;
         }
         if entry.is_dir {

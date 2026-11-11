@@ -94,7 +94,7 @@ impl Config {
     /// name reaches the prefixed one. Exact first, across every source directory, because the
     /// expression names a crate and not a group.
     fn crate_named(&self, name: &str) -> Option<PathBuf> {
-        let prefixed = refpath::fold(&self.crate_prefix).map(|p| format!("{p}_{name}"));
+        let prefixed = mockspace_refnames::fold(&self.crate_prefix).map(|p| format!("{p}_{name}"));
         [Some(name.to_string()), prefixed].into_iter().flatten().find_map(|want| {
             self.src_dirs.iter().find_map(|d| {
                 let mut dirs: Vec<PathBuf> = fs::read_dir(d)
@@ -105,8 +105,7 @@ impl Config {
                     .collect();
                 dirs.sort();
                 dirs.into_iter().find(|p| {
-                    p.file_name().and_then(|n| refpath::fold(&n.to_string_lossy())).as_deref()
-                        == Some(want.as_str())
+                    p.file_name().is_some_and(|n| mockspace_refnames::fold(&n.to_string_lossy()).is_some_and(|f| f == want.as_str()))
                 })
             })
         })

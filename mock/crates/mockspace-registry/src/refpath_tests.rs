@@ -7,25 +7,27 @@ use letkajenkka::Kind;
 
 use super::*;
 
-/// The `conformance/` directory of the checkout of `letkajenkka` this crate builds against: the one
-/// the lockfile pins, found in cargo's git checkouts.
+/// The `conformance/` directory of the `letkajenkka` this crate builds against: the version the
+/// lockfile pins, in the source cargo unpacked from the registry it came from.
 fn conformance_dir() -> PathBuf {
     let lock = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../Cargo.lock")).expect("the lockfile");
-    let rev = lock
-        .lines()
-        .find(|l| l.contains("orgrinrt/letkajenkka.git") && l.contains('#'))
-        .and_then(|l| l.rsplit('#').next())
-        .map(|r| r.trim_end_matches('"').chars().take(7).collect::<String>())
-        .expect("the lockfile pins letkajenkka to a revision");
+    let lock: toml_edit::DocumentMut = lock.parse().expect("the lockfile is toml");
+    let package = lock
+        .get("package")
+        .and_then(|p| p.as_array_of_tables())
+        .and_then(|all| all.iter().find(|p| p.get("name").and_then(|n| n.as_str()) == Some("letkajenkka")))
+        .expect("the lockfile holds letkajenkka");
+    let version = package.get("version").and_then(|v| v.as_str()).expect("a version");
+    let source = package.get("source").and_then(|v| v.as_str()).unwrap_or_default();
+    assert!(source.starts_with("registry+"), "letkajenkka is taken from a registry, and the lockfile says {source:?}");
     let home = std::env::var_os("CARGO_HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(std::env::var("HOME").expect("a home")).join(".cargo"));
-    let checkouts = home.join("git/checkouts");
-    fs::read_dir(&checkouts)
-        .expect("cargo's git checkouts")
+    let sources = home.join("registry/src");
+    fs::read_dir(&sources)
+        .expect("cargo's registry sources")
         .filter_map(Result::ok)
-        .filter(|e| e.file_name().to_string_lossy().starts_with("letkajenkka-"))
-        .map(|e| e.path().join(&rev).join("conformance"))
+        .map(|e| e.path().join(format!("letkajenkka-{version}")).join("conformance"))
         .find(|p| p.is_dir())
-        .expect("the pinned checkout of letkajenkka holds conformance/")
+        .unwrap_or_else(|| panic!("letkajenkka {version} is unpacked under {} with its conformance/", sources.display()))
 }
 
 /// `(name, query, error, plain names)` of every case in the suite that is a path of names or an
@@ -111,20 +113,26 @@ fn an_operation_is_read_by_the_standard_with_exactly_one_argument() {
     assert_eq!(operation("pathof(a::b)", "refsto"), None);
 }
 
-// Mutation: dropping the hyphen fold makes `no-std` a name of its own beside `no_std`.
+// Mutation: folding a directory's name up to its first dot, as a file's is, names `v1.2` as `v1`;
+// folding a file's whole name keeps the extension a reference never writes.
 #[test]
-fn folding_makes_one_spelling_of_a_name() {
-    assert_eq!(fold("DESIGN").as_deref(), Some("design"));
-    assert_eq!(fold("my-crate").as_deref(), Some("my_crate"));
-    assert_eq!(fold("no_std").as_deref(), Some("no_std"));
-    assert_eq!(fold("2d_grid"), None);
-    assert_eq!(fold("a.b"), None);
-    assert_eq!(fold(""), None);
-    assert_eq!(fold("ärt"), None);
-    assert_eq!(fold_entry("DESIGN.md.tmpl", false).as_deref(), Some("design"));
-    assert_eq!(fold_entry("my-crate", true).as_deref(), Some("my_crate"));
-    assert_eq!(fold_entry("v1.2", true), None);
-    assert_eq!(fold_entry(".hidden", false), None);
+fn a_file_is_named_up_to_its_first_dot_and_a_directory_by_its_whole_name() {
+    let entry = |name: &str, is_dir: bool| fold_entry(name, is_dir).map(|f| f.to_string());
+    assert_eq!(entry("DESIGN.md.tmpl", false).as_deref(), Some("design"));
+    assert_eq!(entry("my-crate", true).as_deref(), Some("my_crate"));
+    assert_eq!(entry("v1.2", true), None);
+    assert_eq!(entry(".hidden", false), None);
+}
+
+// Mutation: cutting the text at its first separator by hand gives `canon` for `canon::Foo` and
+// `canon ` for `canon :: foo`, both of which the standard refuses, and `{a, b}` for a set.
+#[test]
+fn a_root_is_the_first_name_of_a_text_the_standard_reads_as_a_path() {
+    assert_eq!(root("canon::foo::bar"), Some("canon"));
+    assert_eq!(root("abi_count"), Some("abi_count"));
+    for text in ["canon::Foo", "canon :: foo", "{a, b}::c", "*::c", "join(a::b)", "3::a", ""] {
+        assert_eq!(root(text), None, "{text}");
+    }
 }
 
 // Mutation: dropping the hyphen-to-underscore fold from `heading_name`, or keeping the `_` out of

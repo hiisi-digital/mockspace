@@ -15,6 +15,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use crate::refpath::{self, Anchor, FileRef, Location};
@@ -38,14 +39,29 @@ pub enum Outcome {
     Left(String),
 }
 
-/// One `{{ }}` expression of a text, and what became of it.
+/// One reference of a text, where it stands, and what became of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
-    /// The whole placeholder as written, braces included.
+    /// The bytes of the text it was read from that the reference takes: the whole placeholder,
+    /// braces included, the item of a list, or the string of a config that holds it.
+    pub span:    Range<usize>,
+    /// The reference as written: the whole placeholder, braces included, or the item.
     pub token:   String,
     /// The expression inside it.
     pub old:     String,
     pub outcome: Outcome,
+}
+
+impl Found {
+    /// The token as the rewrite writes it, keeping the spacing inside its braces; `None` unless
+    /// it is rewritten.
+    #[must_use]
+    pub fn rewritten(&self) -> Option<String> {
+        match &self.outcome {
+            Outcome::Rewritten(new) => Some(self.token.replacen(self.old.trim(), new, 1)),
+            _ => None,
+        }
+    }
 }
 
 /// Every placeholder of `text` outside a code fence that is not in the new spelling already.
@@ -53,7 +69,10 @@ pub struct Found {
 pub fn in_text(text: &str, ctx: &Ctx<'_>) -> Vec<Found> {
     let mut out = Vec::new();
     let mut fenced = false;
-    for line in text.lines() {
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        let start = at;
+        at += line.len();
         if line.trim_start().starts_with("```") {
             fenced = !fenced;
             continue;
@@ -61,12 +80,13 @@ pub fn in_text(text: &str, ctx: &Ctx<'_>) -> Vec<Found> {
         if fenced {
             continue;
         }
-        for (token, old) in crate::placeholder_exprs(line) {
-            let outcome = expr(&old, ctx);
+        for (span, old) in crate::placeholder_spans(line) {
+            let outcome = expr(old, ctx);
             if outcome != Outcome::Same {
                 out.push(Found {
-                    token,
-                    old,
+                    span: start + span.start .. start + span.end,
+                    token: line[span].to_string(),
+                    old: old.to_string(),
                     outcome,
                 });
             }
@@ -75,23 +95,40 @@ pub fn in_text(text: &str, ctx: &Ctx<'_>) -> Vec<Found> {
     out
 }
 
-/// The text with each rewritten placeholder written in the new spelling. A placeholder keeps the
-/// spacing inside its braces as it was.
+/// Every item of a list of references, a field declared to hold them, that is not in the new
+/// spelling already. An item holding a placeholder is read as the placeholder, by [`in_text`].
 #[must_use]
-pub fn apply(text: &str, found: &[Found]) -> String {
-    let mut out = text.to_string();
-    for f in found {
-        if let Outcome::Rewritten(new) = &f.outcome {
-            out = out.replace(&f.token, &f.token.replacen(f.old.trim(), new, 1));
-        }
-    }
-    out
+pub fn in_list(value: &str, ctx: &Ctx<'_>) -> Vec<Found> {
+    refpath::list(value)
+        .filter(|item| !item.contains("{{") && !item.contains("}}"))
+        .filter_map(|item| {
+            let outcome = expr(item, ctx);
+            // an item is a slice of the value, so its offset is where it stands in it
+            let start = item.as_ptr() as usize - value.as_ptr() as usize;
+            (outcome != Outcome::Same).then(|| Found {
+                span: start .. start + item.len(),
+                token: item.to_string(),
+                old: item.to_string(),
+                outcome,
+            })
+        })
+        .collect()
 }
 
-/// One item of a field that holds references: a link to a row or a citation, bare.
+/// The text with each rewritten reference written in the new spelling at the span it was found
+/// at, and no other byte of the text touched: a reference spelled alike inside a code fence, or as
+/// the start of a longer one, stays as written.
 #[must_use]
-pub fn item(old: &str, ctx: &Ctx<'_>) -> Outcome {
-    expr(old, ctx)
+pub fn apply(text: &str, found: &[Found]) -> String {
+    let mut edits: Vec<(Range<usize>, String)> =
+        found.iter().filter_map(|f| f.rewritten().map(|new| (f.span.clone(), new))).collect();
+    edits.sort_by_key(|(span, _)| span.start);
+    assert!(edits.windows(2).all(|w| w[0].0.end <= w[1].0.start), "two rewrites of one text overlap: {edits:?}");
+    let mut out = text.to_string();
+    for (span, new) in edits.into_iter().rev() {
+        out.replace_range(span, &new);
+    }
+    out
 }
 
 /// A preset shorthand of `extends` in `mockspace.toml`: `<host>::<name>`, each folded into the
@@ -105,8 +142,8 @@ pub fn preset_shorthand(old: &str) -> Outcome {
     }
     let mut folded = Vec::new();
     for p in &parts {
-        match refpath::fold(p) {
-            Some(n) => folded.push(n),
+        match mockspace_refnames::fold(p) {
+            Some(n) => folded.push(n.to_string()),
             None => {
                 return Outcome::Left(format!(
                     "`{p}` has no name under the standard (it opens on a digit or holds a character outside a-z, 0-9, _ and -)"
@@ -144,7 +181,7 @@ fn expr(old: &str, ctx: &Ctx<'_>) -> Outcome {
         return same_or(s, joined);
     }
     if parts[0] == CRATE_ROOT && parts.len() == 2 {
-        return match refpath::fold(parts[1]) {
+        return match mockspace_refnames::fold(parts[1]) {
             Some(name) => same_or(s, format!("{CRATE_ROOT}::{name}")),
             None => Outcome::Left(format!("crate `{}` has no name under the standard", parts[1])),
         };
@@ -204,9 +241,9 @@ fn citation(parts: &[&str], ctx: &Ctx<'_>) -> Outcome {
     let mut names = Vec::new();
     for (i, c) in comps.iter().enumerate() {
         let last = i + 1 == comps.len();
-        let folded = if last { refpath::fold(c.split('.').next().unwrap_or_default()) } else { refpath::fold(c) };
+        let folded = if last { mockspace_refnames::fold(c.split('.').next().unwrap_or_default()) } else { mockspace_refnames::fold(c) };
         match folded {
-            Some(n) => names.push(n),
+            Some(n) => names.push(n.to_string()),
             None => {
                 return Outcome::Left(format!(
                     "`{c}` has no name under the standard (it opens on a digit, or holds a dot or a character \

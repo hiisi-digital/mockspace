@@ -458,3 +458,54 @@ fn the_dry_run_names_exactly_the_paths_and_edits_the_real_run_writes() {
         assert!(after[path].contains(new), "{line}");
     }
 }
+
+fn in_rulings(text: &str) -> (String, Vec<Found>) {
+    let dir = tempfile::tempdir().unwrap();
+    let (roots, ns) = (BTreeMap::new(), BTreeSet::new());
+    let ctx = Ctx {
+        repo_root:  dir.path(),
+        roots:      &roots,
+        namespaces: &ns,
+    };
+    let fields = BTreeMap::from([("ruling".to_string(), vec!["provenance".to_string()])]);
+    in_toml(text, &fields, &ctx).unwrap()
+}
+
+// Two items of one list where the first is the start of the second, and the same item again after
+// them: each is rewritten where it stands.
+//
+// Mutation: rewriting the string by a search for each item's text, as the run did, writes
+// `crates::foo-bar`, which is no name, and leaves the second item's own rewrite nothing to find.
+#[test]
+fn a_list_whose_item_starts_another_is_rewritten_item_by_item() {
+    let (new, found) = in_rulings("[[ruling]]\nid = \"a\"\nprovenance = [\"crates::Foo, crates::Foo-bar, crates::Foo\"]\n");
+    assert_eq!(new, "[[ruling]]\nid = \"a\"\nprovenance = [\"crates::foo, crates::foo_bar, crates::foo\"]\n");
+    assert_eq!(found.len(), 3, "{found:?}");
+}
+
+// Mutation: taking the bytes of the value as the bytes of the file rewrites at the wrong place
+// once an escape stands before the reference, and one inside the reference is not noticed.
+#[test]
+fn a_reference_with_an_escape_inside_is_left_and_one_after_an_escape_is_rewritten_in_place() {
+    let (new, found) = in_rulings("[[ruling]]\nprovenance = [\"\\u0063rates::Foo-bar, crates::Foo\"]\n");
+    assert_eq!(new, "[[ruling]]\nprovenance = [\"\\u0063rates::Foo-bar, crates::foo\"]\n");
+    let left: Vec<&str> = found.iter().filter(|f| matches!(f.outcome, Outcome::Left(_))).map(|f| f.token.as_str()).collect();
+    assert_eq!(left, ["crates::Foo-bar"]);
+}
+
+// Each form of a TOML string, and which byte of the file writes each byte of its value.
+//
+// Mutation: not dropping the line break after the opening quotes of a multi-line string, or the
+// whitespace after a line-ending backslash, shifts every byte after it, and the check against the
+// value refuses the string.
+#[test]
+fn each_byte_of_a_value_is_traced_to_the_byte_of_the_file_that_writes_it() {
+    assert_eq!(written_at("\"a\\tb\"", "a\tb"), Some(vec![Some(1), None, Some(4)]));
+    assert_eq!(written_at("'a\\tb'", "a\\tb"), Some(vec![Some(1), Some(2), Some(3), Some(4)]));
+    assert_eq!(written_at("\"\"\"\nab\"\"\"", "ab"), Some(vec![Some(4), Some(5)]));
+    assert_eq!(written_at("\"\"\"a\\\n  b\"\"\"", "ab"), Some(vec![Some(3), Some(8)]));
+    assert_eq!(written_at("\"\\u00e4x\"", "äx"), Some(vec![None, None, Some(7)]));
+    assert_eq!(written_at("\"ab\"", "ax"), None, "a value the bytes do not spell is not read");
+    assert_eq!(raw_span(&[Some(1), None, Some(4)], &(0 .. 1)), Some(1 .. 2));
+    assert_eq!(raw_span(&[Some(1), None, Some(4)], &(0 .. 3)), None);
+}

@@ -13,8 +13,9 @@ members = [
 # (arvo / hilavitkutin / viola-plugin-abi), a dependency universe disjoint
 # from the tool crates above (which pin tree-sitter and run on std). Keeping
 # it out of this workspace means `cargo mock check` never compiles the stack,
-# and the two graphs cannot conflict.
-exclude = ["crates/mockspace-builtin-lints"]
+# and the two graphs cannot conflict. `mockspace-refnames` is a member of the root workspace, which
+# builds it for the registry and the engine, and the crates here take it by path.
+exclude = ["crates/mockspace-builtin-lints", "crates/mockspace-refnames"]
 
 # Release profile mirrors the parent workspace.
 [profile.release]

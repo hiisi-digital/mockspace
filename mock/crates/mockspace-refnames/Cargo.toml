@@ -1,0 +1,14 @@
+[package]
+name = "mockspace-refnames"
+version = "0.1.0"
+edition = "2024"
+description = "Names in a mockspace reference: a host's own naming folded into the letkajenkka character set, and a path read as plain names."
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+publish = false
+workspace = "../../.."
+
+# Both cargo workspaces read references, so this crate is built by each: a member of the root one,
+# and excluded from `mock/`, whose crates take it by path.
+[dependencies]
+letkajenkka = "0.0.1-rc.1"

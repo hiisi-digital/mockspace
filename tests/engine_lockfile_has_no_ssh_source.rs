@@ -34,7 +34,6 @@ fn the_finder_names_an_ssh_source_and_passes_the_rest() {
 
 #[test]
 fn no_engine_lockfile_pulls_a_package_over_ssh() {
-    // FIXME(02b7c73b2e63): red until `letkajenkka` is a crates.io version; waits on the rc publish.
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut offenders = Vec::new();
     for lock in ["Cargo.lock", "mock/Cargo.lock"] {

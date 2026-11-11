@@ -1293,8 +1293,9 @@ dependencies = [
 
 [[package]]
 name = "letkajenkka"
-version = "0.0.1"
-source = "git+ssh://git@github.com/orgrinrt/letkajenkka.git?branch=work%2Fletkajenkka-refs#d33518be6c2e992f6cadbf36636e1ab746a1c272"
+version = "0.0.1-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b97cff48a021385c8c902dfadd26cb3fb334cc82a8c3460c37da2f5180dd2aee"
 
 [[package]]
 name = "libc"
@@ -1372,6 +1373,7 @@ name = "mockspace-config"
 version = "0.1.0"
 dependencies = [
  "letkajenkka",
+ "mockspace-refnames",
  "serde",
  "tempfile",
  "toml",
@@ -1384,9 +1386,17 @@ dependencies = [
  "fs2",
  "gix",
  "letkajenkka",
+ "mockspace-refnames",
  "serde",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "mockspace-refnames"
+version = "0.1.0"
+dependencies = [
+ "letkajenkka",
 ]
 
 [[package]]
@@ -1399,6 +1409,7 @@ dependencies = [
  "inventory",
  "mockspace-config",
  "mockspace-core",
+ "mockspace-refnames",
  "mockspace-rs-attrs",
  "mockspace-template",
  "once_cell",

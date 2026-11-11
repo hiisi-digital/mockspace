@@ -252,13 +252,14 @@ fn in_config(text: &str) -> Result<(String, Vec<Found>), String> {
                 if let Outcome::Rewritten(new) = &outcome {
                     let quote = &raw[.. 1];
                     if raw.len() == old.len() + 2 && raw[1 .. raw.len() - 1] == *old && (quote == "\"" || quote == "'") {
-                        edits.push((span, format!("{quote}{new}{quote}")));
+                        edits.push((span.clone(), format!("{quote}{new}{quote}")));
                     } else {
                         outcome = Outcome::Left("it is written with escapes the rewrite does not read".to_string());
                     }
                 }
                 if outcome != Outcome::Same {
                     found.push(Found {
+                        span,
                         token: old.clone(),
                         old: old.clone(),
                         outcome,
@@ -300,34 +301,24 @@ fn in_toml(
     let (mut edits, mut found) = (Vec::new(), Vec::new());
     for h in held {
         let raw = &text[h.span.clone()];
-        let mut changes: Vec<(String, String)> = Vec::new();
         let mut here = legacy_refs::in_text(&h.value, ctx);
         if h.reference {
-            for part in mockspace_registry::list(&h.value) {
-                let outcome = legacy_refs::item(part, ctx);
-                if outcome != Outcome::Same && !part.contains("{{") {
-                    here.push(Found {
-                        token: part.to_string(),
-                        old: part.to_string(),
-                        outcome,
-                    });
-                }
-            }
+            here.extend(legacy_refs::in_list(&h.value, ctx));
         }
-        let mut new_raw = raw.to_string();
+        // Each rewrite is made at the bytes of the file that write its reference, and a reference
+        // any byte of which is written as an escape is left.
+        let at = written_at(raw, &h.value);
+        let mut in_raw = Vec::new();
         for f in &mut here {
-            if let Outcome::Rewritten(new) = &f.outcome {
-                let new_token = f.token.replacen(f.old.trim(), new, 1);
-                if raw.contains(&f.token) {
-                    changes.push((f.token.clone(), new_token));
-                } else {
-                    f.outcome = Outcome::Left("it is written with escapes the rewrite does not read".to_string());
-                }
+            if f.rewritten().is_none() {
+                continue;
+            }
+            match at.as_deref().and_then(|at| raw_span(at, &f.span)) {
+                Some(span) => in_raw.push(Found { span, ..f.clone() }),
+                None => f.outcome = Outcome::Left("it is written with escapes the rewrite does not read".to_string()),
             }
         }
-        for (old, new) in &changes {
-            new_raw = new_raw.replace(old, new);
-        }
+        let new_raw = legacy_refs::apply(raw, &in_raw);
         if new_raw != raw {
             edits.push((h.span, new_raw));
         }
@@ -340,6 +331,65 @@ fn in_toml(
     }
     ImDocument::parse(out.clone()).map_err(|e| format!("the rewrite would not read as TOML: {e}"))?;
     Ok((out, found))
+}
+
+/// For each byte of a string's value, the byte of the string as the file writes it (`raw`, its
+/// quotes included) that writes it, or `None` for a byte an escape writes. `None` for the whole
+/// where the bytes so read are not the value, which is a string this does not read.
+fn written_at(raw: &str, value: &str) -> Option<Vec<Option<usize>>> {
+    let bytes = raw.as_bytes();
+    let (delim, basic) = match bytes {
+        [b'"', b'"', b'"', ..] => (3, true),
+        [b'\'', b'\'', b'\'', ..] => (3, false),
+        [b'"', ..] => (1, true),
+        [b'\'', ..] => (1, false),
+        _ => return None,
+    };
+    let end = raw.len().checked_sub(delim)?;
+    let mut i = delim;
+    // a multi-line string drops the line break straight after its opening quotes
+    if delim == 3 {
+        if raw[i ..].starts_with("\r\n") {
+            i += 2;
+        } else if raw[i ..].starts_with('\n') {
+            i += 1;
+        }
+    }
+    let mut at = Vec::with_capacity(value.len());
+    while i < end {
+        if !basic || bytes[i] != b'\\' {
+            at.push(Some(i));
+            i += 1;
+            continue;
+        }
+        let next = *bytes.get(i + 1)?;
+        if delim == 3 && matches!(next, b' ' | b'\t' | b'\r' | b'\n') {
+            // a line-ending backslash: it and the whitespace after it write nothing
+            i += 1;
+            while i < end && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
+                i += 1;
+            }
+            continue;
+        }
+        let (len, written) = match next {
+            b'u' => (6, char::from_u32(u32::from_str_radix(raw.get(i + 2 .. i + 6)?, 16).ok()?)?.len_utf8()),
+            b'U' => (10, char::from_u32(u32::from_str_radix(raw.get(i + 2 .. i + 10)?, 16).ok()?)?.len_utf8()),
+            _ => (2, 1),
+        };
+        at.extend(std::iter::repeat_n(None, written));
+        i += len;
+    }
+    let same = at.len() == value.len()
+        && at.iter().zip(value.bytes()).all(|(r, v)| r.is_none_or(|r| bytes[r] == v));
+    same.then_some(at)
+}
+
+/// Where the bytes `span` of the value stand in the file's string, where each of them is written
+/// as itself and in order.
+fn raw_span(at: &[Option<usize>], span: &Range<usize>) -> Option<Range<usize>> {
+    let first = (*at.get(span.start)?)?;
+    let all_plain = (span.start .. span.end).all(|v| at.get(v).copied().flatten() == Some(first + (v - span.start)));
+    all_plain.then(|| first .. first + span.len())
 }
 
 fn collect(item: &Item, fields: &[String], inside: bool, out: &mut Vec<Held>) {

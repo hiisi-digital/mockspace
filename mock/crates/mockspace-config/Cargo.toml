@@ -12,8 +12,9 @@ publish = false
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 # The one parser of a hierarchical reference path.
-# FIXME(02b7c73b2e63): private, so spelled over ssh, which the anonymous launcher install cannot fetch; becomes a crates.io version once the rc is published.
-letkajenkka = { git = "ssh://git@github.com/orgrinrt/letkajenkka.git", branch = "work/letkajenkka-refs" }
+letkajenkka = "0.0.1-rc.1"
+# The names of a reference, folded and read plain, as every mockspace crate reads them.
+mockspace-refnames = { path = "../mockspace-refnames" }
 
 [dev-dependencies]
 tempfile = "3"

@@ -172,3 +172,55 @@ fn a_preset_shorthand_that_is_not_a_host_and_a_name_is_left_and_says_why() {
         assert!(!why.is_empty(), "{bad}");
     }
 }
+
+fn ctx_in<'a>(dir: &'a Path, roots: &'a BTreeMap<String, String>, ns: &'a BTreeSet<&'a str>) -> Ctx<'a> {
+    Ctx {
+        repo_root:  dir,
+        roots,
+        namespaces: ns,
+    }
+}
+
+// The same placeholder outside a fence and inside one: the one outside is rewritten, and the
+// example inside the fence stays as the author wrote it.
+//
+// Mutation: rewriting by a search for the placeholder's text across the whole file, as `apply`
+// did, rewrites the fenced copy too.
+#[test]
+fn a_placeholder_spelled_alike_inside_a_fence_is_not_rewritten() {
+    let dir = world();
+    let (roots, ns) = (roots(), BTreeSet::from(["vocab"]));
+    let ctx = ctx_in(dir.path(), &roots, &ns);
+    let text = "see {{ seed::DESIGN::844 }}\n\n```md\nwrite {{ seed::DESIGN::844 }} like this\n```\n";
+    let found = in_text(text, &ctx);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(&text[found[0].span.clone()], "{{ seed::DESIGN::844 }}");
+    assert_eq!(apply(text, &found), "see {{ seed::design::844 }}\n\n```md\nwrite {{ seed::DESIGN::844 }} like this\n```\n");
+}
+
+// An item of a list is rewritten where it stands, so one that is the start of a later item does
+// not rewrite that one's first bytes.
+//
+// Mutation: rewriting by a search for the item's text turns `crates::Foo-bar` into
+// `crates::foo-bar`, which is no name, before its own rewrite can find it.
+#[test]
+fn an_item_of_a_list_that_starts_another_is_rewritten_alone() {
+    let dir = world();
+    let (roots, ns) = (roots(), BTreeSet::from(["vocab"]));
+    let ctx = ctx_in(dir.path(), &roots, &ns);
+    let value = "crates::Foo, crates::Foo-bar,crates::Foo";
+    let found = in_list(value, &ctx);
+    let spans: Vec<&str> = found.iter().map(|f| &value[f.span.clone()]).collect();
+    assert_eq!(spans, ["crates::Foo", "crates::Foo-bar", "crates::Foo"]);
+    assert_eq!(apply(value, &found), "crates::foo, crates::foo_bar,crates::foo");
+}
+
+// Mutation: reading an item that holds a placeholder as an item of the list as well names it a
+// second time, beside what the placeholder reader finds in it.
+#[test]
+fn an_item_holding_a_placeholder_is_left_to_the_placeholder_reader() {
+    let dir = world();
+    let (roots, ns) = (roots(), BTreeSet::from(["vocab"]));
+    let ctx = ctx_in(dir.path(), &roots, &ns);
+    assert!(in_list("{{ crates::Foo }}, crates::Bar", &ctx).iter().all(|f| f.token == "crates::Bar"));
+}

@@ -671,7 +671,7 @@ mod tests {
 
         fn insert(mut self, host: &str, preset: PresetFile) -> Self {
             self.presets
-                .insert((host.to_string(), mockspace_config::fold_name(&preset.name).unwrap()), preset);
+                .insert((host.to_string(), mockspace_refnames::fold(&preset.name).unwrap().to_string()), preset);
             self
         }
     }

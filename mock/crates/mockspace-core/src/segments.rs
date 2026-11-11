@@ -34,7 +34,7 @@ pub fn split(input: &str) -> Result<Vec<&str>, SegmentError> {
             _ => SegmentError::Syntax(e),
         }
     })?;
-    let names = query.path().and_then(letkajenkka::Path::plain).ok_or(SegmentError::NotPlain)?;
+    let names = query.path().and_then(mockspace_refnames::plain).ok_or(SegmentError::NotPlain)?;
     // A step is a slice of the folded copy, which has the length of the original, so its place in the
     // copy is its place in the text.
     Ok(names

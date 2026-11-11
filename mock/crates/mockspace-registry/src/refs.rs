@@ -23,16 +23,22 @@ use super::*;
 /// Provenance fields in the data need no braces: the field is already declared
 /// to hold references, so there is nothing to disambiguate.
 pub fn placeholder_exprs(line: &str) -> Vec<(String, String)> {
+    placeholder_spans(line).into_iter().map(|(span, inner)| (line[span].to_string(), inner.to_string())).collect()
+}
+
+/// Each placeholder of `line` as the byte span of the whole placeholder, braces included, and the
+/// expression inside it trimmed: what [`placeholder_exprs`] reads, with where each one stands, so a
+/// rewrite edits that placeholder and no other text that happens to be spelled alike.
+pub fn placeholder_spans(line: &str) -> Vec<(core::ops::Range<usize>, &str)> {
     let mut out = Vec::new();
-    let mut rest = line;
-    while let Some(s) = rest.find("{{") {
-        let after = &rest[s + 2 ..];
-        let Some(e) = after.find("}}") else { break };
-        let inner = after[.. e].trim().to_string();
+    let mut from = 0;
+    while let Some(s) = line[from ..].find("{{").map(|s| from + s) {
+        let Some(e) = line[s + 2 ..].find("}}").map(|e| s + 2 + e) else { break };
+        let inner = line[s + 2 .. e].trim();
         if !inner.is_empty() {
-            out.push((format!("{{{{{}}}}}", &after[.. e]), inner));
+            out.push((s .. e + 2, inner));
         }
-        rest = &after[e + 2 ..];
+        from = e + 2;
     }
     out
 }
