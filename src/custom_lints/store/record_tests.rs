@@ -81,3 +81,44 @@ fn a_scoped_run_refuses_a_recorded_duplicate_and_builds_the_rest_alone() {
 fn a_scoped_run_with_no_record_takes_the_whole_build_once() {
     assert_eq!(plan_scoped(None, "ticket-add"), ScopedPlan::Whole);
 }
+
+fn git(dir: &Path, args: &[&str]) {
+    let ok = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+        .args(args)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "git {args:?}");
+}
+
+#[test]
+fn a_worktree_with_no_record_reads_the_newest_a_sibling_left() {
+    // A ticket seat or a helper's clone has never run a whole build. With no record its first run of one
+    // tool took the whole build, every lint and tool in release, past an hour in a helper container.
+    let tmp = tempfile::tempdir().unwrap();
+    let main = tmp.path().join("main");
+    std::fs::create_dir_all(main.join("mock")).unwrap();
+    git(&main, &["init", "-q"]);
+    git(&main, &["commit", "-q", "--allow-empty", "-m", "root"]);
+    let seat = tmp.path().join("seat");
+    git(&main, &["worktree", "add", "-q", seat.to_str().unwrap()]);
+    let seat_mock = seat.join("mock");
+    // the control: nothing recorded anywhere, so the run takes the whole build that writes the record
+    assert_eq!(duplicates_for_run(&seat, &seat_mock), None);
+    assert_eq!(plan_scoped(duplicates_for_run(&seat, &seat_mock), "ticket-add"), ScopedPlan::Whole);
+    record_duplicates(&main.join("mock"), &["check".to_string()]).unwrap();
+    assert_eq!(duplicates_for_run(&seat, &seat_mock), Some(vec!["check".to_string()]));
+    assert_eq!(plan_scoped(duplicates_for_run(&seat, &seat_mock), "ticket-add"), ScopedPlan::OneTool);
+    assert_eq!(
+        plan_scoped(duplicates_for_run(&seat, &seat_mock), "check"),
+        ScopedPlan::Refuse(vec!["check".to_string()]),
+        "a name the sibling's whole build found twice is still refused"
+    );
+    // the worktree's own record wins over a sibling's
+    std::fs::create_dir_all(&seat_mock).unwrap();
+    record_duplicates(&seat_mock, &[]).unwrap();
+    assert_eq!(duplicates_for_run(&seat, &seat_mock), Some(vec![]));
+}
