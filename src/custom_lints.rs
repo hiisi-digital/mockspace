@@ -112,7 +112,7 @@ fn discover(cfg: &Config, config_path: &Path) -> Option<Content> {
 /// What a run of the one tool `tool` does: refuse it, take the whole build, or build the tool alone, from the
 /// record the last whole build left.
 pub(crate) fn scoped_plan(cfg: &Config, tool: &str) -> store::ScopedPlan {
-    store::plan_scoped(store::duplicates_of(&cfg.mock_dir), tool)
+    store::plan_scoped(store::duplicates_for_run(&cfg.repo_root, &cfg.mock_dir), tool)
 }
 
 /// The content of a build cut to the one tool in `<mock>/tools/<tool>`: that

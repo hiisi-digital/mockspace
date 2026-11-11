@@ -43,10 +43,42 @@ pub(crate) fn record_duplicates(mock_dir: &Path, names: &[String]) -> Result<(),
 /// What the last whole build recorded: `None` when none has (or the file is gone), `Some(empty)` when it
 /// found no duplicate.
 pub(crate) fn duplicates_of(mock_dir: &Path) -> Option<Vec<String>> {
-    let text = std::fs::read_to_string(crate::build_dir::lint_crate_dir(mock_dir).join(DUPLICATES)).ok()?;
+    read_record(&crate::build_dir::lint_crate_dir(mock_dir).join(DUPLICATES))
+}
+
+fn read_record(file: &Path) -> Option<Vec<String>> {
+    let text = std::fs::read_to_string(file).ok()?;
     Some(text.lines().filter(|l| !l.is_empty()).map(str::to_string).collect())
 }
 
+/// The record a run of one tool reads: this worktree's own, else the newest one a sibling worktree of the
+/// same clone left at the same mock directory.
+///
+/// A worktree made for one errand (a ticket seat, a helper's clone) has never run a whole build, and with
+/// no record of its own its first run of one tool took the whole build, every lint and every tool in
+/// release, which in a helper container ran past an hour. The record is the last whole build's and was
+/// never tied to the revisions this run builds against, so a sibling's is the same kind of answer. A
+/// collision only this worktree's own tools introduce is refused by its next whole build.
+pub(crate) fn duplicates_for_run(repo_root: &Path, mock_dir: &Path) -> Option<Vec<String>> {
+    if let Some(own) = duplicates_of(mock_dir) {
+        return Some(own);
+    }
+    let rel = mock_dir.strip_prefix(repo_root).ok()?;
+    let listed = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let newest = String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .filter_map(|l| l.strip_prefix("worktree "))
+        .map(|w| crate::build_dir::lint_crate_dir(&Path::new(w).join(rel)).join(DUPLICATES))
+        .filter_map(|f| Some((std::fs::metadata(&f).ok()?.modified().ok()?, f)))
+        .max_by_key(|(at, _)| *at)?;
+    read_record(&newest.1)
+}
 /// What a run of one tool does, given the record of the last whole build.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ScopedPlan {

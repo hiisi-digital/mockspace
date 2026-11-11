@@ -39,6 +39,7 @@ pub(crate) use reap::reap;
 pub(crate) use record::{
     Generated,
     ScopedPlan,
+    duplicates_for_run,
     duplicates_of,
     generated_dir_of,
     plan_scoped,
