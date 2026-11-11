@@ -48,6 +48,11 @@ impl World {
             "#!/bin/sh\n[ \"$1\" = mock ] && { shift; exec \"$MOCKSPACE_BIN\" --dir \"$(git rev-parse --show-toplevel)/mock\" \"$@\"; }\n[ \"$1\" = metadata ] && exec \"$REAL_CARGO\" \"$@\"\nexit 127\n",
         )
         .unwrap();
+        mockspace_manifest::write_executable(
+            &shims.join("mock"),
+            "#!/bin/sh\nexec \"$MOCKSPACE_BIN\" --dir \"$(git rev-parse --show-toplevel)/mock\" \"$@\"\n",
+        )
+        .unwrap();
         fs::create_dir_all(&remote).unwrap();
         assert!(w.sh(&remote, "git", &["init", "-q", "--bare", "-b", "dev"]).ok);
         w
@@ -171,6 +176,11 @@ impl Clone<'_> {
         self.git(&["commit", "-q", "--no-verify", "--allow-empty", "-m", msg]);
     }
 
+    /// Commit what is staged, bypassing the generated hooks.
+    pub fn commit_staged(&self, msg: &str) {
+        self.git(&["commit", "-q", "--no-verify", "-m", msg]);
+    }
+
     pub fn push(&self) {
         self.git(&["push", "-q", "--no-verify", "origin", "HEAD"]);
     }
@@ -244,5 +254,12 @@ impl Clone<'_> {
         let p = self.w.base().join(name);
         self.git(&["worktree", "add", "-q", "-b", branch, p.to_str().unwrap(), "HEAD"]);
         p
+    }
+}
+
+impl<'w> Clone<'w> {
+    /// A handle on another working tree of the same repository, for running commands in it.
+    pub fn at(&self, root: PathBuf) -> Clone<'w> {
+        Clone { w: self.w, root }
     }
 }
