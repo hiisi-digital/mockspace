@@ -173,3 +173,31 @@ fn a_stopped_migration_is_not_finished_over_a_directory_changed_since() {
     assert!(!o.ok, "{}", o.all());
     assert_eq!(a.read("mock/research/notes with spaces.md"), b"changed since the ref was made\n");
 }
+
+// A fresh clone of a repository the migration was made in has no instance and no sparse block
+// yet: nothing was stopped here, so the run is refused as made, and `data-refs instantiate` is
+// what the clone wants.
+//
+// Mutation: key the finishing step on the missing sparse block alone; the fresh clone's run then
+// says it finishes a stopped run, and succeeds.
+#[test]
+fn a_fresh_clone_of_a_migrated_repository_refuses_the_migration_as_made() {
+    let w = fixture::migrated_remote();
+    let b = w.clone_of("b");
+    let before = check::at(&b, "HEAD");
+    let o = research(&b);
+    assert!(!o.ok, "a migration already made is refused: {}", o.all());
+    assert!(o.all().contains("made here before"), "{}", o.all());
+    let changed = b.git(&["status", "--porcelain", "--untracked-files=no"]);
+    assert!(changed.is_empty(), "no tracked file is changed: {changed}");
+    let sparse = b.git_out(&["config", "--get", "core.sparseCheckout"]);
+    assert!(!sparse.ok, "no sparse block is written: {}", sparse.all());
+    assert!(!b.exists("mock/research"), "no instance is made");
+    assert_eq!(check::at(&b, "HEAD"), before);
+    for _ in 0..2 {
+        let again = research(&b);
+        assert!(!again.ok, "a second run is refused too: {}", again.all());
+    }
+    b.ok(&["data-refs", "instantiate"]);
+    b.ok(&["data-refs", "verify"]);
+}
