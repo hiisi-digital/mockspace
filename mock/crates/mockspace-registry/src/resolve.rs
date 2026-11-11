@@ -24,6 +24,7 @@ pub fn resolve_all(
     docs_dir: &Path,
     cfg: &dyn RegistryEnv,
 ) -> String {
+    let _scope = crate::refpath::cache_scope();
     // One pass. Data is resolved bottom-up before any document renders, so a
     // reference inside a row's field is already inlined by the time a table
     // carrying it expands, and re-running over the output would only find

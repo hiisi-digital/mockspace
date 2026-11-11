@@ -252,22 +252,94 @@ pub enum Location {
     Ambiguous(Vec<String>),
 }
 
+/// What one entry of a directory is, as a citation's walk needs it.
+#[derive(Debug, Clone)]
+struct Entry {
+    name:    String,
+    path:    PathBuf,
+    is_dir:  bool,
+    is_file: bool,
+}
+
+thread_local! {
+    /// The directory listings held while a [`CacheScope`] is open, and how many scopes are.
+    static LISTINGS: std::cell::RefCell<(usize, std::collections::HashMap<PathBuf, std::rc::Rc<[Entry]>>)> =
+        std::cell::RefCell::new((0, std::collections::HashMap::new()));
+    static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// While this is alive, a directory a citation walks through is listed once and the listing held,
+/// so a pass that resolves many citations reads each directory once and not once for each of them.
+/// Nothing is held outside a scope, so a file made between two calls is found, and a scope is
+/// opened around a pass that does not write.
+#[must_use]
+pub struct CacheScope(());
+
+/// Opens a [`CacheScope`] on this thread. Scopes nest, and the listings go when the outermost ends.
+pub fn cache_scope() -> CacheScope {
+    LISTINGS.with(|l| l.borrow_mut().0 += 1);
+    CacheScope(())
+}
+
+impl Drop for CacheScope {
+    fn drop(&mut self) {
+        LISTINGS.with(|l| {
+            let mut l = l.borrow_mut();
+            l.0 -= 1;
+            if l.0 == 0 {
+                l.1.clear();
+            }
+        });
+    }
+}
+
+/// How many directories this thread has listed for citations, held ones not counted again.
+#[must_use]
+pub fn dir_reads() -> usize {
+    READS.with(std::cell::Cell::get)
+}
+
+fn listing(dir: &Path) -> std::rc::Rc<[Entry]> {
+    if let Some(held) = LISTINGS.with(|l| l.borrow().1.get(dir).cloned()) {
+        return held;
+    }
+    READS.with(|r| r.set(r.get() + 1));
+    let read: Vec<Entry> = fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(Result::ok)
+                .map(|e| {
+                    let path = e.path();
+                    Entry {
+                        name:    e.file_name().to_string_lossy().into_owned(),
+                        is_dir:  path.is_dir(),
+                        is_file: path.is_file(),
+                        path,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let held: std::rc::Rc<[Entry]> = read.into();
+    LISTINGS.with(|l| {
+        let mut l = l.borrow_mut();
+        if l.0 > 0 {
+            l.1.insert(dir.to_path_buf(), held.clone());
+        }
+    });
+    held
+}
+
 /// Every file under `dir` that `names` reach, the last name being the file's own.
 fn walk(dir: &Path, names: &[String], out: &mut Vec<PathBuf>) {
     let Some((name, rest)) = names.split_first() else { return };
-    let Ok(entries) = fs::read_dir(dir) else { return };
-    for entry in entries.filter_map(Result::ok) {
-        let path = entry.path();
-        let is_dir = path.is_dir();
-        let is_file = path.is_file();
-        let file_name = entry.file_name().to_string_lossy().into_owned();
-        if fold_entry(&file_name, is_dir).as_deref() != Some(name.as_str()) {
+    for entry in listing(dir).iter() {
+        if fold_entry(&entry.name, entry.is_dir).as_deref() != Some(name.as_str()) {
             continue;
         }
-        if is_dir {
-            walk(&path, rest, out);
-        } else if is_file && rest.is_empty() {
-            out.push(path);
+        if entry.is_dir {
+            walk(&entry.path, rest, out);
+        } else if entry.is_file && rest.is_empty() {
+            out.push(entry.path.clone());
         }
     }
 }

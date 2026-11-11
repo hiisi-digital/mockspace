@@ -299,3 +299,55 @@ fn the_forge_slug_keeps_every_space_as_a_hyphen_and_trims_nothing() {
         assert_eq!(forge_slug(heading), slug, "{heading:?}");
     }
 }
+
+// A pass that resolves many citations opens a scope, and a directory is listed once in it however
+// many citations walk through it. Outside a scope nothing is held, so a file made between two calls
+// is found.
+//
+// Mutation: no cache lists the shared directory once for each of the sixty citations, and a cache
+// kept past the scope misses the file made after it.
+#[test]
+fn a_directory_is_listed_once_in_a_scope_and_never_held_outside_one() {
+    let dir = tree(&["crates/my-crate/NOTES.md", "crates/other/NOTES.md", "DESIGN.md"]);
+    let cites: Vec<FileRef> = (0 .. 60)
+        .map(|i| FileRef::read(&format!("mock::crates::{}::notes::{}", if i % 2 == 0 { "my_crate" } else { "other" }, i + 1)).unwrap())
+        .collect();
+
+    let before = dir_reads();
+    let scope = cache_scope();
+    for c in &cites {
+        assert!(matches!(c.locate(dir.path()), Location::Found(_)));
+    }
+    let in_scope = dir_reads() - before;
+    // the root, `crates`, and the two crate directories
+    assert_eq!(in_scope, 4, "each directory listed once");
+    drop(scope);
+
+    let before = dir_reads();
+    for c in &cites {
+        let _ = c.locate(dir.path());
+    }
+    assert!(dir_reads() - before >= 60, "no scope, no cache");
+
+    let _scope = cache_scope();
+    let late = FileRef::read("mock::crates::other::late::1").unwrap();
+    assert_eq!(late.locate(dir.path()), Location::Missing);
+    drop(_scope);
+    fs::write(dir.path().join("crates/other/LATE.md"), "x\n").unwrap();
+    assert!(matches!(late.locate(dir.path()), Location::Found(_)), "a scope that ended holds nothing");
+}
+
+// Scopes nest: the inner one ending does not drop what the outer holds.
+#[test]
+fn a_nested_scope_leaves_the_outer_cache_standing() {
+    let dir = tree(&["a/B.md"]);
+    let c = FileRef::read("mock::a::b::1").unwrap();
+    let outer = cache_scope();
+    assert!(matches!(c.locate(dir.path()), Location::Found(_)));
+    let inner = cache_scope();
+    drop(inner);
+    let before = dir_reads();
+    assert!(matches!(c.locate(dir.path()), Location::Found(_)));
+    assert_eq!(dir_reads(), before, "still held");
+    drop(outer);
+}

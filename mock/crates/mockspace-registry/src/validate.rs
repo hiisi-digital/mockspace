@@ -30,6 +30,7 @@ pub fn validate_provenance(
     reg: &Registry,
     namespaces: &[super::RegistryNamespace],
 ) -> Vec<RegistryFinding> {
+    let _scope = crate::refpath::cache_scope();
     let mut out = Vec::new();
     // Which fields hold references is read off each namespace's declared field
     // TYPES. Keying on the literal name `provenance` validated one field for one
