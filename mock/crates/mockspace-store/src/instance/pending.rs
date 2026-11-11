@@ -51,19 +51,6 @@ impl Instance<'_> {
         Ok(matches!(self.pending_named()?, Some((_, _, false))))
     }
 
-    /// Forgets a copy whose commit the repository no longer holds, so the copies go on from the
-    /// backup ref; what git wrote over then is taken as the bytes on disk. Gives whether there was
-    /// one. A copy the repository holds is never forgotten here.
-    pub fn forget_lost_copy(&self) -> Result<bool, StoreError> {
-        match self.pending_named()? {
-            Some((file, _, false)) => {
-                std::fs::remove_file(&file).map_err(|e| self.io("forgetting the lost copy beside the record of", e))?;
-                Ok(true)
-            },
-            _ => Ok(false),
-        }
-    }
-
     /// The file beside the record, the commit it names, and whether the repository holds it.
     fn pending_named(&self) -> Result<Option<(PathBuf, Oid, bool)>, StoreError> {
         let file = self.pending_file()?;

@@ -138,11 +138,6 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> ExitCode {
 /// The look every verb but `instantiate` takes first. `None` where it could not be taken and the
 /// verb goes on without it; the reason is said.
 fn look_first(g: &Given<'_>, ns: &str, inst: &Instance<'_>) -> Result<Option<Look>, String> {
-    // a copy `git gc` took before an engine command did is lost whatever is done now; taking the
-    // bytes on disk is the way past it, and the copies go on from the backup ref
-    if g.verb == "commit" && g.accept && inst.forget_lost_copy().map_err(|e| e.to_string())? {
-        eprintln!("{ns}: a copy of the files of the instance that `git gc` took is forgotten, and the bytes on disk are taken");
-    }
     let look = match g.verb {
         "instantiate" => return Ok(None),
         "snapshot" => inst.guard(),
@@ -159,12 +154,15 @@ fn look_first(g: &Given<'_>, ns: &str, inst: &Instance<'_>) -> Result<Option<Loo
             Ok(Some(look))
         },
         Err(e) if matches!(g.verb, "commit" | "snapshot") => {
-            let way = if inst.pending_is_lost().unwrap_or(false) {
-                format!("; `cargo mock data-refs commit {ns} --accept-overwritten` takes the bytes on disk and forgets that copy")
+            // FIXME(the_way_past_a_copy_a_git_gc_pruned_is_provisional): a copy `git gc` pruned
+            // fails every `commit` of this instance, `--accept-overwritten` included, as the design
+            // has it; whether a way past it is given is op's call
+            let lost = if inst.pending_is_lost().unwrap_or(false) {
+                "; a `git gc` pruned that copy before an engine command took it, and no command of the engine goes past it"
             } else {
-                String::new()
+                ""
             };
-            Err(format!("the copy of the files of the instance could not be read, so what git wrote over is not known: {e}{way}"))
+            Err(format!("the copy of the files of the instance could not be read, so what git wrote over is not known: {e}{lost}"))
         },
         Err(e) => {
             eprintln!("{ns}: the copy of the files of the instance could not be made, and the {} goes on: {e}", g.verb);
