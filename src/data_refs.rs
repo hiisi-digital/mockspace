@@ -442,9 +442,10 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode
         }
     }
     // the instances are kept from git's own writes by the sparse checkout of this worktree: set up by
-    // `instantiate`, which every worktree runs, and checked by `verify`
+    // `instantiate` and the first `commit`, and checked by `verify`
     let sparse = match *verb {
         "instantiate" => sparse::install(cfg),
+        "commit" if !failed => sparse::install(cfg),
         "verify" if !failed => sparse::check(cfg),
         _ => Ok(()),
     };

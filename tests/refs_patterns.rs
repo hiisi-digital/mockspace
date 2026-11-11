@@ -50,10 +50,10 @@ fn widening_the_patterns_names_the_files_the_branch_still_tracks_and_the_way_thr
     for m in manifests {
         assert!(o.all().contains(m), "the refusal names {m}: {}", o.all());
     }
-    assert!(o.all().contains("git rm --cached"), "{}", o.all());
+    assert!(o.all().contains("git rm --cached --sparse"), "{}", o.all());
     // the stated remedy
     for m in manifests {
-        a.git(&["rm", "-q", "--cached", m]);
+        a.git(&["rm", "-q", "--cached", "--sparse", m]);
     }
     a.git(&["add", "-f", "mock/mockspace.toml"]);
     a.commit_staged("chore: widen the templates ref");
@@ -91,8 +91,11 @@ fn a_file_goes_from_its_ref_back_to_the_branch_by_deleting_it_there_and_narrowin
     assert!(!held_on_remote(&w2, &[Held { ns: "research", path: "research" }]).contains_key(crlf));
     edit_config(&a, "**/*.txt", "empty.txt");
     a.write(crlf, &bytes);
-    a.git(&["add", "-f", crlf]);
+    a.git(&["add", "--sparse", "-f", crlf]);
     a.commit_all("chore: keep the crlf file on the branch");
+    // the exclusions are written from the patterns, so verify names the stale block until instantiate
+    a.fails(&["data-refs", "verify"]);
+    let _ = a.run(&["data-refs", "instantiate"]);
     a.ok(&["data-refs", "verify"]);
     a.push();
     let b = w2.clone_of("b");

@@ -39,7 +39,7 @@ pub fn standing(cfg: &crate::config::Config) -> Result<(), Vec<String>> {
             let shown: Vec<&str> = tracked.iter().take(5).map(String::as_str).collect();
             let more = if tracked.len() > 5 { format!(" and {} more", tracked.len() - 5) } else { String::new() };
             Ok(Some(format!(
-                "the data ref `{ns}` holds {} file(s) the branch still has tracked ({}{more}); `git rm --cached` takes \
+                "the data ref `{ns}` holds {} file(s) the branch still has tracked ({}{more}); `git rm --cached --sparse` takes \
                  them out of the tree and leaves the files",
                 tracked.len(),
                 shown.join(", ")

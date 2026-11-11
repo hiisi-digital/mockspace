@@ -81,7 +81,7 @@ fn a_committed_local_edit_meets_the_migration_as_a_conflict_and_goes_on_to_the_r
     assert!(!o.ok, "a modify against a delete is a conflict: {}", o.all());
     assert_eq!(old.read(NOTES), b"local committed edit\n", "the conflicted file keeps the edit");
     // resolve as the migration did: the branch no longer tracks it, the file stays
-    old.git(&["rm", "-q", "--cached", NOTES]);
+    old.git(&["rm", "-q", "--cached", "--sparse", NOTES]);
     old.commit_staged("merge: take the migration");
     // the directory is not empty, so `instantiate` refuses it and touches nothing of it
     let o = old.run(&["data-refs", "instantiate", "research"]);

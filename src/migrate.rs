@@ -356,7 +356,7 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
                 } else {
                     return Err(vec![format!(
                         "migrate: the ref of `{ns}` already has commits and they do not hold what the branch tracks, \
-                         so it was made elsewhere; `git rm --cached` the files the branch still tracks and `cargo \
+                         so it was made elsewhere; `git rm --cached --sparse` the files the branch still tracks and `cargo \
                          mock data-refs instantiate {ns}` on a branch that declares it"
                     )]);
                 }
