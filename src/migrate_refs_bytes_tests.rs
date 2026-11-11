@@ -35,3 +35,18 @@ fn a_template_whose_name_is_not_utf8_is_refused_and_not_left_out() {
     assert_eq!(std::fs::read(r.cfg.repo_root.join(name)).unwrap(), TEMPLATE.as_bytes());
     assert_eq!(read(&r.cfg, "docs/DOC.md.tmpl"), TEMPLATE, "nothing else is written either");
 }
+
+// Mutation: list the registry's files lossily, as before; the file then reads as absent and is
+// passed over while the run says the tree is migrated.
+#[test]
+fn a_registry_file_whose_name_is_not_utf8_is_refused_and_not_left_out() {
+    let r = repo();
+    let name = std::ffi::OsStr::from_bytes(b"caf\xe9.toml");
+    let path = r.cfg.mock_dir.join("registry").join(name);
+    std::fs::write(&path, RULINGS).unwrap();
+    let why = plan_of(&r.cfg, &[NAME]).unwrap_err().join("\n");
+    assert!(why.contains("caf") && why.contains("text"), "{why}");
+    assert_eq!(run(&r.cfg, &[NAME]), ExitCode::FAILURE);
+    assert_eq!(std::fs::read(&path).unwrap(), RULINGS.as_bytes());
+    assert_eq!(read(&r.cfg, "docs/DOC.md.tmpl"), TEMPLATE, "nothing else is written either");
+}
