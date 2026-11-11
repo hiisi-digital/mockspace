@@ -268,9 +268,10 @@ fn gc_keeps_every_copy_of_an_edit_git_wrote_over() {
 // (`--prune=now`, or a `gc.pruneExpire` of now) takes them. The edit git wrote over is then in no
 // copy, and the next look fails rather than say the file is safe.
 //
-// Mutation for the rest: refuse every `commit` while the file names a copy that is gone, with no way
-// past; the clone then never commits the ref again and never copies a later edit. The way past is
-// provisional, asked in question ticket `the_way_past_a_copy_a_git_gc_pruned_is_provisional`.
+// Mutation for the rest: let `commit --accept-overwritten` forget the copy that cannot be read and
+// commit the bytes on disk; the design has a copy that cannot be read fail `commit`, since what git
+// wrote over is then not known. Whether there is a way past it is op's call, asked in question
+// ticket `the_way_past_a_copy_a_git_gc_pruned_is_provisional`.
 #[test]
 fn gc_that_prunes_at_once_takes_a_copy_no_engine_command_has_taken_yet() {
     let w = refs_e2e::World::new();
@@ -287,16 +288,16 @@ fn gc_that_prunes_at_once_takes_a_copy_no_engine_command_has_taken_yet() {
     let gone = [DIRTY].iter().all(|t| !history_holds(&a, "research", t));
     assert!(gone, "the edit is in the backup ref; drop this pin: {all}");
     l.kept(&w, &[&a]).unwrap();
-    // the lost copy is said, and `commit` refuses until the person takes the bytes on disk, which the
-    // refusal names; after that the clone copies and commits again
+    // the lost copy is said, and `commit` fails with or without `--accept-overwritten`, naming the
+    // file that names the copy, and changes nothing
     assert!(all.contains("no longer holds"), "{all}");
-    let c = a.fails(&["data-refs", "commit", "research"]);
-    assert!(c.all().contains("--accept-overwritten"), "the refusal names the way past: {}", c.all());
-    a.ok(&["data-refs", "commit", "research", "--accept-overwritten"]);
-    l.write(&a, "mock/research/after.md", b"edited after the prune\n");
-    let s = a.ok(&["data-refs", "status", "research"]);
-    assert!(!s.all().contains("could not"), "{}", s.all());
-    assert!(history_holds_at(&a, "research", "after.md", b"edited after the prune\n"), "later edits are copied again");
-    a.ok(&["data-refs", "commit", "research"]);
+    let tip = a.git_out(&["rev-parse", "-q", "--verify", "refs/heads/mock/research"]).stdout;
+    for args in [&["data-refs", "commit", "research"][..], &["data-refs", "commit", "research", "--accept-overwritten"]] {
+        let before = refs_e2e::whole::capture(&a);
+        let c = a.fails(args);
+        assert!(c.all().contains("no longer holds") && c.all().contains(".guard"), "{args:?} names the lost copy: {}", c.all());
+        refs_e2e::whole::kept(&a, &before, &refs_e2e::whole::capture(&a), &refs_e2e::whole::Allowed::default()).unwrap();
+    }
+    assert_eq!(a.git_out(&["rev-parse", "-q", "--verify", "refs/heads/mock/research"]).stdout, tip, "nothing was committed");
     l.kept(&w, &[&a]).unwrap();
 }
