@@ -207,6 +207,91 @@ impl DataRefDecl {
     }
 }
 
+/// What stops a run before anything reads the mock directory: a declared ref with no instance here,
+/// whose files would otherwise read as a directory with nothing in it, and a file a ref holds that
+/// the branch still tracks, which is then in two places that can differ. Every one is named.
+pub fn standing(cfg: &crate::config::Config) -> Result<(), Vec<String>> {
+    let mut why = Vec::new();
+    for d in &cfg.data_refs {
+        let ns = d.namespace();
+        let found = (|| -> Result<Option<String>, String> {
+            let store = d.open(&cfg.repo_root)?;
+            let inst = d.instance(&store, &cfg.mock_dir)?;
+            if inst.base().map_err(|e| e.to_string())?.is_none() {
+                return Ok(Some(format!(
+                    "the data ref `{ns}` has no instance at {}, so `cargo mock data-refs instantiate {ns}` fetches it",
+                    d.instance_dir(&cfg.mock_dir).display()
+                )));
+            }
+            let tracked = d.tracked(&cfg.repo_root, &cfg.mock_dir)?;
+            if tracked.is_empty() {
+                return Ok(None);
+            }
+            let shown: Vec<&str> = tracked.iter().take(5).map(String::as_str).collect();
+            let more = if tracked.len() > 5 { format!(" and {} more", tracked.len() - 5) } else { String::new() };
+            Ok(Some(format!(
+                "the data ref `{ns}` holds {} file(s) the branch still has tracked ({}{more}); `git rm --cached` takes \
+                 them out of the tree and leaves the files",
+                tracked.len(),
+                shown.join(", ")
+            )))
+        })();
+        match found {
+            Ok(None) => {},
+            Ok(Some(line)) => why.push(line),
+            Err(e) => why.push(format!("the data ref `{ns}`: {e}")),
+        }
+    }
+    if why.is_empty() { Ok(()) } else { Err(why) }
+}
+
+impl DataRefDecl {
+    /// The files under this ref's `path` that the index of the branch holds and the ref would hold
+    /// too, as paths from the repository root.
+    pub fn tracked(&self, repo_root: &Path, mock_dir: &Path) -> Result<Vec<String>, String> {
+        let dir = self
+            .path
+            .as_deref()
+            .unwrap_or("")
+            .trim_matches('/')
+            .split('/')
+            .fold(mock_dir.to_path_buf(), |p, part| p.join(part));
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo_root)
+            .args(["ls-files", "-z", "--full-name", "--"])
+            .arg(&dir)
+            .output()
+            .map_err(|e| format!("running git ls-files: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("git ls-files failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        let held = match self.include.as_deref() {
+            None => None,
+            Some(patterns) => Some(mockspace_store::Held::new(patterns).map_err(|e| e.to_string())?),
+        };
+        let lead = match dir.strip_prefix(repo_root) {
+            Ok(rel) => {
+                rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
+            },
+            Err(_) => return Err(format!("{} is not under the repository", dir.display())),
+        };
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .filter(|p| {
+                let inside = p.strip_prefix(lead.as_str()).map(|r| r.trim_start_matches('/'));
+                match (&held, inside) {
+                    (None, _) => true,
+                    (Some(h), Some(rel)) => h.holds(rel),
+                    (Some(_), None) => false,
+                }
+            })
+            .map(str::to_owned)
+            .collect())
+    }
+}
+
 /// `cargo mock data-refs <status|verify|instantiate|commit> [namespace]`. Prints one line per ref it
 /// touched, and a refusal on stderr; exits non-zero when any ref could not be done.
 pub fn run(cfg: &crate::config::Config, args: &[&str]) -> std::process::ExitCode {

@@ -189,7 +189,11 @@ const COMMANDS: &[Cmd] = &[
                   `instantiate` fetches the ref into the directory; `commit` writes the \
                   directory's changes to the ref (the first commit seeds it from the files). \
                   A missing instance is an error in every verb but `instantiate`. With no \
-                  `[[data_ref]]` declared the command says so and succeeds.",
+                  `[[data_ref]]` declared the command says so and succeeds. A table with \
+                  `include` holds only the files of its directory those patterns match \
+                  (`**/*.md.tmpl`), and the branch keeps the rest. Every other command stops \
+                  first when a declared ref has no instance, or when the branch still tracks \
+                  a file a ref holds.",
     },
     Cmd {
         name:    "registry-append",

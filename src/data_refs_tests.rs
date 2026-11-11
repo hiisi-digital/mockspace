@@ -183,6 +183,46 @@ mod verbs {
         assert!(!b.mock_dir.join("crates/one/src/lib.rs").exists(), "the control: a source came out of a data ref");
     }
 
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    #[test]
+    fn a_declared_ref_with_no_instance_stops_the_run_and_names_the_verb() {
+        let w = World::new();
+        let a = with_ref(&w, "a");
+        let why = standing(&a).unwrap_err().join("\n");
+        assert!(why.contains("`research`") && why.contains("data-refs instantiate"), "{why}");
+        std::fs::create_dir_all(a.mock_dir.join("research")).unwrap();
+        std::fs::write(a.mock_dir.join("research/note.md"), "findings\n").unwrap();
+        assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
+        assert_eq!(standing(&a), Ok(()), "the control: with the instance in place the run goes on");
+        // and a project that declares nothing is never stopped
+        let mut none = w.clone_of("b", false);
+        none.data_refs = Vec::new();
+        assert_eq!(standing(&none), Ok(()));
+    }
+
+    #[test]
+    fn a_file_the_ref_holds_may_not_be_tracked_by_the_branch() {
+        let w = World::new();
+        let mut a = w.clone_of("a", false);
+        a.data_refs = vec![held("templates", "crates", &["**/*.md.tmpl"])];
+        std::fs::create_dir_all(a.mock_dir.join("crates/one/src")).unwrap();
+        std::fs::write(a.mock_dir.join("crates/one/src/lib.rs"), "pub fn one() {}\n").unwrap();
+        std::fs::write(a.mock_dir.join("crates/one/DESIGN.md.tmpl"), "design of one\n").unwrap();
+        // tracked before the ref was made, as in a repository not yet migrated
+        git(&a.repo_root, &["add", "-f", "--", "."]);
+        assert_eq!(run(&a, &["commit"]), ExitCode::SUCCESS);
+        let why = standing(&a).unwrap_err().join("\n");
+        assert!(why.contains("DESIGN.md.tmpl") && why.contains("tracked"), "{why}");
+        assert!(!why.contains("lib.rs"), "a source is the branch's to track: {why}");
+
+        git(&a.repo_root, &["rm", "-q", "--cached", "--", "mock/crates/one/DESIGN.md.tmpl"]);
+        assert_eq!(standing(&a), Ok(()), "the control: untracked, with the source still tracked, it stands");
+    }
+
     #[test]
     fn verify_passes_on_a_clean_instance_and_names_what_is_wrong_otherwise() {
         let w = World::new();

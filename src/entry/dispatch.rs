@@ -339,6 +339,19 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         return crate::suite::history_guard::run(&cfg.repo_root, &cfg.mock_dir);
     }
 
+    // A declared data ref with no instance reads as a directory with nothing in it, and a file a
+    // ref holds that the branch still tracks is in two places. Either stops the run here, before
+    // a lint or a tool reads the mock directory. The verbs that repair it are let through.
+    if !is_recovery_command(&args) && first_positional(&args) != Some("data-refs") {
+        if let Err(why) = crate::data_refs::standing(&cfg) {
+            eprintln!();
+            for line in why {
+                eprintln!("BLOCKED: {line}");
+            }
+            return ExitCode::FAILURE;
+        }
+    }
+
     // Keep the durable gate installed and active with no user involvement. This
     // is the whole engine-side setup under the launcher+pin model; the dissolved
     // proxy model's self-install (the `.cargo` alias, the proxy, proxy-pin lock
