@@ -31,6 +31,11 @@ fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
     Git::new(repo.to_path_buf()).must(args, &[], None).map(|o| o.text()).map_err(|e| e.to_string())
 }
 
+/// A config value, `None` where it is not set; a failed read is an error.
+fn config(repo: &Path, args: &[&str], key: &str) -> Result<Option<String>, String> {
+    Git::new(repo.to_path_buf()).config_get(args, key).map_err(|e| e.to_string())
+}
+
 /// The path of `dir` from the repository root, `/`-separated, with no slash at either end.
 fn from_root(cfg: &Config, dir: &Path) -> String {
     dir.strip_prefix(&cfg.repo_root)
@@ -105,10 +110,9 @@ pub fn install(cfg: &Config) -> Result<(), String> {
         return Ok(());
     }
     let repo = &cfg.repo_root;
-    let setting = |key: &str| -> Result<bool, String> {
-        let out = Git::new(repo.clone()).run(&["config", "--type=bool", "--get", key], &[], None).map_err(|e| e.to_string())?;
-        Ok(out.ok() && out.text() == "true")
-    };
+    // a failed read is an error, never read as the setting being off: the patterns a person keeps
+    // would be dropped as left over
+    let setting = |key: &str| -> Result<bool, String> { Ok(config(repo, &["--type=bool"], key)?.as_deref() == Some("true")) };
     // lines a sparse checkout that is off left in the file are no patterns of anybody's now, and
     // turning it on would hide the branch's files they leave out
     let was_on = setting("core.sparseCheckout")?;
@@ -170,14 +174,18 @@ pub fn check(cfg: &Config) -> Result<(), String> {
             Ok(())
         };
     }
-    let on = Git::new(cfg.repo_root.clone())
-        .run(&["config", "--worktree", "--get", "core.sparseCheckout"], &[], None)
-        .map_err(|e| e.to_string())?
-        .text()
-        == "true";
+    let on = config(&cfg.repo_root, &["--worktree"], "core.sparseCheckout")?.as_deref() == Some("true");
     if !(on && compose(&existing, &lines) == existing) {
         return Err("this worktree does not keep git from writing over its instances (a checkout of a commit from before \
                     the migration would overwrite them); `cargo mock data-refs instantiate` sets that up"
+            .to_string());
+    }
+    // the hook reads these on a branch that declares none of the refs; a ref missing from them is
+    // not copied before git writes over it there
+    if remembered(cfg) != cfg.data_refs {
+        return Err("this worktree does not remember every declared ref for the hook that copies an edit (a checkout of a \
+                    commit from before the migration would overwrite the instances it leaves out); `cargo mock data-refs \
+                    instantiate` sets that up"
             .to_string());
     }
     super::hook::check(cfg)
@@ -188,21 +196,19 @@ pub fn check(cfg: &Config) -> Result<(), String> {
 /// clone's linked worktrees would read themselves as bare; where either is set there it first
 /// moves into the config of the main worktree alone, as `git sparse-checkout init` does.
 fn worktree_config(cfg: &Config) -> Result<(), String> {
-    let repo = Git::new(cfg.repo_root.clone());
-    let run = |args: &[&str]| repo.run(args, &[], None).map_err(|e| e.to_string());
-    if run(&["config", "--type=bool", "--get", "extensions.worktreeConfig"])?.text() == "true" {
+    if config(&cfg.repo_root, &["--type=bool"], "extensions.worktreeConfig")?.as_deref() == Some("true") {
         return Ok(());
     }
     let common = PathBuf::from(git(&cfg.repo_root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?);
     let (shared, main) = (common.join("config"), common.join("config.worktree"));
     let (shared, main) = (shared.to_string_lossy(), main.to_string_lossy());
     for key in ["core.bare", "core.worktree"] {
-        let value = run(&["config", "--file", &shared, "--get", key])?;
         // `core.bare = false` is every worktree's answer anyway, and stays where it is
-        if !value.ok() || (key == "core.bare" && value.text() != "true") {
+        let Some(value) = config(&cfg.repo_root, &["--file", &shared], key)? else { continue };
+        if key == "core.bare" && value != "true" {
             continue;
         }
-        git(&cfg.repo_root, &["config", "--file", &main, key, &value.text()])?;
+        git(&cfg.repo_root, &["config", "--file", &main, key, &value])?;
         git(&cfg.repo_root, &["config", "--file", &shared, "--unset", key])?;
     }
     git(&cfg.repo_root, &["config", "extensions.worktreeConfig", "true"])?;

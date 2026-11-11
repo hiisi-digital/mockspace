@@ -83,11 +83,8 @@ impl Instance<'_> {
     /// The top of the work tree the instance lies in, and the instance's path from it (empty where
     /// it is the top). `None` where it lies in no work tree, and no attribute or index reaches it.
     fn from_top(&self) -> Result<Option<(PathBuf, String)>, StoreError> {
-        let top = self.store.git.run(&["rev-parse", "--show-toplevel"], &[], None)?;
-        if !top.ok() {
-            return Ok(None);
-        }
-        let (Ok(top), Ok(dir)) = (std::fs::canonicalize(top.text()), std::fs::canonicalize(&self.dir)) else {
+        let Some(top) = self.store.git.work_tree_top()? else { return Ok(None) };
+        let (Ok(top), Ok(dir)) = (std::fs::canonicalize(top), std::fs::canonicalize(&self.dir)) else {
             return Ok(None);
         };
         let Ok(rel) = dir.strip_prefix(&top) else { return Ok(None) };

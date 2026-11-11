@@ -121,9 +121,14 @@ pub(super) fn install(cfg: &Config) -> Result<(), String> {
 
 /// `core.hooksPath`, absolute, where it is set.
 fn hooks_path(cfg: &Config) -> Result<Option<PathBuf>, String> {
+    // a failed read is an error, never read as `core.hooksPath` being unset: the hand-over would
+    // be neither made nor checked
+    let set = Git::new(cfg.repo_root.clone()).config_get(&[], "core.hooksPath").map_err(|e| e.to_string())?;
+    if set.is_none_or(|s| s.is_empty()) {
+        return Ok(None);
+    }
     let out = git(cfg, &["rev-parse", "--path-format=absolute", "--git-path", "hooks"])?;
-    let set = git(cfg, &["config", "--get", "core.hooksPath"])?;
-    Ok((set.ok() && !set.text().is_empty() && out.ok()).then(|| PathBuf::from(out.text())))
+    if out.ok() { Ok(Some(PathBuf::from(out.text()))) } else { Err(format!("git rev-parse --git-path hooks: {}", out.stderr)) }
 }
 
 /// Whether the hook is there and git runs it: where `core.hooksPath` is set, the directory it names

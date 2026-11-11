@@ -105,6 +105,44 @@ impl Git {
 }
 
 impl Git {
+    /// The top of the work tree this runs in, or `None` where git says there is none: a bare
+    /// repository, or a directory in no repository. Any other failure is an error, and never read as
+    /// the answer that there is no work tree.
+    pub fn work_tree_top(&self) -> Result<Option<String>, StoreError> {
+        let out = self.run(&["rev-parse", "--show-toplevel"], &[], None)?;
+        if out.ok() {
+            return Ok(Some(out.text()));
+        }
+        let none = out.code == Some(128)
+            && (out.stderr.contains("must be run in a work tree") || out.stderr.contains("not a git repository"));
+        if none {
+            return Ok(None);
+        }
+        Err(StoreError::Git {
+            command: "rev-parse --show-toplevel".to_owned(),
+            detail:  out.stderr,
+        })
+    }
+
+    /// The value of a config key as `git config <args> --get <key>` gives it, or `None` where it is
+    /// not set. Any other failure is an error, and never read as the key being unset.
+    pub fn config_get(&self, args: &[&str], key: &str) -> Result<Option<String>, StoreError> {
+        let mut all = vec!["config"];
+        all.extend_from_slice(args);
+        all.extend_from_slice(&["--get", key]);
+        let out = self.run(&all, &[], None)?;
+        match out.code {
+            Some(0) => Ok(Some(out.text())),
+            Some(1) if out.stderr.is_empty() => Ok(None),
+            _ => {
+                Err(StoreError::Git {
+                    command: all.join(" "),
+                    detail:  out.stderr,
+                })
+            },
+        }
+    }
+
     /// Run this program in place of `git`: a wrapper, or a build of git kept elsewhere.
     pub fn with_program(mut self, program: impl Into<std::ffi::OsString>) -> Self {
         self.program = program.into();

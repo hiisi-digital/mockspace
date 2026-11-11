@@ -93,15 +93,11 @@ impl Instance<'_> {
     /// it lies inside the work tree this store was opened on. The line is appended, so two
     /// instances made together both keep theirs.
     pub(super) fn exclude(&self) -> Result<(), StoreError> {
-        let top = self
-            .store
-            .git
-            .run(&["rev-parse", "--show-toplevel"], &[], None)?;
-        if !top.ok() {
-            return Ok(());
-        }
+        // a failed call is an error, never read as lying in no work tree: the line would be left
+        // out, and the files of the instance would read as new on the branch
+        let Some(top) = self.store.git.work_tree_top()? else { return Ok(()) };
         let (Ok(top), Ok(dir)) = (
-            std::fs::canonicalize(top.text()),
+            std::fs::canonicalize(top),
             std::fs::canonicalize(&self.dir),
         ) else {
             return Ok(());
