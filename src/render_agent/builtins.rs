@@ -92,7 +92,7 @@ _names_other_repo=0
 _bare_git_message=0
 if [ -n "$COMMAND" ]; then
     # A git message verb with no repository in front of it runs wherever the shell is, so an explicit path elsewhere says nothing about it.
-    if echo "$COMMAND_AUTHORING" | grep -qE '\bgit[[:space:]]+(commit|tag|notes|merge|revert|cherry-pick|am)\b'; then
+    if echo "$COMMAND_AUTHORING" | grep -qE '\bgit[[:space:]]+(commit|tag|notes|merge|revert|cherry-pick|am)([[:space:]]|$|[;&|)])'; then
         _bare_git_message=1
     fi
     for _p in $(printf '%s\n' "$COMMAND" \
@@ -174,7 +174,7 @@ if [ -z "$DOMAIN" ] && [ -n "$COMMAND" ]; then
        || echo "$COMMAND" | grep -qE "$_GLAB_WRITE" \
        || _forge_api_write; then
         DOMAIN="pull-request-body"
-    elif echo "$COMMAND_AUTHORING" | grep -qE '\bgit[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(commit|tag|notes|merge|revert|cherry-pick|am)\b'; then
+    elif echo "$COMMAND_AUTHORING" | grep -qE '\bgit[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(commit|tag|notes|merge|revert|cherry-pick|am)([[:space:]]|$|[;&|)])'; then
         DOMAIN="commit-message"
     fi
 fi

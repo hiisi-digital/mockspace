@@ -248,3 +248,32 @@ fn a_command_touching_no_repository_at_all_is_left_alone() {
         "the gate refused a command that authors no message: {out}"
     );
 }
+
+#[test]
+fn a_plumbing_verb_that_starts_with_a_message_verb_authors_nothing() {
+    // `git merge-tree`, `merge-base` and `merge-file` read and write no message,
+    // and neither do `tag-like` words a verb is only the prefix of. The verb
+    // used to end at a word boundary, which a hyphen is, so each was taken for
+    // a merge and the gate built the whole lint pack to check nothing.
+    let (mine, _other) = two_repos("plumbing");
+    let gate = gate_for(&mine);
+    for cmd in [
+        "git merge-tree --write-tree origin/dev feature",
+        "git merge-base origin/dev feature",
+        "git merge-file ours base theirs",
+        "git am-not-a-verb",
+    ] {
+        let out = run_from(&mine, &gate, &bash_payload(cmd));
+        assert!(!claimed(&out), "`{cmd}` was claimed as a message: {out}");
+    }
+    // The control: the verb itself, ending at a space, the end, or a separator.
+    for cmd in [
+        "git merge --no-ff feature",
+        "git merge",
+        "git commit;",
+        "git commit -m 'Fixed a whole load of things and this subject runs far past the seventy-two character limit.'",
+    ] {
+        let out = run_from(&mine, &gate, &bash_payload(cmd));
+        assert!(claimed(&out), "`{cmd}` went unclaimed: {out}");
+    }
+}
