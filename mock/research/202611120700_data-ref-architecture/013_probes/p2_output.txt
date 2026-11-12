@@ -1,0 +1,28 @@
+== 1 steady state, repair run three times by each clone: any PUSH?
+      3 A: r=37ce35b s=37ce35b -> no fire (seen := r)
+      3 B: r=37ce35b s=37ce35b -> no fire (seen := r)
+== 2 a plain clone P mirror-pushes (the remote ref is deleted); A repairs, then B, then A again
+A: r=none s=37ce35b -> PUSH (create)
+B: r=37ce35b s=37ce35b -> no fire (seen := r)
+A: r=37ce35b s=37ce35b -> no fire (seen := r)
+remote now: 37ce35b
+== 3 a stale clone rewinds the remote to c1 by mirror/force; B repairs, A repairs
+B: r=e848c0d s=37ce35b -> PUSH (rewind repair)
+A: r=37ce35b s=37ce35b -> no fire (seen := r)
+remote now: 37ce35b
+== 4 a legitimate advance by someone else (c4 on top of c3) between runs: no fire, seen follows
+B: r=ffc1c36 s=37ce35b -> no fire (seen := r)
+A: r=ffc1c36 s=37ce35b -> no fire (seen := r)
+remote now: ffc1c36  B seen: ffc1c36
+== 5 concurrent divergent edits: B commits d5 on c4 and pushes; A commits e5 on c4 locally, has not fetched B's, runs repair
+A: r=c8be210 s=ffc1c36 -> no fire (seen := r)
+remote now: c8be210 (d5 = c8be210); A's unpushed e5 untouched: 76ebd34
+== 6 A has only unpushed local commits above the remote tip (seen == remote): no fire
+A: r=c8be210 s=c8be210 -> no fire (seen := r)
+== 5b incomparable: the remote is rewound to c3 and someone commits x5 on c3 (not on c4): A's seen tip c4 is incomparable with the remote
+A: r=75dca77 s=ffc1c36 incomparable -> no fire (concurrent edit)
+remote still: 75dca77 (x5b = 75dca77); seen unchanged: ffc1c36
+== 7 race: A decided r=c1 and will push seen tip c4; the remote advanced to x5b meanwhile; the lease must refuse and x5b must survive
+push rc=1 (To file:///tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af7); remote: 75dca77, x5b was 75dca77
+== 8 an external job rewinds the remote five times; how many repairs?
+external rewinds: 5, repairs: 5 (one per rewind, none extra); remote now ffc1c36
