@@ -222,7 +222,7 @@ fn in_a_round_whose_doc_changelist_is_locked_the_rewritten_templates_wait_on_dis
     let o = c.run(&["data-refs", "commit"]);
     assert!(!o.ok && o.all().contains("lints refuse"), "the rewrite on a ref passed the phase gates now: {}", o.all());
     let rewritten = s.rewritten();
-    whole::kept(&c, &before, &whole::capture(&c), &Allowed { rewritten, ..Allowed::default() }).unwrap();
+    whole::kept(&c, &before, &whole::capture(&c), &Allowed { rewritten, commits: true, ..Allowed::default() }).unwrap();
     assert!(String::from_utf8(c.read(&readme)).unwrap().contains("seed::design::the_four_lanes"), "the rewrite is on disk");
     assert_eq!(w.remote_tip("refs/heads/mock/templates").unwrap(), tip, "the ref is as it was");
     let s = c.ok(&["data-refs", "status", "templates"]);

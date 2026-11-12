@@ -88,10 +88,14 @@ pub struct Own {
     pub sparse: Option<Vec<String>>,
 }
 
-/// The config keys the engine sets for itself, each for a reason it says when it does: the gate's
-/// `core.hooksPath` (saved and put back by `deactivate`), the full pattern mode the instances need,
-/// and the two keys per-worktree config moves into the main worktree's own file, read the same there.
-const ENGINE_KEYS: [&str; 4] = ["core.hookspath", "core.sparsecheckoutcone", "core.bare", "core.worktree"];
+/// The config keys the engine sets for itself, each for a reason it says when it does: the full
+/// pattern mode the instances need, and the two keys per-worktree config moves into the main
+/// worktree's own file, read the same there.
+const ENGINE_KEYS: [&str; 3] = ["core.sparsecheckoutcone", "core.bare", "core.worktree"];
+
+/// The key the gate saves the person's `core.hooksPath` under when it takes the key, which
+/// `deactivate` puts back.
+const SAVED_HOOKS_PATH: &str = "mockspace.previoushookspath";
 
 /// The start and end of the engine's block in a sparse-checkout file.
 const SPARSE_BLOCK: (&str, &str) = ("# mockspace data refs:", "# end mockspace data refs");
@@ -187,9 +191,10 @@ pub fn blob_of(w: &World, bytes: &[u8]) -> String {
     String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap().trim().to_string()
 }
 
-/// Every object reachable from a reference or a reflog entry of the repository at `dir`.
+/// Every object reachable from a reference of the repository at `dir`. A reflog is left out: its
+/// entries expire, and a person does not look there for what they wrote.
 pub fn reachable(w: &World, dir: &Path) -> BTreeSet<String> {
-    let o = w.sh(dir, "git", &["rev-list", "--objects", "--all", "--reflog"]);
+    let o = w.sh(dir, "git", &["rev-list", "--objects", "--all"]);
     assert!(o.ok, "{}", o.all());
     o.stdout.lines().filter_map(|l| l.split(' ').next()).map(str::to_owned).collect()
 }
@@ -241,7 +246,7 @@ pub fn kept(c: &Clone, before: &Whole, after: &Whole, allowed: &Allowed) -> Resu
             }
         }
     }
-    kept_own(c, &before.git, &after.git, &mut || {
+    kept_own(c, &before.git, &after.git, allowed.commits, &mut || {
         on_remote
             .get_or_insert_with(|| {
                 let mut all = reachable(c.w, &c.w.remote);
@@ -253,22 +258,24 @@ pub fn kept(c: &Clone, before: &Whole, after: &Whole, allowed: &Allowed) -> Resu
     if bad.is_empty() { Ok(()) } else { Err(bad.join("\n")) }
 }
 
-/// HEAD names the branch it named, at the commit it was at or one ahead of it; every staged object
-/// is staged still or held by a commit; every config value of the repository's own is set still,
-/// but the engine's own keys; every hook of the person's own is there as it was; and every line of a
-/// sparse checkout that was on is in it still.
-fn kept_own(c: &Clone, was: &Own, now: &Own, reachable: &mut dyn FnMut() -> BTreeSet<String>, bad: &mut Vec<String>) {
+/// HEAD names the branch it named, at the commit it was at, or one ahead of it where the scenario
+/// commits; every staged object is staged still at its own path, or held by a commit; every config
+/// value of the repository's own is set still, but the engine's own keys, and the person's
+/// `core.hooksPath` is set still or saved by the gate that took it; every hook of the person's own is
+/// there as it was; and every line of a sparse checkout that was on is in it still.
+fn kept_own(c: &Clone, was: &Own, now: &Own, commits: bool, reachable: &mut dyn FnMut() -> BTreeSet<String>, bad: &mut Vec<String>) {
     if was.head.0 != now.head.0 {
         bad.push(format!("HEAD: named {}, now {}", was.head.0, now.head.0));
+    } else if was.head.1 != now.head.1 && !commits {
+        bad.push(format!("HEAD: moved from {} to {} under a command that commits nothing", was.head.1, now.head.1));
     } else if was.head.1 != now.head.1
         && !(was.head.1.is_empty() || c.w.sh(&c.root, "git", &["merge-base", "--is-ancestor", &was.head.1, &now.head.1]).ok)
     {
         bad.push(format!("HEAD: moved from {} to {}, which does not hold it", was.head.1, now.head.1));
     }
-    let staged: BTreeSet<&str> = now.index.values().map(|(_, o)| o.as_str()).collect();
     let mut ids: Option<BTreeSet<String>> = None;
     for ((path, stage), (_, object)) in &was.index {
-        if now.index.get(&(path.clone(), stage.clone())).is_some_and(|(_, o)| o == object) || staged.contains(object.as_str()) {
+        if now.index.get(&(path.clone(), stage.clone())).is_some_and(|(_, o)| o == object) {
             continue;
         }
         if !ids.get_or_insert_with(&mut *reachable).contains(object) {
@@ -282,6 +289,10 @@ fn kept_own(c: &Clone, was: &Own, now: &Own, reachable: &mut dyn FnMut() -> BTre
                 left.remove(i);
             },
             None if ENGINE_KEYS.contains(&k.as_str()) => {},
+            // the gate's own path, or the person's put where `deactivate` gives it back from
+            None if k == "core.hookspath"
+                && now.config.iter().any(|(nk, nv)| nk == k && mockspace_manifest::gate::is_ours(nv))
+                && (mockspace_manifest::gate::is_ours(v) || now.config.iter().any(|(nk, nv)| nk == SAVED_HOOKS_PATH && nv == v)) => {},
             None => bad.push(format!("config {k}: was {v:?}, now {:?}", now.config.iter().filter(|(nk, _)| nk == k).map(|(_, v)| v).collect::<Vec<_>>())),
         }
     }
@@ -319,9 +330,9 @@ fn brief(e: &Entry) -> String {
 
 /// What a person wrote during a scenario. The check at the end is that every text is somewhere a
 /// person gets it back from: at the path it was written to, or at one a step the scenario states
-/// moved it to, in any of the clones, or reachable from a reference or a reflog of a clone or of the
-/// remote. A text at some other path is not where anybody looks, and an object only a pending copy
-/// names, which `git gc` may take, is not either.
+/// moved it to, in any of the clones, or reachable from a reference of a clone or of the remote. A
+/// text at some other path is not where anybody looks, and an object only a reflog or a pending copy
+/// names, which an expiry or `git gc` may take, is not either.
 #[derive(Default)]
 pub struct Ledger {
     texts: Vec<(String, String, Vec<u8>)>,
