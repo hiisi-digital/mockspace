@@ -14,10 +14,6 @@ use crate::{CrateLint, Lint, LintContext, LintError};
 pub struct NoEntrySuffix;
 
 impl Lint for NoEntrySuffix {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
@@ -43,7 +39,7 @@ impl CrateLint for NoEntrySuffix {
             format!("{}_registry", ctx.crate_prefix.replace('-', "_"))
         );
 
-        for (line_idx, line) in ctx.source.lines().enumerate() {
+        for (line_idx, line) in ctx.source().lines().enumerate() {
             let trimmed = line.trim();
 
             // Form 1: "define_registry!(Name for Trait with EntryType)"

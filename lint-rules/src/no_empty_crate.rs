@@ -20,7 +20,7 @@
 
 use tree_sitter::Node;
 
-use crate::{CrateLint, Lint, LintContext, LintError, make_parser};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const LINT_NAME: &str = "no-empty-crate";
 
@@ -43,10 +43,6 @@ const SUBSTANTIVE_KINDS: &[&str] = &[
 pub struct NoEmptyCrate;
 
 impl Lint for NoEmptyCrate {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::Crate
-    }
-
     /// Crate-scoped. Whether a crate is empty is a fact about the crate; per
     /// file it would call every module file an empty crate.
     fn per_file(&self) -> bool {
@@ -66,7 +62,7 @@ impl CrateLint for NoEmptyCrate {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         // lib.rs tree is already parsed: check it first so the common case
         // of a populated lib.rs avoids re-parsing every module.
-        if has_substantive_content(ctx.tree.root_node()) {
+        if has_substantive_content(ctx.tree().root_node()) {
             return Vec::new();
         }
 
@@ -74,15 +70,12 @@ impl CrateLint for NoEmptyCrate {
         // substantive content. Handles the `pub mod foo; pub use foo::*;`
         // re-export pattern where lib.rs itself holds nothing substantive
         // but the crate clearly has an API surface.
-        let mut parser = make_parser();
-        for file in ctx.all_sources {
-            // Skip lib.rs: already checked via ctx.tree above.
+        for file in ctx.all_sources() {
+            // Skip lib.rs: already checked via ctx.tree() above.
             if file.rel_path.file_name().and_then(|n| n.to_str()) == Some("lib.rs") {
                 continue;
             }
-            let Some(tree) = parser.parse(&file.text, None) else {
-                continue;
-            };
+            let tree = file.tree();
             if has_substantive_content(tree.root_node()) {
                 return Vec::new();
             }
@@ -118,52 +111,21 @@ fn has_substantive_content(node: Node) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-    use std::path::PathBuf;
-
     use super::*;
-    use crate::CrateSourceFile;
+    use crate::testkit::LintFixture;
 
-    fn make_ctx(
-        lib_src: &str,
-        extra: &[(&str, &str)],
-    ) -> (tree_sitter::Tree, LintContext<'static>) {
-        let mut parser = make_parser();
-        let tree = parser.parse(lib_src, None).unwrap();
-        let tree = Box::leak(Box::new(tree));
-        let mut sources: Vec<CrateSourceFile> = vec![CrateSourceFile {
-            rel_path: PathBuf::from("src/lib.rs"),
-            text:     lib_src.to_string(),
-        }];
-        for (name, body) in extra {
-            sources.push(CrateSourceFile {
-                rel_path: PathBuf::from(format!("src/{}", name)),
-                text:     body.to_string(),
-            });
-        }
-        let ctx = LintContext {
-            crate_name: "test-crate",
-            short_name: "test",
-            source: Box::leak(lib_src.to_string().into_boxed_str()),
-            tree,
-            all_sources: Box::leak(Box::new(sources)),
-            deps: Box::leak(Box::new(Vec::new())),
-            all_crates: Box::leak(Box::new(BTreeSet::new())),
-            design_doc: None,
-            all_doc_content: Box::leak("".to_string().into_boxed_str()),
-            shame_doc: None,
-            workspace_root: Box::leak(Box::new(PathBuf::from("/tmp"))),
-            proc_macro_crates: Box::leak(Box::new(Vec::new())),
-            crate_prefix: "test",
-            lint_proc_macro_source: false,
-            primitive_introductions: Box::leak(Box::new(std::collections::BTreeMap::new())),
-        };
-        (unsafe { std::ptr::read(tree as *const _) }, ctx)
+    fn make_ctx(lib_src: &str, extra: &[(&str, &str)]) -> LintFixture {
+        extra
+            .iter()
+            .fold(LintFixture::new(lib_src).with_crate_name("test-crate", "test"), |f, (name, body)| {
+                f.with_module(&format!("src/{name}"), body)
+            })
     }
 
     #[test]
     fn populated_lib_rs_passes() {
-        let (_t, ctx) = make_ctx("pub struct Foo;", &[]);
+        let fixture = make_ctx("pub struct Foo;", &[]);
+        let ctx = fixture.ctx();
         assert!(NoEmptyCrate.check(&ctx).is_empty());
     }
 
@@ -175,7 +137,8 @@ mod tests {
         // flagged as a false positive.
         let lib = "pub mod inner;\npub use inner::Thing;\n";
         let inner = "pub struct Thing;\n";
-        let (_t, ctx) = make_ctx(lib, &[("inner.rs", inner)]);
+        let fixture = make_ctx(lib, &[("inner.rs", inner)]);
+        let ctx = fixture.ctx();
         assert!(NoEmptyCrate.check(&ctx).is_empty());
     }
 
@@ -184,14 +147,16 @@ mod tests {
         // lib.rs and the only submodule are both empty shells.
         let lib = "//! only a doc comment\n";
         let inner = "//! nothing here either\n";
-        let (_t, ctx) = make_ctx(lib, &[("inner.rs", inner)]);
+        let fixture = make_ctx(lib, &[("inner.rs", inner)]);
+        let ctx = fixture.ctx();
         let errs = NoEmptyCrate.check(&ctx);
         assert_eq!(errs.len(), 1);
     }
 
     #[test]
     fn lib_rs_only_with_docs_flags() {
-        let (_t, ctx) = make_ctx("//! just docs\n", &[]);
+        let fixture = make_ctx("//! just docs\n", &[]);
+        let ctx = fixture.ctx();
         assert_eq!(NoEmptyCrate.check(&ctx).len(), 1);
     }
 }

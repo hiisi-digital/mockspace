@@ -20,11 +20,10 @@
 //! Severity: Error (blocks commit, push, and build).
 
 use std::path::Path;
-use std::process::Command;
 
 use crate::changelist_helpers::{self, Phase};
 use crate::src_layout::{self, SrcLayout};
-use crate::{Lint, LintError, RepoContext, RepoLint, Severity};
+use crate::{Lint, LintError, RepoContext, RepoLint, Severity, View};
 
 const LINT_NAME: &str = "changelist-required";
 
@@ -52,10 +51,10 @@ impl RepoLint for ChangelistRequired {
         // there were no crates, which silently disabled the gate in a repo whose
         // taxonomy had not been settled yet.
         let workspace_root = ctx.mock_dir;
-        let layout = SrcLayout::new(workspace_root, ctx.src_dirs);
+        let layout = SrcLayout::new(workspace_root, ctx.src_dirs());
 
         let design_rounds = workspace_root.join("design_rounds");
-        let phase = changelist_helpers::current_phase(&design_rounds);
+        let phase = changelist_helpers::current_phase(ctx.view(), &design_rounds);
 
         // Source changes are allowed only in Phase::Src.
         if phase == Phase::Src {
@@ -64,6 +63,7 @@ impl RepoLint for ChangelistRequired {
 
         // Check if any .rs source files are modified.
         let modified = crate::fmt_only::drop_fmt_only(
+            ctx.view(),
             workspace_root,
             // FIXME: `.rs` is the half of this that is still rust's convention
             // rather than the project's. The directories now come from
@@ -74,7 +74,7 @@ impl RepoLint for ChangelistRequired {
             // is verbatim the failure `src_layout` was written to end. Wants an
             // extension set per source directory, or a language key carrying
             // one. Catalogued at `a_source_gate_guards_the_extensions_the_project_writes`.
-            src_layout::changed_files(workspace_root, &layout, ctx.ref_files, |f| {
+            src_layout::changed_files(ctx.view(), workspace_root, &layout, ctx.ref_files(), |f| {
                 layout.holds(f) && f.ends_with(".rs")
             }),
         );
@@ -88,9 +88,7 @@ impl RepoLint for ChangelistRequired {
                     .package_dir(workspace_root, file)
                     .map(|d| d.join("src/lib.rs"))
                     .unwrap_or_default();
-                let nuked = std::fs::read_to_string(&librs)
-                    .map(|s| s.contains("Nuked by"))
-                    .unwrap_or(false);
+                let nuked = ctx.view().text(&librs).is_some_and(|s| s.contains("Nuked by"));
                 if nuked {
                     return false;
                 }
@@ -103,8 +101,8 @@ impl RepoLint for ChangelistRequired {
                 // committed is the staged content, so judging the worktree
                 // would let someone stage real source, overwrite the worktree
                 // copy with comments, and commit past the gate.
-                let content = staged_or_worktree(workspace_root, file, source);
-                !content.map(|s| declares_nothing(&s)).unwrap_or(false)
+                let content = staged_or_worktree(ctx.view(), workspace_root, file, source);
+                !content.is_some_and(declares_nothing)
             })
             .map(|(file, source)| {
                 let crate_name = layout
@@ -161,27 +159,24 @@ impl RepoLint for ChangelistRequired {
 /// catalogued as an ignored test below. Closing it needs a signal for which
 /// commit shape is in flight, which the sanitized hook environment no longer
 /// provides for free.
-pub(crate) fn staged_or_worktree(
+pub(crate) fn staged_or_worktree<'r>(
+    view: &View<'r>,
     workspace_root: &Path,
     file: &str,
     source: &str,
-) -> Option<String> {
+) -> Option<&'r str> {
     if source == "staged" {
-        let out = Command::new("git")
-            // `:./` resolves the path against the current directory. The bare
-            // `:{file}` form resolves from the repository root, so from a mock
-            // directory it reads `<repo>/crates/...` rather than
-            // `<repo>/mock/crates/...`: the wrong blob where both exist, and a
-            // silent fall-through to the worktree where they do not.
-            .args(["show", &format!(":./{file}")])
-            .current_dir(workspace_root)
-            .output()
-            .ok()?;
-        if out.status.success() {
-            return String::from_utf8(out.stdout).ok();
+        // `:./` resolves the path against the current directory. The bare
+        // `:{file}` form resolves from the repository root, so from a mock
+        // directory it reads `<repo>/crates/...` rather than
+        // `<repo>/mock/crates/...`: the wrong blob where both exist, and a
+        // silent fall-through to the worktree where they do not.
+        let out = view.git_in(workspace_root, &["show", &format!(":./{file}")]);
+        if out.ok() {
+            return out.text();
         }
     }
-    std::fs::read_to_string(workspace_root.join(file)).ok()
+    view.text(workspace_root.join(file))
 }
 
 /// Whether a Rust file declares nothing at all.
@@ -224,6 +219,8 @@ fn declares_nothing(src: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+
     use super::*;
 
     /// The gate end to end against a project that does not use the word
@@ -267,7 +264,7 @@ mod tests {
 
         let run = |dirs: &[std::path::PathBuf]| {
             let crates = std::collections::BTreeSet::new();
-            ChangelistRequired.check_repo(&RepoContext {
+            crate::testkit::check_repo(&ChangelistRequired, crate::RepoInput {
                 mock_dir:    &root,
                 repo_root:   &root,
                 all_crates:  &crates,
@@ -277,7 +274,6 @@ mod tests {
                 open_panels: &[],
                 ref_files: &crate::src_layout::NO_REF_FILES,
                 registry:    &Default::default(),
-                verdicts:    None,
             })
         };
 
@@ -330,7 +326,8 @@ mod tests {
         // Modified again after staging: this is what `commit -a` would commit.
         std::fs::write(dir.join(file), "pub fn worktree_version() {}\n").unwrap();
 
-        let content = staged_or_worktree(&dir, file, "staged").unwrap();
+        let reading = crate::Reading::new(&dir);
+        let content = staged_or_worktree(&reading.view(), &dir, file, "staged").unwrap().to_string();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             content.contains("worktree_version"),
@@ -394,7 +391,7 @@ mod fmt_only_exemption {
     fn blocked(root: &std::path::Path) -> Vec<LintError> {
         let crates = std::collections::BTreeSet::new();
         let src_dirs = [root.join("crates")];
-        let ctx = RepoContext {
+        let ctx = crate::RepoInput {
             mock_dir:    root,
             repo_root:   root,
             all_crates:  &crates,
@@ -404,9 +401,8 @@ mod fmt_only_exemption {
             open_panels: &[],
             ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    &Default::default(),
-            verdicts:    None,
         };
-        ChangelistRequired.check_repo(&ctx)
+        crate::testkit::check_repo(&ChangelistRequired, ctx)
     }
 
     const UGLY: &str = "pub fn a(  x:u8 )->u8{x+1}\n";
@@ -518,7 +514,7 @@ mod fmt_only_judges_the_committed_content {
     fn gate(root: &std::path::Path) -> Vec<LintError> {
         let crates = std::collections::BTreeSet::new();
         let src_dirs = [root.join("crates")];
-        ChangelistRequired.check_repo(&RepoContext {
+        crate::testkit::check_repo(&ChangelistRequired, crate::RepoInput {
             mock_dir:    root,
             repo_root:   root,
             all_crates:  &crates,
@@ -528,7 +524,6 @@ mod fmt_only_judges_the_committed_content {
             open_panels: &[],
             ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    &Default::default(),
-            verdicts:    None,
         })
     }
 

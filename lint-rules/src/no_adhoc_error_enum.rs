@@ -18,10 +18,6 @@ use crate::{CrateLint, Lint, LintContext, LintError};
 pub struct NoAdhocErrorEnum;
 
 impl Lint for NoAdhocErrorEnum {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
@@ -38,7 +34,7 @@ impl CrateLint for NoAdhocErrorEnum {
         }
 
         let mut errors = Vec::new();
-        let root = ctx.tree.root_node();
+        let root = ctx.tree().root_node();
         visit_enums(root, ctx, &mut errors);
         errors
     }
@@ -62,13 +58,13 @@ fn check_enum(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     }
 
     let name = match node.child_by_field_name("name") {
-        Some(n) => txt(n, ctx.source),
+        Some(n) => txt(n, ctx.source()),
         None => return,
     };
 
     if name.ends_with("Error") {
         let line_idx = node.start_position().row;
-        let line = ctx.source.lines().nth(line_idx).unwrap_or("");
+        let line = ctx.source().lines().nth(line_idx).unwrap_or("");
         if crate::line_lint_allowed(line, "no_adhoc_error_enum") {
             errors.push(LintError::warning(
                 ctx.crate_name.to_string(),

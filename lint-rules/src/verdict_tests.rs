@@ -6,29 +6,6 @@
 use std::collections::HashMap;
 
 use super::*;
-use crate::testkit::LintFixture;
-
-/// A digest that frames every part, as the engine's does, without hashing: two inputs are
-/// equal here exactly when their framed bytes are, so a test sees a missing input directly.
-struct Framing;
-
-impl VerdictCache for Framing {
-    fn digest(&self, parts: &[&[u8]]) -> String {
-        let mut out = String::new();
-        for p in parts {
-            out.push_str(&format!("{}:", p.len()));
-            out.push_str(&String::from_utf8_lossy(p));
-            out.push('|');
-        }
-        out
-    }
-
-    fn replay(&self, _key: &str) -> Option<String> {
-        None
-    }
-
-    fn remember(&self, _key: &str, _encoded: &str) {}
-}
 
 fn finding(msg: &str) -> LintError {
     LintError {
@@ -152,48 +129,4 @@ fn a_path_filter_is_part_of_what_a_lint_is_shown() {
         },
     );
     assert_ne!(before, behaviour_material("no-todo", Origin::BuiltIn, Some(&cfg)));
-}
-
-#[test]
-fn the_crate_digest_moves_with_every_input_a_crate_lint_can_see() {
-    let base = LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]);
-    let digest = |f: &LintFixture| crate_digest(&Framing, &f.ctx());
-    let control = digest(&base);
-    assert_eq!(control, digest(&base), "the control: nothing moved, nothing changed");
-
-    let moved = [
-        ("the root source", LintFixture::new("pub fn b() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"])),
-        ("a module file", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_module("src/m.rs", "fn m() {}\n")),
-        ("the dependency list", LintFixture::new("pub fn a() {}\n").with_deps(&["y"]).with_all_crates(&["a", "b"])),
-        ("the workspace's crates", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b", "c"])),
-        ("the design doc", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_design_doc("d")),
-        ("the doc templates", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_doc_content("d")),
-        ("the SHAME template", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_shame_doc("s")),
-        ("the prefix", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_crate_prefix("zz")),
-        ("the proc-macro crate list", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_proc_macro_crates(&["other"])),
-        ("the short name alone", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_crate_name("test-crate", "other-short")),
-        ("the crate name", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_crate_name("renamed", "renamed")),
-        ("the proc-macro answer", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_lint_proc_macro_source(true)),
-        ("an introduced primitive", LintFixture::new("pub fn a() {}\n").with_deps(&["x"]).with_all_crates(&["a", "b"]).with_primitive_introductions(std::collections::BTreeMap::from([("test-crate".to_string(), vec!["u8".to_string()])]))),
-    ];
-    for (what, fixture) in &moved {
-        assert_ne!(control, digest(fixture), "a change to {what} must change the crate's digest");
-    }
-}
-
-#[test]
-fn a_dependency_listed_in_another_order_is_the_same_crate() {
-    let a = LintFixture::new("fn a() {}\n").with_deps(&["x", "y"]);
-    let b = LintFixture::new("fn a() {}\n").with_deps(&["y", "x"]);
-    assert_eq!(crate_digest(&Framing, &a.ctx()), crate_digest(&Framing, &b.ctx()));
-}
-
-#[test]
-fn a_file_moved_to_another_path_with_the_same_text_is_a_different_crate() {
-    let at = |path: &str| LintFixture::new("fn a() {}\n").with_module(path, "fn m() {}\n");
-    assert_ne!(
-        crate_digest(&Framing, &at("src/one.rs").ctx()),
-        crate_digest(&Framing, &at("src/two.rs").ctx()),
-        "a rename moves what a lint reading paths sees"
-    );
 }

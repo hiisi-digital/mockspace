@@ -45,7 +45,7 @@
 
 use std::path::Path;
 
-use crate::{Lint, LintError, RepoContext, RepoLint, Severity};
+use crate::{Lint, LintError, RepoContext, RepoLint, Severity, View};
 
 pub struct TheMockToolchainMatchesTheRoot;
 
@@ -84,6 +84,14 @@ enum Value {
     Arr(Vec<String>),
 }
 
+/// One toolchain file as the run read it: its text, and its TOML parse where it parsed.
+pub struct Toolchain<'a> {
+    /// The file's text.
+    pub text:   &'a str,
+    /// The file parsed as TOML, `None` where it is not, which the legacy one-line form is not.
+    pub parsed: Option<&'a toml::Table>,
+}
+
 /// The `[toolchain]` table, as `(key, value)` in declaration order.
 ///
 /// A real parse, because a hand scanner is wrong here in the direction that
@@ -103,9 +111,9 @@ enum Value {
 /// unreadable copy claims nothing, and an unreadable root demands nothing. A
 /// malformed toolchain file is rustup's complaint to make, and making it here
 /// too would report one fault twice.
-fn toolchain_table(text: &str) -> Option<Vec<(String, Value)>> {
-    let Ok(doc) = text.parse::<toml::Table>() else {
-        return legacy_channel(text).map(|c| vec![("channel".to_string(), Value::Str(c))]);
+fn toolchain_table(file: &Toolchain<'_>) -> Option<Vec<(String, Value)>> {
+    let Some(doc) = file.parsed else {
+        return legacy_channel(file.text).map(|c| vec![("channel".to_string(), Value::Str(c))]);
     };
     let Some(toml::Value::Table(t)) = doc.get("toolchain") else {
         return Some(Vec::new());
@@ -168,8 +176,8 @@ fn allowed(text: &str) -> bool {
 /// report can ask the same question of the same two files without a second copy
 /// of the rule, and so the tests can plant text rather than a directory tree.
 #[must_use]
-pub fn disagreements(root: &str, copy: &str) -> Vec<String> {
-    if allowed(copy) {
+pub fn disagreements(root: &Toolchain<'_>, copy: &Toolchain<'_>) -> Vec<String> {
+    if allowed(copy.text) {
         return Vec::new();
     }
     // Either file failing to parse ends this, and the direction is the same on
@@ -228,11 +236,12 @@ pub fn disagreements(root: &str, copy: &str) -> Vec<String> {
 /// which it takes, and takes `rust-toolchain`. The order here is the opposite of
 /// what it reads like it should be, and `rustup_prefers_the_extensionless_file`
 /// is what holds it.
-fn toolchain_file(dir: &Path) -> Option<(std::path::PathBuf, String)> {
+fn toolchain_file<'r>(view: &View<'r>, dir: &Path) -> Option<(std::path::PathBuf, Toolchain<'r>)> {
     for name in ["rust-toolchain", "rust-toolchain.toml"] {
         let path = dir.join(name);
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            return Some((path, text));
+        if let Some(text) = view.text(&path) {
+            let parsed = view.toml(&path).and_then(Result::ok);
+            return Some((path, Toolchain { text, parsed }));
         }
     }
     None
@@ -240,10 +249,10 @@ fn toolchain_file(dir: &Path) -> Option<(std::path::PathBuf, String)> {
 
 impl RepoLint for TheMockToolchainMatchesTheRoot {
     fn check_repo(&self, ctx: &RepoContext) -> Vec<LintError> {
-        let Some((copy_path, copy)) = toolchain_file(ctx.mock_dir) else {
+        let Some((copy_path, copy)) = toolchain_file(ctx.view(), ctx.mock_dir) else {
             return Vec::new();
         };
-        let Some((_, root)) = toolchain_file(ctx.repo_root) else {
+        let Some((_, root)) = toolchain_file(ctx.view(), ctx.repo_root) else {
             return Vec::new();
         };
         // The offending path, not `"unknown"`. The siblings use that as a
@@ -276,6 +285,21 @@ impl RepoLint for TheMockToolchainMatchesTheRoot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn table_of(text: &str) -> Option<Vec<(String, Value)>> {
+        let parsed = text.parse::<toml::Table>().ok();
+        toolchain_table(&Toolchain { text, parsed: parsed.as_ref() })
+    }
+
+    /// What the lint finds between two files given as text, each parsed the way the reading parses
+    /// one.
+    fn disagreements(root: &str, copy: &str) -> Vec<String> {
+        let (r, c) = (root.parse::<toml::Table>().ok(), copy.parse::<toml::Table>().ok());
+        super::disagreements(
+            &Toolchain { text: root, parsed: r.as_ref() },
+            &Toolchain { text: copy, parsed: c.as_ref() },
+        )
+    }
 
     const ROOT: &str = "[toolchain]\nchannel = \"nightly-2026-05-28\"\ncomponents = [\"rustfmt\", \
                         \"clippy\", \"rust-src\"]\n";
@@ -422,7 +446,7 @@ mod tests {
         }
         let registry = crate::RegistryView::default();
         let no_crates = std::collections::BTreeSet::new();
-        let ctx = RepoContext {
+        let ctx = crate::RepoInput {
             mock_dir:    &mock,
             repo_root:   repo,
             all_crates:  &no_crates,
@@ -432,9 +456,8 @@ mod tests {
             open_panels: &[],
             ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    &registry,
-            verdicts:    None,
         };
-        TheMockToolchainMatchesTheRoot.check_repo(&ctx)
+        crate::testkit::check_repo(&TheMockToolchainMatchesTheRoot, ctx)
     }
 
     #[test]
@@ -644,7 +667,7 @@ mod tests {
     fn a_hash_inside_a_quoted_value_stays_in_it() {
         // Nothing in this schema is likely to carry one, and the line scan this
         // replaced cut the value there and dropped half of it silently.
-        let table = toolchain_table("[toolchain]\nchannel = \"a#b\"\n");
+        let table = table_of("[toolchain]\nchannel = \"a#b\"\n");
         assert_eq!(
             table,
             Some(vec![("channel".to_string(), Value::Str("a#b".to_string()))])

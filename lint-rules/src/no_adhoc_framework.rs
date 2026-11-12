@@ -25,10 +25,6 @@ use crate::{CrateLint, Lint, LintContext, LintError};
 pub struct NoAdhocFramework;
 
 impl Lint for NoAdhocFramework {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
@@ -55,7 +51,7 @@ impl CrateLint for NoAdhocFramework {
         let mut in_define_registry = false;
         let mut registry_brace_depth: i32 = 0;
 
-        for (line_num, line) in ctx.source.lines().enumerate() {
+        for (line_num, line) in ctx.source().lines().enumerate() {
             let trimmed = line.trim();
 
             // Skip comments.
@@ -97,7 +93,7 @@ impl CrateLint for NoAdhocFramework {
             if let Some(name) = extract_struct_name(trimmed) {
                 if name.ends_with("Registry") {
                     // Check current line AND up to 3 preceding lines for suppression.
-                    let context_lines = gather_context_lines(ctx.source, line_num, 3);
+                    let context_lines = gather_context_lines(ctx.source(), line_num, 3);
                     emit_with_explanation(
                         &context_lines,
                         line_num,
@@ -113,7 +109,7 @@ impl CrateLint for NoAdhocFramework {
 
             // ── Heuristic 2: direct inventory crate usage ────────────────
             if trimmed.contains("inventory::submit!") || trimmed.contains("inventory::collect!") {
-                let context_lines = gather_context_lines(ctx.source, line_num, 3);
+                let context_lines = gather_context_lines(ctx.source(), line_num, 3);
                 emit_with_explanation(
                     &context_lines,
                     line_num,
@@ -126,7 +122,7 @@ impl CrateLint for NoAdhocFramework {
 
             // ── Heuristic 3: global mutable singleton (OnceLock<Mutex<) ──
             if trimmed.contains("OnceLock<Mutex<") || trimmed.contains("OnceLock<RwLock<") {
-                let context_lines = gather_context_lines(ctx.source, line_num, 3);
+                let context_lines = gather_context_lines(ctx.source(), line_num, 3);
                 emit_with_explanation(
                     &context_lines,
                     line_num,
@@ -141,7 +137,7 @@ impl CrateLint for NoAdhocFramework {
             if trimmed.contains("HashMap<&str, usize>")
                 || trimmed.contains("HashMap<String, usize>")
             {
-                let context_lines = gather_context_lines(ctx.source, line_num, 3);
+                let context_lines = gather_context_lines(ctx.source(), line_num, 3);
                 emit_with_explanation(
                     &context_lines,
                     line_num,

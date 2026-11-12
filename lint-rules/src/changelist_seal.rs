@@ -39,10 +39,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use std::process::Command;
 
 use crate::changelist_helpers::{self, ClKind, ClStatus, ParsedChangelist};
-use crate::{Lint, LintError, RepoContext, RepoLint, Severity};
+use crate::{Lint, LintError, RepoContext, RepoLint, Severity, View};
 
 const LINT_NAME: &str = "changelist-seal";
 
@@ -66,12 +65,13 @@ impl Lint for ChangelistSeal {
 impl RepoLint for ChangelistSeal {
     fn check_repo(&self, ctx: &RepoContext) -> Vec<LintError> {
         let design_rounds = ctx.mock_dir.join("design_rounds");
-        let mut findings = active_round_findings(&design_rounds);
-        let committed = committed_files(&design_rounds);
-        for round in closed_round_dirs(&design_rounds) {
+        let view = ctx.view();
+        let mut findings = active_round_findings(view, &design_rounds);
+        let committed = committed_files(view, &design_rounds);
+        for round in closed_round_dirs(view, &design_rounds) {
             let none = BTreeSet::new();
             let held = committed.get(&round).unwrap_or(&none);
-            closed_round_findings(&design_rounds, &round, held, &mut findings);
+            closed_round_findings(view, &design_rounds, &round, held, &mut findings);
         }
         findings
             .into_iter()
@@ -84,11 +84,11 @@ impl RepoLint for ChangelistSeal {
 ///
 /// Public because `close` refuses on it before moving anything, which is the
 /// one place a close that commits without the hooks can be stopped.
-pub fn active_round_findings(design_rounds: &Path) -> Vec<String> {
-    let cls = changelist_helpers::find_changelists(design_rounds);
+pub fn active_round_findings(view: &View<'_>, design_rounds: &Path) -> Vec<String> {
+    let cls = changelist_helpers::find_changelists(view, design_rounds);
     let mut findings = Vec::new();
     for cl in &cls {
-        if cl.status == ClStatus::Locked && says_nothing(&design_rounds.join(&cl.filename)) {
+        if cl.status == ClStatus::Locked && says_nothing(view, &design_rounds.join(&cl.filename)) {
             findings.push(empty_lock(&format!("design_rounds/{}", cl.filename)));
         }
     }
@@ -118,13 +118,14 @@ pub fn active_round_findings(design_rounds: &Path) -> Vec<String> {
 }
 
 fn closed_round_findings(
+    view: &View<'_>,
     design_rounds: &Path,
     round: &str,
     committed: &BTreeSet<String>,
     findings: &mut Vec<String>,
 ) {
     let dir = design_rounds.join(round);
-    for cl in changelist_helpers::find_changelists(&dir) {
+    for cl in changelist_helpers::find_changelists(view, &dir) {
         if committed.contains(&cl.filename) {
             continue;
         }
@@ -138,7 +139,7 @@ fn closed_round_findings(
                  close again."
                 ))
             },
-            ClStatus::Locked if says_nothing(&dir.join(&cl.filename)) => {
+            ClStatus::Locked if says_nothing(view, &dir.join(&cl.filename)) => {
                 findings.push(empty_lock(&rel))
             },
             ClStatus::Locked | ClStatus::Deprecated => {},
@@ -164,11 +165,8 @@ fn empty_lock(rel: &str) -> String {
 ///
 /// An unreadable file is not called empty: this judges what a file says, and a
 /// file that could not be read has not been shown to say nothing.
-pub fn says_nothing(path: &Path) -> bool {
-    match std::fs::read_to_string(path) {
-        Ok(text) => is_bare_title(&text),
-        Err(_) => false,
-    }
+pub fn says_nothing(view: &View<'_>, path: &Path) -> bool {
+    view.text(path).is_some_and(is_bare_title)
 }
 
 /// At most one line that is not blank, that one a heading, and the heading
@@ -194,14 +192,15 @@ pub(crate) fn is_bare_title(text: &str) -> bool {
 
 /// Closed rounds: the subdirectories of `design_rounds/` named by a round
 /// stamp, sorted.
-fn closed_round_dirs(design_rounds: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(design_rounds) else {
+fn closed_round_dirs(view: &View<'_>, design_rounds: &Path) -> Vec<String> {
+    let Some(listing) = view.list(design_rounds) else {
         return Vec::new();
     };
-    let mut rounds: Vec<String> = entries
-        .flatten()
-        .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
-        .map(|e| e.file_name().to_string_lossy().to_string())
+    let mut rounds: Vec<String> = listing
+        .entries()
+        .iter()
+        .filter(|e| e.is_dir())
+        .map(|e| e.name().to_string())
         .filter(|name| is_round_dir(name))
         .collect();
     rounds.sort();
@@ -218,19 +217,13 @@ use crate::round_id::is_round_dir;
 /// Empty where git cannot answer, a repository with no commit yet among them,
 /// and then every closed round is judged, since none of it has been shown to be
 /// history.
-fn committed_files(design_rounds: &Path) -> BTreeMap<String, BTreeSet<String>> {
+fn committed_files(view: &View<'_>, design_rounds: &Path) -> BTreeMap<String, BTreeSet<String>> {
     let mut by_round: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let Ok(output) = Command::new("git")
-        .args(["ls-tree", "-r", "--name-only", "HEAD", "--", "."])
-        .current_dir(design_rounds)
-        .output()
-    else {
-        return by_round;
-    };
-    if !output.status.success() {
+    let output = view.git_in(design_rounds, &["ls-tree", "-r", "--name-only", "HEAD", "--", "."]);
+    if !output.ok() {
         return by_round;
     }
-    for path in String::from_utf8_lossy(&output.stdout).lines() {
+    for path in String::from_utf8_lossy(output.stdout()).lines() {
         if let Some((round, file)) = path.split_once('/')
             && !file.contains('/')
         {

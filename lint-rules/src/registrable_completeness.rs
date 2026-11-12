@@ -38,10 +38,6 @@ const EXEMPT_MACROS: &[&str] = &[
 pub struct RegistrableCompleteness;
 
 impl Lint for RegistrableCompleteness {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::Crate
-    }
-
     /// Crate-scoped. Completeness is a property of the crate's registrations taken together.
     fn per_file(&self) -> bool {
         false
@@ -66,7 +62,7 @@ impl CrateLint for RegistrableCompleteness {
         }
 
         let mut errors = Vec::new();
-        let root = ctx.tree.root_node();
+        let root = ctx.tree().root_node();
         visit_macros(root, ctx, &mut errors);
         errors
     }
@@ -90,7 +86,7 @@ fn check_macro_def(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
         None => return,
     };
 
-    let macro_name = &ctx.source[name_node.byte_range()];
+    let macro_name = &ctx.source()[name_node.byte_range()];
 
     // only check define_* macros
     if !macro_name.starts_with("define_") {
@@ -109,7 +105,7 @@ fn check_macro_def(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     // check for lint:allow suppression
     let line_idx = node.start_position().row;
     if line_idx > 0 {
-        if let Some(prev_line) = ctx.source.lines().nth(line_idx - 1) {
+        if let Some(prev_line) = ctx.source().lines().nth(line_idx - 1) {
             if crate::line_lint_allowed(prev_line, "registrable_completeness") {
                 errors.push(LintError::warning(
                     ctx.crate_name.to_string(),
@@ -123,7 +119,7 @@ fn check_macro_def(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     }
 
     // get the full macro body text
-    let body_text = &ctx.source[node.byte_range()];
+    let body_text = &ctx.source()[node.byte_range()];
 
     // check that the macro body generates Registrable impl
     let has_registrable = body_text.contains("Registrable") || body_text.contains("registrable");
