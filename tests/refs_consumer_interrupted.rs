@@ -2,7 +2,9 @@
 //! whose mock directory is not called `mock`, the one with every odd kind of file and the one of
 //! thousands of files. A `directory-to-ref` run is stopped at every git call it makes, one run for
 //! each: once by the call failing, and once by the process that makes it being killed before it
-//! runs, with a signal it cannot handle, so none of its own error handling runs. A migration
+//! runs, with a signal it cannot handle, so none of its own error handling runs; and once by the
+//! whole process group, the command and the git call it made, killed while git holds a lock, which
+//! git then names and the person removes, as git tells them to. A migration
 //! that only renames or writes files is stopped after each file. The run that finishes it leaves what
 //! a run nobody stopped leaves: the same files, index, hiding of the instances, hooks and ref trees.
 //! Nothing is lost on the way, and the call made once more is refused.
@@ -111,19 +113,6 @@ fn differ(want: &[(String, String)], got: &[(String, String)]) -> Vec<String> {
     out
 }
 
-/// What call `k` may change and still have lost nothing.
-fn allowed(s: &Shape, k: usize) -> Allowed {
-    let calls = s.calls();
-    if k == 0 {
-        let renamed = s.renames().iter().map(|(f, t)| (f.clone().into_bytes(), t.clone().into_bytes())).collect();
-        Allowed { renamed, ..Allowed::default() }
-    } else if k == calls.len() - 1 {
-        Allowed { rewritten: s.rewritten(), ..Allowed::default() }
-    } else {
-        Allowed { rewritten: [b"mockspace.toml".to_vec()].into(), ..Allowed::default() }
-    }
-}
-
 /// Runs `one` for each of `0 .. n` on two threads, a world each, and fails naming every case
 /// that failed.
 fn each(n: usize, what: &str, one: impl Fn(usize) -> Result<(), String> + Sync) {
@@ -159,6 +148,9 @@ enum Stop {
     Fail,
     /// The process that makes the call is killed before it runs, and handles nothing.
     Kill,
+    /// The call is started, and the whole group, the command and the call, is killed while git holds
+    /// a lock: what Ctrl-C at a terminal reaches, with a signal nothing handles, so the lock stays.
+    Group,
 }
 
 /// Call `k` stopped at each git call it makes, then made again.
@@ -178,6 +170,7 @@ fn stopped_at_each_git_call(s: &Shape, k: usize, stop: Stop) {
     // clock), so a run may not reach a call the clean run made; it must then end as a run nobody
     // stopped
     let stopped = AtomicUsize::new(0);
+    let locked = AtomicUsize::new(0);
     each(made, "stopped at git call", |i| {
         let n = i + 1;
         let w = copy_of(&prep);
@@ -188,21 +181,41 @@ fn stopped_at_each_git_call(s: &Shape, k: usize, stop: Stop) {
         match stop {
             Stop::Fail => spy.fail_at(n),
             Stop::Kill => spy.kill_at(n),
+            Stop::Group => spy.group_kill_at(n, &c.root.join(".git")),
         }
         let first = c.run(&args);
         spy.stop_failing();
-        let mark = if stop == Stop::Kill { "KILLED " } else { "INJECTED " };
+        let mark = if stop == Stop::Fail { "INJECTED " } else { "KILLED " };
         let failed = spy.text().lines().find(|l| l.starts_with(mark)).unwrap_or("none").to_string();
         if failed != "none" {
             stopped.fetch_add(1, Ordering::SeqCst);
         } else if !first.ok {
             return Err(format!("no call {n} was reached, and the run failed\nfirst: {}", first.all()));
         }
-        if stop == Stop::Kill && failed != "none" && first.ok {
+        let left_behind = locks_in(&c.root.join(".git"));
+        if !left_behind.is_empty() {
+            locked.fetch_add(1, Ordering::SeqCst);
+        }
+        if stop != Stop::Fail && failed != "none" && first.ok {
             return Err(format!("the control: a killed run reads as done; {failed}\nfirst: {}", first.all()));
         }
-        let finish = c.run(&args);
-        let ctx = format!("{failed}\nfirst: {}\nfinish: {}", first.all(), finish.all());
+        let mut finish = c.run(&args);
+        // git names a lock a killed call left and says to remove it; the person does, and makes the
+        // same call again, as often as a new lock is named
+        let mut cleared: Vec<String> = Vec::new();
+        while !finish.ok {
+            let fresh: Vec<String> =
+                locks_named(&finish.all()).into_iter().filter(|p| !cleared.contains(p) && std::path::Path::new(p).exists()).collect();
+            if fresh.is_empty() {
+                break;
+            }
+            for p in &fresh {
+                std::fs::remove_file(p).unwrap();
+            }
+            cleared.extend(fresh);
+            finish = c.run(&args);
+        }
+        let ctx = format!("{failed}\nleft: {left_behind:?}\ncleared: {cleared:?}\nfirst: {}\nfinish: {}", first.all(), finish.all());
         if first.ok {
             // the stopped call did not stop the run; it must have left what the clean run did
             if finish.ok {
@@ -216,12 +229,42 @@ fn stopped_at_each_git_call(s: &Shape, k: usize, stop: Stop) {
         if c.run(&args).ok {
             return Err(format!("made again after it was finished; {ctx}"));
         }
-        whole::kept(&c, &before, &whole::capture(&c), &allowed(s, k)).map_err(|e| format!("lost: {e}\n{ctx}"))?;
+        whole::kept(&c, &before, &whole::capture(&c), &s.allowed(k)).map_err(|e| format!("lost: {e}\n{ctx}"))?;
         let d = differ(&want, &left(&c));
         if d.is_empty() { Ok(()) } else { Err(format!("left other than a run nobody stopped:\n{}\n{ctx}", d.join("\n"))) }
     });
     let stopped = stopped.into_inner();
     assert!(stopped > 0, "the control: no run of {made} was stopped at its call");
+    // the moves hand git their files on its input while it holds the index or a ref, so a kill there
+    // leaves the lock; the renames and the reference rewrite write the files themselves, and their
+    // only git writes are the gate's `config` sets, which take no input to hold them at the lock
+    let (whole, by_pattern, _) = moves_of(s);
+    if stop == Stop::Group && (k == whole || k == by_pattern) {
+        assert!(locked.into_inner() > 0, "the control: no run of {made} killed with its group left a lock behind");
+    }
+}
+
+/// The lock files under `git_dir`, the objects left out.
+fn locks_in(git_dir: &std::path::Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut dirs = vec![git_dir.to_path_buf()];
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(&d).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() && p != git_dir.join("objects") {
+                dirs.push(p);
+            } else if p.extension().is_some_and(|x| x == "lock") {
+                out.push(p.display().to_string());
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// The paths of the lock files a message quotes, as git quotes one it could not take.
+fn locks_named(text: &str) -> Vec<String> {
+    text.split('\'').filter(|p| p.starts_with('/') && p.ends_with(".lock")).map(str::to_owned).collect()
 }
 
 /// The calls of `s`: the renames, each move and the reference rewrite, by their place in the list.
@@ -327,6 +370,26 @@ macro_rules! for_shape {
             #[test]
             fn a_whole_directory_moved_to_a_ref_killed_at_each_git_call_is_finished_by_the_same_call() {
                 stopped_at_each_git_call(&S, moves_of(&S).0, Stop::Kill);
+            }
+
+            #[test]
+            fn a_whole_directory_moved_to_a_ref_killed_with_its_group_at_each_git_call_is_finished_by_the_same_call() {
+                stopped_at_each_git_call(&S, moves_of(&S).0, Stop::Group);
+            }
+
+            #[test]
+            fn a_directory_moved_by_pattern_killed_with_its_group_at_each_git_call_is_finished_by_the_same_call() {
+                stopped_at_each_git_call(&S, moves_of(&S).1, Stop::Group);
+            }
+
+            #[test]
+            fn round_filenames_killed_with_its_group_at_each_git_call_is_finished_by_the_same_call() {
+                stopped_at_each_git_call(&S, 0, Stop::Group);
+            }
+
+            #[test]
+            fn the_reference_rewrite_killed_with_its_group_at_each_git_call_is_finished_by_the_same_call() {
+                stopped_at_each_git_call(&S, moves_of(&S).2, Stop::Group);
             }
 
             #[test]

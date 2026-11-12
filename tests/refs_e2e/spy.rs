@@ -18,6 +18,9 @@ pub struct Spy {
     count:    PathBuf,
     /// There when the call at that ordinal kills the process that made it instead of failing.
     kill:     PathBuf,
+    /// There, naming the git directory to watch, when the call at that ordinal is started and the
+    /// whole process group is killed while it holds a lock there.
+    group:    PathBuf,
     /// There while each call's argument and input bytes are counted into `sizes`.
     measure:  PathBuf,
     /// One line a call while measured: its subcommand, its argument bytes and its input bytes.
@@ -33,6 +36,7 @@ pub fn install(w: &World) -> Spy {
         at:    base.join("git.fail-at"),
         count: base.join("git.count"),
         kill:  base.join("git.kill"),
+        group: base.join("git.group"),
         measure: base.join("git.measure"),
         sizes: base.join("git.sizes"),
     };
@@ -49,6 +53,37 @@ echo "$line" >> '{log}'
 if [ -f '{at}' ]; then
   n=$(( $(cat '{count}' 2>/dev/null || echo 0) + 1 ))
   echo $n > '{count}'
+  if [ "$(cat '{at}')" = "$n" ] && [ -f '{group}' ]; then
+    # Ctrl-C at a terminal reaches every process of the foreground group at once: the caller, and
+    # this call while it writes. The call is started, held at half of its input, and the group is
+    # killed once git holds a lock of the repository, or when it has not taken one by then.
+    echo "GROUP $line" >> '{log}'
+    watch=$(cat '{group}')
+    pg=$(cut -d' ' -f5 /proc/$$/stat)
+    tmp='{log}'.in.$$
+    cat > "$tmp"
+    fifo='{log}'.fifo.$$
+    rm -f "$fifo"; mkfifo "$fifo"
+    '{real}' "$@" < "$fifo" &
+    g=$!
+    exec 4> "$fifo"
+    rm -f "$fifo"
+    size=$(wc -c < "$tmp")
+    head -c $((size / 2)) "$tmp" >&4
+    rm -f "$tmp"
+    i=0
+    while [ $i -lt 200 ] && kill -0 $g 2>/dev/null; do
+      if [ -n "$(find "$watch" -path "$watch/objects" -prune -o -name '*.lock' -print 2>/dev/null | head -n 1)" ]; then
+        echo "LOCKED $(find "$watch" -path "$watch/objects" -prune -o -name '*.lock' -print 2>/dev/null | head -n 1)" >> '{log}'
+        break
+      fi
+      i=$((i + 1))
+    done
+    echo "KILLED $line" >> '{log}'
+    # dash reads `--` as a process id, so the group goes straight after the signal
+    kill -KILL -$pg
+    exit 137
+  fi
   if [ "$(cat '{at}')" = "$n" ] && [ -f '{kill}' ]; then
     echo "KILLED $line" >> '{log}'
     kill -KILL $PPID
@@ -96,6 +131,7 @@ exec '{real}' "$@"
         at = spy.at.display(),
         count = spy.count.display(),
         kill = spy.kill.display(),
+        group = spy.group.display(),
         measure = spy.measure.display(),
         sizes = spy.sizes.display(),
     );
@@ -115,7 +151,8 @@ impl Spy {
 
     /// Every process started as `git` since the last [`Spy::clear`].
     pub fn spawns(&self) -> usize {
-        self.text().lines().filter(|l| !l.starts_with("INJECTED ") && !l.starts_with("KILLED ")).count()
+        let marks = ["INJECTED ", "KILLED ", "GROUP ", "LOCKED "];
+        self.text().lines().filter(|l| !marks.iter().any(|m| l.starts_with(m))).count()
     }
 
     pub fn clear(&self) {
@@ -167,10 +204,20 @@ impl Spy {
         self.fail_at(n);
     }
 
+    /// Starts the `n`th call from now, holds it at half of its input, and once it holds a lock under
+    /// `git_dir` kills every process of the group the command runs in, as Ctrl-C at a terminal reaches
+    /// them all, with a signal none of them handles: the lock or half-written file git was writing is
+    /// left where it is. A call that takes no lock is killed once it ends or after a while.
+    pub fn group_kill_at(&self, n: usize, git_dir: &Path) {
+        std::fs::write(&self.group, git_dir.as_os_str().as_encoded_bytes()).unwrap();
+        self.fail_at(n);
+    }
+
     /// Ends every failure and kill this spy was told to make.
     pub fn stop_failing(&self) {
         let _ = std::fs::remove_file(&self.at);
         let _ = std::fs::remove_file(&self.kill);
+        let _ = std::fs::remove_file(&self.group);
         let _ = std::fs::remove_file(&self.fail);
     }
 

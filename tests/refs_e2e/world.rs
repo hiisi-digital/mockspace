@@ -245,6 +245,9 @@ impl Clone<'_> {
 
     pub fn run_in(&self, dir: &Path, args: &[&str]) -> Out {
         let mut c = self.w.command(BIN, dir);
+        // a group of its own, as a shell gives a command it runs in the foreground, so a stop that
+        // reaches the whole group reaches the command and what it started, and never the test
+        std::os::unix::process::CommandExt::process_group(&mut c, 0);
         c.arg("--dir").arg(self.mock()).args(args);
         let o = c.output().unwrap();
         Out {
