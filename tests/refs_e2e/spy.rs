@@ -117,9 +117,7 @@ if [ -f '{measure}' ]; then
   # the caller names to it where the number of calls does not
   tmp='{sizes}'.$$
   cat > "$tmp"
-  # the process id of the caller, where a name holds it, counts as one byte, so the count is the
-  # same whatever number the system gave the process
-  echo "$sub $(printf %s "$*" | sed "s/$PPID/P/g" | wc -c) $(sed "s/$PPID/P/g" "$tmp" | wc -c)" >> '{sizes}'
+  echo "$sub $(printf %s "$*" | wc -c) $(wc -c < "$tmp")" >> '{sizes}'
   exec 3< "$tmp"
   rm -f "$tmp"
   exec '{real}' "$@" <&3 3<&-
