@@ -1,0 +1,12 @@
+same path ex=1 checkout OLD        rc=0 edit_survives=0  Note: switching to '24c15391cb1bcb1db5d0d3b5d9e80ecf8a75dfa0'.  
+same path ex=1 checkout -f OLD     rc=0 edit_survives=0  Note: switching to '24c15391cb1bcb1db5d0d3b5d9e80ecf8a75dfa0'.  
+same path ex=1 reset --hard OLD    rc=0 edit_survives=0  HEAD is now at 24c1539 old 
+same path ex=1 switch --detach OLD rc=0 edit_survives=0  HEAD is now at 2464ebb old 
+same path ex=1 stash -u            rc=0 edit_survives=1  No local changes to save 
+same path ex=0 checkout OLD        rc=1 edit_survives=1  error: The following untracked working tree files would be overwritten by checkout: 	mock/research/NOTES.md 
+same path ex=0 checkout -f OLD     rc=0 edit_survives=0  Note: switching to 'd3362c7f4227528704e4039ecd0e54809ff03d6f'.  
+same path ex=0 reset --hard OLD    rc=0 edit_survives=0  HEAD is now at d3362c7 old 
+same path ex=0 switch --detach OLD rc=1 edit_survives=1  error: The following untracked working tree files would be overwritten by checkout: 	mock/research/NOTES.md 
+same path ex=0 stash -u            rc=0 edit_survives=1  Ignoring path mock/research/ Saved working directory and index state WIP on dev: c4fc9fe migrate 
+other path ex=1 checkout -f OLD    rc=0 edit_survives=1  Note: switching to '3970e392d50348ae4f683960f80fd8add69aeb9d'.  
+other path ex=1 reset --hard OLD   rc=0 edit_survives=1  HEAD is now at 3970e39 old 
