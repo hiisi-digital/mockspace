@@ -1,0 +1,31 @@
+== instantiate over the placeholder
+mock/research
+== main status with data advanced and dirty: []
+G main: git clean -fd -> kept=1 {}
+G main: git clean -ffd -> kept=1 {}
+G main: git clean -ffdx -> kept=1 {}
+G main: git clean -ffdX -> kept=1 {}
+G main: git checkout -f OLD; git checkout -f dev -> kept=1 {Switched to branch 'dev'}
+G main: git reset --hard OLD; git reset --hard dev@{1} -> kept=1 {HEAD is now at fc70c8b placeholder}
+G main: git stash -a; git stash pop -> kept=1 {No stash entries found.}
+G main: git add -A; git commit -qm x; git checkout -qf HEAD~1; git checkout -qf dev -> kept=1 {warning: unable to rmdir 'mock/rdata': Directory not empty}
+G main: git submodule update --init --force -> kept=1 {Skipping submodule 'mock/rdata'}
+G main: git submodule update --init --checkout --force -> kept=0 {Submodule path 'mock/rdata': checked out '0bfd5f10a27d59c5278161901a06683cbd9f75b2'}
+G main: git submodule deinit -f mock/rdata -> kept=0 {Cleared directory 'mock/rdata'}
+G main: git rm -r --cached mock/rdata; git reset -q -> kept=1 {rm 'mock/rdata'}
+G main: git read-tree -u --reset OLD; git read-tree -u --reset dev -> kept=1 {warning: unable to rmdir 'mock/rdata': Directory not empty}
+== add -A with data advanced: does the gitlink move on the code branch?
+M? mock/rdata 
+== an uninstantiated clone writes files at the path by hand and runs add -A
+(dir listing)
+
+On branch dev
+160000 commit b74d9f6130a978b8da21b743ecdf3f3dce11e036	mock/rdata
+== clone --recurse-submodules of the repo
+Skipping submodule 'mock/rdata'
+
+== linked worktree w2 holding a nested data worktree under the placeholder
+G linked: git worktree remove ../w2 -> kept=1 {fatal: working trees containing submodules cannot be moved or removed}
+G linked: git worktree remove --force ../w2 -> kept=0 {}
+G linked: git worktree remove -f -f ../w2 -> kept=0 {}
+G linked: git worktree move ../w2 ../w3 -> kept=1 {fatal: working trees containing submodules cannot be moved or removed}
