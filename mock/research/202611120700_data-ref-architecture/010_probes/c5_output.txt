@@ -1,0 +1,6 @@
+before: refs/mock-snapshot/research@w1 refs/mock-wt/research@w1 
+fetch --prune: { - [deleted]         (none)     -> refs/mock-snapshot/research@w1; - [deleted]         (none)     -> refs/mock-wt/research@w1;}
+after: []
+data worktree: status {On branch refs/mock-wt/research@w1} HEAD reflog holds commit: 0
+after gc --prune=now the unpushed commit: commit
+(code worktree detached so that the checked-out-branch refusal does not mask the prune)
