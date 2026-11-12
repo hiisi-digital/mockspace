@@ -21,10 +21,11 @@ fn strs(a: &[String]) -> Vec<&str> {
 fn migrated_under(setup: Setup) {
     let s = consumer::ELSEWHERE;
     let w = consumer::remote(&s);
-    if setup == Setup::Shook && setups::shook_on_path(&w).is_none() {
-        eprintln!("git-shook is not on the PATH, so the clone set up with it is not tried");
-        return;
-    }
+    assert!(
+        setup != Setup::Shook || setups::shook_on_path(&w).is_some(),
+        "git-shook is not on the PATH: put a `git-shook` that knows `git shook install --yes --only` (git-shook's `dev`, \
+         built) first on the PATH, since the clone set up with it is a case this test owes"
+    );
     let c = setup.clone_in(&w, "a");
     s.add_ignored_output(&c);
     // the engine sets the clone up on its first run, before any migration
@@ -118,19 +119,13 @@ fn migrated_under(setup: Setup) {
             c.git(&["checkout", "-q", &before_any]);
             let _ = c.run(&["data-refs", "status"]);
             let back = c.git_out(&["checkout", "-q", "-f", "dev"]);
-            if setup == Setup::BareWorktrees {
-                // Pinned, not settled. Per-worktree config moves `core.bare` into the bare
-                // repository's own `config.worktree`, as the design has it, and git then reads the
-                // bare repository from a linked worktree as one with `dev` checked out, so the way
-                // back to `dev` is refused. Before the migration it is not. Whether the engine keeps
-                // the move is op's call, asked in question ticket
-                // `per_worktree_config_in_a_bare_clone_leaves_its_head_branch_u`; the day it is
-                // answered, this pin goes.
-                assert!(!back.ok && back.all().contains("already used by worktree"), "the way back is refused no more; drop this pin: {}", back.all());
-                c.git(&["checkout", "-q", "-f", "--ignore-other-worktrees", "dev"]);
-            } else {
-                assert!(back.ok, "{what}: {}", back.all());
-            }
+            // Red on purpose for the bare clone: the design keeps a bare clone's linked worktrees
+            // working, and per-worktree config moves `core.bare` into the bare repository's own
+            // `config.worktree`, after which git 2.43 reads the bare repository from a linked
+            // worktree as one with `dev` checked out, so the way back to `dev` is refused there.
+            // Before the migration it is not. How the engine keeps the worktrees working is op's
+            // call, asked in question ticket `per_worktree_config_in_a_bare_clone_leaves_its_head_branch_u`.
+            assert!(back.ok, "{what}: the linked worktree goes back to `dev`: {}", back.all());
         }
         refs_e2e::daily::edit_back_after_forced_way_back(&c, "research", rel, &file, &edited, &what);
     }
