@@ -1,0 +1,26 @@
+######## refspec style: none
+instantiated: p.git  ;w1 [feat1] locked;w1/mock/rdata [mock-wt/research/w1] locked;w2 [feat2] locked;w2/mock/rdata [mock-wt/research/w2] locked;
+worktreeConfig set: [] core.bare=true
+Auto-merging NOTES.md
+w2 after pull: a|b|two|one|
+w1 after pull: a|b|two|one|
+plain fetch in bare: rc=0  fetch in w1: rc=0
+mirror-style fetch '+refs/heads/*:refs/heads/*' from w1: {}
+landing gate in w2: data HEAD ancestor of remote mock/research: yes
+worktree remove w2: {fatal: cannot remove a locked working tree, lock reason: holds data worktree mock/rdata} --force: {fatal: cannot remove a locked working tree, lock reason: holds data worktree mock/rdata} edit=1
+worktree prune -v: {} gc: rc=0 edit=1
+red test 2 moves from w1: fetch dev:dev {} branch -f dev {} checkout dev {} -> w1 on dev
+a new worktree w3 before instantiate: mock/rdata exists=no
+######## refspec style: tracking
+instantiated: p.git  ;w1 [feat1] locked;w1/mock/rdata [mock-wt/research/w1] locked;w2 [feat2] locked;w2/mock/rdata [mock-wt/research/w2] locked;
+worktreeConfig set: [] core.bare=true
+Auto-merging NOTES.md
+w2 after pull: a|b|two|one|
+w1 after pull: a|b|two|one|
+plain fetch in bare: rc=0  fetch in w1: rc=0
+mirror-style fetch '+refs/heads/*:refs/heads/*' from w1: {}
+landing gate in w2: data HEAD ancestor of remote mock/research: yes
+worktree remove w2: {fatal: cannot remove a locked working tree, lock reason: holds data worktree mock/rdata} --force: {fatal: cannot remove a locked working tree, lock reason: holds data worktree mock/rdata} edit=1
+worktree prune -v: {} gc: rc=0 edit=1
+red test 2 moves from w1: fetch dev:dev {} branch -f dev {} checkout dev {} -> w1 on dev
+a new worktree w3 before instantiate: mock/rdata exists=no
