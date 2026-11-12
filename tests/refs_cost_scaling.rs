@@ -2,9 +2,13 @@
 //! one five times its size, its research, templates and registry rows grown alike, counted in git
 //! processes started, in the bytes those processes are handed as arguments and input, and in
 //! objects written, rather than in time. A command whose work is one edited file costs the same on
-//! both, in every count; a migration that moves a directory starts a process for each batch of the
-//! files it moves, never one for each file, and writes no blob the branch has. A cost that grows
-//! with the tree where the change did not is a finding.
+//! both, in every count: a look, a copy, a commit and an update of `research`, the same of the ref
+//! by pattern that holds the templates, `verify`, a `restore` of one file, and the lists of the held
+//! files the gates are told on every lint run. A command that writes every file of an instance,
+//! `instantiate` and a `restore` of a directory taken off whole, and a migration that moves a
+//! directory, start a process for each batch of the files, never one for each file, and the move
+//! writes no blob the branch has. A cost that grows with the tree where the change did not is a
+//! finding.
 
 #[path = "common/ambient.rs"]
 mod ambient;
@@ -17,6 +21,7 @@ use refs_e2e::Clone;
 const SMALL: usize = 400;
 const LARGE: usize = 2000;
 const NOTES: &str = "mock/research/20261001_alpha/NOTES.md";
+const TEMPLATE: &str = "mock/crates/alpha/docs/gen/t00000.md.tmpl";
 
 /// A consumer of `bulk` research files, and a template and a row file for every four of them.
 fn shape(bulk: usize) -> Shape {
@@ -75,6 +80,35 @@ fn daily_costs(bulk: usize) -> Vec<(&'static str, Cost)> {
     out.push(("the hook's copy, one file edited", measure(&a, &spy, &["data-refs", "snapshot"])));
     out.push(("commit, one file edited", measure(&a, &spy, &["data-refs", "commit", "research"])));
     out.push(("update, one file from another clone", measure(&b, &spy, &["data-refs", "update", "research"])));
+    // the ref by pattern, whose instance is the crates directory and holds its templates alone
+    a.write(TEMPLATE, b"one template edited\n");
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    out.push(("status of the ref by pattern, one template edited", measure(&a, &spy, &["data-refs", "status", "templates"])));
+    out.push(("commit of the ref by pattern, one template edited", measure(&a, &spy, &["data-refs", "commit", "templates"])));
+    out.push(("verify, nothing edited", measure(&a, &spy, &["data-refs", "verify"])));
+    a.remove(NOTES);
+    out.push(("restore, one file taken off", measure(&a, &spy, &["data-refs", "restore", "research"])));
+    // the gates are told the files the refs hold and which of them changed, on every lint run
+    a.write(NOTES, b"one file edited for the gates\n");
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    out.push(("the gates' lists of the held files, one file edited", measure(&a, &spy, &["--lint-only", "--scope", "infra"])));
+    out
+}
+
+/// What the commands that write every file of an instance cost: `instantiate` in a fresh clone,
+/// and `restore` of a directory taken off whole.
+fn whole_instance_costs(bulk: usize) -> Vec<(&'static str, Cost)> {
+    let s = shape(bulk);
+    let w = consumer::migrated(&s);
+    let a = w.clone_of("a");
+    a.git(&["config", "gc.auto", "0"]);
+    let _ = a.run(&["status"]);
+    let spy = spy::install(&w);
+    spy.measure_input();
+    let mut out = Vec::new();
+    out.push(("instantiate, every ref", measure(&a, &spy, &["data-refs", "instantiate"])));
+    std::fs::remove_dir_all(a.path("mock/research")).unwrap();
+    out.push(("restore, every file of research", measure(&a, &spy, &["data-refs", "restore", "research"])));
     out
 }
 
@@ -158,4 +192,19 @@ fn a_migration_starts_no_more_git_processes_on_a_tree_five_times_larger() {
     let research = &large.iter().find(|(w, _)| w == "directory-to-ref research").unwrap().1;
     let bound = dirs + 1;
     assert!(research.objects <= bound, "the move writes {dirs} trees and a commit, not blobs the branch has\n{shown}");
+}
+
+// Mutation: write each file of an instance with a git call of its own, or read each blob with one;
+// the commands then start a process more for every file more.
+#[test]
+fn a_command_that_writes_every_file_starts_no_more_git_processes_on_a_tree_five_times_larger() {
+    let (small, large) = (whole_instance_costs(SMALL), whole_instance_costs(LARGE));
+    let shown = table(&small, &large);
+    eprintln!("{shown}");
+    let extra = (LARGE - SMALL) + (shape(LARGE).cites - shape(SMALL).cites);
+    let batches = extra.div_ceil(BATCH);
+    for ((what, s), (_, l)) in small.iter().zip(&large) {
+        assert!(l.spawns <= s.spawns + batches, "{what}: git processes grow with each file\n{shown}");
+        assert_eq!(s.objects, l.objects, "{what}: objects written grow with the tree\n{shown}");
+    }
 }
