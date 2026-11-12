@@ -86,6 +86,8 @@ mod no_self_define;
 mod no_todo;
 pub mod path_filter;
 pub mod round_id;
+pub mod lints_read_through_the_view;
+pub use lints_read_through_the_view::{Bypass, assert_lints_read_through_the_view, bypasses, bypasses_under};
 mod registrable_completeness;
 mod repr_c_abi_safety;
 mod single_source;
@@ -1771,6 +1773,7 @@ pub fn all_repo_lints() -> Vec<Box<dyn RepoLint>> {
         Box::new(changelist_immutability::ChangelistImmutability),
         Box::new(changelist_seal::ChangelistSeal),
         Box::new(the_mock_toolchain_matches_the_root::TheMockToolchainMatchesTheRoot),
+        Box::new(lints_read_through_the_view::LintsReadThroughTheView),
     ]
 }
 
