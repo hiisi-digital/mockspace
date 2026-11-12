@@ -232,10 +232,11 @@ fn git_moves_orig_head_before_it_writes_in_a_merge_and_after_in_a_reset_and_a_re
         git(&["add", "g"]);
         git(&["commit", "-q", "-m", "other"]);
         let hook = dir.join(".git/hooks/reference-transaction");
-        std::fs::write(&hook, "#!/bin/sh\n[ \"$1\" = prepared ] || exit 0\nwhile read -r _ _ r; do [ \"$r\" = ORIG_HEAD ] && echo \"at ORIG_HEAD: $(cat f)\" >&2; done\nexit 0\n").unwrap();
-        let mut p = std::fs::metadata(&hook).unwrap().permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut p, 0o755);
-        std::fs::set_permissions(&hook, p).unwrap();
+        mockspace_manifest::write_executable(
+            &hook,
+            "#!/bin/sh\n[ \"$1\" = prepared ] || exit 0\nwhile read -r _ _ r; do [ \"$r\" = ORIG_HEAD ] && echo \"at ORIG_HEAD: $(cat f)\" >&2; done\nexit 0\n",
+        )
+        .unwrap();
         let said = git(args);
         let seen = if before { "at ORIG_HEAD: here" } else { "at ORIG_HEAD: dev" };
         assert!(said.contains(seen), "{args:?}: {said}");
