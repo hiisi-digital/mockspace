@@ -97,6 +97,19 @@ fn migrated_under(setup: Setup) {
             assert_eq!(side.git(&["status", "--porcelain", "--untracked-files=no"]), "", "the other worktree is as it was");
             let bare = w.sh(&w.base().join("a.git"), "git", &["rev-parse", "--is-bare-repository"]);
             assert_eq!(bare.stdout.trim(), "true", "the clone itself is bare still: {}", bare.all());
+            // Red on purpose, with the way back below: a linked worktree that left `dev` moves it
+            // as it did before the migration, by a fetch into it and by `branch -f`, and goes back
+            // to it. Asked in question ticket `per_worktree_config_in_a_bare_clone_leaves_its_head_branch_u`.
+            let tip = c.git(&["rev-parse", "HEAD"]).trim().to_string();
+            c.git(&["checkout", "-q", "--detach"]);
+            let mut refused = Vec::new();
+            for args in [&["fetch", "-q", "origin", "dev:dev"][..], &["branch", "-f", "dev", &tip], &["checkout", "-q", "dev"]] {
+                let o = c.git_out(args);
+                if !o.ok {
+                    refused.push(format!("{args:?}: {}", o.all().trim()));
+                }
+            }
+            assert!(refused.is_empty(), "a linked worktree of the bare clone moves and takes `dev` again:\n{}", refused.join("\n"));
         },
     }
 
