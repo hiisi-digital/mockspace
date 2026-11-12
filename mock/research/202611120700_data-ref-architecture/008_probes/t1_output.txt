@@ -1,0 +1,14 @@
+U clean -fd    edit survives=1
+U clean -fdx   edit survives=1
+U clean -fdX   edit survives=1
+U clean -ffd   edit survives=
+U clean -ffdx  edit survives=
+U clean -ffdX  edit survives=1
+H clean -fd    edit survives=1
+H clean -fdx   edit survives=1
+H clean -fdX   edit survives=1
+H clean -ffd   edit survives=1
+H clean -ffdx  edit survives=
+H clean -ffdX  edit survives=
+== worktree lock does not stop clean:
+locked, clean -ffd: edit survives=
