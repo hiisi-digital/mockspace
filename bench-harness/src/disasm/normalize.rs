@@ -44,6 +44,13 @@ pub(super) fn normalize_disasm(text: &str) -> String {
         {
             continue;
         }
+        // the header names the file, which differs for every variant: LLVM
+        // parts it from the format with a tab, GNU binutils with spaces
+        if let Some(pos) = trimmed.find(":     file format ").or_else(|| trimmed.find(":\tfile format ")) {
+            lines.push(trimmed[pos + 1 ..].trim_start().to_string());
+            adrp_reg = None;
+            continue;
+        }
         let kept = if let Some(pos) = trimmed.find('\t') { &trimmed[pos + 1 ..] } else { trimmed };
         let kept = strip_symbol_annotation(kept);
         let mut normalized = normalize_addresses(kept);

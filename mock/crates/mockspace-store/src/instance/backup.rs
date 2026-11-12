@@ -337,7 +337,10 @@ impl Instance<'_> {
             }
         }
         let key = self.record_key()?;
-        let mine = if new.is_empty() { None } else { Some(self.key_tree(new)?) };
+        // `old` is the copy whose tree the pending copy, or else the last, holds under the key
+        let from = pending.or(last).map(|at| (at, old));
+        let base = delta.base.commit().map(|commit| (commit, &delta.base_ids));
+        let mine = if new.is_empty() { None } else { Some(self.key_tree(new, from, base)?) };
         let mut entries = String::new();
         if let Some(last) = last {
             let top = git.must(&["ls-tree", "-z", last.as_str()], &[], None)?;
@@ -386,12 +389,47 @@ impl Instance<'_> {
         }
     }
 
-    /// The tree of `copy`, its sets as directories, built in an index of its own.
-    fn key_tree(&self, copy: &Copy) -> Result<String, StoreError> {
+    /// The tree of `copy`, its sets as directories, built in an index of its own. Each set starts as
+    /// the same set of the last copy where `from` names the commit whose tree holds `old` under this
+    /// instance's key, and a guard the last copy did not have starts as the tree of `base`, its commit
+    /// and its files; git is handed only what differs from that, so a copy of one changed file among
+    /// thousands costs one line, and a set emptied costs nothing.
+    fn key_tree(
+        &self,
+        copy: &Copy,
+        from: Option<(&Oid, &Copy)>,
+        base: Option<(&Oid, &BTreeMap<String, FileId>)>,
+    ) -> Result<String, StoreError> {
+        let key = self.record_key()?;
+        let empty = Copy::default();
+        let was_sets = from.map_or(empty.sets(), |(_, old)| old.sets());
+        let none = BTreeMap::new();
+        let mut seeds = Vec::new();
         let mut lines = String::new();
-        for (set, files) in copy.sets() {
+        for ((set, files), (_, old)) in copy.sets().into_iter().zip(was_sets) {
+            if files.is_empty() {
+                continue;
+            }
+            let was = match (from, base) {
+                (Some((at, _)), _) if !old.is_empty() => {
+                    seeds.push((set, format!("{at}:{key}/{set}")));
+                    old
+                },
+                (_, Some((commit, ids))) if set == "guard" => {
+                    seeds.push((set, commit.as_str().to_owned()));
+                    ids
+                },
+                _ => &none,
+            };
+            // mode 0 takes the path out of the index, whatever the object named beside it; taken
+            // first, so a file can stand where a directory of the last copy was
+            for (path, id) in was.iter().filter(|(path, _)| !files.contains_key(*path)) {
+                lines.push_str(&format!("0 {}\t{set}/{path}\0", id.blob));
+            }
             for (path, id) in files {
-                lines.push_str(&format!("{} {}\t{set}/{path}\0", id.mode.git(), id.blob));
+                if was.get(path) != Some(id) {
+                    lines.push_str(&format!("{} {}\t{set}/{path}\0", id.mode.git(), id.blob));
+                }
             }
         }
         let records = self.record_file()?;
@@ -405,7 +443,12 @@ impl Instance<'_> {
         let index_s = index.to_string_lossy().into_owned();
         let env = [("GIT_INDEX_FILE", index_s.as_str())];
         let git = &self.store.git;
-        git.must(&["update-index", "-z", "--add", "--index-info"], &env, Some(lines.as_bytes()))?;
+        for (set, tree) in &seeds {
+            git.must(&["read-tree", &format!("--prefix={set}/"), tree], &env, None)?;
+        }
+        if !lines.is_empty() {
+            git.must(&["update-index", "-z", "--add", "--replace", "--index-info"], &env, Some(lines.as_bytes()))?;
+        }
         Ok(git.must(&["write-tree"], &env, None)?.text())
     }
 

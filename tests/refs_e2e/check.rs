@@ -43,6 +43,11 @@ pub fn at(c: &Clone, rev: &str) -> Manifest {
 
 /// What the refs hold on the remote, mapped to repository-root paths. A ref not there holds nothing.
 pub fn held_on_remote(w: &World, refs: &[Held]) -> Manifest {
+    held_on_remote_at(w, refs, "mock")
+}
+
+/// [`held_on_remote`] for a mock directory at `mock` from the root.
+pub fn held_on_remote_at(w: &World, refs: &[Held], mock: &str) -> Manifest {
     let mut all = Manifest::new();
     for h in refs {
         let reference = format!("refs/heads/mock/{}", h.ns);
@@ -50,7 +55,7 @@ pub fn held_on_remote(w: &World, refs: &[Held]) -> Manifest {
             continue;
         }
         let text = w.remote_git(&["ls-tree", "-r", "-z", &reference]);
-        all.extend(parse_tree(&text, &format!("mock/{}/", h.path)));
+        all.extend(parse_tree(&text, &format!("{mock}/{}/", h.path)));
     }
     all
 }

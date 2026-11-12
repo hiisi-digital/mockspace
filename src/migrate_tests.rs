@@ -369,3 +369,21 @@ fn a_commit_of_a_data_ref_is_stopped_where_the_lints_refuse_the_tree() {
     assert_ne!(tip(), before);
     assert!(crate::data_refs::ref_files(&cfg).unwrap().changed.is_empty());
 }
+
+// Git stops reading a list it refuses at the first path, and says why on stderr. A list longer
+// than a pipe holds is then written into a pipe nobody reads: the call must still end, with git's
+// own words and not the broken pipe.
+//
+// Mutation: write the whole list before reading what git says; the error is then the broken pipe,
+// or, where git says more than a pipe holds first, the call never ends.
+#[test]
+fn untracking_a_list_git_refuses_ends_with_gits_own_words() {
+    let w = World::new();
+    let cfg = consumer(&w, "a");
+    let before = tracked(&cfg);
+    let mut paths = vec!["../outside/the/repository".to_string()];
+    paths.extend((0..20_000).map(|n| format!("research/a/long/path/that/is/not/tracked/at/all/{n:08}.md")));
+    let err = carry_out(&cfg, &Step::Untrack(paths)).unwrap_err();
+    assert!(err.starts_with("git update-index:") && err.contains("outside"), "{err}");
+    assert_eq!(tracked(&cfg), before, "nothing is untracked");
+}

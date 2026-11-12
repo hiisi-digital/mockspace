@@ -81,6 +81,9 @@ enum Step {
     WriteRegistry(Vec<(String, String)>),
     /// Take these paths (from the repository root) out of the index, leaving the files.
     Untrack(Vec<String>),
+    /// Keep git from writing over the instances of every ref the config declares once the steps
+    /// before have run: the sparse checkout of this worktree and the hook that copies an edit.
+    KeepGitOff,
     /// Rename a file, both paths from the repository root.
     Rename {
         from: String,
@@ -142,14 +145,6 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    // the declared instance is now what git would write over on a checkout of an older commit
-    if plan.steps.iter().any(|s| matches!(s, Step::Untrack(_))) {
-        let declared = Config::from_dir(&cfg.mock_dir);
-        if let Err(why) = crate::data_refs::keep_git_off_the_instances(&declared) {
-            eprintln!("migrate: the migration is made, and the sparse checkout that keeps git from writing over the instance is not set: {why}");
-            return ExitCode::FAILURE;
-        }
-    }
     println!("done: {}", plan.after);
     ExitCode::SUCCESS
 }
@@ -157,6 +152,7 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
 fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
     match step {
         Step::Seed(decl, tracked) => {
+            mark_seeded(cfg, decl)?;
             let store = decl.open(&cfg.repo_root)?;
             let inst = decl.instance(&store, &cfg.mock_dir)?;
             let message = format!("data: {}", decl.namespace());
@@ -169,7 +165,9 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
                 .collect();
             inst.seed_tracked(&keep, &message, &mockspace_store::Refuse).map(|_| ()).map_err(|e| e.to_string())
         },
+        // the seed of a run that was stopped inside it, finished here
         Step::Adopt(decl) => {
+            mark_seeded(cfg, decl)?;
             let store = decl.open(&cfg.repo_root)?;
             let inst = decl.instance(&store, &cfg.mock_dir)?;
             inst.adopt().map(|_| ()).map_err(|e| e.to_string())
@@ -188,29 +186,18 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
                 .map_err(|e| format!("writing {}: {e}", cfg.config_path.display()))
         },
         Step::Untrack(paths) => {
-            // by standard input, so a tree of any size is one call
-            let mut child = Command::new("git")
-                .arg("-C")
-                .arg(&cfg.repo_root)
-                .args(["update-index", "--force-remove", "-z", "--stdin"])
-                .stdin(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
+            // by standard input, so a tree of any size is one call; the store's runner feeds the
+            // list while it reads what git says, so a refusal ends the call with git's words
+            let input: Vec<u8> = paths.iter().flat_map(|p| p.bytes().chain([0])).collect();
+            let out = mockspace_store::Git::new(cfg.repo_root.clone())
+                .run(&["update-index", "--force-remove", "-z", "--stdin"], &[], Some(&input))
                 .map_err(|e| format!("running git update-index: {e}"))?;
-            {
-                use std::io::Write;
-                let mut input = child.stdin.take().ok_or("git update-index took no input")?;
-                for p in paths {
-                    input.write_all(p.as_bytes()).and_then(|()| input.write_all(b"\0")).map_err(|e| e.to_string())?;
-                }
-            }
-            let out = child.wait_with_output().map_err(|e| e.to_string())?;
-            if out.status.success() {
-                Ok(())
-            } else {
-                Err(format!("git update-index: {}", String::from_utf8_lossy(&out.stderr).trim()))
-            }
+            if out.ok() { Ok(()) } else { Err(format!("git update-index: {}", out.stderr)) }
         },
+        // the declared instance is now what git would write over on a checkout of an older commit;
+        // the config is read again, since a step before may have appended the declaration
+        Step::KeepGitOff => crate::data_refs::keep_git_off_the_instances(&Config::from_dir(&cfg.mock_dir))
+            .map_err(|why| format!("keeping git from writing over the instance: {why}")),
         Step::Rename {
             from,
             to,
@@ -295,6 +282,7 @@ fn flags<'a>(args: &[&'a str], known: &[&str]) -> Result<Vec<(&'a str, &'a str)>
     if why.is_empty() { Ok(out) } else { Err(why) }
 }
 
+
 fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String>> {
     let given = flags(args, &["--namespace", "--path", "--include", "--form", "--remote"])?;
     let one = |name: &str| given.iter().rev().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string());
@@ -340,6 +328,24 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
     }
 
     let tracked = decl.tracked(&cfg.repo_root, &cfg.mock_dir).map_err(|e| vec![format!("migrate: {e}")])?;
+    // the last step left undone: everything is moved, the seed ran in this clone and left it its
+    // instance, and git is not kept off the instance yet. A clone the seed did not run in was never
+    // part of the run, whatever record of an instance it holds: a fresh clone of a repository
+    // migrated elsewhere wants `data-refs instantiate`
+    if declared
+        && tracked.is_empty()
+        && seeded_here(cfg, &decl)?
+        && crate::data_refs::git_is_kept_off_the_instances(cfg).is_err()
+    {
+        return Ok(Plan {
+            lines: vec![format!(
+                "an earlier run of this migration moved `{ns}` and did not keep git from writing over its instance; \
+                 finishing it"
+            )],
+            steps: vec![Step::KeepGitOff],
+            after: "commit the config and the removals on this branch".to_string(),
+        });
+    }
     if tracked.is_empty() {
         return Err(vec![if declared {
             format!("migrate: mockspace.toml already declares this ref and the branch tracks none of its files, so this migration was made here before")
@@ -449,6 +455,7 @@ fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String
     }
     lines.extend(tracked.iter().map(|p| format!("untrack {p}")));
     steps.push(Step::Untrack(tracked));
+    steps.push(Step::KeepGitOff);
     Ok(Plan {
         lines,
         steps,
@@ -529,6 +536,10 @@ fn plan_references(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String>> {
         after: after.to_string(),
     })
 }
+
+#[path = "migrate_seeded.rs"]
+mod seeded;
+use seeded::{mark_seeded, seeded_here};
 
 #[cfg(test)]
 #[path = "migrate_tests.rs"]

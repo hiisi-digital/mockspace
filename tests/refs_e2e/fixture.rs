@@ -165,3 +165,28 @@ pub fn seat<'w>(w: &'w super::world::World, name: &str) -> Clone<'w> {
     c.ok(&["data-refs", "instantiate"]);
     c
 }
+
+/// The notes of the research, from the root.
+pub const NOTES: &str = "mock/research/20261001_alpha/NOTES.md";
+
+/// The fixture with a branch `feat` cut before the migration that edits the notes, and the
+/// migration on `dev`, pushed.
+pub fn migrated_with_an_old_branch_editing_the_notes(w: &super::world::World) -> Clone<'_> {
+    let a = w.first_clone("a");
+    build_tracked(&a);
+    a.git(&["checkout", "-q", "-b", "feat"]);
+    a.write(NOTES, b"edited on the old branch\n");
+    a.commit_all("docs: edit the notes on the branch");
+    a.git(&["checkout", "-q", "dev"]);
+    migrate_all(&a);
+    a.push();
+    a
+}
+
+/// [`migrated_with_an_old_branch_editing_the_notes`] with the instance's notes edited and not
+/// committed.
+pub fn dirty_instance_and_an_old_branch(w: &super::world::World) -> Clone<'_> {
+    let a = migrated_with_an_old_branch_editing_the_notes(w);
+    a.write(NOTES, b"DIRTY instance edit\n");
+    a
+}

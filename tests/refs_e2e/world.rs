@@ -9,6 +9,33 @@ pub const BIN: &str = env!("CARGO_BIN_EXE_mockspace");
 
 static CLOCK: AtomicU64 = AtomicU64::new(0);
 
+/// The clean side of the LFS-like filter: the bytes go to the store under their hash, and the blob
+/// is a pointer naming them. A pointer is passed through, as LFS passes one.
+const LFS_CLEAN: &str = r#"#!/bin/sh
+store="$(dirname "$0")/../lfs-store"
+mkdir -p "$store"
+t=$(mktemp "$store/.in.XXXXXX")
+cat > "$t"
+if [ "$(head -n 1 "$t")" = "version lfs-like" ]; then cat "$t"; rm -f "$t"; exit 0; fi
+h=$(sha256sum < "$t" | cut -c1-64)
+mv "$t" "$store/$h"
+printf 'version lfs-like\noid sha256:%s\nsize %s\n' "$h" "$(wc -c < "$store/$h" | tr -d ' ')"
+"#;
+
+/// The smudge side: a pointer becomes the bytes the store holds for it, anything else passes.
+const LFS_SMUDGE: &str = r#"#!/bin/sh
+store="$(dirname "$0")/../lfs-store"
+t=$(mktemp)
+cat > "$t"
+if [ "$(head -n 1 "$t")" = "version lfs-like" ]; then
+  h=$(sed -n 's/^oid sha256://p' "$t")
+  cat "$store/$h" || { rm -f "$t"; exit 1; }
+else
+  cat "$t"
+fi
+rm -f "$t"
+"#;
+
 /// A deterministic, strictly increasing commit time.
 fn tick() -> String {
     let n = CLOCK.fetch_add(60, Ordering::SeqCst);
@@ -43,16 +70,19 @@ impl World {
         let w = World { tmp, remote: remote.clone(), home };
         let shims = base.join("shims");
         fs::create_dir_all(&shims).unwrap();
+        // the launcher reads `mock_dir` from a `mockspace.toml` at the root, as the real one does
+        let dir = "top=$(git rev-parse --show-toplevel)\nd=mock\nif [ -f \"$top/mockspace.toml\" ]; then\n  m=$(sed -n 's/^mock_dir *= *\"\\([^\"]*\\)\".*/\\1/p' \"$top/mockspace.toml\" | head -n 1)\n  [ -n \"$m\" ] && d=$m\nfi\n";
         mockspace_manifest::write_executable(
             &shims.join("cargo"),
-            "#!/bin/sh\n[ \"$1\" = mock ] && { shift; exec \"$MOCKSPACE_BIN\" --dir \"$(git rev-parse --show-toplevel)/mock\" \"$@\"; }\n[ \"$1\" = metadata ] && exec \"$REAL_CARGO\" \"$@\"\nexit 127\n",
+            format!("#!/bin/sh\n{dir}[ \"$1\" = mock ] && {{ shift; exec \"$MOCKSPACE_BIN\" --dir \"$top/$d\" \"$@\"; }}\n[ \"$1\" = metadata ] && exec \"$REAL_CARGO\" \"$@\"\nexit 127\n"),
         )
         .unwrap();
-        mockspace_manifest::write_executable(
-            &shims.join("mock"),
-            "#!/bin/sh\nexec \"$MOCKSPACE_BIN\" --dir \"$(git rev-parse --show-toplevel)/mock\" \"$@\"\n",
-        )
-        .unwrap();
+        mockspace_manifest::write_executable(&shims.join("mock"), format!("#!/bin/sh\n{dir}exec \"$MOCKSPACE_BIN\" --dir \"$top/$d\" \"$@\"\n"))
+            .unwrap();
+        // A filter shaped like LFS: the blob is a pointer, the bytes sit in a store every clone of
+        // this world shares, as an LFS server would hold them.
+        mockspace_manifest::write_executable(&shims.join("lfs-clean"), LFS_CLEAN).unwrap();
+        mockspace_manifest::write_executable(&shims.join("lfs-smudge"), LFS_SMUDGE).unwrap();
         fs::create_dir_all(&remote).unwrap();
         assert!(w.sh(&remote, "git", &["init", "-q", "--bare", "-b", "dev"]).ok);
         w
@@ -76,6 +106,16 @@ impl World {
             .env("MOCKSPACE_BIN", BIN)
             .env("REAL_CARGO", std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
             .env("PATH", format!("{}:{}", self.base().join("shims").display(), std::env::var("PATH").unwrap()));
+        // the filter is installed for the person, as `git lfs install` does, and applies only where
+        // an attribute names it
+        let shims = self.base().join("shims");
+        c.env("GIT_CONFIG_COUNT", "3")
+            .env("GIT_CONFIG_KEY_0", "filter.lfslike.clean")
+            .env("GIT_CONFIG_VALUE_0", shims.join("lfs-clean"))
+            .env("GIT_CONFIG_KEY_1", "filter.lfslike.smudge")
+            .env("GIT_CONFIG_VALUE_1", shims.join("lfs-smudge"))
+            .env("GIT_CONFIG_KEY_2", "filter.lfslike.required")
+            .env("GIT_CONFIG_VALUE_2", "true");
         let t = tick();
         for k in ["GIT_AUTHOR_DATE", "GIT_COMMITTER_DATE"] {
             c.env(k, &t);
@@ -135,8 +175,11 @@ pub struct Clone<'w> {
     pub root: PathBuf,
 }
 
+/// The `post-merge` hook every clone has of the person's own.
+pub const PERSONS_HOOK: &str = "#!/bin/sh\n# the person's own hook\nexit 0\n";
+
 impl Clone<'_> {
-    fn configure(&self) {
+    pub(super) fn configure(&self) {
         for kv in [
             ["user.name", "tester"],
             ["user.email", "tester@example.com"],
@@ -149,10 +192,20 @@ impl Clone<'_> {
         ] {
             self.git(&["config", kv[0], kv[1]]);
         }
+        // a hook of the person's own, which no command of the engine may take or rewrite
+        mockspace_manifest::write_executable(&self.hooks_dir().join("post-merge"), PERSONS_HOOK).unwrap();
     }
 
+    /// The mock directory: what `mock_dir` of a `mockspace.toml` at the root names, as the
+    /// launcher reads it, and `mock` where there is none.
     pub fn mock(&self) -> PathBuf {
-        self.root.join("mock")
+        let named = fs::read_to_string(self.root.join("mockspace.toml")).ok().and_then(|text| {
+            text.lines().find_map(|l| {
+                let v = l.trim().strip_prefix("mock_dir")?.trim_start().strip_prefix('=')?.trim();
+                v.strip_prefix('"')?.split('"').next().map(str::to_owned)
+            })
+        });
+        self.root.join(named.unwrap_or_else(|| "mock".to_string()))
     }
 
     pub fn path(&self, rel: &str) -> PathBuf {
@@ -192,6 +245,9 @@ impl Clone<'_> {
 
     pub fn run_in(&self, dir: &Path, args: &[&str]) -> Out {
         let mut c = self.w.command(BIN, dir);
+        // a group of its own, as a shell gives a command it runs in the foreground, so a stop that
+        // reaches the whole group reaches the command and what it started, and never the test
+        std::os::unix::process::CommandExt::process_group(&mut c, 0);
         c.arg("--dir").arg(self.mock()).args(args);
         let o = c.output().unwrap();
         Out {

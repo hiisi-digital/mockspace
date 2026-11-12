@@ -79,10 +79,18 @@ fn walk(
         if fs::metadata(&path).is_ok_and(|m| m.is_dir()) {
             walk(root, &path, on_path, out)?;
         } else if let Ok(rel) = path.strip_prefix(root) {
-            let parts: Vec<_> = rel
+            // a store names its files as text; a lossy name would name no file and read as absent
+            let parts = rel
                 .components()
-                .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                .collect();
+                .map(|c| {
+                    c.as_os_str().to_str().map(str::to_owned).ok_or_else(|| {
+                        StoreError::InvalidPath {
+                            path: rel.to_string_lossy().into_owned(),
+                            why:  "is not text, which a store cannot name; rename it",
+                        }
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             out.push(parts.join("/"));
         }
     }

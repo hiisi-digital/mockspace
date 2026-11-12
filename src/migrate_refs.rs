@@ -94,7 +94,16 @@ pub(crate) fn plan(cfg: &Config) -> Result<Planned, Vec<String>> {
                     rel_of(&stores.source_of(&file))
                 };
                 let text = match stores.read(&file) {
-                    Ok(Some(b)) => String::from_utf8_lossy(&b).into_owned(),
+                    Ok(Some(b)) => match String::from_utf8(b) {
+                        Ok(text) => text,
+                        Err(e) => {
+                            why.push(format!(
+                                "migrate: {rel} is not UTF-8 ({e}), so a rewrite would write other bytes than it holds; \
+                                 nothing is written"
+                            ));
+                            continue;
+                        },
+                    },
                     Ok(None) => continue,
                     Err(e) => {
                         why.push(format!("migrate: reading {rel}: {e}"));
@@ -231,11 +240,23 @@ fn templates(cfg: &Config) -> Result<Vec<PathBuf>, String> {
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    let mut found: BTreeSet<PathBuf> = String::from_utf8_lossy(&out.stdout)
-        .split('\0')
-        .filter(|p| !p.is_empty())
-        .map(|p| cfg.repo_root.join(p))
-        .collect();
+    let mut found = BTreeSet::new();
+    let mut odd = Vec::new();
+    for name in out.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+        match std::str::from_utf8(name) {
+            Ok(p) => {
+                found.insert(cfg.repo_root.join(p));
+            },
+            Err(_) => odd.push(String::from_utf8_lossy(name).into_owned()),
+        }
+    }
+    if !odd.is_empty() {
+        return Err(format!(
+            "migrate: {} is a template whose name is not UTF-8, so it cannot be rewritten; rename it and run again; \
+             nothing is written",
+            odd.join(", ")
+        ));
+    }
     let held = crate::data_refs::ref_files(cfg).map_err(|e| format!("migrate: the files of the data refs: {e}"))?;
     found.extend(held.held.iter().filter(|p| p.ends_with(".md.tmpl")).map(|p| cfg.mock_dir.join(p)));
     Ok(found.into_iter().filter(|p| p.is_file()).collect())

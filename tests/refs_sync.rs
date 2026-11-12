@@ -6,7 +6,7 @@ mod refs_e2e;
 
 use refs_e2e::{fixture, status_of, tip};
 
-const NOTES: &str = "mock/research/20261001_alpha/NOTES.md";
+use refs_e2e::fixture::NOTES;
 const SPACES: &str = "mock/research/notes with spaces.md";
 const EMPTY: &str = "mock/research/empty.txt";
 

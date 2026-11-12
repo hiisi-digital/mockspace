@@ -302,7 +302,7 @@ mod landing;
 mod sparse;
 mod standing;
 pub use gate::{repo_lints_pass, run_gated};
-pub use sparse::install as keep_git_off_the_instances;
+pub use sparse::{check as git_is_kept_off_the_instances, install as keep_git_off_the_instances};
 pub use standing::standing;
 pub use landing::trailer_lines;
 

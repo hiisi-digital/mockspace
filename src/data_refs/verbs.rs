@@ -95,11 +95,19 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> ExitCode {
     };
     // a branch cut before a migration declares none of the refs its worktree still holds, so the copy of
     // the files goes by the declarations this worktree last installed as well
-    let remembered = if *verb == "snapshot" { sparse::remembered(cfg) } else { Vec::new() };
+    let remembered = sparse::remembered(cfg);
+    let undeclared: Vec<&DataRefDecl> =
+        remembered.iter().filter(|r| !cfg.data_refs.iter().any(|d| d.namespace() == r.namespace())).collect();
+    if *verb != "snapshot" {
+        // at such a commit the files of an instance are the branch's too, and a forced way back
+        // (`checkout -f`, `reset --hard`) writes over an edit carried there with no reference
+        // moving first, so every engine command there keeps a copy of them as the hook does
+        guard_undeclared(cfg, &undeclared);
+    }
     let decls: Vec<&DataRefDecl> = cfg
         .data_refs
         .iter()
-        .chain(remembered.iter().filter(|r| !cfg.data_refs.iter().any(|d| d.namespace() == r.namespace())))
+        .chain(undeclared.iter().copied().filter(|_| *verb == "snapshot"))
         .filter(|d| g.wanted.is_none_or(|w| d.namespace() == w))
         .collect();
     if decls.is_empty() {
@@ -135,6 +143,22 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> ExitCode {
     if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS }
 }
 
+/// Keeps every file of each instance in `undeclared` in its copy, as the hook does before git
+/// writes. A copy that cannot be made is said and stops nothing, as from the hook.
+fn guard_undeclared(cfg: &crate::config::Config, undeclared: &[&DataRefDecl]) {
+    for d in undeclared {
+        let ns = d.namespace();
+        let copied = (|| -> Result<(), String> {
+            let store = d.open(&cfg.repo_root)?;
+            let inst = d.instance(&store, &cfg.mock_dir)?;
+            inst.guard().map_err(|e| e.to_string())?.copied.map_err(|e| e.to_string())
+        })();
+        if let Err(e) = copied {
+            eprintln!("{ns}: this commit declares no such ref, and the copy of the files of its instance could not be made: {e}");
+        }
+    }
+}
+
 /// The look every verb but `instantiate` takes first. `None` where it could not be taken and the
 /// verb goes on without it; the reason is said.
 fn look_first(g: &Given<'_>, ns: &str, inst: &Instance<'_>) -> Result<Option<Look>, String> {
@@ -154,7 +178,15 @@ fn look_first(g: &Given<'_>, ns: &str, inst: &Instance<'_>) -> Result<Option<Loo
             Ok(Some(look))
         },
         Err(e) if matches!(g.verb, "commit" | "snapshot") => {
-            Err(format!("the copy of the files of the instance could not be read, so what git wrote over is not known: {e}"))
+            // FIXME(the_way_past_a_copy_a_git_gc_pruned_is_provisional): a copy `git gc` pruned
+            // fails every `commit` of this instance, `--accept-overwritten` included, as the design
+            // has it; whether a way past it is given is op's call
+            let lost = if inst.pending_is_lost().unwrap_or(false) {
+                "; a `git gc` pruned that copy before an engine command took it, and no command of the engine goes past it"
+            } else {
+                ""
+            };
+            Err(format!("the copy of the files of the instance could not be read, so what git wrote over is not known: {e}{lost}"))
         },
         Err(e) => {
             eprintln!("{ns}: the copy of the files of the instance could not be made, and the {} goes on: {e}", g.verb);

@@ -74,10 +74,23 @@ impl Git {
             }
         };
         let mut child = cmd.spawn().map_err(io)?;
-        if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
-            pipe.write_all(bytes).map_err(io)?;
-        }
-        let out = child.wait_with_output().map_err(io)?;
+        // the input is written beside the reading of the output, never before it: git answers a
+        // line of input with a line of output, and once more output waits than a pipe holds git
+        // stops reading, so a writer that wrote everything first would wait on git for good
+        let out = std::thread::scope(|scope| {
+            let writer = match (stdin, child.stdin.take()) {
+                (Some(bytes), Some(mut pipe)) => Some(scope.spawn(move || pipe.write_all(bytes))),
+                _ => None,
+            };
+            let out = child.wait_with_output();
+            let wrote = writer.map_or(Ok(()), |w| w.join().unwrap_or_else(|_| Err(std::io::Error::other("the writer panicked"))));
+            // a git that failed stopped reading, so its own words say more than the broken pipe
+            match (out, wrote) {
+                (Ok(out), Err(e)) if out.status.success() => Err(e),
+                (out, _) => out,
+            }
+        })
+        .map_err(io)?;
         Ok(Out {
             code:   out.status.code(),
             stdout: out.stdout,
@@ -105,6 +118,44 @@ impl Git {
 }
 
 impl Git {
+    /// The top of the work tree this runs in, or `None` where git says there is none: a bare
+    /// repository, or a directory in no repository. Any other failure is an error, and never read as
+    /// the answer that there is no work tree.
+    pub fn work_tree_top(&self) -> Result<Option<String>, StoreError> {
+        let out = self.run(&["rev-parse", "--show-toplevel"], &[], None)?;
+        if out.ok() {
+            return Ok(Some(out.text()));
+        }
+        let none = out.code == Some(128)
+            && (out.stderr.contains("must be run in a work tree") || out.stderr.contains("not a git repository"));
+        if none {
+            return Ok(None);
+        }
+        Err(StoreError::Git {
+            command: "rev-parse --show-toplevel".to_owned(),
+            detail:  out.stderr,
+        })
+    }
+
+    /// The value of a config key as `git config <args> --get <key>` gives it, or `None` where it is
+    /// not set. Any other failure is an error, and never read as the key being unset.
+    pub fn config_get(&self, args: &[&str], key: &str) -> Result<Option<String>, StoreError> {
+        let mut all = vec!["config"];
+        all.extend_from_slice(args);
+        all.extend_from_slice(&["--get", key]);
+        let out = self.run(&all, &[], None)?;
+        match out.code {
+            Some(0) => Ok(Some(out.text())),
+            Some(1) if out.stderr.is_empty() => Ok(None),
+            _ => {
+                Err(StoreError::Git {
+                    command: all.join(" "),
+                    detail:  out.stderr,
+                })
+            },
+        }
+    }
+
     /// Run this program in place of `git`: a wrapper, or a build of git kept elsewhere.
     pub fn with_program(mut self, program: impl Into<std::ffi::OsString>) -> Self {
         self.program = program.into();

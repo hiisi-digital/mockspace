@@ -47,6 +47,14 @@ use crate::ids::{Base, FileId, Oid};
 use crate::ref_history::BATCH;
 use crate::ref_store::RefStore;
 
+/// What a fill wrote: the files, from the instance, and the directories it made, in the order
+/// it made them.
+#[derive(Default)]
+struct Wrote {
+    files: Vec<String>,
+    dirs:  Vec<PathBuf>,
+}
+
 /// A directory kept in step with the local ref of a [`RefStore`].
 pub struct Instance<'a> {
     store: &'a RefStore,
@@ -109,6 +117,19 @@ impl<'a> Instance<'a> {
         self.held.as_ref().is_none_or(|h| h.holds(rel))
     }
 
+    /// Refuses a directory that already holds a file the instance would hold, naming each. What a
+    /// `.gitignore` keeps out and what a cache directory holds is no file of the instance, is never
+    /// read, removed or written by it, and stands in nobody's way: a clone that built in the directory
+    /// before the ref reached it keeps its build output and its ignored files.
+    fn holds_nothing_yet(&self) -> Result<(), StoreError> {
+        let here = self.walk()?;
+        if here.is_empty() {
+            return Ok(());
+        }
+        let why = if self.held.is_some() { "already holds files its patterns match" } else { "already holds files" };
+        Err(self.fail(why, here))
+    }
+
     /// Refuses a tree of the ref that holds a path this instance does not: written here it
     /// would be a file the branch sees and no later edit of the instance could name.
     fn check_held(&self, ids: &BTreeMap<String, FileId>) -> Result<(), StoreError> {
@@ -146,14 +167,7 @@ impl<'a> Instance<'a> {
         }
         let existed = self.dir.exists();
         if existed {
-            if self.held.is_some() {
-                let here = self.walk()?;
-                if !here.is_empty() {
-                    return Err(self.fail("already holds files its patterns match", here));
-                }
-            } else if std::fs::read_dir(&self.dir).map_err(|e| self.io("reading", e))?.next().is_some() {
-                return Err(self.fail("is not an empty directory", Vec::new()));
-            }
+            self.holds_nothing_yet()?;
         }
         let made = std::fs::create_dir_all(&self.dir)
             .map_err(|e| self.io("creating", e))
@@ -168,12 +182,13 @@ impl<'a> Instance<'a> {
         made
     }
 
-    /// Writes the files of the local tip into the directory, which must be absent or empty, and
+    /// Writes the files of the local tip into the directory, which must hold no file of the instance, and
     /// records the tip as the base. Gives the tip. An empty directory that has a record, whose
     /// base holds files, is one where every file was removed, and is refused: the removals are
     /// an edit not yet applied, and the directory itself removed starts the instance again.
-    /// When it fails after writing, the files it wrote and the record are removed again, and a
-    /// directory it made with them.
+    /// Nothing may stand where the tip writes, a file git ignores included. When it fails after
+    /// writing, the files it wrote, the directories it made and the record are removed again, and
+    /// nothing else.
     pub fn materialize(&self) -> Result<String, StoreError> {
         let Some(tip) = self.store.local_oid()? else {
             return Err(StoreError::NotFetched {
@@ -182,17 +197,7 @@ impl<'a> Instance<'a> {
         };
         let existed = self.dir.exists();
         if existed {
-            if self.held.is_some() {
-                let here = self.walk()?;
-                if !here.is_empty() {
-                    return Err(self.fail("already holds files its patterns match", here));
-                }
-            } else {
-                let mut entries = std::fs::read_dir(&self.dir).map_err(|e| self.io("reading", e))?;
-                if entries.next().is_some() {
-                    return Err(self.fail("is not an empty directory", Vec::new()));
-                }
-            }
+            self.holds_nothing_yet()?;
             if let Some(base) = self.base()? {
                 if !self.ids_of(&base)?.is_empty() {
                     return Err(self.fail(
@@ -205,46 +210,58 @@ impl<'a> Instance<'a> {
         let ids = self.store.tree_ids(&tip)?;
         self.check_held(&ids)?;
         self.check_parents(&ids.keys().collect::<Vec<_>>())?;
+        self.check_room(&ids)?;
+        let mut wrote = Wrote::default();
         let made = self
-            .fill(&tip)
+            .fill(&ids, &mut wrote)
             .and_then(|()| self.exclude())
             .and_then(|()| self.record(&Base::At(tip.clone())));
         if made.is_err() {
             self.forget();
-            if self.held.is_some() {
-                // the directory holds the branch's files too, so only what the fill wrote goes
-                for path in ids.keys() {
-                    if std::fs::remove_file(self.dir.join(path)).is_ok() {
-                        self.prune(path);
-                    }
-                }
-                if !existed {
-                    let _ = std::fs::remove_dir(&self.dir);
-                }
-            } else if existed {
-                for entry in std::fs::read_dir(&self.dir).into_iter().flatten().flatten() {
-                    let path = entry.path();
-                    let _ = if path.is_dir() {
-                        std::fs::remove_dir_all(path)
-                    } else {
-                        std::fs::remove_file(path)
-                    };
-                }
-            } else {
-                let _ = std::fs::remove_dir_all(&self.dir);
+            // only what the fill wrote goes: the directory may hold the branch's files, or files
+            // git ignores, and those are the person's
+            for path in &wrote.files {
+                let _ = std::fs::remove_file(self.dir.join(path));
+            }
+            for dir in wrote.dirs.iter().rev() {
+                let _ = std::fs::remove_dir(dir);
+            }
+            if !existed {
+                let _ = std::fs::remove_dir(&self.dir);
             }
         }
         made?;
         Ok(tip.to_string())
     }
 
-    fn fill(&self, tip: &Oid) -> Result<(), StoreError> {
+    /// Refuses a tip that cannot be written without writing over or under something here: a
+    /// path of the tip where anything stands already, or one below something that is not a
+    /// directory. A file git ignores is the person's, so it is named, never written over.
+    fn check_room(&self, ids: &BTreeMap<String, FileId>) -> Result<(), StoreError> {
+        let writes: Vec<&String> = ids.keys().collect();
+        let mut blocked = self.in_the_way(&[], &writes)?;
+        blocked.extend(writes.iter().filter(|p| std::fs::symlink_metadata(self.dir.join(p.as_str())).is_ok()).map(|p| (*p).clone()));
+        blocked.sort();
+        blocked.dedup();
+        if blocked.is_empty() { Ok(()) } else { Err(self.fail("holds files in the way of the tip", blocked)) }
+    }
+
+    /// Writes the files of `ids` into the directory, noting in `wrote` each file it wrote and
+    /// each directory it made, so a failure later takes back those and nothing else.
+    fn fill(&self, ids: &BTreeMap<String, FileId>, wrote: &mut Wrote) -> Result<(), StoreError> {
         std::fs::create_dir_all(&self.dir).map_err(|e| self.io("creating", e))?;
-        let ids = self.store.tree_ids(tip)?;
         let paths: Vec<&String> = ids.keys().collect();
         for chunk in paths.chunks(BATCH) {
             let wanted: Vec<&Oid> = chunk.iter().map(|p| &ids[*p].blob).collect();
             for (path, bytes) in chunk.iter().zip(self.store.blobs(&wanted)?) {
+                let at = self.dir.join(path.as_str());
+                let mut missing: Vec<PathBuf> =
+                    at.ancestors().skip(1).take_while(|d| *d != self.dir && !d.exists()).map(Path::to_path_buf).collect();
+                missing.reverse();
+                // noted before the write, so a write that fails half way is taken back too: nothing
+                // stood at these paths, `check_room` saw to that
+                wrote.dirs.extend(missing);
+                wrote.files.push((*path).clone());
                 self.write(path, &bytes, ids[*path].mode.is_exec())?;
             }
         }

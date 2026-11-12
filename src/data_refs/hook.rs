@@ -1,9 +1,11 @@
 //! The `reference-transaction` hook that copies the files of every instance before git writes the
 //! work tree.
 //!
-//! git moves `ORIG_HEAD` before a merge, a rebase or a reset writes the work tree, and this hook
-//! runs `data-refs snapshot` when it sees that move, which keeps every file of each instance in its
-//! backup ref (see `mockspace_store::Instance::guard`). It never stops the person's command: the
+//! git moves `ORIG_HEAD` in a merge, a rebase and a reset, and this hook runs `data-refs snapshot`
+//! when it sees that move, which keeps every file of each instance in its backup ref (see
+//! `mockspace_store::Instance::guard`). A merge moves it before it writes the work tree, so that copy
+//! holds what the merge writes over; a reset and a rebase move it after they write, so for those the
+//! copy that counts is the one taken on the move before them. It never stops the person's command: the
 //! hook exits 0 whatever the launcher does, and says a failure on stderr, since a merge refused for
 //! a copy that could not be made is a stop the person did not ask for, and the next engine command
 //! still finds what git wrote over by the bytes the copy kept from before.
@@ -121,9 +123,14 @@ pub(super) fn install(cfg: &Config) -> Result<(), String> {
 
 /// `core.hooksPath`, absolute, where it is set.
 fn hooks_path(cfg: &Config) -> Result<Option<PathBuf>, String> {
+    // a failed read is an error, never read as `core.hooksPath` being unset: the hand-over would
+    // be neither made nor checked
+    let set = Git::new(cfg.repo_root.clone()).config_get(&[], "core.hooksPath").map_err(|e| e.to_string())?;
+    if set.is_none_or(|s| s.is_empty()) {
+        return Ok(None);
+    }
     let out = git(cfg, &["rev-parse", "--path-format=absolute", "--git-path", "hooks"])?;
-    let set = git(cfg, &["config", "--get", "core.hooksPath"])?;
-    Ok((set.ok() && !set.text().is_empty() && out.ok()).then(|| PathBuf::from(out.text())))
+    if out.ok() { Ok(Some(PathBuf::from(out.text()))) } else { Err(format!("git rev-parse --git-path hooks: {}", out.stderr)) }
 }
 
 /// Whether the hook is there and git runs it: where `core.hooksPath` is set, the directory it names

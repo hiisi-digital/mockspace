@@ -67,6 +67,17 @@ fn normalize_disasm_strips_address_and_raw_opcode_columns() {
     );
 }
 
+/// GNU binutils parts the path from the format with spaces, not the tab LLVM
+/// writes, so the path of the file, which differs for every variant, must come
+/// off by the words that follow it.
+#[test]
+fn normalize_disasm_drops_the_path_of_a_gnu_objdump_header() {
+    let a = normalize_disasm("/t/libvariant_a.so:     file format elf64-x86-64\n");
+    let b = normalize_disasm("/t/libvariant_unrolled_x4.so:     file format elf64-x86-64\n");
+    assert_eq!(a, "file format elf64-x86-64");
+    assert_eq!(a, b, "two variants of one architecture read the same header");
+}
+
 #[test]
 fn normalize_disasm_drops_otool_section_header() {
     let text = "libx.dylib:\n(__TEXT,__text) section\n_bench_entry:\n0000000000000338\tret\n";
@@ -543,8 +554,11 @@ fn different_work_is_not_flagged_duplicate() {
 /// every variant, so the line read `release == release` and named nobody.
 #[test]
 fn a_variant_is_named_by_its_own_name_not_by_its_build_directory() {
-    let a = "/b/variants/alpha/target/release/libalpha.dylib";
-    let b = "/b/variants/beta/target/release/libbeta.dylib";
+    // the host's own prefix and suffix, which `config::resolve_variant_path`
+    // builds the path from
+    let (p, s) = (std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX);
+    let a = &format!("/b/variants/alpha/target/release/{p}alpha{s}");
+    let b = &format!("/b/variants/beta/target/release/{p}beta{s}");
     assert_eq!(super::short_name(a), "alpha");
     assert_eq!(super::short_name(b), "beta");
     assert_ne!(
