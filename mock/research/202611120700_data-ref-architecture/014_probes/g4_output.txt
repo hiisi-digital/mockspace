@@ -1,0 +1,8 @@
+deleted (r none), no concurrent move         push rc=0 remote now=c3 {To ../o.git}
+rewound to c1, no concurrent move            push rc=0 remote now=c3 {To ../o.git}
+rewound to c1, someone advances to c4        push rc=1 remote now=c4 {To ../o.git}
+rewound to c1, someone diverges to x2        push rc=1 remote now=x2 {To ../o.git}
+rewound to c1, rewound again to c2           push rc=0 remote now=c3 {To ../o.git}
+deleted, someone recreates at x2             push rc=1 remote now=x2 {To ../o.git}
+equal to s (steady state)                    push rc=0 remote now=c3 {}
+ahead of s (legit change) c4                 push rc=1 remote now=c4 {To ../o.git}
