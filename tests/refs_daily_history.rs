@@ -87,38 +87,48 @@ fn history_holds_at(c: &refs_e2e::Clone, ns: &str, name: &str, text: &[u8]) -> b
     })
 }
 
-// Mutation: none; this is a pin. With no engine command anywhere between, the way there by
-// `checkout` and the forced way back are plain git, and none of them leaves a copy of the edit. At
-// the old commit git takes the edited file, on disk where the patterns leave it out, as a changed
-// tracked file: `checkout -f` there writes the old bytes over it, `checkout -f` back moves no
-// `ORIG_HEAD`, and `reset --hard` back moves it only after it wrote the tree (pinned in
-// `refs_hook.rs`), so the hook copies a tree the edit is already gone from. Telling git to expect
-// files outside the patterns keeps the forced ways, and has a plain `checkout` back delete the edit
-// instead (measured), so it is no fix. Whether the engine copies on a move of HEAD to such a commit
-// is op's call, asked in question ticket `a_forced_checkout_back_from_an_old_commit_drops_an_edit_no_e`;
-// the day it is answered, this pin goes. A reset there instead of a checkout is covered, by the copy
-// its own move of `ORIG_HEAD` takes (`a_cherry_pick_and_a_hard_reset_across_the_migration_and_back_lose_no_edit`).
+// Mutation: none yet; this test is red on purpose, and asks what the design promises (round
+// 202611110830, the paragraphs on the sparse checkout and the copy): an edit of an instance file is
+// kept whatever git does to the tree, on disk or in a copy the way back names. With no engine command
+// anywhere between, the way there by `checkout` and the forced way back are plain git, and none of
+// them leaves a copy: at the old commit git takes the edited file, on disk where the patterns leave
+// it out, as a changed tracked file; `checkout -f` there writes the old bytes over it, `checkout -f`
+// back moves no `ORIG_HEAD`, and `reset --hard` back moves it only after it wrote the tree (see
+// `git_moves_orig_head_before_it_writes_in_a_merge_and_after_in_a_reset_and_a_rebase`), so the hook
+// copies a tree the edit is already gone from. Telling git to expect files outside the patterns
+// keeps the forced ways and has a plain `checkout` back delete the edit instead (measured), so it is
+// no fix. How the engine closes this is op's call, asked in question ticket
+// `a_forced_checkout_back_from_an_old_commit_drops_an_edit_no_e`. A reset there instead of a
+// checkout is covered, by the copy its own move of `ORIG_HEAD` takes
+// (`a_cherry_pick_and_a_hard_reset_across_the_migration_and_back_lose_no_edit`).
 #[test]
-fn an_edit_taken_to_an_old_commit_by_checkout_with_no_engine_command_since_is_lost_on_the_forced_way_back() {
+fn an_edit_taken_to_an_old_commit_by_checkout_with_no_engine_command_since_is_kept_on_the_forced_way_back() {
     let ways: [(&[&str], &[&str]); 4] = [
         (&["checkout", "-q", "-f"], &["checkout", "-q", "-f", "dev"]),
         (&["checkout", "-q"], &["checkout", "-q", "-f", "dev"]),
         (&["checkout", "-q", "-f"], &["reset", "-q", "--hard", "dev"]),
         (&["checkout", "-q"], &["reset", "-q", "--hard", "dev"]),
     ];
+    let mut lost = Vec::new();
     for (there, back) in ways {
         let (w, _) = migrated();
         let a = seat(&w, "a");
         let mut l = Ledger::default();
-        l.write(&a, NOTES, b"a: edited, then plain git there and back\n");
+        let text = b"a: edited, then plain git there and back\n";
+        l.write(&a, NOTES, text);
         let pre = before_the_migration(&a);
         let mut there = there.to_vec();
         there.push(&pre);
         a.git(&there);
         a.git(back);
         let _ = a.git_out(&["checkout", "-q", "dev"]);
-        assert!(l.kept(&w, &[&a]).is_err(), "{there:?} then {back:?}: the edit is kept now; drop this pin");
+        let what = format!("{there:?} then {back:?}");
+        match l.kept(&w, &[&a]) {
+            Err(e) => lost.push(format!("{what}: {e}")),
+            Ok(()) => edit_back_after_forced_way_back(&a, "research", "20261001_alpha/NOTES.md", NOTES, text, &what),
+        }
     }
+    assert!(lost.is_empty(), "the edit is lost:\n{}", lost.join("\n"));
 }
 
 // Mutation: let an engine command at a commit from before the migration, where no ref is declared,
