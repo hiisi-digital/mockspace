@@ -105,20 +105,17 @@ fn the_sweep_leaves_alone_what_the_store_did_not_write() {
 }
 
 #[test]
-fn the_sweep_removes_a_kept_key_of_a_gone_worktree_or_an_old_shape_and_keeps_a_live_one() {
+fn the_sweep_removes_the_kept_keys_an_older_engine_left() {
     let dir = tempfile::tempdir().unwrap();
     let s = store(dir.path(), "");
     let kept = s.dir.join("last-full-run");
     fs::create_dir_all(&kept).unwrap();
-    let live = dir.path().join("worktree");
-    fs::create_dir_all(&live).unwrap();
-    fs::write(kept.join("live"), format!("key\nhead\n{}\n", live.display())).unwrap();
-    fs::write(kept.join("gone"), "key\nhead\n/no/such/worktree\n").unwrap();
-    fs::write(kept.join("old-shape"), "key\n").unwrap();
+    fs::write(kept.join("live"), "key\nhead\n/a/worktree\n").unwrap();
+    let own = s.digest(&[b"a unit"]);
+    s.remember(&own, "kept");
     fs::remove_file(s.dir.join(".swept")).unwrap();
 
-    let _ = store(dir.path(), "");
-    assert!(kept.join("live").exists(), "a worktree that exists keeps its key");
-    assert!(!kept.join("gone").exists(), "a worktree that is gone does not");
-    assert!(!kept.join("old-shape").exists(), "a file in no shape this version writes does not");
+    let again = store(dir.path(), "");
+    assert!(!kept.exists(), "nothing reads the old run plan's keys, so they go");
+    assert_eq!(again.replay(&own).as_deref(), Some("kept"), "the control: a fresh entry stays");
 }

@@ -309,4 +309,18 @@ mod tests {
         let cut = &text[.. text.len() - 10];
         assert!(decode(cut).is_empty(), "a cut entry is a miss, never a partial replay");
     }
+
+    /// The entry `tests/an_incremental_run_equals_a_full_one_over_a_history.rs` writes over every
+    /// saved unit to show its comparison can fail: one trace asking nothing, which always holds,
+    /// and one wrong finding. Pinned here so a change of format cannot make that plant a miss,
+    /// which would let the walk's control pass for the wrong reason.
+    #[test]
+    fn the_entry_the_history_walk_plants_reads_as_one_wrong_finding() {
+        let planted = "unit-v1 1\nalt 0 0\nverdict-v2 1\nplanted\t1\tplanted\tEEE\t~\t~\tplanted by the test\n";
+        let alts = decode(planted);
+        assert_eq!(alts.len(), 1);
+        assert!(alts[0].answers.is_empty());
+        assert_eq!(alts[0].findings.len(), 1);
+        assert_eq!(alts[0].findings[0].message, "planted by the test");
+    }
 }
