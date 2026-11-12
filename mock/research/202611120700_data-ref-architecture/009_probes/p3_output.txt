@@ -1,0 +1,36 @@
+remote refs: refs/heads/dev refs/mock/research 
+== plain clone family: any ref or object of the data?
+clone:               refs/heads/dev refs/remotes/origin/HEAD refs/remotes/origin/dev   data commit present: no
+clone --bare:        refs/heads/dev 
+fetch --all (plain): refs/heads/dev refs/remotes/origin/HEAD refs/remotes/origin/dev 
+fetch origin:        0 mock refs
+clone --mirror:      refs/heads/dev refs/mock/research    (intended: a backup)
+== opted-in clone
+fetch origin brings data?  0 refs
+fetch --all brings data?   1 ref(s) (opted in, so intended)
+worktree HEAD: refs/mock-wt/research/main  status: On branch refs/mock-wt/research/main
+worktree list: [mock-wt/research/main]
+== vanilla verbs inside the data worktree
+commit moved the ref: be00802 == HEAD be00802
+plain 'git push mock-research' -> remote refs/mock/research = be00802
+bare 'git pull' says: You are not currently on a branch.
+== a second clone's concurrent edit, then pull with explicit args
+ 1 file changed, 1 insertion(+)
+ create mode 100644 other.dat
+after explicit pull: files big.dat other.dat  ; ref == HEAD: yes
+pushed: remote tip == local: yes
+== reflog recovery inside the data worktree
+after reset --hard HEAD~1, ref@{1} = d8e983a (HEAD was d8e983a)
+== leaks from the OPTED-IN clone through vanilla verbs run in the main worktree
+after push --all origin:      remote refs: refs/heads/dev refs/mock/research 
+after push --mirror origin (opted-in): remote refs: refs/heads/dev refs/mock-wt/research/main refs/remotes/mock-research/research refs/remotes/origin/HEAD refs/remotes/origin/dev 
+== a new plain clone after the opted-in mirror push: any data?
+plain2 refs: refs/heads/dev refs/remotes/origin/HEAD refs/remotes/origin/dev 
+== push --mirror from a PLAIN clone, which has no refs/mock/*
+remote refs after plain-clone mirror push: refs/heads/dev refs/remotes/origin/HEAD refs/remotes/origin/dev 
+== the data is still in the opted-in clone: commit
+== variant: opted-in clone keeps an IDENTITY mapping refs/mock/research locally (fetch = +refs/mock/research:refs/mock/research)
+opted-in local refs: refs/heads/dev refs/mock-wt/research/main refs/mock/research refs/remotes/mock-research/research refs/remotes/origin/HEAD refs/remotes/origin/dev 
+remote after opted-in push --mirror (identity mapped, up to date): refs/heads/dev refs/mock-wt/research/main refs/mock/research refs/remotes/mock-research/research refs/remotes/origin/HEAD refs/remotes/origin/dev 
+-- same, but the opted-in clone is BEHIND: another clone pushed a data commit it has not fetched
+remote refs/mock/research before the stale clone's mirror push: 3f34fab, after: d8e983a  (the newer data commit is no longer reachable from the remote ref)

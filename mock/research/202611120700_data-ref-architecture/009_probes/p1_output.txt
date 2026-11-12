@@ -1,0 +1,35 @@
+== 1. clean variants (edit survives if it prints EDIT)
+arm U: git clean -fd                                 EDIT
+arm U: git clean -ffd                                cat: mock/study/N.md: No such file or directory
+arm U: git clean -fdx                                EDIT
+arm U: git clean -ffdx                               cat: mock/study/N.md: No such file or directory
+arm U: git clean -ffdX                               EDIT
+arm H: git clean -fd                                 EDIT
+arm H: git clean -ffd                                EDIT
+arm H: git clean -fdx                                EDIT
+arm H: git clean -ffdx                               cat: mock/study/N.md: No such file or directory
+arm H: git clean -ffdX                               cat: mock/study/N.md: No such file or directory
+== 2. worktree lock: does a lock stop clean -ffdx?
+locked data wt, clean -ffdx                          cat: mock/study/N.md: No such file or directory
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/009/p1/m             80e7008 [dev]
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/009/p1/m/mock/study  68836a6 [mock/study] locked
+== 3. a commit from ANOTHER clone tracks a regular file at the data path, then the main tree moves onto it
+U      checkout -q polluted               data N.md = EDIT     ; data wt status:  M N.md 
+U      checkout -q -f polluted            data N.md = THEIRS   ; data wt status:  M N.md 
+U      merge -q --no-edit polluted        data N.md = EDIT     ; data wt status:  M N.md 
+U      reset -q --hard polluted           data N.md = THEIRS   ; data wt status:  M N.md 
+H      checkout -q polluted               data N.md = THEIRS   ; data wt status:  M N.md 
+H      checkout -q -f polluted            data N.md = THEIRS   ; data wt status:  M N.md 
+H      merge -q --no-edit polluted        data N.md = THEIRS   ; data wt status:  M N.md 
+H      reset -q --hard polluted           data N.md = THEIRS   ; data wt status:  M N.md 
+== 4. a gitlink at the data path committed (git add -A on U), then submodule verbs
+tracked: mock/study
+fatal: no submodule mapping found in .gitmodules for path 'mock/study'
+submodule status rc=128
+fatal: No url found for submodule path 'mock/study' in .gitmodules
+submodule update --init rc=128
+== 5. update by git pull in the data worktree over an ignored local file
+after git pull: output.txt = THEIRS
+error: The following untracked working tree files would be overwritten by merge:
+	output.txt
+after fetch + merge --no-overwrite-ignore: output.txt = LOCAL-GENERATED
