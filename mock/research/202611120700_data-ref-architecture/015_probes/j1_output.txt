@@ -1,0 +1,31 @@
+G0:
+   # foo
+   
+   Intro paragraph, first line.
+   Intro paragraph, second line.
+   
+   version: 1.2
+   
+   | alpha |
+   | beta |
+   | gamma |
+   
+   Closing paragraph.
+1 edit a literal prose line                          CLEAN, and render(T') == render(T) + PR change: absorbed
+2 edit a line a placeholder produced                 CONFLICT (1 hunk): not automatic
+3 edit a row of the generated table                  CONFLICT (1 hunk): not automatic
+4 delete a generated table row                       CONFLICT (1 hunk): not automatic
+5 insert a paragraph after literal text              CLEAN, and render(T') == render(T) + PR change: absorbed
+6 delete a literal line                              CLEAN, and render(T') == render(T) + PR change: absorbed
+7 edit the literal line right after the table        CLEAN, and render(T') == render(T) + PR change: absorbed
+8 edit the title a placeholder produced              CONFLICT (1 hunk): not automatic
+9 PR edit + template changed on another line         CLEAN, and render(T') == render(T) + PR change: absorbed
+10 PR edit + template changed on the SAME line       CONFLICT (1 hunk): not automatic
+11 PR empties the generated file                     CONFLICT (1 hunk): not automatic
+== base choice: G at the PR's merge-base against the latest G after a template change
+base = G at merge-base: closing line in T' = [Closing paragraph, upstream.] (upstream change kept)
+base = latest G:           closing line in T' = [Closing paragraph.] (the PR is read as reverting the upstream change)
+== regeneration without trivial conflicts: two branches regenerate G from different data, then merge
+plain merge of two regenerations: [UU G] conflict markers: 1
+with merge=gen (driver keeps ours): rc=0 conflict markers: 0; G says: version: 1.3
+after the post-merge regeneration from the newer data: version: 1.4
