@@ -1,0 +1,6 @@
+== (a) two branches both regenerate the same version bump
+merge rc=0 ; conflict markers: 0
+== (b) PR edits a literal line; dev regenerates a version bump
+merge rc=0 ; has PR edit: 1; has bump: 1
+== (c) PR edits the COMPUTED line; dev regenerates the same line
+merge rc=1 ; conflict markers: 1 ; PR text visible in the working file: 1
