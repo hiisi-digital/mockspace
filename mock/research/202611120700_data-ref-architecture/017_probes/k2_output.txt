@@ -1,0 +1,6 @@
+shipped  both regenerated                         merge rc=0 G=# Doc version 3||Intro line.||Closing paragraph.|
+shipped  PR literal edit vs regeneration          merge rc=0 G=# Doc version 3||Intro line.||Closing paragraph.|
+shipped  PR computed-line edit vs regeneration    merge rc=0 G=# Doc version 3||Intro line.||Closing paragraph.|
+rule     both regenerated                         merge rc=0 G=# Doc version 3||Intro line.||Closing paragraph.|
+rule     PR literal edit vs regeneration          merge rc=0 G=# Doc version 3||Intro line, by a PR.||Closing paragraph.|
+rule     PR computed-line edit vs regeneration    merge rc=1 G=<<<<<<< ours|# Doc version 3|=======|# Doc version 1 (beta)|>>>>>>> theirs||Intro line.||C
