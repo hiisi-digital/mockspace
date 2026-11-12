@@ -8,7 +8,9 @@ mod ambient;
 mod refs_e2e;
 
 use refs_e2e::consumer;
-use refs_e2e::daily::{NOTES, S, SRC, TMPL, before_the_migration, migrated, nothing_lost_or_wrongly_committed, seat};
+use refs_e2e::daily::{
+    NOTES, S, SRC, TMPL, before_the_migration, edit_back_after_forced_way_back, migrated, nothing_lost_or_wrongly_committed, seat,
+};
 use refs_e2e::whole::Ledger;
 
 // Mutation: drop the copy the hook takes when a reset moves `ORIG_HEAD`; a reset to a commit from
@@ -85,6 +87,40 @@ fn history_holds_at(c: &refs_e2e::Clone, ns: &str, name: &str, text: &[u8]) -> b
     })
 }
 
+// With no engine command anywhere between, the way there and the forced way back are plain git. The
+// sparse checkout keeps the edit at the old commit as a file git does not look at, so the way back
+// leaves it where it is.
+//
+// Mutation: let git take a file the patterns leave out and that is on disk as one it looks at (what
+// it does unless told to expect such files); at the old commit the edit is then a changed tracked
+// file, and the forced way back drops it with no copy anywhere.
+#[test]
+fn the_forced_way_back_with_no_engine_command_since_the_edit_keeps_it() {
+    let ways: [(&[&str], &[&str]); 3] = [
+        (&["checkout", "-q", "-f"], &["checkout", "-q", "-f", "dev"]),
+        (&["checkout", "-q"], &["checkout", "-q", "-f", "dev"]),
+        (&["checkout", "-q", "-f"], &["reset", "-q", "--hard", "dev"]),
+    ];
+    for (there, back) in ways {
+        let (w, _) = migrated();
+        let a = seat(&w, "a");
+        let mut l = Ledger::default();
+        let text = b"a: edited, then plain git there and back\n";
+        l.write(&a, NOTES, text);
+        let pre = before_the_migration(&a);
+        let mut there = there.to_vec();
+        there.push(&pre);
+        a.git(&there);
+        a.git(back);
+        let _ = a.git_out(&["checkout", "-q", "dev"]);
+        let what = format!("{there:?} then {back:?}");
+        if let Err(e) = l.kept(&w, &[&a]) {
+            panic!("{what}: {e}");
+        }
+        edit_back_after_forced_way_back(&a, "research", "20261001_alpha/NOTES.md", NOTES, text, &what);
+    }
+}
+
 // Mutation: let an engine command at a commit from before the migration, where no ref is declared,
 // copy nothing; an edit made on `dev` and carried there, which the sparse checkout keeps and which is
 // a tracked file there, is then dropped by the forced ways back (`checkout -f`, `reset --hard`) with
@@ -109,16 +145,7 @@ fn the_forced_way_back_from_a_commit_from_before_the_migration_keeps_an_edit_car
         let _ = a.git_out(&["checkout", "-q", "dev"]);
         assert!(history_holds(&a, "research", text), "{way:?}: a copy holds the edit: {}", at_old.all());
         l.kept(&w, &[&a]).unwrap();
-        let s = a.run(&["data-refs", "status", "research"]);
-        if !a.exists(NOTES) || a.read(NOTES) != text {
-            // git wrote over the file, or took the whole instance as it left the commit that tracks it
-            assert!(s.all().contains("20261001_alpha/NOTES.md"), "{way:?}: the way back is said: {}", s.all());
-            if !a.exists(NOTES) {
-                a.ok(&["data-refs", "restore"]);
-            }
-            a.ok(&["data-refs", "restore", "research", "20261001_alpha/NOTES.md"]);
-        }
-        assert_eq!(a.read(NOTES), text, "{way:?}: the edit is back on disk");
+        edit_back_after_forced_way_back(&a, "research", "20261001_alpha/NOTES.md", NOTES, text, &format!("{way:?}"));
         a.ok(&["data-refs", "commit", "research"]);
         l.kept(&w, &[&a]).unwrap();
     }

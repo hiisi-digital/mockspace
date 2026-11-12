@@ -61,3 +61,20 @@ pub fn before_the_migration(c: &Clone) -> String {
     pre
 }
 
+
+/// After a forced way back from a commit from before the migration, the edit `text` of `rel` in the
+/// instance of `ns` (at `file` from the root) is on disk, or the engine says how it comes back:
+/// `status` names it, a plain `restore` brings back the instance git took whole, and a `restore` of
+/// the file writes the edit back from the copy. Panics, naming `what`, where it does not.
+pub fn edit_back_after_forced_way_back(c: &Clone, ns: &str, rel: &str, file: &str, text: &[u8], what: &str) {
+    let s = c.run(&["data-refs", "status", ns]);
+    if !c.exists(file) || c.read(file) != text {
+        // git wrote over the file, or took the whole instance as it left the commit that tracks it
+        assert!(s.all().contains(rel), "{what}: the way back is said: {}", s.all());
+        if !c.exists(file) {
+            c.ok(&["data-refs", "restore"]);
+        }
+        c.ok(&["data-refs", "restore", ns, rel]);
+    }
+    assert_eq!(c.read(file), text, "{what}: the edit is back on disk");
+}
