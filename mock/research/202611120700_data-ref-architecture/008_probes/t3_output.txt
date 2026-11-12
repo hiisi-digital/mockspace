@@ -1,0 +1,8 @@
+U: tree holds gitlink at data path: [160000 commit a4ac00b221aac1b2]
+fatal: No url found for submodule path 'mock/rdata' in .gitmodules
+  rc=128 lib populated=no
+On branch dev
+nothing to commit, working tree clean
+T: tree holds gitlink at data path: []
+Submodule path 'lib': checked out 'f850ad11197a4183982b97b8ef8017d6e5e8aae3'
+  rc=0 lib populated=yes
