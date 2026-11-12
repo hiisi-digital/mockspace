@@ -1,0 +1,153 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
+//! What a unit is saved under: the lint's identity and configuration and the unit itself, so a
+//! different configuration or a different lint of the same name never replays another's findings.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use super::*;
+use crate::{CrateLint, LintContext, PathFilter};
+
+/// A crate lint reporting its parameter and the file it was shown, counting its judgings.
+struct Param {
+    name:   &'static str,
+    value:  String,
+    judged: Arc<AtomicUsize>,
+}
+
+impl Lint for Param {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
+    }
+
+    fn configure(&mut self, params: &HashMap<String, String>) {
+        if let Some(v) = params.get("value") {
+            self.value.clone_from(v);
+        }
+    }
+}
+
+impl CrateLint for Param {
+    fn check(&self, ctx: &LintContext) -> Vec<LintError> {
+        self.judged.fetch_add(1, Ordering::SeqCst);
+        let at = ctx.source_path().display().to_string();
+        vec![LintError::error(ctx.crate_name.to_string(), 1, self.name, format!("{}@{at}", self.value))]
+    }
+}
+
+fn param(name: &'static str) -> (LintPack, Arc<AtomicUsize>) {
+    let judged = Arc::new(AtomicUsize::new(0));
+    let pack = LintPack {
+        crate_lints: vec![Box::new(Param {
+            name,
+            value: "default".into(),
+            judged: Arc::clone(&judged),
+        })],
+        ..LintPack::default()
+    };
+    (pack, judged)
+}
+
+fn workspace() -> Workspace {
+    Workspace::new("keys", &[("alpha", &[("src/lib.rs", "pub mod m;\n"), ("src/m.rs", "pub fn f() { todo!() }\n")])])
+}
+
+fn of(name: &str, found: &[LintError]) -> Vec<String> {
+    found
+        .iter()
+        .filter(|e| e.lint_name == name)
+        .map(|e| format!("{}:{:?}", e.message, e.path))
+        .collect()
+}
+
+fn with_param(value: &str) -> LintConfig {
+    let mut cfg = LintConfig::empty();
+    cfg.params
+        .insert("param".into(), HashMap::from([("value".to_string(), value.to_string())]));
+    cfg
+}
+
+#[test]
+fn a_parameter_is_part_of_the_key() {
+    let w = workspace();
+    let cache = Mem::default();
+    let (mut pack, judged) = param("param");
+    let one = with_param("one");
+    let two = with_param("two");
+
+    // The engine configures a pack once while it owns it, as here.
+    pack.configure_from(&one);
+    let first = w.run(Some(&cache), Some(&one), Some(&pack));
+    assert!(of("param", &first).iter().all(|m| m.starts_with("one@")), "{first:?}");
+    let n = judged.load(Ordering::SeqCst);
+    let _ = w.run(Some(&cache), Some(&one), Some(&pack));
+    assert_eq!(judged.load(Ordering::SeqCst), n, "the same parameter replays");
+
+    pack.configure_from(&two);
+    let second = w.run(Some(&cache), Some(&two), Some(&pack));
+    assert!(of("param", &second).iter().all(|m| m.starts_with("two@")), "{second:?}");
+    assert_eq!(judged.load(Ordering::SeqCst), 2 * n);
+}
+
+#[test]
+fn a_configured_severity_is_applied_to_replayed_findings() {
+    let w = workspace();
+    let cache = Mem::default();
+    let mut warn = LintConfig::empty();
+    warn.base.insert("no-todo".into(), Severity::ADVISORY);
+    let level = |found: &[LintError]| {
+        found
+            .iter()
+            .filter(|e| e.lint_name == "no-todo")
+            .map(|e| e.severity)
+            .collect::<Vec<_>>()
+    };
+    let judged = level(&w.run(Some(&cache), Some(&warn), None));
+    assert_eq!(judged, [Severity::ADVISORY]);
+    let reading = Reading::new(&w.dir.0);
+    let replayed = level(&w.run_with(&reading, Some(&cache), Some(&warn), None));
+    assert_eq!(replayed, judged);
+    assert_eq!(reading.counts().parses, 0, "the control: the second run was a replay");
+}
+
+#[test]
+fn a_pack_lint_with_a_built_in_name_saves_apart_from_it() {
+    let w = workspace();
+    let cache = Mem::default();
+    let (pack, judged) = param("no-todo");
+    let full = shown(&w.run(None, None, Some(&pack)));
+    assert_eq!(of("no-todo", &w.run(None, None, Some(&pack))).len(), 3, "the built-in finds one, the pack lint two");
+    let n = judged.load(Ordering::SeqCst);
+    let per_run = n / 2;
+
+    let cold = shown(&w.run(Some(&cache), None, Some(&pack)));
+    let warm = shown(&w.run(Some(&cache), None, Some(&pack)));
+    assert_eq!(cold, full);
+    assert_eq!(warm, full, "each replays its own findings and not the other's");
+    assert_eq!(judged.load(Ordering::SeqCst), n + per_run, "the pack lint was judged cold and replayed warm");
+}
+
+#[test]
+fn a_path_filter_changing_reruns_the_lint() {
+    let w = workspace();
+    let cache = Mem::default();
+    let mut only_root = LintConfig::empty();
+    only_root.paths.insert("no-todo".into(), PathFilter {
+        include: vec!["src/lib.rs".into()],
+        exclude: vec![],
+    });
+    let all = shown(&w.run(Some(&cache), None, None));
+    assert!(all.contains("no-todo"), "the control: unfiltered, the module's todo is found");
+    let filtered = w.run(Some(&cache), Some(&only_root), None);
+    assert_eq!(shown(&filtered), shown(&w.run(None, Some(&only_root), None)));
+    assert!(of("no-todo", &filtered).is_empty(), "the filtered run judged again: {filtered:?}");
+}
