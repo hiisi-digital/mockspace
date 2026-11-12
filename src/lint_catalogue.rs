@@ -100,7 +100,7 @@ pub struct Listing {
     /// A `[lints.<name>]` table carrying only `findings`, only `params` or only
     /// path filters populates no base severity and is still a decision the
     /// project made. The engine counts it as one, in
-    /// `run_with_overrides`'s `named_in_config`, and a catalogue that counted
+    /// `run::gate::enabled`'s `named_in_config`, and a catalogue that counted
     /// only `base` reported four such shapes as "pack default" while the engine
     /// treated them as configured. One of those directions is dangerous rather
     /// than merely wrong: a lint whose pack default is `OFF`, named only under
@@ -128,7 +128,7 @@ impl Listing {
 
     /// Whether the engine runs it at an ordinary gate.
     ///
-    /// Two of `run_with_overrides`'s three skip conditions: a lint is skipped
+    /// Two of `run::gate::enabled`'s three skip conditions: a lint is skipped
     /// when its default is off and nothing named it, and skipped when a base
     /// override turns it off.
     ///
@@ -197,7 +197,7 @@ pub fn enumerate(pack: &LintPack, config: &LintConfig) -> Vec<Listing> {
 
 /// Whether the project named this lint anywhere in its configuration.
 ///
-/// The same five sections `run_with_overrides` reads, in the same order. Spelled
+/// The same five sections `run::gate::enabled` reads, in the same order. Spelled
 /// once here so a sixth section added to [`LintConfig`] is one edit rather than
 /// two places that agree until they do not.
 fn named_in_config(name: &str, config: &LintConfig) -> bool {
