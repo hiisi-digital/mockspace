@@ -13,12 +13,15 @@ const README: &str = include_str!("../../README.md");
 
 /// Every `mockspace_*` key the readme names, in the order it names them.
 fn keys_named_in_the_readme() -> Vec<String> {
+    keys_named_in(README)
+}
+
+/// Every `mockspace_*` key `text` names, in the order it names them, as
+/// many on a line as the line holds.
+fn keys_named_in(text: &str) -> Vec<String> {
     let mut found = Vec::new();
-    for line in README.lines() {
-        let Some(at) = line.find("mockspace_") else {
-            continue;
-        };
-        let rest = &line[at ..];
+    for (at, _) in text.match_indices("mockspace_") {
+        let rest = &text[at ..];
         let end = rest
             .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
             .unwrap_or(rest.len());
@@ -28,6 +31,16 @@ fn keys_named_in_the_readme() -> Vec<String> {
         }
     }
     found
+}
+
+// Mutation: read one key a line; the second key of a line is then never
+// checked, and a wrong one there passes.
+#[test]
+fn every_key_a_line_names_is_read() {
+    assert_eq!(
+        keys_named_in("`mockspace_branch = \"dev\"` follows, and `mockspace_rev` holds\n"),
+        ["mockspace_branch", "mockspace_rev"]
+    );
 }
 
 #[test]
