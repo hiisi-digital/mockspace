@@ -1,0 +1,15 @@
+mock/research/202611120700_data-ref-architecture/011_probes/n1_names_git_refuses.sh: line 4: cd: /tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/names2: No such file or directory
+[git~1]        error: Invalid path 'git~1/f' fatal: git update-index: --cacheinfo can
+[GIT~1]        error: Invalid path 'GIT~1/f' fatal: git update-index: --cacheinfo can
+[Git~1]        error: Invalid path 'Git~1/f' fatal: git update-index: --cacheinfo can
+[git~2]        tracked
+[.git~1]       tracked
+[~mock]        tracked
+[~git~1]       tracked
+[git~1x]       tracked
+[xgit~1]       tracked
+[.git ]        error: Invalid path '.git /f' fatal: git update-index: --cacheinfo can
+[.git.]        error: Invalid path '.git./f' fatal: git update-index: --cacheinfo can
+[@]            tracked
+[gitmod~1]     tracked
+[.gitmodules]  tracked
