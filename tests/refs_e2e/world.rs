@@ -179,7 +179,7 @@ pub struct Clone<'w> {
 pub const PERSONS_HOOK: &str = "#!/bin/sh\n# the person's own hook\nexit 0\n";
 
 impl Clone<'_> {
-    fn configure(&self) {
+    pub(super) fn configure(&self) {
         for kv in [
             ["user.name", "tester"],
             ["user.email", "tester@example.com"],
@@ -193,7 +193,7 @@ impl Clone<'_> {
             self.git(&["config", kv[0], kv[1]]);
         }
         // a hook of the person's own, which no command of the engine may take or rewrite
-        mockspace_manifest::write_executable(&self.root.join(".git/hooks/post-merge"), PERSONS_HOOK).unwrap();
+        mockspace_manifest::write_executable(&self.hooks_dir().join("post-merge"), PERSONS_HOOK).unwrap();
     }
 
     /// The mock directory: what `mock_dir` of a `mockspace.toml` at the root names, as the

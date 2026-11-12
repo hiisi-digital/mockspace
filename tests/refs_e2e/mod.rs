@@ -13,6 +13,7 @@ pub mod check;
 pub mod consumer;
 pub mod daily;
 pub mod fixture;
+pub mod setups;
 pub mod spy;
 pub mod whole;
 pub mod world;

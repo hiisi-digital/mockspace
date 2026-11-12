@@ -190,6 +190,21 @@ impl Shape {
         out
     }
 
+    /// What call `k` of [`Shape::calls`] may change and still have lost nothing: the renames, the
+    /// config each move appends to, and the files the reference rewrite writes.
+    pub fn allowed(&self, k: usize) -> super::whole::Allowed {
+        use super::whole::Allowed;
+        let calls = self.calls();
+        if k == 0 {
+            let renamed = self.renames().iter().map(|(f, t)| (f.clone().into_bytes(), t.clone().into_bytes())).collect();
+            Allowed { renamed, ..Allowed::default() }
+        } else if k == calls.len() - 1 {
+            Allowed { rewritten: self.rewritten(), ..Allowed::default() }
+        } else {
+            Allowed { rewritten: [b"mockspace.toml".to_vec()].into(), ..Allowed::default() }
+        }
+    }
+
     /// Builds the consumer over several commits in `c` and pushes `dev`; ignored build output is on
     /// disk and never tracked.
     pub fn build(&self, c: &Clone) {
