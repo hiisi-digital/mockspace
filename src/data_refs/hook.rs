@@ -1,9 +1,11 @@
 //! The `reference-transaction` hook that copies the files of every instance before git writes the
 //! work tree.
 //!
-//! git moves `ORIG_HEAD` before a merge, a rebase or a reset writes the work tree, and this hook
-//! runs `data-refs snapshot` when it sees that move, which keeps every file of each instance in its
-//! backup ref (see `mockspace_store::Instance::guard`). It never stops the person's command: the
+//! git moves `ORIG_HEAD` in a merge, a rebase and a reset, and this hook runs `data-refs snapshot`
+//! when it sees that move, which keeps every file of each instance in its backup ref (see
+//! `mockspace_store::Instance::guard`). A merge moves it before it writes the work tree, so that copy
+//! holds what the merge writes over; a reset and a rebase move it after they write, so for those the
+//! copy that counts is the one taken on the move before them. It never stops the person's command: the
 //! hook exits 0 whatever the launcher does, and says a failure on stderr, since a merge refused for
 //! a copy that could not be made is a stop the person did not ask for, and the next engine command
 //! still finds what git wrote over by the bytes the copy kept from before.

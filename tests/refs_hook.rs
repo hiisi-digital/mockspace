@@ -81,7 +81,7 @@ fn a_merge_goes_through_whatever_the_launcher_does() {
     }
 }
 
-// Mutation: the same, on a rebase, which moves `ORIG_HEAD` before it writes.
+// Mutation: the same, on a rebase, which moves `ORIG_HEAD` too, after it writes.
 #[test]
 fn a_rebase_goes_through_whatever_the_launcher_does() {
     let w = fixture::migrated_remote();
@@ -203,4 +203,41 @@ fn in_a_linked_worktree_of_an_activated_repository_git_runs_the_hook() {
     wt.write(NOTES, b"an edit no commit holds\n");
     merge_the_old_branch(&wt);
     assert!(backup_holds_the_edit(&wt), "git did not run the hook from the linked worktree");
+}
+
+// Mutation: none; this pins the order of git the hook rests on. A merge moves `ORIG_HEAD` before it
+// writes the work tree, so the copy the hook takes then holds what the merge writes over; a reset
+// and a rebase move it after, so for those the copy that counts is the one taken before them. The
+// day git changes that order, this test says so and the account of the hook goes with it.
+#[test]
+fn git_moves_orig_head_before_it_writes_in_a_merge_and_after_in_a_reset_and_a_rebase() {
+    let w = World::new();
+    for (args, before) in [(&["merge", "-q", "--no-edit", "dev"][..], true), (&["reset", "-q", "--hard", "dev"], false), (&["rebase", "-q", "dev"], false)] {
+        let dir = w.base().join(format!("order-{}", args[0]));
+        let git = |a: &[&str]| {
+            let o = w.command("git", &dir).args(a).output().unwrap();
+            assert!(o.status.success(), "{a:?}: {}", String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stderr).into_owned()
+        };
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&["init", "-q", "-b", "dev"]);
+        std::fs::write(dir.join("f"), "here\n").unwrap();
+        git(&["add", "f"]);
+        git(&["commit", "-q", "-m", "here"]);
+        git(&["branch", "other"]);
+        std::fs::write(dir.join("f"), "dev\n").unwrap();
+        git(&["commit", "-q", "-am", "dev"]);
+        git(&["checkout", "-q", "other"]);
+        std::fs::write(dir.join("g"), "other\n").unwrap();
+        git(&["add", "g"]);
+        git(&["commit", "-q", "-m", "other"]);
+        let hook = dir.join(".git/hooks/reference-transaction");
+        std::fs::write(&hook, "#!/bin/sh\n[ \"$1\" = prepared ] || exit 0\nwhile read -r _ _ r; do [ \"$r\" = ORIG_HEAD ] && echo \"at ORIG_HEAD: $(cat f)\" >&2; done\nexit 0\n").unwrap();
+        let mut p = std::fs::metadata(&hook).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut p, 0o755);
+        std::fs::set_permissions(&hook, p).unwrap();
+        let said = git(args);
+        let seen = if before { "at ORIG_HEAD: here" } else { "at ORIG_HEAD: dev" };
+        assert!(said.contains(seen), "{args:?}: {said}");
+    }
 }
