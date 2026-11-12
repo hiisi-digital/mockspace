@@ -1,0 +1,11 @@
+lfs filter configured in common config: git-lfs clean -- %f
+blob in the data branch for big.bin:
+version https://git-lfs.github.com/spec/v1
+oid sha256:9086c8ca8e4ef36d1f69929e6700e502d36aadcc7b26e4e32b7c046ad5c44fb8
+size 5000
+lfs object stored under the common dir: 1 dir(s)
+== hook log
+PRE-COMMIT ran: GIT_DIR=/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/q3/r/.git/worktrees/research cwd=/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/q3/r/.git/mock-data/research branch=mock/research
+== main worktree status (symlink excluded):
+(end)
+== through the link, editors see the real bytes: 5000

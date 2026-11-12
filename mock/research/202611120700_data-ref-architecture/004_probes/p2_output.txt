@@ -1,0 +1,7 @@
+fatal: update_ref failed for ref 'refs/mock-backup/research/wt1': cannot lock ref 'refs/mock-backup/research/wt1': 'refs/mock-backup/research' exists; cannot create 'refs/mock-backup/research/wt1'
+rc after the shipped name exists: 128
+layout alone: rc=0
+fatal: update_ref failed for ref 'refs/mock-backup/research': cannot lock ref 'refs/mock-backup/research': 'refs/mock-backup/research/wt1' exists; cannot create 'refs/mock-backup/research'
+then the shipped name: rc=128
+== two namespaces where one is a prefix of the other (validate_namespace allows registry/ticket style names)
+fatal: update_ref failed for ref 'refs/mock/a/b': cannot lock ref 'refs/mock/a/b': 'refs/mock/a' exists; cannot create 'refs/mock/a/b'
