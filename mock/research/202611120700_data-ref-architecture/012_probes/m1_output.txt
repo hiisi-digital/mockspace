@@ -1,0 +1,39 @@
+== 0. a hook that only LOGS: does pre-push list the deletion of refs/mock/research made by push --mirror?
+ - [deleted]         refs/mock/research
+lines the hook was handed:
+line: [refs/remotes/origin/HEAD] [59da3e9f6f15eaf355fddee06beaa849b23a2a32] [refs/remotes/origin/HEAD] [0000000000000000
+line: [refs/remotes/origin/dev] [59da3e9f6f15eaf355fddee06beaa849b23a2a32] [refs/remotes/origin/dev] [000000000000000000
+deletion line among them: 0
+== 1. plain clone with the hook, push --mirror (it has no refs/mock): what does the hook see, does it refuse?
+refusing: refs/remotes/origin/HEAD is a clone-local ref, this looks like push --mirror
+error: failed to push some refs to '/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/012/m1g/remote.git'
+rc=1
+args: origin remote.git
+line: [refs/remotes/origin/HEAD] [59da3e9f6f15eaf355fddee06beaa849b23a2a32] [refs/remotes/origin/HEAD] [0000000000000000000000000000000000000000]
+remote still has: refs/mock/research 
+(the hook above now also refuses when it sees refs/remotes/* on the way out; case 1 repeated:)
+refusing: refs/remotes/origin/HEAD is a clone-local ref, this looks like push --mirror
+error: failed to push some refs to '/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/012/m1g/remote.git'
+remote still has: refs/mock/research 
+== 2. the same without the hook: remote loses it, objects remain?
+remote refs/mock: 0; old tip object still on the remote: commit
+dangling on the remote (fsck): 2 commit(s); restore by update-ref: refs/mock/research
+== 2b. the heuristic hook again, but the remote already carries refs/remotes/* from the mirror in 2 (nothing new for the hook to see)
+ - [deleted]         refs/mock/research
+lines handed to the hook: 0; remote refs/mock after: 0  (0 means the deletion went through the hook)
+== 3. rewind: stale clone mirror-pushes an old tip over a newer remote tip; the hook sees both shas
+refusing a rewind or divergence of refs/mock/research (remote 938e51613cb445b30eb5a754f1c1b1f839f71051 not an ancestor of e549750724cb3478520c11adb696062140bed63c)
+error: failed to push some refs to '/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/012/m1g/remote.git'
+line: [refs/mock/research] [e549750724cb3478520c11adb696062140bed63c] [refs/mock/research] [938e51613cb445b30eb5a754f1c1b1f839f71051]
+remote tip is still the newest: yes
+== 4. no hook anywhere, rewind lands; a newer holder re-pushes; the stale holder cannot undo it
+remote tip after the stale mirror: e549750 (stale=e549750 newest=938e516)
+the holder of the newest tip pushes it back (a fast-forward, no force): remote now 938e516
+stale clone re-pushing its old tip: rejected-or-noop lines: 1
+== 4b. what a holder's mirror ref does when the remote was rewound: unforced against forced fetch refspec
+holder mirror at newest: 938e516
+ ! [rejected]        refs/mock/research -> refs/mock/research  (non-fast-forward)
+unforced fetch of the rewound remote: local mirror 938e516 (kept the newest if it equals 938e516)
+forced (+) fetch: local mirror e549750 (the newer tip is now held by no mirror ref in this clone)
+== 5. the case with no holder: delete on the remote, every local copy gone
+after remote gc --prune=now, old tip present on the remote: fatal: git cat-file: could not get object info
