@@ -18,7 +18,7 @@
 use std::time::Duration;
 
 use super::table::Table;
-use super::{Question, Reading, Trace, Values};
+use super::{Answer, Question, Reading, Trace, Values};
 use crate::LintError;
 use crate::reading::disk::Kind;
 use crate::reading::memo::Memo;
@@ -204,6 +204,14 @@ impl<'r> Store<'r> {
     /// question the run cannot answer.
     pub(crate) fn save(&self, key: &str, prior: Vec<Alt>, trace: &Trace, findings: &[LintError], took: Duration) {
         if self.reading.is_overlaid() || trace.untraced.is_some() {
+            return;
+        }
+        // A command that did not start or did not succeed says something of the machine, a tool
+        // missing or a network away, that no input of it answers for, so a unit holding one is
+        // judged again on the next run rather than replaying the failure after the machine is
+        // put right.
+        let failed = |q: &Question| matches!(q, Question::Run { .. }) && !self.reading.ran(q).is_some_and(Answer::ok);
+        if trace.questions.iter().any(failed) {
             return;
         }
         let mut answers = Vec::with_capacity(trace.questions.len());

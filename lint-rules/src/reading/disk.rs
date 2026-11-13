@@ -374,6 +374,22 @@ impl Reading {
         })
     }
 
+    /// What the command a [`Question::Run`] names answered in this run, `None` for any other
+    /// question or for a command not run.
+    pub(crate) fn ran(&self, q: &super::Question) -> Option<&Answer> {
+        let super::Question::Run {
+            program,
+            args,
+            cwd,
+            stdin,
+            ..
+        } = q
+        else {
+            return None;
+        };
+        self.runs.peek(&(program.clone(), args.clone(), cwd.clone(), stdin.clone()))
+    }
+
     /// Every file under `dir` the walk keeps, depth first in name order, and every directory it
     /// listed. `skip` is shown each entry's absolute path; an entry it answers `true` for is left
     /// out, and a directory so answered is not entered.

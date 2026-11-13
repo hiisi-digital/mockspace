@@ -279,6 +279,12 @@ impl<'r> View<'r> {
         let cwd = self.reading.key(cwd);
         let args: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
         let stdin_key = stdin.map(stdin_digest);
+        // The inputs are read before the command can run, and their digests are taken from these
+        // bytes when the unit is saved, so an input written while the command runs is saved under
+        // what the command was started over and not under what it left behind.
+        for p in inputs {
+            let _ = self.reading.read(&self.abs(p));
+        }
         let inputs: Vec<String> = inputs.iter().map(|p| self.reading.key(p)).collect();
         self.record(Question::Run {
             program: program.to_string(),

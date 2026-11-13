@@ -162,3 +162,52 @@ fn a_file_rewritten_within_the_clock_tick_is_read_again() {
     assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["two"]);
     assert_eq!(judged.load(Ordering::SeqCst), 2);
 }
+
+/// A command that did not start, or ended in failure, is judged again on the next run, since what
+/// failed may be the machine and not the inputs. A command that succeeded replays, the control.
+#[test]
+fn a_command_that_failed_or_never_started_is_never_saved() {
+    for (program, script, saved) in [
+        ("sh", "exit 0", true),
+        ("sh", "exit 3", false),
+        ("mockspace-a-program-no-machine-has", "", false),
+    ] {
+        let dir = Dir::new("run-failed");
+        dir.write("script", script);
+        let cache = Mem::default();
+        let (probe, judged) = Probe::new(|v| {
+            let program = v.text("program").unwrap_or_default().to_string();
+            let a = v.run(&program, &["script"], v.root(), &[Path::new("script")]);
+            format!("started={} ok={}", a.started(), a.ok())
+        });
+        dir.write("program", program);
+        let pack = pack_of(probe);
+        let _ = run_repo(&dir, &cache, &pack, None);
+        let _ = run_repo(&dir, &cache, &pack, None);
+        let want = if saved { 1 } else { 2 };
+        assert_eq!(judged.load(Ordering::SeqCst), want, "{program} {script:?}");
+    }
+}
+
+/// An input the command writes while it runs is saved under what it was when the command started,
+/// so the next run sees it moved and judges again, and never replays output of the old content
+/// under the new one's digest.
+#[test]
+fn an_input_written_while_the_command_runs_is_saved_as_it_was_before() {
+    let dir = Dir::new("run-writes-input");
+    dir.write("in.txt", "old");
+    let cache = Mem::default();
+    let (probe, judged) = Probe::new(|v| {
+        v.run("sh", &["-c", "cat in.txt; printf new > in.txt"], v.root(), &[Path::new("in.txt")])
+            .text()
+            .unwrap_or_default()
+            .to_string()
+    });
+    let pack = pack_of(probe);
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["old"]);
+    assert_eq!(std::fs::read_to_string(dir.0.join("in.txt")).unwrap(), "new");
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["new"], "the input moved, so it ran again");
+    assert_eq!(judged.load(Ordering::SeqCst), 2);
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["new"], "the control: unmoved, it replays");
+    assert_eq!(judged.load(Ordering::SeqCst), 2);
+}
