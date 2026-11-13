@@ -1,0 +1,13 @@
+Auto-merging G.md
+trunk after merging the PR (plain git merge): # Doc version 1||Intro line, clarified by a PR.||Closing paragraph, upstream.|
+== classification (the last engine write anywhere was trunk's v1 regeneration)
+trunk: 002 single-B says edited; 007 produced-set says edited
+feature: 002 single-B says edited; 007 produced-set says not-edited
+-- after the feature branch regenerates again (now the last engine write is v2):
+trunk: 002 single-B says edited; 007 produced-set says edited
+feature: 002 single-B says not-edited; 007 produced-set says not-edited
+== carry back on trunk with the 007 base (newest first-parent commit whose G is in the set)
+base commit: trunk: template change regenerated; merge-file rc=0; round trip Gen(T',v1)==O: yes
+T' = # Doc version {{v}}||Intro line, clarified by a PR.||Closing paragraph, upstream.|
+== the same with 002's single B after the feature branch's v2 write
+merge-file rc=1; round trip: no; T' = <<<<<<< <scratch>/003/p17/k1/run/Tm|# Doc version {{v}}|=======|# Doc version 1|>>>>>>> <scratch>/003/p17/k1/run/O||Intro line, clarified by a PR.||Closing paragraph, upstream.|

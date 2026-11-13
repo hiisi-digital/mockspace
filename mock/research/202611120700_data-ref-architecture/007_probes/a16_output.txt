@@ -1,0 +1,22 @@
+remote refs: refs/heads/dev refs/mock/research 
+plain clone has: 0 mock refs; objects of data commit present: no
+clone --bare has: 0 mock refs
+clone --mirror has: refs/mock/research 
+plain after fetch --all: 0 mock refs
+a: vanilla git push from data worktree: {   ad07d24..acbfc2e  HEAD -> refs/mock/research} remote now acbfc2e
+b: vanilla git pull: {} files: B.md N.md 
+b: vanilla git push: {   acbfc2e..80227df  HEAD -> refs/mock/research}
+a: after pull: B.md N.md  status: ## mock-wt/research/a...mock-research/research
+a: fetch --all also fetches data: 1
+a: git push --all from the main worktree puts on the remote: refs/heads/dev refs/heads/mock-wt/research/a 
+== push --mirror from a plain clone that never asked for data
+remote refs after: refs/heads/dev refs/remotes/origin/HEAD refs/remotes/origin/dev 
+(restored from a: 80227df)
+== push --mirror from clone a, which has the data under refs/remotes/mock-research
+remote refs after: refs/heads/dev refs/heads/mock-wt/research/a refs/remotes/mock-research/research refs/remotes/origin/HEAD refs/remotes/origin/dev refs/remotes/origin/mock-wt/research/a 
+(restored from a: 80227df)
+== alternative: a worktree whose HEAD is a symref onto refs/mock/research
+symbolic-ref: {} status: {On branch refs/mock/research}
+refs/mock/research moved by commit: viaHEAD
+pull: {You are not currently on a branch.}
+gc keeps the data reachable in a: commit

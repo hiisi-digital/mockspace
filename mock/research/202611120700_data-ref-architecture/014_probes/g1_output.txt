@@ -1,0 +1,2 @@
+control, no fsmonitor: the read loop visited 6 of 6 files
+(run still blocked when committed; see g1_hang_evidence.txt; g1b is the completed rerun)

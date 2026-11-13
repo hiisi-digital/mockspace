@@ -1,0 +1,18 @@
+== carry-back: an edit to the generated output arrives (a pull request), template unchanged
+literal line edited                                              AUTOMATIC: carried into template, Gen(T') == O
+literal line edited and a line appended at the end               AUTOMATIC: carried into template, Gen(T') == O
+a literal two-line paragraph deleted                             AUTOMATIC: carried into template, Gen(T') == O
+edit ON a line the template computes ({{VERSION}} {{NAME}})      CONFLICT: not automatic (1 conflicting hunk(s))
+edit INSIDE a loop-expanded region                               CONFLICT: not automatic (1 conflicting hunk(s))
+line added at the end of a loop-expanded region                  CONFLICT: not automatic (1 conflicting hunk(s))
+insertion directly after a literal line, two lines above a computed one AUTOMATIC: carried into template, Gen(T') == O
+edit on the line DIRECTLY after a computed line (touching hunks) CONFLICT: not automatic (1 conflicting hunk(s))
+edit to the title, a computed line                               CONFLICT: not automatic (1 conflicting hunk(s))
+text appended after the last line                                AUTOMATIC: carried into template, Gen(T') == O
+== two edits in different places (two PRs merged by git first), then carried back together
+two independent literal edits                                    AUTOMATIC: carried into template, Gen(T') == O
+== regenerate with an edit present, template changed elsewhere (VERSION bump, a new literal line in T)
+regenerate: output edit on a literal line, version bumped        merge3 rc=0; result has the edit: 1; has new version: 1
+regenerate a second time (B=Gcur, O=R, same template)            R2 == R: yes; edit still present: 1
+== regenerate when the edit and the template change overlap (both touch the title/version line)
+overlapping edit and template change                             merge3 rc=1 (non-zero = conflict markers: not automatic)

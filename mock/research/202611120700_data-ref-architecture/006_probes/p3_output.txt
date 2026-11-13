@@ -1,0 +1,7 @@
+polluted tip tracks: mock/study
+checkout -q -f dev           edit=EDIT  worktree list: 2 entries
+checkout -q -f polluted      edit=EDIT  worktree list: 2 entries
+reset -q --hard dev          edit=EDIT  worktree list: 2 entries
+checkout -q polluted         edit=EDIT  worktree list: 2 entries
+switch -q --detach dev       edit=EDIT  worktree list: 2 entries
+clean -fdq                   edit=EDIT  worktree list: 2 entries

@@ -1,0 +1,6 @@
+worktree remove (no force): parent exists=no
+Skipping repository mock/data/research
+clean -fdX: edit survives=1
+Skipping repository mock/data/research
+clean -fdx: edit survives=1
+worktree remove --force: parent exists=no

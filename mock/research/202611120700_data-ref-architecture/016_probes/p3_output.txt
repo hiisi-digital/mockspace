@@ -1,0 +1,19 @@
+== (a) verbs in the main tree with an uncommitted data edit
+git checkout -q -f other data edit: EDIT   .mock still a link: yes
+git reset -q --hard dev  data edit: EDIT   .mock still a link: yes
+git clean -fdxq          data edit: EDIT   .mock still a link: no
+git clean -ffdxq         data edit: EDIT   .mock still a link: no
+git stash -u -q          data edit: EDIT   .mock still a link: yes
+git switch -q dev        data edit: EDIT   .mock still a link: yes
+git status in the main tree: []
+== (b) physical ../ from inside the instance (the manifests' ../../../crates/lib)
+cd into .mock/research/sketch, cargo metadata: BREAKS (the physical parent is the state dir)
+from the root with --manifest-path .mock/research/sketch/Cargo.toml: resolves
+== (c) a second clone of the same repository, same state key: two worktrees want one branch, and one directory
+fatal: '/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/p016-3-PeMCye/state/key1/research' already exists
+== (d) the clone is moved, then deleted
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/p016-3-PeMCye/state/key1/research  10a9f1b [moc
+data worktree opens from its own path: fatal: not a git repository: /tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e
+repair: .git file broken: /tmp/claude-0/
+after repair, data worktree status: [ M N.md] branch: mock/research
+after rm -rf of the clone: data files still in the state dir: N.md sketch ; its .git file points at: gitdir: /tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7

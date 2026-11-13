@@ -1,0 +1,17 @@
+tip id (what a Mock-Ref trailer would carry): 104201027f
+== (a) ref deleted on the remote, objects still there until the remote's gc
+remote still has the commit object: commit
+== (b) a clone that never had the data tries to recover from the id alone
+ * branch            104201027f44bc7f87deeed30a28456e8f5d8d47 -> FETCH_HEAD
+has object after fetch by id: commit
+with uploadpack.allowAnySHA1InWant=true on the remote: has object: commit
+== (a2) now the remote gc runs (prune=now)
+remote has the commit object: fatal: git cat-file: could not get object info
+with no clone holding the object, the id alone recovers nothing: 
+== (c) receive.hideRefs=refs/mock on the remote
+after a plain clone's mirror push: refs/mock/x = 1042010
+ ! [remote rejected] HEAD -> refs/mock/x (deny updating a hidden ref)
+error: failed to push some refs to 'file:///tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/013/p3/origin.git'
+opted-in clone publishes a new tip: refs/mock/x = 1042010
+error: failed to push some refs to 'file:///tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/013/p3/origin.git'
+and creates a new data ref: refs/mock/y = fatal: Needed a single revision

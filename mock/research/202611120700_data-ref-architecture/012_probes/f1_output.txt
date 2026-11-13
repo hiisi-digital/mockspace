@@ -1,0 +1,13 @@
+A no fsmonitor:                   7 ms per git status (mean of 30); snapshot ref made: no
+B hook direct, protocol floor:    10 ms per git status (mean of 30); snapshot ref made: no
+C shook dispatcher + floor:      21 ms per git status (mean of 30); snapshot ref made: no
+D shook + snapshot every command: 71 ms per git status (mean of 30); snapshot ref made: yes
+E shook + snapshot throttled 60 s: 27 ms per git status (mean of 30); snapshot ref made: yes  (first command pays one snapshot)
+F shook + snapshot if a file changed: 31 ms per git status (mean of 30); snapshot ref made: yes
+== between commands: processes started by the hook that are still alive
+hook-related processes: 5
+== does a person's own core.fsmonitor survive? (it is replaced by the single config value)
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/012/f1c/r/.shook/hooks/fsmonitor-watchman
+== the dispatcher's output reaches git? status still correct after an edit:
+ M f/1
+?? .shook/
