@@ -7,7 +7,7 @@
 //! thread that has nothing else to do, and the run never has more threads at work than it names.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use super::*;
@@ -16,17 +16,19 @@ use super::*;
 #[derive(Default)]
 struct Counts {
     /// Threads judging a unit or an item at this moment.
-    working:     AtomicUsize,
-    most:        AtomicUsize,
+    working:    AtomicUsize,
+    most:       AtomicUsize,
     /// Items of the split unit being judged at this moment.
-    items:       AtomicUsize,
-    most_items:  AtomicUsize,
+    items:      AtomicUsize,
     /// Small units still to finish.
-    small_left:  AtomicUsize,
+    small_left: AtomicUsize,
     /// The most items judged at once after the last small unit finished.
-    most_after:  AtomicUsize,
-    /// The sum of every item's cost, in microseconds.
-    item_micros: AtomicUsize,
+    most_after: AtomicUsize,
+    /// Set once as many items as the run has threads were judged at once, after which no item
+    /// waits.
+    released:   AtomicBool,
+    /// The threads of the run.
+    threads:    usize,
 }
 
 impl Counts {
@@ -38,6 +40,18 @@ impl Counts {
     fn leave(&self) {
         self.working.fetch_sub(1, Ordering::SeqCst);
     }
+}
+
+/// Whether `ready` comes true within five seconds, asked over and over in the meantime.
+fn until(ready: impl Fn() -> bool) -> bool {
+    let end = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < end {
+        if ready() {
+            return true;
+        }
+        std::thread::yield_now();
+    }
+    ready()
 }
 
 /// A crate lint over many crates, each a short unit.
@@ -60,14 +74,16 @@ impl Lint for Small {
 impl crate::CrateLint for Small {
     fn check(&self, _ctx: &crate::LintContext) -> Vec<LintError> {
         self.0.enter();
-        std::thread::sleep(Duration::from_millis(4));
         self.0.leave();
         self.0.small_left.fetch_sub(1, Ordering::SeqCst);
         Vec::new()
     }
 }
 
-/// A repo lint splitting itself into items of uneven cost.
+/// A repo lint splitting itself into items, each of which holds its thread until every small unit
+/// is done and then until as many items as the run has threads are being judged at once. Only
+/// threads that came to the split from elsewhere can make up that number, so a run in which they
+/// do not waits out the timeout and falls short of it.
 struct Split(Arc<Counts>, usize);
 
 impl Lint for Split {
@@ -91,15 +107,11 @@ impl RepoLint for Split {
             .each(&items, |_, item| {
                 let c = &self.0;
                 c.enter();
-                let now = c.items.fetch_add(1, Ordering::SeqCst) + 1;
-                c.most_items.fetch_max(now, Ordering::SeqCst);
-                let n: usize = item[5 ..].parse().unwrap();
-                let cost = Duration::from_millis(4 + (n as u64 * 7) % 23);
-                std::thread::sleep(cost);
-                if c.small_left.load(Ordering::SeqCst) == 0 {
-                    c.most_after.fetch_max(c.items.load(Ordering::SeqCst), Ordering::SeqCst);
-                }
-                c.item_micros.fetch_add(cost.as_micros() as usize, Ordering::SeqCst);
+                c.items.fetch_add(1, Ordering::SeqCst);
+                until(|| c.small_left.load(Ordering::SeqCst) == 0);
+                until(|| c.released.load(Ordering::SeqCst) || c.items.load(Ordering::SeqCst) >= c.threads);
+                c.released.store(true, Ordering::SeqCst);
+                c.most_after.fetch_max(c.items.load(Ordering::SeqCst), Ordering::SeqCst);
                 c.items.fetch_sub(1, Ordering::SeqCst);
                 c.leave();
                 vec![LintError::error("workspace".into(), 1, "split", item.clone())]
@@ -111,53 +123,37 @@ impl RepoLint for Split {
 }
 
 /// One run of `crates` small units beside one unit of `items` items, on `threads` threads, with
-/// no store. Returns the counts, the run's wall time and the split unit's findings in order.
-fn run_spread(crates: usize, items: usize, threads: usize) -> (Arc<Counts>, Duration, Vec<String>) {
+/// no store. Returns the counts and the split unit's findings in order.
+fn run_spread(crates: usize, items: usize, threads: usize) -> (Arc<Counts>, Vec<String>) {
     let names: Vec<String> = (0 .. crates).map(|i| format!("c{i:03}")).collect();
     let files: &[(&str, &str)] = &[("src/lib.rs", "pub fn f() {}\n")];
     let list: Vec<(&str, &[(&str, &str)])> = names.iter().map(|n| (n.as_str(), files)).collect();
     let w = Workspace::new(&format!("spread-{threads}"), &list);
-    let counts = Arc::new(Counts::default());
-    counts.small_left.store(crates, Ordering::SeqCst);
+    let counts = Arc::new(Counts {
+        small_left: AtomicUsize::new(crates),
+        threads,
+        ..Counts::default()
+    });
     let pack = LintPack {
         crate_lints: vec![Box::new(Small(Arc::clone(&counts)))],
         repo_lints: vec![Box::new(Split(Arc::clone(&counts), items))],
         ..LintPack::default()
     };
     let reading = Reading::new(&w.dir.0).with_threads(threads);
-    let start = Instant::now();
     let found = w.run_with(&reading, None, None, Some(&pack));
-    let wall = start.elapsed();
     let split = found.iter().filter(|e| e.lint_name == "split").map(|e| e.message.clone()).collect();
-    (counts, wall, split)
+    (counts, split)
 }
 
 /// Once the small units are done, every one of the run's threads judges the split unit's items,
 /// and at no moment are more threads at work than the run names. The items come back in order.
 #[test]
 fn idle_threads_take_the_items_of_a_unit_already_splitting() {
-    let (counts, _, split) = run_spread(48, 64, 4);
+    let (counts, split) = run_spread(48, 64, 4);
     let want: Vec<String> = (0 .. 64).map(|i| format!("item-{i:03}")).collect();
     assert_eq!(split, want, "the findings come back in the items' order");
     let most = counts.most.load(Ordering::SeqCst);
     assert!(most <= 4, "{most} threads were at work at once on a run of four");
     let after = counts.most_after.load(Ordering::SeqCst);
     assert_eq!(after, 4, "once the small units were done, only {after} of four threads judged items");
-}
-
-/// The measurement behind the test above: the run's wall time against the sum of the split
-/// unit's item costs, at one thread and at four. Prints, asserts nothing.
-#[test]
-#[ignore = "a measurement, run by hand with --ignored --nocapture"]
-fn spread_wall_against_item_cost() {
-    for threads in [1, 4] {
-        let (counts, wall, _) = run_spread(400, 160, threads);
-        let items = Duration::from_micros(counts.item_micros.load(Ordering::SeqCst) as u64);
-        eprintln!(
-            "threads {threads}: wall {wall:?}, item cost {items:?}, most at work {}, most items at once {}, after small units {}",
-            counts.most.load(Ordering::SeqCst),
-            counts.most_items.load(Ordering::SeqCst),
-            counts.most_after.load(Ordering::SeqCst),
-        );
-    }
 }

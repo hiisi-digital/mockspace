@@ -318,10 +318,14 @@ mod tests {
         let budget = Budget::new(4);
         let working = AtomicUsize::new(0);
         let most = AtomicUsize::new(0);
+        let released = AtomicUsize::new(0);
+        // Each item holds its thread until four are at work at once, after which none waits, so a
+        // fifth thread at work would be seen.
         let busy = || {
             let now = working.fetch_add(1, Ordering::SeqCst) + 1;
             most.fetch_max(now, Ordering::SeqCst);
-            std::thread::sleep(Duration::from_millis(5));
+            until(|| released.load(Ordering::SeqCst) == 1 || working.load(Ordering::SeqCst) >= 4);
+            released.store(1, Ordering::SeqCst);
             working.fetch_sub(1, Ordering::SeqCst);
         };
         let out = each_index(&budget, 8, |outer| {
@@ -334,8 +338,7 @@ mod tests {
         });
         assert_eq!(out, (0 .. 8).collect::<Vec<_>>());
         let most = most.load(Ordering::SeqCst);
-        assert!(most <= 4, "{most} threads worked at once on a budget of 4");
-        assert!(most >= 2, "the control: the budget was used at all ({most})");
+        assert_eq!(most, 4, "every thread of the budget and no more worked at once");
         assert_eq!(budget.spare.load(Ordering::SeqCst), 3, "every thread was given back");
     }
 
@@ -344,36 +347,39 @@ mod tests {
     #[test]
     fn a_unit_waiting_on_its_last_item_takes_another_units_items() {
         let budget = Budget::new(4);
-        let first_open = AtomicUsize::new(0);
-        let second_open = AtomicUsize::new(0);
         let helped = AtomicUsize::new(0);
         let second = Mutex::new(None);
+        let open_of = |n: usize| budget.lock().open.iter().any(|b| b.n == n);
+        let handed_out = |n: usize| budget.lock().open.iter().any(|b| b.n == n && b.next == n);
         each_index(&budget, 3, |unit| match unit {
-            // A unit splitting into many short items.
+            // A unit splitting into many items, each held until the second unit's thread has
+            // taken one of them, so the threads already on them cannot finish the split alone.
             0 => {
-                first_open.store(1, Ordering::SeqCst);
                 each_index(&budget, 40, |_| {
-                    std::thread::sleep(Duration::from_millis(5));
-                    let here = Some(std::thread::current().id());
-                    if second_open.load(Ordering::SeqCst) == 1 && *second.lock().unwrap() == here {
+                    if *second.lock().unwrap() == Some(std::thread::current().id()) {
                         helped.fetch_add(1, Ordering::SeqCst);
+                    }
+                    until(|| helped.load(Ordering::SeqCst) > 0);
+                });
+            },
+            // A unit splitting, once the first has split and taken the last spare thread, into two
+            // items. Its own thread returns from whichever it takes once both are handed out; the
+            // free thread taking the other holds it until the first unit was helped, so the second
+            // unit waits on it with nothing of its own left.
+            1 => {
+                assert!(until(|| open_of(40) && budget.spare.load(Ordering::SeqCst) == 0), "the first unit split");
+                let me = std::thread::current().id();
+                *second.lock().unwrap() = Some(me);
+                each_index(&budget, 2, |_| {
+                    if std::thread::current().id() == me {
+                        assert!(until(|| handed_out(2)), "the other item was taken");
+                    } else {
+                        until(|| helped.load(Ordering::SeqCst) > 0);
                     }
                 });
             },
-            // A unit splitting later into one short item it takes itself and one long item a
-            // free thread takes, so it waits on that one with nothing of its own left.
-            1 => {
-                while first_open.load(Ordering::SeqCst) == 0 {
-                    std::thread::yield_now();
-                }
-                std::thread::sleep(Duration::from_millis(2));
-                *second.lock().unwrap() = Some(std::thread::current().id());
-                second_open.store(1, Ordering::SeqCst);
-                each_index(&budget, 2, |i| std::thread::sleep(Duration::from_millis(if i == 0 { 10 } else { 80 })));
-                second_open.store(0, Ordering::SeqCst);
-            },
-            // A unit done at once, whose thread is then free.
-            _ => std::thread::sleep(Duration::from_millis(1)),
+            // A unit done once the second has split, whose thread is then free to take its item.
+            _ => assert!(until(|| open_of(2)), "the second unit split"),
         });
         let helped = helped.load(Ordering::SeqCst);
         assert!(helped > 0, "the waiting unit took none of the other unit's items");
@@ -388,7 +394,6 @@ mod tests {
         let finished = AtomicUsize::new(0);
         let caught = std::panic::catch_unwind(AssertUnwindSafe(|| {
             each_index(&budget, 16, |i| {
-                std::thread::sleep(Duration::from_millis(2));
                 assert!(i != 3, "item three fails");
                 finished.fetch_add(1, Ordering::SeqCst);
             })
