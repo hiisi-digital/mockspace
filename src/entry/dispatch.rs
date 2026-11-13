@@ -236,6 +236,15 @@ fn explain_lint_load_failure(cfg: &Config, err: &impl std::fmt::Display) -> Stri
     s
 }
 
+/// Configures a loaded pack from the project's config: each lint from `[lints.<name>]` and each
+/// tool from `[tools.<name>]`. A key a tool does not declare is not handed over here, and the run
+/// of that tool refuses it (`entry::tool`). One function so the dispatcher and its tests configure
+/// the same way.
+pub(crate) fn configure_pack(pack: &mut LintPack, cfg: &Config) {
+    pack.configure_from(&cfg.lint_overrides);
+    pack.configure_tools(&cfg.tool_params);
+}
+
 pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // The engine runs as a grandchild of git hooks, whose exported repo-location
     // GIT_* variables poison every `git` this process spawns from a different
@@ -430,10 +439,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // and `configure` wants `&mut`. Here the pack is still owned, so this is
     // where it happens, once, for every kind.
     if let Some(l) = &mut loaded {
-        l.pack.configure_from(&cfg.lint_overrides);
-        // The same for its tools, from `[tools.<name>]`. A key a tool does not declare is
-        // not handed over here, and the run of that tool refuses it (`entry::tool`).
-        l.pack.configure_tools(&cfg.tool_params);
+        configure_pack(&mut l.pack, &cfg);
     }
     let pack = match &loaded {
         Some(l) => &l.pack,

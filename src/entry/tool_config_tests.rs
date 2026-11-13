@@ -22,11 +22,13 @@ use mockspace_lint_rules::tool::{
 
 use crate::config::Config;
 
-/// What the probe was handed and whether it ran, kept outside it so the test reads it after the run.
+/// What the probe was handed, whether it ran, and the code the run exited with, kept outside it so
+/// the test reads it after the run.
 #[derive(Default)]
 struct Seen {
     subjects: Option<Vec<String>>,
     ran:      bool,
+    exit:     Option<std::process::ExitCode>,
 }
 
 struct Probe(Arc<Mutex<Seen>>);
@@ -71,8 +73,8 @@ impl Tool for Probe {
     }
 }
 
-/// Loads a repository whose config is `toml`, configures a pack holding the probe from it the way the
-/// dispatcher does, and runs the probe, returning what it saw.
+/// Loads a repository whose config is `toml`, configures a pack holding the probe from it through
+/// the dispatcher's own `configure_pack`, and runs the probe, returning what it saw.
 fn run_with(toml: &str) -> Seen {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
@@ -87,14 +89,16 @@ fn run_with(toml: &str) -> Seen {
     let seen = Arc::new(Mutex::new(Seen::default()));
     let mut pack = LintPack::default();
     pack.tools.push(Box::new(Probe(Arc::clone(&seen))));
-    pack.configure_tools(&cfg.tool_params);
-    let _ = super::tool::run(&cfg, &pack, "probe", &["anything"], true);
+    crate::entry::dispatch::configure_pack(&mut pack, &cfg);
+    let exit = super::tool::run(&cfg, &pack, "probe", &["anything"], true);
     drop(pack);
-    Arc::try_unwrap(seen)
+    let mut seen = Arc::try_unwrap(seen)
         .ok()
         .expect("the pack is dropped")
         .into_inner()
-        .unwrap()
+        .unwrap();
+    seen.exit = Some(exit);
+    seen
 }
 
 #[test]
@@ -105,6 +109,7 @@ fn a_key_the_tool_reads_reaches_it_and_it_runs() {
         Some(vec!["workflow".to_owned(), "engine".to_owned()])
     );
     assert!(seen.ran);
+    assert_eq!(seen.exit, Some(std::process::ExitCode::SUCCESS));
 }
 
 #[test]
@@ -114,6 +119,7 @@ fn a_key_the_tool_does_not_read_stops_the_run_and_never_reaches_it() {
     let seen = run_with("\n[tools.probe]\nsubject = [\"workflow\"]\n");
     assert_eq!(seen.subjects, None, "the undeclared key was handed over");
     assert!(!seen.ran, "the tool ran over a key it does not read");
+    assert_eq!(seen.exit, Some(std::process::ExitCode::from(2)));
 }
 
 #[test]
@@ -123,4 +129,30 @@ fn with_no_table_the_tool_runs_on_its_defaults() {
     let seen = run_with("");
     assert_eq!(seen.subjects, None);
     assert!(seen.ran);
+    assert_eq!(seen.exit, Some(std::process::ExitCode::SUCCESS));
+}
+
+#[test]
+fn mock_help_names_the_keys_a_tool_reads() {
+    let mut pack = LintPack::default();
+    pack.tools.push(Box::new(Probe(Arc::default())));
+    let listings = crate::tool_catalogue::enumerate(&pack);
+    let probe = listings
+        .iter()
+        .find(|l| l.name == "probe")
+        .expect("the probe is listed");
+    let help = crate::tool_catalogue::render_one(probe);
+    assert!(
+        help.contains("[tools.probe] subjects  the subject ids the probe reads"),
+        "{help}"
+    );
+    // THE CONTROL: a tool that reads no table has no key named in its help.
+    let other = listings
+        .iter()
+        .find(|l| l.name != "probe")
+        .expect("another tool is listed");
+    assert!(
+        !crate::tool_catalogue::render_one(other).contains("[tools."),
+        "a tool reading no table names one in its help"
+    );
 }
