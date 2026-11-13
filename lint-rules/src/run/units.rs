@@ -243,6 +243,9 @@ impl<'a> Runner<'a> {
                 krate,
                 filter: Some(filter),
             } => {
+                // Which file `source()` reads follows from what is in the crate, so the listing is
+                // in the trace: a file sorting first reruns the lint.
+                let _ = view.crate_files(&krate.dir);
                 let allowed: Vec<_> = view
                     .reading()
                     .crate_sources(&krate.dir)

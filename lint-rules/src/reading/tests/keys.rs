@@ -151,3 +151,51 @@ fn a_path_filter_changing_reruns_the_lint() {
     assert_eq!(shown(&filtered), shown(&w.run(None, Some(&only_root), None)));
     assert!(of("no-todo", &filtered).is_empty(), "the filtered run judged again: {filtered:?}");
 }
+
+/// A crate-scoped lint naming the one file it was shown, which a path filter picks.
+struct First;
+
+impl Lint for First {
+    fn name(&self) -> &'static str {
+        "first"
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
+    }
+
+    fn per_file(&self) -> bool {
+        false
+    }
+}
+
+impl CrateLint for First {
+    fn check(&self, ctx: &LintContext) -> Vec<LintError> {
+        let shown = format!("{}={}", ctx.source_path().display(), ctx.source().trim());
+        vec![LintError::error(ctx.crate_name.to_string(), 1, "first", shown)]
+    }
+}
+
+/// Under a path filter the file a crate-scoped lint is shown is the first the filter admits, so a
+/// file sorting ahead of it reruns the lint, though the lint read nothing but that one file.
+#[test]
+fn a_file_sorting_first_under_a_filter_reruns_the_lint() {
+    let w = Workspace::new("keys-first", &[("alpha", &[("src/lib.rs", "pub mod mz;\n"), ("src/mz.rs", "z\n")])]);
+    let cache = Mem::default();
+    let pack = LintPack {
+        crate_lints: vec![Box::new(First)],
+        ..LintPack::default()
+    };
+    let mut filtered = LintConfig::empty();
+    filtered.paths.insert("first".into(), PathFilter {
+        include: vec!["src/m*.rs".into()],
+        exclude: vec![],
+    });
+    assert_eq!(of("first", &w.run(Some(&cache), Some(&filtered), Some(&pack))), ["src/mz.rs=z:None"]);
+    w.write("alpha", "src/ma.rs", "a\n");
+    assert_eq!(
+        of("first", &w.run(Some(&cache), Some(&filtered), Some(&pack))),
+        ["src/ma.rs=a:None"],
+        "the new first file is the one shown"
+    );
+}
