@@ -236,3 +236,70 @@ fn a_rewrite_with_its_old_time_put_back_is_read_again() {
     assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["two"]);
     assert_eq!(judged.load(Ordering::SeqCst), 2);
 }
+
+/// Whether a path is a file, a directory or nothing is part of the trace: each change of it reruns
+/// the unit, and the unit replays while it holds.
+#[test]
+fn a_kind_answer_changing_reruns_the_unit() {
+    let dir = Dir::new("kind");
+    let cache = Mem::default();
+    let (probe, judged) = Probe::new(|v| format!("file={} dir={}", v.is_file("x"), v.is_dir("x")));
+    let pack = pack_of(probe);
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["file=false dir=false"]);
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["file=false dir=false"]);
+    assert_eq!(judged.load(Ordering::SeqCst), 1, "the control: an unmoved answer replays");
+    dir.write("x/inside", "");
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["file=false dir=true"]);
+    std::fs::remove_dir_all(dir.0.join("x")).unwrap();
+    dir.write("x", "");
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["file=true dir=false"]);
+    assert_eq!(judged.load(Ordering::SeqCst), 3);
+}
+
+/// A crate lint reading what the engine hands over, here a crate's dependencies.
+struct Deps {
+    judged: Arc<AtomicUsize>,
+}
+
+impl Lint for Deps {
+    fn name(&self) -> &'static str {
+        "deps"
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
+    }
+
+    fn per_file(&self) -> bool {
+        false
+    }
+}
+
+impl crate::CrateLint for Deps {
+    fn check(&self, ctx: &crate::LintContext) -> Vec<LintError> {
+        self.judged.fetch_add(1, Ordering::SeqCst);
+        vec![LintError::error(ctx.crate_name.to_string(), 1, "deps", ctx.deps().join(","))]
+    }
+}
+
+/// A value the engine hands over is a question like any other: the unit that read it reruns when
+/// it changes, and replays while it does not.
+#[test]
+fn a_value_answer_changing_reruns_the_unit() {
+    let mut w = Workspace::new("value", &[("alpha", &[("src/lib.rs", "pub fn f() {}\n")])]);
+    let cache = Mem::default();
+    let judged = Arc::new(AtomicUsize::new(0));
+    let pack = LintPack {
+        crate_lints: vec![Box::new(Deps {
+            judged: Arc::clone(&judged),
+        })],
+        ..LintPack::default()
+    };
+    let deps = |found: &[LintError]| found.iter().filter(|e| e.lint_name == "deps").map(|e| e.message.clone()).collect::<Vec<_>>();
+    assert_eq!(deps(&w.run(Some(&cache), None, Some(&pack))), [""]);
+    assert_eq!(deps(&w.run(Some(&cache), None, Some(&pack))), [""]);
+    assert_eq!(judged.load(Ordering::SeqCst), 1, "the control: an unmoved value replays");
+    w.crates[0].deps = vec!["beta".into()];
+    assert_eq!(deps(&w.run(Some(&cache), None, Some(&pack))), ["beta"]);
+    assert_eq!(judged.load(Ordering::SeqCst), 2);
+}
