@@ -48,8 +48,9 @@ impl InstallMode {
 /// nothing in `mockspace.toml` sets it, so this default is the only value it takes.
 ///
 /// The engine's nuke detection and the generated hooks both read the marker the
-/// config resolves to, and this is the one place the default is spelled.
-pub const DEFAULT_NUKE_MARKER: &str = "Nuked by `cargo mock --nuke`";
+/// config resolves to. The default is spelled once, in the lint crate, because
+/// `changelist-required` judges the stub a nuke writes and has no config to read.
+pub const DEFAULT_NUKE_MARKER: &str = mockspace_lint_rules::changelist_required::NUKE_MARKER;
 
 /// Mockspace workspace configuration.
 #[derive(Clone, Debug)]

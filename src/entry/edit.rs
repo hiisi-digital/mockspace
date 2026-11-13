@@ -214,8 +214,77 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, req: &Request) -> ExitCode {
     ExitCode::from(exit_of(cfg, pack, req))
 }
 
+/// The source directories as they really are, and every place in them the edited file is
+/// read at, or `None` with the reason printed when `req.file` is not absolute.
+///
+/// A lint reads a file by its place under a source directory, so a path that only reaches
+/// it by `..` or a relative spelling would name no crate and pass. It is normalised
+/// lexically here, and a relative one is refused. A file reached through a link to a
+/// source directory is taken to the real directory, so both sides of the comparison are
+/// real paths.
+fn places_of(cfg: &Config, req: &Request) -> Option<(Vec<std::path::PathBuf>, Vec<std::path::PathBuf>)> {
+    let Some(file) = normalised(req.file) else {
+        eprintln!(
+            "mock check-edit: `{}` is not an absolute path, so no crate of this repository can be told from it.",
+            req.file.display()
+        );
+        return None;
+    };
+    let src_dirs: Vec<std::path::PathBuf> = cfg
+        .src_dirs
+        .iter()
+        .map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()))
+        .collect();
+    let places = through_directory_links(&file, &src_dirs);
+    Some((src_dirs, places))
+}
+
+/// The verdict of `changelist-required`, the design round's phase gate, on the edit.
+///
+/// The gate is a repository lint, yet what it asks of one file is that file's own text and
+/// the round's phase: outside IMPL a source file passes only when it declares nothing, which
+/// is how a round's doc phase adds a crate, its manifest and a `lib.rs` of documentation.
+/// So an edit has a verdict from it, and the agent hook asks for that verdict rather than
+/// refusing every source edit outside IMPL.
+fn phase_gate_exit(cfg: &Config, req: &Request) -> u8 {
+    let Some((src_dirs, places)) = places_of(cfg, req) else {
+        return 2;
+    };
+    let mock_dir = cfg.mock_dir.canonicalize().unwrap_or_else(|_| cfg.mock_dir.clone());
+    let mut blocked = false;
+    for place in &places {
+        let Some(text) = after(req, || std::fs::read_to_string(place).ok()) else {
+            continue;
+        };
+        // Only an edit the tool refuses itself goes unjudged. A place the gate cannot
+        // address is a question with no answer, and passing it would fail open.
+        let Ok(rel) = place.strip_prefix(&mock_dir) else {
+            eprintln!(
+                "mock check-edit: `{}` is not under the mock dir `{}`, so the phase gate cannot \
+                 address it.",
+                place.display(),
+                mock_dir.display()
+            );
+            return 2;
+        };
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        if !mockspace_lint_rules::changelist_required::admits_edit(&mock_dir, &src_dirs, &rel, &text) {
+            eprintln!(
+                "`{rel}` would declare items, and source waits for the IMPL phase. Outside it a \
+                 source file may carry only comments, module docs and inner attributes, which is \
+                 how a round's doc phase adds a crate: its manifest and a `lib.rs` of documentation."
+            );
+            blocked = true;
+        }
+    }
+    u8::from(blocked)
+}
+
 /// The status `run` exits with.
 fn exit_of(cfg: &Config, pack: &LintPack, req: &Request) -> u8 {
+    if req.lint == mockspace_lint_rules::Lint::name(&mockspace_lint_rules::changelist_required::ChangelistRequired) {
+        return phase_gate_exit(cfg, req);
+    }
     let builtins = mockspace_lint_rules::all_lints();
     let named = |n: &str| {
         builtins
@@ -243,25 +312,9 @@ fn exit_of(cfg: &Config, pack: &LintPack, req: &Request) -> u8 {
         Some(true) => {},
     }
 
-    // A lint reads a file by its place under a source directory, so a path that only
-    // reaches it by `..` or a relative spelling would name no crate and pass. It is
-    // normalised lexically here, and a relative one is refused.
-    let Some(file) = normalised(req.file) else {
-        eprintln!(
-            "mock check-edit: `{}` is not an absolute path, so no crate of this repository can be told from it.",
-            req.file.display()
-        );
+    let Some((src_dirs, places)) = places_of(cfg, req) else {
         return 2;
     };
-
-    // The source directories as they really are, and the file reached through a link to one
-    // taken to the real directory, so both sides of the comparison are real paths.
-    let src_dirs: Vec<std::path::PathBuf> = cfg
-        .src_dirs
-        .iter()
-        .map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()))
-        .collect();
-    let places = through_directory_links(&file, &src_dirs);
 
     let crates = crate::parse::discover_crates_in(&src_dirs, &cfg.crate_prefix);
     // The gate lints a file once in every crate that reaches it, so the edit is refused when

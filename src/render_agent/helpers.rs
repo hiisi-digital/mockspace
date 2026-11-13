@@ -294,3 +294,44 @@ pub(crate) fn find_launcher(if_missing: &str) -> String {
          fi\n"
     )
 }
+
+/// The shell that hands the edit in a hook's payload to `mock check-edit` for `lint`, run from
+/// the repository in the shell variable `root_var`, leaving the launcher's output in `_OUT` and
+/// its exit status in `_RC`. `gate` names the gate in a refusal when it cannot ask.
+///
+/// Every hook that asks a lint about an edit reads the payload the same way: a field goes to a
+/// file byte for byte, since `$(...)` strips trailing newlines and an old_string that is only
+/// newlines, or a new_string ending in one, would then name a different file than the one the
+/// edit makes. `_extract` ends with the one newline jq adds, which is the only one removed. A
+/// Write carries `content`, an Edit `old_string` and `new_string`, a multi-edit `edits`.
+pub(crate) fn ask_check_edit(lint: &str, gate: &str, root_var: &str) -> String {
+    let launcher_lookup = find_launcher(&format!(
+        "the {gate} gate cannot run: no mockspace launcher on PATH. The verdict is the lint's and the engine gives it, so guessing a weaker rule here would contradict it. Install with: cargo install cargo-mock"
+    ));
+    format!(
+        "_extract_to() {{\n\
+         \x20   local v\n\
+         \x20   v=$(_extract \"$1\"; printf x)\n\
+         \x20   v=${{v%x}}\n\
+         \x20   printf '%s' \"${{v%$'\\n'}}\" > \"$2\"\n\
+         }}\n\
+         {launcher_lookup}\
+         [ -d \"${root_var}\" ] \\\n\
+         \x20   || deny \"the {gate} gate cannot run: its repository ${root_var} is not there. Regenerate the hooks with cargo mock from where the repository now is.\"\n\
+         WORK=$(mktemp -d) || deny \"the {gate} gate cannot run: no temporary directory.\"\n\
+         trap 'rm -rf \"$WORK\"' EXIT\n\
+         _extract_to old_string \"$WORK/old\"\n\
+         _extract_to new_string \"$WORK/new\"\n\
+         if [[ ! -s \"$WORK/old\" && ! -s \"$WORK/new\" ]]; then _extract_to content \"$WORK/new\"; fi\n\
+         ARGS=(check-edit --lint {lint} --file \"$FILE_PATH\" --lint-only)\n\
+         _extract_to edits \"$WORK/edits\"\n\
+         if [[ \"$(head -c 1 \"$WORK/edits\")\" == \"[\" ]]; then\n\
+         \x20   ARGS+=(--edits \"$WORK/edits\")\n\
+         elif [[ -s \"$WORK/old\" ]]; then\n\
+         \x20   ARGS+=(--replace \"$WORK/old\")\n\
+         \x20   if [[ \"$(_extract replace_all)\" == \"true\" ]]; then ARGS+=(--all); fi\n\
+         fi\n\
+         _OUT=$(cd \"${root_var}\" 2>/dev/null && \"$launcher\" \"${{ARGS[@]}}\" < \"$WORK/new\" 2>&1)\n\
+         _RC=$?\n"
+    )
+}
