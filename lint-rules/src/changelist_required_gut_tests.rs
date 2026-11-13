@@ -18,7 +18,9 @@ use super::*;
 
 const LIB_ITEMS: &str = "//! The crate.\npub mod more;\npub fn a() {}\n";
 const MORE_ITEMS: &str = "pub fn more() {}\n";
-const STUB: &str = "// Nuked by `cargo mock --nuke`\n";
+fn stub(proc_macro: bool) -> String {
+    nuke_stub("x", proc_macro, NUKE_MARKER)
+}
 
 /// A repository in DOC whose crate `x` has `lib.rs` and `more.rs` committed with items.
 fn committed(tag: &str) -> PathBuf {
@@ -31,7 +33,11 @@ fn committed(tag: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("crates/x/src")).unwrap();
     std::fs::create_dir_all(root.join("design_rounds")).unwrap();
-    std::fs::write(root.join("design_rounds/202601010000_changelist.doc.md"), "x\n").unwrap();
+    std::fs::write(
+        root.join("design_rounds/202601010000_changelist.doc.md"),
+        "x\n",
+    )
+    .unwrap();
     std::fs::write(root.join("crates/x/src/lib.rs"), LIB_ITEMS).unwrap();
     std::fs::write(root.join("crates/x/src/more.rs"), MORE_ITEMS).unwrap();
     for args in [
@@ -47,7 +53,13 @@ fn committed(tag: &str) -> PathBuf {
 }
 
 fn git(root: &Path, args: &[&str]) {
-    let ok = Command::new("git").args(args).current_dir(root).output().unwrap().status.success();
+    let ok = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .unwrap()
+        .status
+        .success();
     assert!(ok, "git {args:?}");
 }
 
@@ -63,7 +75,7 @@ fn gate(root: &Path) -> Vec<LintError> {
         invocation:  None,
         canon_paths: &[],
         open_panels: &[],
-        ref_files: &crate::src_layout::NO_REF_FILES,
+        ref_files:   &crate::src_layout::NO_REF_FILES,
         registry:    &Default::default(),
         verdicts:    None,
     })
@@ -118,8 +130,8 @@ fn scaffolding_rewritten_as_scaffolding_passes() {
 #[test]
 fn a_marker_stub_beside_surviving_source_is_refused() {
     let root = committed("stub");
-    let guard = admits(&root, "crates/x/src/lib.rs", STUB);
-    std::fs::write(root.join("crates/x/src/lib.rs"), STUB).unwrap();
+    let guard = admits(&root, "crates/x/src/lib.rs", &stub(false));
+    std::fs::write(root.join("crates/x/src/lib.rs"), &stub(false)).unwrap();
     let found = gate(&root);
     done(root);
     assert!(!guard, "the guard must refuse the stub");
@@ -139,19 +151,30 @@ fn a_removal_without_a_nuke_is_refused() {
 /// The whole shape of a nuke passes: the stub, and every other source file removed.
 #[test]
 fn a_whole_nuke_passes() {
-    let root = committed("nuke");
-    std::fs::write(root.join("crates/x/src/lib.rs"), STUB).unwrap();
-    git(&root, &["rm", "-q", "crates/x/src/more.rs"]);
-    git(&root, &["add", "-A"]);
-    let found = gate(&root);
-    done(root);
-    assert!(found.is_empty(), "{found:?}");
+    for proc_macro in [false, true] {
+        let root = nuked("nuke", proc_macro);
+        let found = gate(&root);
+        done(root);
+        assert!(found.is_empty(), "proc macro {proc_macro}: {found:?}");
+    }
+}
+
+/// The stub is admitted at the guard once nothing else is left, for both kinds.
+#[test]
+fn the_stub_of_either_kind_is_admitted_once_nothing_else_is_left() {
+    for proc_macro in [false, true] {
+        let root = committed("stubguard");
+        git(&root, &["rm", "-q", "crates/x/src/more.rs"]);
+        let admitted = admits(&root, "crates/x/src/lib.rs", &stub(proc_macro));
+        done(root);
+        assert!(admitted, "proc macro {proc_macro}");
+    }
 }
 
 /// `x` nuked: the stub staged over `lib.rs` and `more.rs` removed.
-fn nuked(tag: &str) -> PathBuf {
+fn nuked(tag: &str, proc_macro: bool) -> PathBuf {
     let root = committed(tag);
-    std::fs::write(root.join("crates/x/src/lib.rs"), STUB).unwrap();
+    std::fs::write(root.join("crates/x/src/lib.rs"), stub(proc_macro)).unwrap();
     git(&root, &["rm", "-q", "crates/x/src/more.rs"]);
     git(&root, &["add", "-A"]);
     root
@@ -160,20 +183,20 @@ fn nuked(tag: &str) -> PathBuf {
 /// A nuke excuses removals and the stub, never new items in the crate.
 #[test]
 fn items_written_into_a_nuked_crate_are_refused_by_the_guard() {
-    let root = nuked("guard");
+    let root = nuked("guard", false);
     let over_lib = admits(&root, "crates/x/src/lib.rs", "pub fn back() {}\n");
     let beside = admits(&root, "crates/x/src/evil.rs", "pub fn evil() {}\n");
-    let stub = admits(&root, "crates/x/src/lib.rs", STUB);
+    let the_stub = admits(&root, "crates/x/src/lib.rs", &stub(false));
     done(root);
     assert!(!over_lib, "items over the stub");
     assert!(!beside, "items in a new file");
-    assert!(stub, "the stub itself");
+    assert!(the_stub, "the stub itself");
 }
 
 /// Code outside `src`, beside a nuke, is judged on its own text.
 #[test]
 fn code_outside_src_beside_a_nuke_is_refused() {
-    let root = nuked("outside");
+    let root = nuked("outside", false);
     std::fs::write(root.join("crates/x/build.rs"), "fn main() {}\n").unwrap();
     git(&root, &["add", "-A"]);
     let found = gate(&root);
@@ -184,9 +207,17 @@ fn code_outside_src_beside_a_nuke_is_refused() {
 /// Items written over a staged stub and left unstaged are refused.
 #[test]
 fn unstaged_items_over_a_nuke_stub_are_refused() {
-    let root = nuked("unstaged");
+    let root = nuked("unstaged", false);
     std::fs::write(root.join("crates/x/src/lib.rs"), "pub fn back() {}\n").unwrap();
     let found = gate(&root);
     done(root);
     assert!(!found.is_empty(), "{found:?}");
+}
+
+/// A custom inner attribute can expand to items, so it is not known to declare nothing.
+#[test]
+#[ignore = "mockspace_changelist_required_reads_a_custom_inner_attribute: every inner attribute passes"]
+fn a_custom_inner_attribute_is_not_known_to_declare_nothing() {
+    assert!(scaffold::declares_nothing("#![no_std]\n"));
+    assert!(!scaffold::declares_nothing("#![generate_items]\n"));
 }

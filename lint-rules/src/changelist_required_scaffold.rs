@@ -11,8 +11,22 @@ use std::process::Command;
 use super::staged_or_worktree;
 use crate::src_layout::SrcLayout;
 
-/// The marker a nuked crate's `lib.rs` stub carries.
-const NUKE_MARKER: &str = "Nuked by";
+/// The marker a nuked crate's `lib.rs` stub carries, and the one place it is
+/// spelled: the launcher's config defaults to it and `cargo mock --nuke`
+/// writes it through [`nuke_stub`].
+pub const NUKE_MARKER: &str = "Nuked by `cargo mock --nuke`";
+
+/// The `lib.rs` a nuke leaves for crate `name`, carrying `marker`.
+///
+/// A proc-macro crate keeps `extern crate proc_macro;`, its one declaration,
+/// so the stub still builds as a proc-macro crate.
+pub fn nuke_stub(name: &str, proc_macro: bool, marker: &str) -> String {
+    let head = format!(
+        "//! {name}: {}.\n//!\n//! {marker}. Rewrite from design docs (mechanical, no reinterpretation).\n",
+        if proc_macro { "proc macro crate" } else { "nuked" }
+    );
+    if proc_macro { format!("{head}\nextern crate proc_macro;\n") } else { head }
+}
 
 /// Whether a source file the gate would otherwise refuse passes in a phase
 /// other than IMPL, given the `content` it carries, `None` for a removal.
@@ -42,13 +56,19 @@ pub(super) fn passes_outside_impl(
                     lib == file && nothing_else_left(workspace_root, &src, &lib)
                 });
             stub_at_lib || (declares_nothing(text) && nothing_at_head(workspace_root, file))
-        }
+        },
     }
 }
 
-/// Whether `text` is the stub a nuke writes over `lib.rs`.
+/// Whether `text` is the stub a nuke writes over `lib.rs`: the marker, and
+/// nothing declared but a proc-macro crate's `extern crate proc_macro;`.
 fn is_stub(text: &str) -> bool {
-    text.contains(NUKE_MARKER) && declares_nothing(text)
+    text.contains(NUKE_MARKER)
+        && top_level_only(text, |n, src| {
+            n.kind() == "extern_crate_declaration"
+                && n.utf8_text(src.as_bytes())
+                    .is_ok_and(|t| t == "extern crate proc_macro;")
+        })
 }
 
 /// The `src` directory and `lib.rs` path of the package holding `file`.
@@ -91,7 +111,8 @@ fn crate_is_nuked(workspace_root: &Path, layout: &SrcLayout, file: &str) -> bool
 
 /// Whether `src` holds no Rust file other than `lib`, in the index or on disk.
 fn nothing_else_left(workspace_root: &Path, src: &Path, lib: &str) -> bool {
-    !other_source_in_index(workspace_root, src, lib) && !other_source_on_disk(&workspace_root.join(src))
+    !other_source_in_index(workspace_root, src, lib)
+        && !other_source_on_disk(&workspace_root.join(src))
 }
 
 /// Whether the index holds a Rust file under `src` other than `lib`, both
@@ -135,7 +156,11 @@ fn walk_has_rust(dir: &Path) -> bool {
     std::fs::read_dir(dir).is_ok_and(|read| {
         read.flatten().any(|e| {
             let p = e.path();
-            if p.is_dir() { walk_has_rust(&p) } else { p.extension().is_some_and(|x| x == "rs") }
+            if p.is_dir() {
+                walk_has_rust(&p)
+            } else {
+                p.extension().is_some_and(|x| x == "rs")
+            }
         })
     })
 }
@@ -148,6 +173,12 @@ fn walk_has_rust(dir: &Path) -> bool {
 /// and text that does not parse is not known to declare nothing, so it counts
 /// as source.
 pub(super) fn declares_nothing(src: &str) -> bool {
+    top_level_only(src, |_, _| false)
+}
+
+/// Whether `src` parses and every top-level node is a comment, an inner
+/// attribute, or a node `also` admits.
+fn top_level_only(src: &str, also: impl Fn(tree_sitter::Node<'_>, &str) -> bool) -> bool {
     let Some(tree) = crate::make_parser().parse(src, None) else {
         return false;
     };
@@ -156,6 +187,10 @@ pub(super) fn declares_nothing(src: &str) -> bool {
         return false;
     }
     let mut cursor = root.walk();
-    root.children(&mut cursor)
-        .all(|n| matches!(n.kind(), "line_comment" | "block_comment" | "inner_attribute_item"))
+    root.children(&mut cursor).all(|n| {
+        matches!(
+            n.kind(),
+            "line_comment" | "block_comment" | "inner_attribute_item"
+        ) || also(n, src)
+    })
 }

@@ -31,6 +31,7 @@ mod scaffold;
 #[cfg(test)]
 use scaffold::declares_nothing;
 use scaffold::passes_outside_impl;
+pub use scaffold::{NUKE_MARKER, nuke_stub};
 
 const LINT_NAME: &str = "changelist-required";
 
@@ -174,9 +175,11 @@ pub fn admits_edit(mock_dir: &Path, src_dirs: &[PathBuf], file: &str, text: &str
 /// then further modified commits the *worktree* blob, so this reads content
 /// the commit will not carry. Detection is unaffected (the file is flagged
 /// either way); only content-based judgment can go stale, and the case is
-/// catalogued as an ignored test below. Closing it needs a signal for which
-/// commit shape is in flight, which the sanitized hook environment no longer
-/// provides for free.
+/// catalogued as an ignored test below. `changelist-required` closes it for
+/// itself by judging a staged file's working-tree text as well; the fmt-only
+/// exemption still reads the index alone. Closing it here needs a signal for
+/// which commit shape is in flight, which the sanitized hook environment no
+/// longer provides for free.
 pub(crate) fn staged_or_worktree(
     workspace_root: &Path,
     file: &str,

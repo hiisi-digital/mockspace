@@ -24,7 +24,9 @@
 //! `lib.rs` holding only the crate's docs, which `changelist-required` admits
 //! and cargo needs to read the workspace, and the items come in the source
 //! phase. Once both changelists are locked the lint holds the crate again, so
-//! a round cannot close over a crate it never populated.
+//! a round cannot close over a crate it never populated. A crate HEAD holds
+//! source for is never shielded, so an existing crate gutted to its docs is
+//! empty whatever the changelist says about it.
 
 use std::path::Path;
 
@@ -116,9 +118,13 @@ impl CrateLint for NoEmptyCrate {
     }
 }
 
-/// Whether the round open under `mock_dir` is adding `crate_name`: its phase
-/// is DOC, DRAFT or IMPL, and its doc changelist names the crate.
+/// Whether the round open under `mock_dir` is adding `crate_name`: HEAD holds
+/// no source for it, its phase is DOC, DRAFT or IMPL, and its doc changelist
+/// names the crate. An existing crate the changelist mentions is not shielded.
 fn born_in_the_open_round(mock_dir: &Path, crate_name: &str) -> bool {
+    if head_holds_source(mock_dir, crate_name) {
+        return false;
+    }
     let rounds = mock_dir.join("design_rounds");
     if !matches!(
         changelist_helpers::current_phase(&rounds),
@@ -130,6 +136,54 @@ fn born_in_the_open_round(mock_dir: &Path, crate_name: &str) -> bool {
         .or_else(|| changelist_helpers::find_locked_doc_cl(&rounds))
         .and_then(|cl| std::fs::read_to_string(rounds.join(cl.filename)).ok())
         .is_some_and(|text| names_crate(&text, crate_name))
+}
+
+
+/// Whether `HEAD` holds source for `crate_name`: a manifest under `mock_dir`
+/// naming the package, whose `src` holds a file with substantive content.
+/// The doc phase of the round adding the crate commits its manifest and a
+/// docs-only `lib.rs`, so the crate being in `HEAD` is not enough. A query
+/// that fails proves nothing, so it answers yes.
+fn head_holds_source(mock_dir: &Path, crate_name: &str) -> bool {
+    let pattern = format!(r#"^name[[:space:]]*=[[:space:]]*"{crate_name}"[[:space:]]*$"#);
+    let Some(grep) = git_out(mock_dir, &["grep", "-l", "-E", &pattern, "HEAD", "--", "*Cargo.toml"])
+    else {
+        return true;
+    };
+    let manifests = match grep {
+        Ok(out) => out,
+        Err(1) => return false, // no manifest names it: a crate HEAD does not hold
+        Err(_) => return true,
+    };
+    let mut parser = make_parser();
+    for manifest in manifests.lines().filter_map(|l| l.strip_prefix("HEAD:")) {
+        let src = Path::new(manifest).parent().unwrap_or(Path::new("")).join("src");
+        let src = src.to_string_lossy();
+        let Some(Ok(files)) = git_out(mock_dir, &["ls-tree", "-r", "--name-only", "HEAD", "--", &src])
+        else {
+            return true;
+        };
+        for file in files.lines().filter(|f| f.ends_with(".rs")) {
+            let Some(Ok(text)) = git_out(mock_dir, &["show", &format!("HEAD:./{file}")]) else {
+                return true;
+            };
+            match parser.parse(&text, None) {
+                Some(tree) if !has_substantive_content(tree.root_node()) => {},
+                _ => return true,
+            }
+        }
+    }
+    false
+}
+
+/// Run git in `dir`: `None` when it cannot start, `Err(code)` on a failing exit.
+fn git_out(dir: &Path, args: &[&str]) -> Option<Result<String, i32>> {
+    let out = std::process::Command::new("git").args(args).current_dir(dir).output().ok()?;
+    if out.status.success() {
+        Some(Ok(String::from_utf8_lossy(&out.stdout).into_owned()))
+    } else {
+        Some(Err(out.status.code().unwrap_or(-1)))
+    }
 }
 
 /// Whether `text` names `crate_name` as a whole word, so `foo` is not named by
@@ -255,6 +309,32 @@ mod tests {
             let text = if name.contains(".doc.") { doc_text } else { "x\n" };
             std::fs::write(root.join("design_rounds").join(name), text).unwrap();
         }
+        commit(&root);
+        root
+    }
+
+    /// Commit everything under `root`, making it a repository first.
+    fn commit(root: &std::path::Path) {
+        let run = |args: &[&str]| {
+            let ok = std::process::Command::new("git").args(args).current_dir(root).output().unwrap();
+            assert!(ok.status.success(), "git {args:?}");
+        };
+        if !root.join(".git").exists() {
+            run(&["init", "-q"]);
+            run(&["config", "user.email", "t@example.com"]);
+            run(&["config", "user.name", "t"]);
+        }
+        run(&["add", "-A"]);
+        run(&["commit", "-q", "--allow-empty", "-m", "seed", "--no-gpg-sign"]);
+    }
+
+    /// Put crate `test-crate` in `HEAD` with `lib` as its `lib.rs`.
+    fn with_crate_at_head(root: PathBuf, lib: &str) -> PathBuf {
+        let dir = root.join("crates/test-crate");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"test-crate\"\n").unwrap();
+        std::fs::write(dir.join("src/lib.rs"), lib).unwrap();
+        commit(&root);
         root
     }
 
@@ -304,5 +384,21 @@ mod tests {
     fn a_round_with_both_changelists_locked_holds_the_crate_again() {
         let done = ["202601010000_changelist.doc.lock.md", "202601010001_changelist.src.lock.md"];
         assert_eq!(findings_in(round("done", &done, NAMES_IT)), 1);
+    }
+
+    /// An existing crate the changelist names, gutted to its docs, is empty:
+    /// the round is not adding it.
+    #[test]
+    fn an_existing_crate_the_round_names_gutted_to_docs_is_empty() {
+        let root = with_crate_at_head(round("existing", DOC_OPEN, NAMES_IT), "pub fn a() {}\n");
+        assert_eq!(findings_in(root), 1);
+    }
+
+    /// The crate the round scaffolded in an earlier commit, docs only in `HEAD`,
+    /// is still being added.
+    #[test]
+    fn a_crate_the_round_scaffolded_earlier_is_still_shielded() {
+        let root = with_crate_at_head(round("earlier", DOC_OPEN, NAMES_IT), "//! Docs.\n");
+        assert_eq!(findings_in(root), 0);
     }
 }

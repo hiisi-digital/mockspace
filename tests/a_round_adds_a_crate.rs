@@ -299,5 +299,84 @@ fn a_bash_write_of_the_lib_rs_keeps_the_phase_rule() {
     }
 }
 
+/// The phases other than DOC and IMPL, by name.
+const OTHER_PHASES: [&str; 3] = ["TOPIC", "DRAFT", "CLOSED"];
+
+/// `r`, opened in DOC, moved on to `phase`: TOPIC has no changelist, DRAFT the doc
+/// changelist locked, CLOSED both locked.
+fn move_to(r: &Repo, phase: &str) {
+    match phase {
+        "TOPIC" => {
+            r.git(&["rm", "-q", DOC_CL]);
+            r.git(&["commit", "-q", "--no-verify", "-m", "docs: back to the topic"]);
+        },
+        "DRAFT" => lock(r, DOC_CL),
+        "CLOSED" => {
+            lock(r, DOC_CL);
+            write(&r.root.join(SRC_CL), "# Changelist\n");
+            r.git(&["add", "-A"]);
+            r.git(&["commit", "-q", "--no-verify", "-m", "docs: open the source changelist"]);
+            lock(r, SRC_CL);
+        },
+        other => panic!("no phase {other}"),
+    }
+}
+
+/// Outside DOC and IMPL the write guard still admits documentation and refuses an item.
+#[test]
+fn the_write_guard_admits_docs_and_refuses_an_item_in_every_other_phase() {
+    for phase in OTHER_PHASES {
+        let r = doc_phase();
+        move_to(&r, phase);
+        let docs = write_lib(&r, DOCS_ONLY);
+        assert!(matches!(docs, Verdict::Admitted), "{phase}: {docs:?}");
+        match write_lib(&r, ONE_ITEM) {
+            Verdict::Refused(why) => assert!(why.contains("would declare items"), "{phase}: {why}"),
+            v => panic!("{phase}: {v:?}"),
+        }
+    }
+}
+
+/// And the commit gate refuses the item in each of them.
+#[test]
+fn the_commit_gate_refuses_an_item_in_every_other_phase() {
+    for phase in OTHER_PHASES {
+        let r = doc_phase();
+        move_to(&r, phase);
+        scaffold(&r, ONE_ITEM);
+        let out = commit_gate(&r);
+        assert!(!out.status.success(), "{phase}: {}", said(&out));
+        assert!(
+            said(&out).contains("changelist-required"),
+            "{phase}: {}",
+            said(&out)
+        );
+    }
+}
+
+/// A crate added with no round open to add it, in TOPIC or CLOSED, is empty, and the
+/// build gate refuses it. `no-empty-crate` is advisory by default, so the arm runs at
+/// the severity the consumer that met this sets.
+#[test]
+fn a_crate_added_outside_an_open_round_is_refused_at_build() {
+    for phase in ["TOPIC", "CLOSED"] {
+        let r = doc_phase();
+        move_to(&r, phase);
+        scaffold(&r, DOCS_ONLY);
+        let out = r
+            .cmd(BIN)
+            .current_dir(r.root.join("mock"))
+            .args(["--lint-only"])
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{phase}: {}", said(&out));
+        assert!(
+            said(&out).contains("no-empty-crate"),
+            "{phase}: {}",
+            said(&out)
+        );
+    }
+}
+
 #[path = "common/ambient.rs"]
 mod ambient;
