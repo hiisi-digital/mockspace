@@ -71,7 +71,10 @@ impl<'r> View<'r> {
     /// is handed and never through this one: a question put to this view while items are being
     /// judged is not in any item's trace, so the items of this call are then saved for nobody and
     /// judged again on the next run. An `each` asked of this view from inside an item is such a
-    /// question too, and nothing it does clears the mark.
+    /// question too, and nothing it does clears the mark: it saves none of its own items either.
+    ///
+    /// A view marked [`View::untraced`] before the call hands the mark to every item, so no item is
+    /// replayed or saved, and a mark made while the items are judged saves none of them.
     ///
     /// Everything the items asked is written into this view's trace too, so a unit whose items did
     /// not move is replayed whole without being split again.
@@ -109,11 +112,15 @@ impl<'r> View<'r> {
             format!("{}:{}:{}#{}", place.file(), place.line(), place.column(), *n - 1)
         };
         // An `each` asked of this view while another is judging items is a question the outer
-        // items do not hold, as any other question to this view then is.
+        // items do not hold, as any other question to this view then is. The count is taken
+        // before this call adds itself, so such a call sees itself as stray and saves nothing.
+        let strays = self.stray.load(Ordering::Acquire);
         if self.busy.load(Ordering::Acquire) > 0 {
             self.stray.fetch_add(1, Ordering::AcqRel);
         }
-        let strays = self.stray.load(Ordering::Acquire);
+        // A unit that said it reads what no trace holds hands that to every item: an item
+        // of it is judged on every run and saved for nobody.
+        let marked = self.untraced_reason();
         self.busy.fetch_add(1, Ordering::AcqRel);
         let judged: Vec<Judged> = pool::each_index(reading.pool(), items.len(), |i| {
             let item = &items[i];
@@ -128,7 +135,7 @@ impl<'r> View<'r> {
                 }
             });
             let mut prior = Vec::new();
-            if let Some(u) = &unit {
+            if let (Some(u), None) = (&unit, &marked) {
                 let found = u.store.lookup(&u.key);
                 u.store.cache().tally(found.hit.is_some(), u.lint);
                 if let Some((findings, trace)) = found.hit {
@@ -141,6 +148,9 @@ impl<'r> View<'r> {
                 prior = found.prior;
             }
             let view = View::new(reading, unit.clone());
+            if let Some(reason) = &marked {
+                view.untraced(reason);
+            }
             let start = Instant::now();
             let findings = judge(&view, item);
             let took = start.elapsed();
@@ -151,7 +161,10 @@ impl<'r> View<'r> {
             }
         });
         self.busy.fetch_sub(1, Ordering::AcqRel);
-        let stray = self.stray.load(Ordering::Acquire) != strays;
+        // A mark made while the items were judged, on this view or from inside an item, keeps
+        // all of them from being saved; items saved by a call that ended before the mark stay
+        // saved, since nothing they were judged on was read past the trace.
+        let stray = self.stray.load(Ordering::Acquire) != strays || self.untraced_reason().is_some();
         let mut out = Vec::with_capacity(judged.len());
         for j in judged {
             if let (false, Some((key, prior, took)), Some(u)) = (stray, &j.save, &self.unit) {

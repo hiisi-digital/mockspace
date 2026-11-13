@@ -83,11 +83,21 @@ impl<'r> View<'r> {
     /// Say that this unit depends on something a trace cannot hold, an environment variable or the
     /// clock, so it is run on every gate and never replayed. `reason` is kept for whoever reads
     /// why.
+    ///
+    /// The mark covers the unit's [`Self::each`] calls too. An `each` asked after it gives every
+    /// item the mark, so no item is replayed or saved, and an `each` running when it is made saves
+    /// none of its items. Items saved by an `each` that ended before the mark stay saved: they were
+    /// judged on their own traces alone.
     pub fn untraced(&self, reason: &str) {
         let mut t = self.trace.lock().unwrap_or_else(PoisonError::into_inner);
         if t.untraced.is_none() {
             t.untraced = Some(reason.to_string());
         }
+    }
+
+    /// Why this view was marked [`Self::untraced`], if it was.
+    pub(crate) fn untraced_reason(&self) -> Option<String> {
+        self.trace.lock().unwrap_or_else(PoisonError::into_inner).untraced.clone()
     }
 
     /// The repository root every relative path is taken against.
@@ -140,7 +150,8 @@ impl<'r> View<'r> {
     /// Every file whose path relative to the root matches one of `patterns`, in name order,
     /// absolute. A pattern is anchored at the root and takes `*`, `?` and `**` as
     /// [`glob_match_anchored`](crate::glob_match_anchored) does. Only the directories under a
-    /// pattern's literal leading part are walked.
+    /// pattern's literal leading part are walked. A path is matched as it reads, a name that is not
+    /// text with a stand-in for what does not read.
     pub fn glob(&self, patterns: &[&str]) -> Vec<PathBuf> {
         self.record_value("root");
         let mut out: Vec<PathBuf> = Vec::new();
@@ -158,8 +169,10 @@ impl<'r> View<'r> {
             }
             let base = self.abs(Path::new(&literal.join("/")));
             for f in self.walk(&base, |_, _| false) {
-                let key = self.reading.key(&f);
-                if crate::glob_match_anchored(pattern, &key) {
+                // Matched by the name a reader sees, so a name that is not text matches as it reads
+                // and not as the escaped name a key gives it.
+                let shown = f.strip_prefix(self.reading.root()).unwrap_or(&f).to_string_lossy().replace('\\', "/");
+                if crate::glob_match_anchored(pattern, &shown) {
                     out.push(f);
                 }
             }
@@ -300,8 +313,9 @@ impl<'r> View<'r> {
         stdin: Option<&[u8]>,
         inputs: &[&Path],
     ) -> &'r Answer {
-        // The program is started in an absolute directory whatever name the trace gives it, and what
-        // it prints can carry that directory, so the root is in the trace as `root()` puts it there.
+        // The program is started in an absolute directory whatever name the trace gives it, and
+        // what it prints can carry that directory, so the root is in the trace as `root()` puts it
+        // there.
         self.record_value("root");
         let cwd = self.reading.key(cwd);
         let args: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();

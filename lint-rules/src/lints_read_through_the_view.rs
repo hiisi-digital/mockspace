@@ -49,7 +49,9 @@
 //! statement that is a call of `untraced` and nothing else, at the top of its body, is therefore
 //! not looked at, since that call runs whenever the reads after it do. A call in a branch, a
 //! closure or a nested block exempts nothing, and neither does one after the read. A helper
-//! reading for a function calls `untraced` itself.
+//! reading for a function calls `untraced` itself. A read inside the closure of a [`View::each`]
+//! asked after the mark is not looked at either, and need not be: every item of that call carries
+//! the mark, so none is replayed or saved.
 //!
 //! Severity: Error (blocks commit, push, and build).
 

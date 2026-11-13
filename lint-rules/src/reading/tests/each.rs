@@ -376,3 +376,17 @@ fn a_walk_reads_a_file_whose_name_is_not_text() {
     std::fs::write(dir.0.join("d").join(&a), "two").unwrap();
     assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["two"], "the change is seen");
 }
+
+/// A glob matches a file whose name is not text by the name as it reads.
+#[cfg(unix)]
+#[test]
+fn a_glob_matches_a_file_whose_name_is_not_text() {
+    let dir = Dir::new("glob-bad-name");
+    let [a, _] = bad_paths();
+    std::fs::create_dir_all(dir.0.join("d")).unwrap();
+    std::fs::write(dir.0.join("d").join(&a), "one").unwrap();
+    std::fs::write(dir.0.join("d/m.txt"), "two").unwrap();
+    let reading = Reading::new(&dir.0);
+    let found = reading.view().glob(&["**/n*"]);
+    assert_eq!(found, [dir.0.join("d").join(&a)]);
+}
