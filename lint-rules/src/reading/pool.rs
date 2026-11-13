@@ -16,7 +16,7 @@
 //!
 //! A thread takes the items of its own batch first. Once those are all handed out it takes items
 //! of any batch asked for as deep in work as its own or deeper, and waits only when there are none
-//! while some of its own are still being judged. So a thread inside a unit helps the `each` calls
+//! while some of its own are still being judged or a thread it started has not yet ended. So a thread inside a unit helps the `each` calls
 //! of other units, and is never caught judging a unit of the run around it while its own call has
 //! not returned.
 
@@ -28,7 +28,9 @@ use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 /// A batch's work, with the lifetime of the call that opened it taken off. It is called only while
 /// the batch is on the open list, and the call that opened it does not return before the batch is
-/// done and taken off the list, so the closure is alive whenever it is called.
+/// done and taken off the list, so the closure is alive whenever it is called. That holds when the
+/// call unwinds too: the call's `Close` guard stops the batch handing out items, waits for every
+/// item already handed out to return, and takes the batch off the list before the closure drops.
 type Job = *const (dyn Fn(usize) + Sync);
 
 /// One batch on the open list.
@@ -151,11 +153,40 @@ impl Budget {
     }
 }
 
+/// Takes a batch off the open list however the call that opened it ends. On the way out of a panic
+/// it first stops the batch handing out items and waits for those being worked to return, so the
+/// closure the list points at is never called once the call has returned.
+struct Close<'b> {
+    budget: &'b Budget,
+    id:     u64,
+}
+
+impl Drop for Close<'_> {
+    fn drop(&mut self) {
+        let mut open = self.budget.lock();
+        loop {
+            let Some(at) = open.open.iter().position(|b| b.id == self.id) else { return };
+            let batch = &mut open.open[at];
+            batch.n = batch.next;
+            if batch.done == batch.next {
+                open.open.remove(at);
+                self.budget.wake.notify_all();
+                return;
+            }
+            open = self.budget.wake.wait(open).unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+}
+
 /// `work(i)` for every `i` in `order`, handed out in that order to the asking thread, to as many
 /// spare threads of `budget` as there is work for, and to any thread of the run that runs out of
 /// its own, each result at position `i` of what comes back. `order` names each of `0 .. n` once.
 /// With no other thread free, the work runs on the asking thread, one item after another in
 /// `order`.
+///
+/// The asking thread returns once every item has returned and every thread it started has found
+/// nothing left to take; until then it takes work as they do, so it never sits waiting on a thread
+/// that is doing what it could be doing.
 ///
 /// # Panics
 ///
@@ -191,9 +222,13 @@ pub(crate) fn in_order<T: Send>(budget: &Budget, n: usize, order: &[usize], work
         id
     };
     budget.wake.notify_all();
+    // Threads started for this call and not yet ended.
+    let live = AtomicUsize::new(0);
 
     let panic = std::thread::scope(|scope| {
+        let _close = Close { budget, id };
         for _ in 0 .. budget.take(n - 1) {
+            live.fetch_add(1, Ordering::AcqRel);
             let worker = std::thread::Builder::new().spawn_scoped(scope, || {
                 loop {
                     let claim = Budget::claim(&mut budget.lock(), id, depth);
@@ -201,24 +236,38 @@ pub(crate) fn in_order<T: Send>(budget: &Budget, n: usize, order: &[usize], work
                     budget.work(claim);
                 }
                 budget.give(1);
+                let _open = budget.lock();
+                live.fetch_sub(1, Ordering::AcqRel);
+                budget.wake.notify_all();
             });
             // A thread the system will not start is given back, and the others, the asking one
             // among them, do its share.
             if worker.is_err() {
+                live.fetch_sub(1, Ordering::AcqRel);
                 budget.give(1);
             }
         }
         let mut open = budget.lock();
+        let mut panic = None;
+        let mut finished = false;
         loop {
             if let Some(claim) = Budget::claim(&mut open, id, depth) {
                 drop(open);
                 budget.work(claim);
+                #[cfg(test)]
+                tests::fail_point();
                 open = budget.lock();
                 continue;
             }
-            let at = open.open.iter().position(|b| b.id == id).expect("this batch is open");
-            if open.open[at].done == n {
-                break open.open.remove(at).panic;
+            if !finished {
+                let at = open.open.iter().position(|b| b.id == id).expect("this batch is open");
+                if open.open[at].done == n {
+                    panic = open.open.remove(at).panic;
+                    finished = true;
+                }
+            }
+            if finished && live.load(Ordering::Acquire) == 0 {
+                break panic;
             }
             open = budget.wake.wait(open).unwrap_or_else(PoisonError::into_inner);
         }
@@ -349,5 +398,97 @@ mod tests {
         assert_eq!(budget.spare.load(Ordering::SeqCst), 3, "every thread was given back");
         assert!(budget.lock().open.is_empty(), "the batch was taken off the list");
         assert_eq!(each_index(&budget, 3, |i| i), [0, 1, 2], "the budget still works");
+    }
+
+    std::thread_local! {
+        /// Set by a test to make the asking thread panic after the next item it works, outside the
+        /// item, the way a fault in the pool itself would unwind out of [`in_order`].
+        static FAIL: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub(super) fn fail_point() {
+        if FAIL.replace(false) {
+            panic!("the asking thread fails between items");
+        }
+    }
+
+    #[test]
+    fn a_call_unwinding_between_items_takes_its_batch_off_the_list() {
+        let budget = Budget::new(1);
+        let started = AtomicUsize::new(0);
+        FAIL.set(true);
+        let caught = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            each_index(&budget, 4, |_| {
+                started.fetch_add(1, Ordering::SeqCst);
+            })
+        }));
+        assert!(caught.is_err(), "the unwind reached the caller");
+        assert!(budget.lock().open.is_empty(), "no batch is left whose work has gone");
+        assert_eq!(started.load(Ordering::SeqCst), 1, "no item was handed out after the unwind");
+        assert_eq!(budget.spare.load(Ordering::SeqCst), 0, "the budget is as it was");
+        assert_eq!(each_index(&budget, 3, |i| i), [0, 1, 2], "the budget still works");
+    }
+
+    /// Whether `ready` comes true within five seconds, asked over and over in the meantime.
+    fn until(ready: impl Fn() -> bool) -> bool {
+        let end = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < end {
+            if ready() {
+                return true;
+            }
+            std::thread::yield_now();
+        }
+        ready()
+    }
+
+    #[test]
+    fn a_call_whose_items_are_done_works_on_while_its_threads_do() {
+        // The asking thread of `a` and the one thread it starts each take one of `a`'s items. The
+        // started one then takes the second item of another call, `b`, and that item splits itself
+        // only once `a`'s batch is done. The asking thread of `a` has to take the split's second
+        // item, since every other thread is busy, or the split never has two items in flight.
+        let budget = Budget::new(2);
+        let a_in = AtomicUsize::new(0);
+        let in_flight = AtomicUsize::new(0);
+        let reached = AtomicUsize::new(0);
+        let split_done = AtomicUsize::new(0);
+        let only_open = |n: usize| until(|| budget.lock().open.len() == n);
+        std::thread::scope(|scope| {
+            let asking = scope.spawn(|| {
+                let me = std::thread::current().id();
+                each_index(&budget, 2, |_| {
+                    if std::thread::current().id() == me {
+                        a_in.store(1, Ordering::SeqCst);
+                        assert!(
+                            until(|| budget.lock().open.iter().any(|b| b.depth == 0 && b.n == 2 && b.next == 2 && b.id != 0)),
+                            "the other call's items were all handed out"
+                        );
+                    } else {
+                        // Waiting for the other call to open keeps this thread from finding nothing
+                        // to take and ending before there is anything of `b` to take.
+                        assert!(until(|| budget.lock().open.iter().any(|b| b.id != 0)), "the other call opened");
+                    }
+                })
+            });
+            assert!(until(|| a_in.load(Ordering::SeqCst) == 1), "the call opened");
+            each_index(&budget, 2, |i| {
+                if i == 0 {
+                    assert!(until(|| split_done.load(Ordering::SeqCst) == 1), "the split ended");
+                    return;
+                }
+                assert!(only_open(1), "the first call's batch was taken off the list");
+                each_index(&budget, 2, |_| {
+                    in_flight.fetch_add(1, Ordering::SeqCst);
+                    if until(|| in_flight.load(Ordering::SeqCst) >= 2) {
+                        reached.store(1, Ordering::SeqCst);
+                    }
+                });
+                split_done.store(1, Ordering::SeqCst);
+            });
+            asking.join().expect("the first call returned");
+        });
+        assert_eq!(reached.load(Ordering::SeqCst), 1, "both items of the split were in flight at once");
+        assert!(budget.lock().open.is_empty(), "every batch was taken off the list");
+        assert_eq!(budget.spare.load(Ordering::SeqCst), 1, "every thread was given back");
     }
 }
