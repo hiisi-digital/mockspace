@@ -431,6 +431,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // where it happens, once, for every kind.
     if let Some(l) = &mut loaded {
         l.pack.configure_from(&cfg.lint_overrides);
+        // The same for its tools, from `[tools.<name>]`. A key a tool does not declare is
+        // not handed over here, and the run of that tool refuses it (`entry::tool`).
+        l.pack.configure_tools(&cfg.tool_params);
     }
     let pack = match &loaded {
         Some(l) => &l.pack,
