@@ -564,11 +564,11 @@ A bug fix, a wording change, or an implementation matching the existing mock ski
 
 | Phase | Gate | Docs | Source | CL |
 |-------|------|------|--------|----|
-| TOPIC | no changelists | no | no | n/a |
-| DOC | `*_changelist.doc.md` | yes | no | doc CL (iterate) |
-| DRAFT | `*_changelist.doc.lock.md` | no (SHAME ok) | no | src CL creation |
+| TOPIC | no changelists | no | scaffolding | n/a |
+| DOC | `*_changelist.doc.md` | yes | scaffolding | doc CL (iterate) |
+| DRAFT | `*_changelist.doc.lock.md` | no (SHAME ok) | scaffolding | src CL creation |
 | IMPL | `*_changelist.src.md` | no (SHAME ok) | yes | src CL (iterate) |
-| CLOSED | `*_changelist.src.lock.md` | no | no | no |
+| CLOSED | `*_changelist.src.lock.md` | no | scaffolding | no |
 
 Revise a changelist with `cargo mock deprecate` (unlocked) or `cargo mock unlock` (locked); the new one carries "Comparison to deprecated changelist". Enforcement is global: staged, unstaged and untracked changes all count.
 
@@ -577,7 +577,9 @@ The `design-round` skill carries the conversation flow and file layout.
 ## What the phase gate covers
 
 - Gated: per-crate `*.md.tmpl` under {src_dirs} (DOC phase) and `*.rs` that declares something (IMPL phase).
-- Not gated: root `{mock_dir}/*.md.tmpl` (DESIGN, PRINCIPLES, WORKFLOW and others), `Cargo.toml`, and a `.rs` file carrying only module docs and inner attributes. A `.rs` file is gated the moment it declares anything.
+- Not gated: root `{mock_dir}/*.md.tmpl` (DESIGN, PRINCIPLES, WORKFLOW and others), `Cargo.toml`, and scaffolding: a `.rs` file carrying only module docs and inner attributes, where HEAD does not hold the file or holds it declaring nothing too. A file that declared something at HEAD and is cut down to comments is a source change, and a `.rs` file is gated the moment it declares anything.
+- A nuke passes only in its whole shape: the crate's `lib.rs` is the stub `cargo mock --nuke` writes, carrying the marker, and no other Rust file is left under its `src`. Then its removals and the stub pass in any phase; any other text in the crate, a build script or a test included, is judged as above.
+- Scaffolding is how a round adds a crate: its doc phase commits the manifest and a `lib.rs` of the crate's documentation, and `no-empty-crate` passes it while the round's doc changelist names the crate and HEAD holds no source for it.
 - A plain `rm` (or `rm -f`) with no shell syntax, of an existing file git does not track and HEAD does not hold passes in any phase, since it only returns the tree to its committed state. A tracked path, a glob, a directory, a missing path, `mv` and every other writing command keep the phase rule.
 
 ## Edit
@@ -588,7 +590,7 @@ The `design-round` skill carries the conversation flow and file layout.
 - Types and traits: `<crate directory>/src/*.rs`.
 - Framework-wide docs: root `*.md.tmpl`.
 - Agent rules and skills: templates in `agent/`.
-- New crate: a directory under one of {src_dirs} and an entry in the `Cargo.toml` members list.
+- New crate: a round whose doc changelist names it. DOC commits its directory under one of {src_dirs}, its `Cargo.toml`, the members entry and a `src/lib.rs` of module docs and inner attributes only; IMPL commits the items. `no-empty-crate` passes the docs alone while the round is open and holds the crate again once both changelists lock.
 
 ## Validate and regenerate
 
