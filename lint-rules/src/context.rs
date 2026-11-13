@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use tree_sitter::Tree;
 
-use crate::reading::{TreeCell, View, empty_tree};
+use crate::reading::{Entry, TreeCell, View, empty_tree};
 use crate::{Invocation, PROC_MACRO_CRATES, RegistryView};
 
 /// One source file of a crate, borrowed from the run's reading.
@@ -199,7 +199,7 @@ impl<'a> LintContext<'a> {
         if let Some(listing) = self.view.list(dir) {
             for e in listing.entries() {
                 let n = e.name();
-                if e.is_file() && n.starts_with("DEEPDIVE_") && n.ends_with(".md.tmpl") {
+                if Entry::is_file(e) && n.starts_with("DEEPDIVE_") && n.ends_with(".md.tmpl") {
                     out.extend(self.view.text(dir.join(n)));
                 }
             }

@@ -41,7 +41,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::changelist_helpers::{self, ClKind, ClStatus, ParsedChangelist};
-use crate::{Lint, LintError, RepoContext, RepoLint, Severity, View};
+use crate::{Entry, Lint, LintError, RepoContext, RepoLint, Severity, View};
 
 const LINT_NAME: &str = "changelist-seal";
 
@@ -199,7 +199,7 @@ fn closed_round_dirs(view: &View<'_>, design_rounds: &Path) -> Vec<String> {
     let mut rounds: Vec<String> = listing
         .entries()
         .iter()
-        .filter(|e| e.is_dir())
+        .filter(|e| Entry::is_dir(e))
         .map(|e| e.name().to_string())
         .filter(|name| is_round_dir(name))
         .collect();

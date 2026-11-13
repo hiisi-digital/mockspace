@@ -13,7 +13,7 @@
 
 use std::path::Path;
 
-use crate::View;
+use crate::{Entry, View};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -142,7 +142,7 @@ pub fn find_changelists(view: &View<'_>, design_rounds: &Path) -> Vec<ParsedChan
     listing
         .entries()
         .iter()
-        .filter(|e| e.is_file())
+        .filter(|e| Entry::is_file(e))
         .filter_map(|e| parse_changelist(e.name()))
         .collect()
 }

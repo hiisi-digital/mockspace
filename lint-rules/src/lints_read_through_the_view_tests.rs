@@ -175,18 +175,159 @@ fn the_repo_lint_reads_the_mock_lints_directory() {
     assert!(crate::testkit::check_repo(&LintsReadThroughTheView, input).is_empty());
 }
 
-/// The built-in lints are held to what packs are held to. Only the reading itself, the tools,
-/// the test kit and the timing report touch the disk, and they are not lints.
+/// The built-in lints are held to what packs are held to. Only the reading itself, the runner
+/// that builds it, the tools, the test kit and the timing report touch the disk, and they are not
+/// lints. The crate root names `Reading` to export it, and the guard builds one for a pack's
+/// assertion, and nothing else of either file is let through.
 #[test]
 fn every_built_in_lint_reads_through_its_view() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let reading = Reading::new(&src);
     let view = reading.view();
-    let infrastructure = ["reading/", "tool/", "tool.rs", "testkit.rs", "timing.rs"];
+    let infrastructure = ["reading/", "run/", "tool/", "tool.rs", "testkit.rs", "timing.rs"];
+    let names_the_type = ["lib.rs", "lints_read_through_the_view.rs"];
     let found: Vec<String> = bypasses_under(&view, &src)
         .into_iter()
         .filter(|b| !infrastructure.iter().any(|i| b.path.to_string_lossy().starts_with(i)))
+        .filter(|b| !(b.what == READING && names_the_type.iter().any(|f| b.path == Path::new(f))))
         .map(|b| b.to_string())
         .collect();
     assert_eq!(found, Vec::<String>::new());
+}
+
+/// A macro's arguments are tokens, not expressions, and a read inside them reads all the same.
+#[test]
+fn a_read_inside_a_macro_is_refused() {
+    let source = r#"
+fn check(dir: &Path) -> Vec<String> {
+    let _ = vec![std::fs::read(dir)];
+    let _ = format!("{}", std::fs::read_to_string(dir).unwrap());
+    let _ = vec![dir.join("a").exists()];
+    let _ = format!("{:?}", ::std::process::Command::new("git"));
+    let _ = vec![Path::is_file(dir)];
+    Vec::new()
+}
+"#;
+    assert_eq!(found(source), [
+        "3:std::fs",
+        "4:std::fs",
+        "5:.exists()",
+        "6:std::process",
+        "7:Path::is_file",
+    ]);
+    // The control: the same macros over the view and over plain values are not refused.
+    let clean = "fn c(v: &View, d: &Path) { let _ = vec![v.text(d), v.exists(d)]; let _ = format!(\"{}\", d.join(\"a\").display()); }\n";
+    assert_eq!(found(clean), Vec::<String>::new());
+}
+
+/// `use std::*` brings `fs` in under a name the path check cannot see, and so does renaming `std`.
+#[test]
+fn a_glob_or_a_rename_above_a_forbidden_path_is_refused() {
+    let source = "use std::*;\nuse ::std as s;\nuse std::{self as t};\nfn c() { let _ = fs::read(\"x\"); }\n";
+    assert_eq!(found(source), ["1:std::*", "2:std", "3:std"]);
+    // The control: a glob and a rename below or beside them are not refused.
+    let clean = "use std::collections::*;\nuse std::path::Path as P;\nuse std::io::{self};\n";
+    assert_eq!(found(clean), Vec::<String>::new());
+}
+
+/// An environment variable is read around the view as a file is, and the trace holds neither.
+#[test]
+fn an_environment_read_is_refused() {
+    let source = "use std::env;\nfn c() { let _ = std::env::var(\"HOME\"); let _ = ::std::env::args(); }\n";
+    assert_eq!(found(source), ["1:std::env", "2:std::env", "2:std::env"]);
+    // The control: `env!` is read when the lint is built, not when it runs.
+    assert_eq!(found("fn c() { let _ = env!(\"CARGO_MANIFEST_DIR\"); }\n"), Vec::<String>::new());
+}
+
+/// A lint building a reading and a view of its own reads into no trace the run keeps.
+#[test]
+fn a_reading_of_the_lints_own_is_refused() {
+    let source = r#"
+use mockspace_lint_rules::Reading;
+fn c(ctx: &LintContext) {
+    let r = mockspace_lint_rules::Reading::new(ctx.crate_dir());
+    let _ = r.view().text("a");
+    let _ = Reading::default();
+}
+"#;
+    assert_eq!(found(source), ["2:Reading", "4:Reading", "6:Reading"]);
+    // The control: a name that only starts like it is not the type.
+    assert_eq!(found("fn c() { let _ = Readings::new(); let _ = reading::view(); }\n"), Vec::<String>::new());
+}
+
+/// `git2` opens a repository on disk and `fs_err` is `std::fs` under another name.
+#[test]
+fn a_repository_or_file_crate_is_refused() {
+    let source = "use git2::Repository;\nfn c() { let _ = fs_err::read(\"x\"); let _ = ::git2::Repository::open(\".\"); }\n";
+    assert_eq!(found(source), ["1:git2", "2:fs_err", "2:git2"]);
+    // The control: the view's own `git` is not a crate path.
+    assert_eq!(found("fn c(v: &View) { let _ = v.git(&[\"log\"]); }\n"), Vec::<String>::new());
+}
+
+/// `Path::is_file` and `is_dir` ask the disk. An entry of a listing is asked as `Entry::is_dir`,
+/// since the method form cannot be told apart from the path's.
+#[test]
+fn a_path_asked_whether_it_is_a_file_or_a_directory_is_refused() {
+    let source = r#"
+fn c(dir: &Path, entry: &Entry) {
+    let _ = dir.join("a").is_file();
+    let _ = dir.is_dir();
+    let _ = dir.is_symlink();
+    let _ = Path::is_dir(dir);
+    let _ = std::path::PathBuf::is_file(&dir.to_path_buf());
+}
+"#;
+    assert_eq!(found(source), [
+        "3:.is_file()",
+        "4:.is_dir()",
+        "5:.is_symlink()",
+        "6:Path::is_dir",
+        "7:PathBuf::is_file",
+    ]);
+    // The control: the view's own forms take the path, and an entry is asked by its type.
+    let clean = "fn c(v: &View, d: &Path, e: &Entry) { let _ = v.is_file(d) || v.is_dir(d) || Entry::is_dir(e); }\n";
+    assert_eq!(found(clean), Vec::<String>::new());
+}
+
+/// A tool is run on demand and keeps no unit, so it may read the disk; the guard tells it by the
+/// `tools` directory it lives under.
+#[test]
+fn a_tool_under_a_tools_directory_is_not_read() {
+    let pack = Pack::new("tools", &[
+        ("src/lib.rs", CLEAN),
+        ("src/tools/weigh/mod.rs", "use mockspace_lint_rules::Reading;\nfn t() { let _ = Reading::new(\".\"); }\n"),
+        ("src/lints/weigh.rs", "use mockspace_lint_rules::Reading;\n"),
+    ]);
+    let reading = Reading::new(&pack.0);
+    let shown: Vec<String> = bypasses_under(&reading.view(), &pack.0)
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(shown, ["src/lints/weigh.rs:1: reaches `Reading`"]);
+}
+
+/// A lint may have a type of its own called `Reading`; only this crate's is refused.
+#[test]
+fn a_type_of_the_lints_own_named_reading_is_not_refused() {
+    let own = "struct Reading { n: usize }\nfn c() -> Reading { Reading::default() }\n";
+    assert_eq!(found(own), Vec::<String>::new());
+    // The control: the crate's own type is refused beside it, by its path.
+    let both = "struct Reading;\nfn c() { let _ = mockspace::Reading::new(\".\"); }\n";
+    assert_eq!(found(both), ["2:Reading"]);
+}
+
+/// A function asking `untraced` keeps its unit unsaved, so what it reads around the view is read
+/// on every run; a function beside it is still held.
+#[test]
+fn a_function_asking_untraced_may_read_around_the_view() {
+    let source = r#"
+fn home(view: &View) -> Option<String> {
+    view.untraced("the home directory is not in the repository");
+    std::env::var("HOME").ok()
+}
+fn other() -> Option<String> {
+    std::env::var("HOME").ok()
+}
+"#;
+    assert_eq!(found(source), ["7:std::env"]);
 }
