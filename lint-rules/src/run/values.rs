@@ -14,6 +14,8 @@ pub(crate) struct RunValues<'a> {
     pub(crate) ws:     &'a WorkspaceInput,
     pub(crate) crates: &'a [CrateInput],
     pub(crate) repo:   Option<RepoInput<'a>>,
+    /// The reading's root, which a unit that was handed an absolute path is saved under.
+    pub(crate) root:   &'a std::path::Path,
 }
 
 fn joined<S: AsRef<str>>(items: &[S]) -> Vec<u8> {
@@ -34,6 +36,7 @@ impl Values for RunValues<'_> {
         Some(match key {
             "all_crates" => joined(&ws.all_crates.iter().collect::<Vec<_>>()),
             "workspace_root" => ws.workspace_root.to_string_lossy().into_owned().into_bytes(),
+            "root" => self.root.to_string_lossy().into_owned().into_bytes(),
             "proc_macro_crates" => joined(&ws.proc_macro_crates),
             "primitive_introductions" => format!("{:?}", ws.primitive_introductions).into_bytes(),
             "invocation:unwanted" => Vec::new(),

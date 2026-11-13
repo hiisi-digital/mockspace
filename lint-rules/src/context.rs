@@ -134,9 +134,11 @@ impl<'a> LintContext<'a> {
         self.view
     }
 
-    /// The crate's directory, absolute.
+    /// The crate's directory, absolute. Asking for it writes the repository root into the trace,
+    /// as [`View::root`] does, so a finding built on it is never replayed in another checkout.
     #[must_use]
     pub fn crate_dir(&self) -> &'a Path {
+        self.view.record_value("root");
         &self.krate.dir
     }
 

@@ -199,3 +199,72 @@ fn a_file_sorting_first_under_a_filter_reruns_the_lint() {
         "the new first file is the one shown"
     );
 }
+
+/// A crate lint carrying the crate's absolute directory into its finding, or not, counting its
+/// judgings.
+struct Where {
+    name:     &'static str,
+    absolute: bool,
+    judged:   Arc<AtomicUsize>,
+}
+
+impl Lint for Where {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
+    }
+
+    fn per_file(&self) -> bool {
+        false
+    }
+}
+
+impl CrateLint for Where {
+    fn check(&self, ctx: &LintContext) -> Vec<LintError> {
+        self.judged.fetch_add(1, Ordering::SeqCst);
+        let shown = if self.absolute {
+            ctx.crate_dir().display().to_string()
+        } else {
+            ctx.source().trim().to_string()
+        };
+        vec![LintError::error(ctx.crate_name.to_string(), 1, self.name, shown)]
+    }
+}
+
+/// Two checkouts of the same files share the store. A unit that read only files replays in the
+/// other checkout; a unit handed the absolute crate directory is judged again there, so its finding
+/// names the checkout it is shown in.
+#[test]
+fn a_unit_handed_an_absolute_path_replays_only_under_its_own_root() {
+    let files: &[(&str, &[(&str, &str)])] = &[("alpha", &[("src/lib.rs", "pub fn f() {}\n")])];
+    let one = Workspace::new("root-one", files);
+    let two = Workspace::new("root-two", files);
+    let cache = Mem::default();
+    let (abs, rel) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let pack = LintPack {
+        crate_lints: vec![
+            Box::new(Where {
+                name:     "where-abs",
+                absolute: true,
+                judged:   Arc::clone(&abs),
+            }),
+            Box::new(Where {
+                name:     "where-rel",
+                absolute: false,
+                judged:   Arc::clone(&rel),
+            }),
+        ],
+        ..LintPack::default()
+    };
+    let at_one = one.run(Some(&cache), None, Some(&pack));
+    let at_two = two.run(Some(&cache), None, Some(&pack));
+    let dir = |w: &Workspace| w.dir.0.join("crates/alpha").display().to_string();
+    assert_eq!(of("where-abs", &at_one), [format!("{}:None", dir(&one))]);
+    assert_eq!(of("where-abs", &at_two), [format!("{}:None", dir(&two))], "named the checkout it ran in");
+    assert_eq!(abs.load(Ordering::SeqCst), 2);
+    assert_eq!(of("where-rel", &at_two), of("where-rel", &at_one));
+    assert_eq!(rel.load(Ordering::SeqCst), 1, "the control: a unit that read only files replays in the other checkout");
+}

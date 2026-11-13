@@ -86,8 +86,15 @@ impl<'r> View<'r> {
     }
 
     /// The repository root every relative path is taken against.
+    ///
+    /// The store is shared by every checkout on the machine and a trace holds paths relative to
+    /// the root, so a unit is replayed in another checkout of the same files. A unit handed this
+    /// absolute path, or one built on it, could carry it into a finding, so asking for it writes the
+    /// root into the trace and the unit is then replayed only under the same root. [`Self::walk`]
+    /// and [`Self::glob`], which answer with absolute paths, do the same.
     #[must_use]
     pub fn root(&self) -> &'r Path {
+        self.record_value("root");
         self.reading.root()
     }
 
@@ -111,6 +118,7 @@ impl<'r> View<'r> {
     /// absolute path and the entry: an entry it answers `true` for is left out, and a directory so
     /// answered is not entered. Every directory entered is a listing in the trace.
     pub fn walk(&self, dir: impl AsRef<Path>, skip: impl Fn(&Path, &Entry) -> bool) -> Vec<PathBuf> {
+        self.record_value("root");
         let abs = self.abs(dir.as_ref());
         let mut files = Vec::new();
         let mut listed = Vec::new();
@@ -129,6 +137,7 @@ impl<'r> View<'r> {
     /// [`glob_match_anchored`](crate::glob_match_anchored) does. Only the directories under a
     /// pattern's literal leading part are walked.
     pub fn glob(&self, patterns: &[&str]) -> Vec<PathBuf> {
+        self.record_value("root");
         let mut out: Vec<PathBuf> = Vec::new();
         for pattern in patterns {
             let literal: Vec<&str> = pattern

@@ -60,6 +60,7 @@ pub fn run(input: &RunInput<'_>, pack: Option<&LintPack>) -> Vec<LintError> {
         ws:     input.workspace,
         crates: input.crates,
         repo:   input.repo,
+        root:   input.reading.root(),
     };
     let store = input
         .cache
