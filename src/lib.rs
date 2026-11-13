@@ -54,6 +54,7 @@ pub mod render_design;
 pub mod render_md;
 pub mod suite;
 pub mod tool_catalogue;
+pub mod tool_config;
 
 /// Writes a script the tests then run, free of the exec-after-write race.
 #[cfg(all(test, unix))]

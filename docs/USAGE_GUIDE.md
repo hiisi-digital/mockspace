@@ -502,6 +502,19 @@ rules = [
 
 The `{prefix}` placeholder in `scope` / `forbidden` / `reason` expands to `crate_prefix`.
 
+### Tools
+
+A project tool, or a tool a `[lint-crates]` pack ships, takes its configuration from a table named as the tool is:
+
+```toml
+[tools.tackle]
+about_the_work = ["workflow"]
+```
+
+A value is a string, integer, float or boolean, or an array of them, and `{prefix}` in a string stands for the project's crate prefix. A tool declares the keys it reads, and `mock help <tool>` lists them under `[tools.<name>]`. The tool is handed the values of those keys once, when the pack loads, and runs on its own default for a key left unset.
+
+A table setting a key the tool does not declare stops that tool from running, with the keys it does read named, so a misspelt key never passes for a value that was applied. A `tools` entry that is not a table, or a value of any other type, stops the load the way a bad `[lints]` entry does. A table naming no tool the project has is listed as matching none in the generated `catalogues` rule.
+
 ### Graph styling
 
 ```toml

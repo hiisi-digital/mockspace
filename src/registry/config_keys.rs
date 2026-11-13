@@ -72,6 +72,9 @@ pub const ROOT_KEYS: &[&str] = &[
     // told its declaration is discarded silently, on every run, while the pack
     // compiled a few lines earlier in the same output.
     "lint-crates",
+    // `tools` is the third: `tool_config::parse` reads it out of the document,
+    // its values being a scalar or an array per key, as `lints` is.
+    "tools",
     // the launcher's, from `mockspace_manifest::ManifestHeader`
     "mock_dir",
     "mockspace_git",

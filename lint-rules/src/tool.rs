@@ -56,8 +56,10 @@ use std::path::{Path, PathBuf};
 
 use crate::{Level, LintError, LintMode};
 
+pub mod params;
 pub mod purpose;
 pub mod writes;
+pub use params::{ConfigKey, ToolConfig, ToolParams};
 pub use purpose::{NotALint, Purpose, contract_faults, maker_faults};
 pub use writes::{ArgRoot, resolve_writes, symlinked_writes};
 
@@ -335,6 +337,24 @@ pub trait Tool {
     fn value_flags(&self) -> &[&'static str] {
         &[]
     }
+
+    /// The keys a project may set for this tool under `[tools.<name>]` in its
+    /// `mockspace.toml`. See [`params`].
+    ///
+    /// Empty by default, and a table setting a key not declared here is
+    /// refused before the tool is run, so a value nothing reads is never
+    /// mistaken for one that was applied.
+    fn config_keys(&self) -> &[ConfigKey] {
+        &[]
+    }
+
+    /// Takes the values the project set for the keys of [`Self::config_keys`].
+    ///
+    /// Called once, when the pack loads and before any run, and only where the
+    /// tool's table sets at least one declared key; a key it did not declare
+    /// never reaches it. A tool keeps what it reads and falls back to its own
+    /// default for a key left unset.
+    fn configure(&mut self, _params: &ToolParams) {}
 
     /// Do the work.
     ///
