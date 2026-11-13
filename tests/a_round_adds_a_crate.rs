@@ -298,3 +298,6 @@ fn a_bash_write_of_the_lib_rs_keeps_the_phase_rule() {
         v => panic!("{v:?}"),
     }
 }
+
+#[path = "common/ambient.rs"]
+mod ambient;

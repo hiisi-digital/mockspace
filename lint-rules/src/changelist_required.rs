@@ -26,6 +26,12 @@ use crate::changelist_helpers::{self, Phase};
 use crate::src_layout::{self, SrcLayout};
 use crate::{Lint, LintError, RepoContext, RepoLint, Severity};
 
+#[path = "changelist_required_scaffold.rs"]
+mod scaffold;
+#[cfg(test)]
+use scaffold::declares_nothing;
+use scaffold::passes_outside_impl;
+
 const LINT_NAME: &str = "changelist-required";
 
 pub struct ChangelistRequired;
@@ -130,36 +136,6 @@ impl RepoLint for ChangelistRequired {
     }
 }
 
-/// Whether a source file the gate would otherwise refuse passes in a phase
-/// other than IMPL, given the `content` it carries, `None` for a removal.
-///
-/// Two things pass. A removal from a nuked crate, since intentionally wiped
-/// source is not a phase violation; the crate's `lib.rs` carries the marker. And
-/// a file declaring nothing, which is not the source this gate protects: it
-/// wires a crate into the workspace so the dependency graph, the layer
-/// numbering and the structure documents have real edges to read. That second
-/// arm is how a design round adds a crate: its doc phase commits the manifest
-/// and a `lib.rs` holding the crate's documentation, and the items come in the
-/// source phase.
-fn passes_outside_impl(
-    workspace_root: &Path,
-    layout: &SrcLayout,
-    file: &str,
-    content: Option<&str>,
-) -> bool {
-    match content {
-        Some(text) => declares_nothing(text),
-        // A nuke removes a crate's files and writes a comment-only stub, which
-        // the arm above passes, so the marker excuses removals and nothing
-        // else. Read from disk, a marker excusing written files would let any
-        // item through behind a stub somebody wrote first.
-        None => layout
-            .package_dir(workspace_root, file)
-            .and_then(|d| std::fs::read_to_string(d.join("src/lib.rs")).ok())
-            .is_some_and(|s| s.contains("Nuked by")),
-    }
-}
-
 /// The gate's verdict on one source file as an edit not yet made would leave
 /// it: `true` when committing `text` at `file` passes, whatever the phase.
 ///
@@ -211,27 +187,6 @@ pub(crate) fn staged_or_worktree(
         }
     }
     std::fs::read_to_string(workspace_root.join(file)).ok()
-}
-
-/// Whether a Rust file declares nothing at all.
-///
-/// Read from the parse tree: every top-level node is a comment or an inner
-/// attribute, and the text parses. A line scanner skipping lines that start
-/// with `#![` let an item written after the attribute on the same line through,
-/// and text that does not parse is not known to declare nothing, so it counts
-/// as source.
-fn declares_nothing(src: &str) -> bool {
-    let Some(tree) = crate::make_parser().parse(src, None) else {
-        return false;
-    };
-    let root = tree.root_node();
-    if root.has_error() {
-        return false;
-    }
-    let mut cursor = root.walk();
-    root.children(&mut cursor).all(|n| {
-        matches!(n.kind(), "line_comment" | "block_comment" | "inner_attribute_item")
-    })
 }
 
 #[cfg(test)]
@@ -372,22 +327,6 @@ mod tests {
         assert!(!declares_nothing("//! d\n#![no_std\n"));
     }
 
-    /// A nuke deletes a crate's files and writes a comment-only stub, so the
-    /// marker excuses a removal and nothing else. Before, a `lib.rs` carrying the
-    /// marker on disk excused any item written anywhere in the crate.
-    #[test]
-    fn the_nuke_marker_excuses_a_removal_and_never_an_item() {
-        let (root, src) = round_at("nuke", &["202601010000_changelist.doc.md"]);
-        std::fs::create_dir_all(root.join("crates/born/src")).unwrap();
-        std::fs::write(root.join("crates/born/src/lib.rs"), "//! Nuked by x\n").unwrap();
-        let layout = SrcLayout::new(&root, &src);
-        let item = admits_edit(&root, &src, "crates/born/src/other.rs", ONE_ITEM);
-        let removal = passes_outside_impl(&root, &layout, "crates/born/src/other.rs", None);
-        let _ = std::fs::remove_dir_all(&root);
-        assert!(!item, "a marker on disk must not excuse an item");
-        assert!(removal, "a nuke's removals still pass");
-    }
-
     /// A path outside the source directories, or not Rust, is not the gate's.
     #[test]
     fn a_file_the_gate_does_not_hold_is_admitted() {
@@ -442,3 +381,7 @@ mod tests {
 #[cfg(test)]
 #[path = "changelist_required_fmt_tests.rs"]
 mod fmt_tests;
+
+#[cfg(test)]
+#[path = "changelist_required_gut_tests.rs"]
+mod gut_tests;

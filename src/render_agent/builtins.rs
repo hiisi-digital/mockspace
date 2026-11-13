@@ -542,7 +542,9 @@ if echo "$REL_PATH" | grep -qE '^{src_grep}/'; then
         # Outside IMPL the gate still passes a file declaring nothing, which is how a round's
         # doc phase adds a crate: its manifest and a lib.rs of documentation. The verdict is
         # the lint's, from `mock check-edit`. A command writing the file carries no text to ask
-        # about, so it keeps the phase rule.
+        # about, so it keeps the phase rule. The phase above is read from what git tracks and
+        # the lint reads it from the directory, as the commit gate does, so an untracked source
+        # changelist opens IMPL for the lint before it does here.
         _OUT=""
         if [[ -n "$FILE_PATH" ]]; then
 {ask_phase_gate}            if [ "$_RC" -eq 0 ]; then allow; fi

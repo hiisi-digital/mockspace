@@ -1,0 +1,149 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
+//! A source file that held items and is cut down to a comment is a source change.
+//!
+//! Scaffolding passes outside IMPL because it declares nothing on both sides. Judged on the
+//! new text alone, a file gutted to `// emptied` read as scaffolding, and so did a `lib.rs`
+//! stub carrying the nuke marker, which then excused every removal in the crate. Each arm
+//! runs the gate end to end on a committed repository in DOC, and the edit question the
+//! write guard asks, so the two cannot drift.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use super::*;
+
+const LIB_ITEMS: &str = "//! The crate.\npub mod more;\npub fn a() {}\n";
+const MORE_ITEMS: &str = "pub fn more() {}\n";
+const STUB: &str = "// Nuked by `cargo mock --nuke`\n";
+
+/// A repository in DOC whose crate `x` has `lib.rs` and `more.rs` committed with items.
+fn committed(tag: &str) -> PathBuf {
+    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "clr-gut-{tag}-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("crates/x/src")).unwrap();
+    std::fs::create_dir_all(root.join("design_rounds")).unwrap();
+    std::fs::write(root.join("design_rounds/202601010000_changelist.doc.md"), "x\n").unwrap();
+    std::fs::write(root.join("crates/x/src/lib.rs"), LIB_ITEMS).unwrap();
+    std::fs::write(root.join("crates/x/src/more.rs"), MORE_ITEMS).unwrap();
+    for args in [
+        &["init", "-q"][..],
+        &["config", "user.email", "t@example.com"],
+        &["config", "user.name", "t"],
+        &["add", "-A"],
+        &["commit", "-q", "-m", "seed", "--no-gpg-sign"],
+    ] {
+        git(&root, args);
+    }
+    root
+}
+
+fn git(root: &Path, args: &[&str]) {
+    let ok = Command::new("git").args(args).current_dir(root).output().unwrap().status.success();
+    assert!(ok, "git {args:?}");
+}
+
+/// The gate's findings over the repository as it stands.
+fn gate(root: &Path) -> Vec<LintError> {
+    let crates = std::collections::BTreeSet::new();
+    let src_dirs = [root.join("crates")];
+    ChangelistRequired.check_repo(&RepoContext {
+        mock_dir:    root,
+        repo_root:   root,
+        all_crates:  &crates,
+        src_dirs:    &src_dirs,
+        invocation:  None,
+        canon_paths: &[],
+        open_panels: &[],
+        ref_files: &crate::src_layout::NO_REF_FILES,
+        registry:    &Default::default(),
+        verdicts:    None,
+    })
+}
+
+fn admits(root: &Path, file: &str, text: &str) -> bool {
+    admits_edit(root, &[root.join("crates")], file, text)
+}
+
+fn done(root: PathBuf) {
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The control: an item edit outside IMPL is refused.
+#[test]
+fn an_item_edit_is_refused() {
+    let root = committed("item");
+    std::fs::write(root.join("crates/x/src/more.rs"), "pub fn changed() {}\n").unwrap();
+    let found = gate(&root);
+    done(root);
+    assert_eq!(found.len(), 1, "{found:?}");
+}
+
+/// A file that held items, gutted to a comment, is refused at the gate and the guard.
+#[test]
+fn a_file_gutted_to_a_comment_is_refused() {
+    let root = committed("gut");
+    let guard = admits(&root, "crates/x/src/more.rs", "// emptied\n");
+    std::fs::write(root.join("crates/x/src/more.rs"), "// emptied\n").unwrap();
+    let found = gate(&root);
+    done(root);
+    assert!(!guard, "the guard must refuse cutting items out");
+    assert_eq!(found.len(), 1, "{found:?}");
+}
+
+/// A file that declared nothing at `HEAD` and still declares nothing is scaffolding.
+#[test]
+fn scaffolding_rewritten_as_scaffolding_passes() {
+    let root = committed("scaffold");
+    std::fs::write(root.join("crates/x/src/docs.rs"), "//! Docs.\n").unwrap();
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "docs", "--no-gpg-sign"]);
+    let guard = admits(&root, "crates/x/src/docs.rs", "//! Other docs.\n");
+    std::fs::write(root.join("crates/x/src/docs.rs"), "//! Other docs.\n").unwrap();
+    let found = gate(&root);
+    done(root);
+    assert!(guard);
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// A stub with the marker written over `lib.rs` while `more.rs` survives is no nuke.
+#[test]
+fn a_marker_stub_beside_surviving_source_is_refused() {
+    let root = committed("stub");
+    let guard = admits(&root, "crates/x/src/lib.rs", STUB);
+    std::fs::write(root.join("crates/x/src/lib.rs"), STUB).unwrap();
+    let found = gate(&root);
+    done(root);
+    assert!(!guard, "the guard must refuse the stub");
+    assert!(!found.is_empty(), "{found:?}");
+}
+
+/// A removal with no nuke is refused.
+#[test]
+fn a_removal_without_a_nuke_is_refused() {
+    let root = committed("rm");
+    git(&root, &["rm", "-q", "crates/x/src/more.rs"]);
+    let found = gate(&root);
+    done(root);
+    assert_eq!(found.len(), 1, "{found:?}");
+}
+
+/// The whole shape of a nuke passes: the stub, and every other source file removed.
+#[test]
+fn a_whole_nuke_passes() {
+    let root = committed("nuke");
+    std::fs::write(root.join("crates/x/src/lib.rs"), STUB).unwrap();
+    git(&root, &["rm", "-q", "crates/x/src/more.rs"]);
+    git(&root, &["add", "-A"]);
+    let found = gate(&root);
+    done(root);
+    assert!(found.is_empty(), "{found:?}");
+}
