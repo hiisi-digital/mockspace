@@ -265,8 +265,14 @@ fn lines_of(body: &[u8]) -> Vec<&[u8]> {
 }
 
 /// The object id `content` would have as a blob, without writing it.
+///
+/// Any bytes hash, so `git` failing here says nothing of `content`: it is the machine's, a
+/// broken `git` or repository, and the unit is judged again rather than saved with it.
 fn hash_object(view: &View<'_>, dir: &Path, content: &[u8]) -> Option<String> {
     let out = view.run_with_input("git", &["hash-object", "--stdin"], dir, content, &[]);
+    if out.started() && !out.ok() {
+        view.untraced("`git hash-object` failed, which no content can make it do");
+    }
     out.ok_text().map(|id| id.trim().to_string())
 }
 
@@ -309,6 +315,26 @@ mod tests {
 
     fn git(dir: &Path, args: &[&str]) -> Option<String> {
         super::git(&view_of(dir), dir, args)
+    }
+
+    /// `git hash-object` failing is the machine's, so the unit is not saved with it; hashing,
+    /// the control, keeps the unit saveable.
+    #[test]
+    fn a_failed_hash_is_the_machines_and_keeps_the_unit_unsaved() {
+        let dir = std::env::temp_dir().join(format!("merge-badgit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".git"), "not a gitfile\n").unwrap();
+        let view = view_of(&dir);
+        assert_eq!(super::hash_object(&view, &dir, b"x"), None);
+        assert!(view.trace().untraced.is_some(), "a broken repository was saved as an answer");
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let fine = std::env::temp_dir().join(format!("merge-nogit-{}", std::process::id()));
+        std::fs::create_dir_all(&fine).unwrap();
+        let view = view_of(&fine);
+        assert!(super::hash_object(&view, &fine, b"x").is_some());
+        assert!(view.trace().untraced.is_none());
+        std::fs::remove_dir_all(&fine).unwrap();
     }
 
     use super::*;

@@ -18,7 +18,7 @@
 use std::time::Duration;
 
 use super::table::Table;
-use super::{Answer, Question, Reading, Trace, Values};
+use super::{Question, Reading, Trace, Values};
 use crate::LintError;
 use crate::reading::disk::Kind;
 use crate::reading::memo::Memo;
@@ -206,11 +206,15 @@ impl<'r> Store<'r> {
         if self.reading.is_overlaid() || trace.untraced.is_some() {
             return;
         }
-        // A command that did not start or did not succeed says something of the machine, a tool
-        // missing or a network away, that no input of it answers for, so a unit holding one is
-        // judged again on the next run rather than replaying the failure after the machine is
-        // put right.
-        let failed = |q: &Question| matches!(q, Question::Run { .. }) && !self.reading.ran(q).is_some_and(Answer::ok);
+        // A command that did not start, a tool missing, or that a signal ended before it exited
+        // answered nothing, and says something of the machine that no input of it answers for, so
+        // a unit holding one is judged again on the next run rather than replaying the failure
+        // after the machine is put right. A command that exited answered, whatever its status, and
+        // is saved under its inputs; a lint that reads a failed exit as the machine's calls
+        // `untraced` and is not saved.
+        let failed = |q: &Question| {
+            matches!(q, Question::Run { .. }) && !self.reading.ran(q).is_some_and(|a| a.code().is_some())
+        };
         if trace.questions.iter().any(failed) {
             return;
         }

@@ -163,30 +163,54 @@ fn a_file_rewritten_within_the_clock_tick_is_read_again() {
     assert_eq!(judged.load(Ordering::SeqCst), 2);
 }
 
-/// A command that did not start, or ended in failure, is judged again on the next run, since what
-/// failed may be the machine and not the inputs. A command that succeeded replays, the control.
+/// A command's exit is an answer like its output: one that exited non-zero is saved under its
+/// inputs and replays until they move. A command that never started, or that a signal ended before
+/// it exited, answered nothing, since what failed is the machine, and its unit is judged again on
+/// the next run. A lint reading a failure as the machine's says so with `untraced`.
 #[test]
-fn a_command_that_failed_or_never_started_is_never_saved() {
-    for (program, script, saved) in [
-        ("sh", "exit 0", true),
-        ("sh", "exit 3", false),
-        ("mockspace-a-program-no-machine-has", "", false),
+fn a_command_that_never_started_is_never_saved_and_a_failed_exit_is() {
+    for (program, script, blame, saved) in [
+        ("sh", "exit 0", false, true),
+        ("sh", "exit 3", false, true),
+        ("sh", "exit 3", true, false),
+        ("sh", "kill -9 $$", false, false),
+        ("mockspace-a-program-no-machine-has", "", false, false),
     ] {
         let dir = Dir::new("run-failed");
         dir.write("script", script);
+        dir.write("blame", if blame { "yes" } else { "no" });
         let cache = Mem::default();
         let (probe, judged) = Probe::new(|v| {
             let program = v.text("program").unwrap_or_default().to_string();
             let a = v.run(&program, &["script"], v.root(), &[Path::new("script")]);
-            format!("started={} ok={}", a.started(), a.ok())
+            if !a.ok() && v.text("blame") == Some("yes") {
+                v.untraced("the command failing is the machine's, not the repository's");
+            }
+            format!("started={} code={:?}", a.started(), a.code())
         });
         dir.write("program", program);
         let pack = pack_of(probe);
-        let _ = run_repo(&dir, &cache, &pack, None);
-        let _ = run_repo(&dir, &cache, &pack, None);
+        let first = messages(&run_repo(&dir, &cache, &pack, None).found);
+        assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), first);
         let want = if saved { 1 } else { 2 };
-        assert_eq!(judged.load(Ordering::SeqCst), want, "{program} {script:?}");
+        assert_eq!(judged.load(Ordering::SeqCst), want, "{program} {script:?} blame {blame}");
     }
+}
+
+/// A failed exit saved under its inputs is judged again once they move.
+#[test]
+fn a_failed_exit_reruns_when_its_input_moves() {
+    let dir = Dir::new("run-failed-moves");
+    dir.write("script", "exit 3");
+    let cache = Mem::default();
+    let (probe, judged) = Probe::new(|v| format!("{:?}", v.run("sh", &["script"], v.root(), &[Path::new("script")]).code()));
+    let pack = pack_of(probe);
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["Some(3)"]);
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["Some(3)"]);
+    assert_eq!(judged.load(Ordering::SeqCst), 1, "the failed exit replayed");
+    dir.write("script", "exit 0");
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["Some(0)"]);
+    assert_eq!(judged.load(Ordering::SeqCst), 2, "the input moved, so it ran again");
 }
 
 /// An input the command writes while it runs is saved under what it was when the command started,

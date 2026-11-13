@@ -260,6 +260,14 @@ impl<'r> View<'r> {
     /// The output of `program` with `args`, run in `cwd`, once for the run. `inputs` are the files
     /// the output depends on, and they are what answers for it later: the command is never run
     /// again to check a trace, so a dependency left out of `inputs` replays a stale finding.
+    ///
+    /// Its exit status is part of the answer. A command that exited non-zero is saved with the
+    /// unit and replayed until its inputs move, the same as one that exited zero, so a failure that
+    /// is the repository's (a package nobody takes, a stale lockfile) costs nothing on the next run.
+    /// A command that could not be started, or that a signal ended, answered nothing and keeps its
+    /// unit from being saved. Where a failed exit is the machine's and not the repository's, a
+    /// network away or a tool too old, the lint says so with [`Self::untraced`] once it has seen
+    /// it, and the unit is judged again on the next run.
     pub fn run(&self, program: &str, args: &[&str], cwd: impl AsRef<Path>, inputs: &[&Path]) -> &'r Answer {
         self.run_inner(program, args, cwd.as_ref(), None, inputs)
     }

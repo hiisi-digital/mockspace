@@ -28,7 +28,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::View;
+use crate::{Answer, View};
 
 /// Why a change was not fmt-only, for the message the gate prints.
 #[derive(Debug, PartialEq, Eq)]
@@ -142,11 +142,25 @@ fn rustfmt<'r>(view: &View<'r>, dir: &Path, source: &str) -> Result<&'r str, Not
     }
     let inputs: Vec<&Path> = inputs.iter().map(PathBuf::as_path).collect();
     let out = view.run_with_input("rustfmt", &["--emit=stdout", "--quiet"], dir, source.as_bytes(), &inputs);
+    formatted(view, out)
+}
+
+/// What `rustfmt` answered, read as the source formatted or why it is not.
+///
+/// A `rustfmt` that could not be started is missing, and its unit is not saved, since it started
+/// nothing. One that refused the source it was handed says where, naming `<stdin>`, and that is
+/// an answer about the source, saved with it. A failure naming no place in the source happened
+/// before the source was read, a pinned toolchain or its `rustfmt` component not installed, and is
+/// the machine's, so the unit is judged again once the machine is put right.
+fn formatted<'r>(view: &View<'r>, out: &'r Answer) -> Result<&'r str, NotFmtOnly> {
     if !out.started() {
         return Err(NotFmtOnly::RustfmtMissing);
     }
     if !out.ok() {
-        // Unparseable source, or a rustfmt that refused the input.
+        let read_the_source = std::str::from_utf8(out.stderr()).is_ok_and(|e| e.contains("<stdin>"));
+        if !read_the_source {
+            view.untraced("rustfmt failed before reading the source, a toolchain or component missing");
+        }
         return Err(NotFmtOnly::Undeterminable);
     }
     out.text().ok_or(NotFmtOnly::Undeterminable)
@@ -292,5 +306,34 @@ mod tests {
             Err(NotFmtOnly::Undeterminable),
             "rustfmt cannot format it, so nothing can be established"
         );
+    }
+
+    /// `rustfmt` refusing unparseable source is an answer about the source, saved with it, and a
+    /// `rustfmt` failing before it read anything is the machine's, which keeps the unit unsaved.
+    #[test]
+    fn a_refused_source_is_an_answer_and_a_failure_before_reading_it_is_the_machines() {
+        require_rustfmt();
+        let r = Repo::new("refused", UGLY);
+        let reading = crate::Reading::new(&r.root);
+        let view = reading.view();
+        assert_eq!(rustfmt(&view, &r.root, "pub fn a( {{{ \n"), Err(NotFmtOnly::Undeterminable));
+        assert!(view.trace().untraced.is_none(), "the source was refused, which is an answer");
+
+        // What a rustup proxy says when the pinned toolchain is not installed: no place in the
+        // source, since none was read.
+        let missing = "echo \"error: toolchain 'x' is not installed\" >&2; exit 1";
+        let reading = crate::Reading::new(&r.root);
+        let view = reading.view();
+        let out = view.run("sh", &["-c", missing], &r.root, &[]);
+        assert_eq!(formatted(&view, out), Err(NotFmtOnly::Undeterminable));
+        assert!(view.trace().untraced.is_some(), "the machine failed, so the unit is not saved");
+
+        // The control: the same failure naming the source it read is an answer.
+        let refused = "echo ' --> <stdin>:1:9' >&2; exit 1";
+        let reading = crate::Reading::new(&r.root);
+        let view = reading.view();
+        let out = view.run("sh", &["-c", refused], &r.root, &[]);
+        assert_eq!(formatted(&view, out), Err(NotFmtOnly::Undeterminable));
+        assert!(view.trace().untraced.is_none());
     }
 }
