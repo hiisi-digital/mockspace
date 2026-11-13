@@ -7,6 +7,7 @@
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+use std::sync::PoisonError;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
@@ -53,12 +54,6 @@ impl<T: Item + ?Sized> Item for &T {
     }
 }
 
-impl<K: Item, V> Item for (K, V) {
-    fn key(&self) -> Cow<'_, str> {
-        self.0.key()
-    }
-}
-
 /// What one item came to: its findings, its trace, and what to save for it.
 struct Judged {
     findings: Vec<LintError>,
@@ -75,28 +70,50 @@ impl<'r> View<'r> {
     /// on worker threads and holds no state it changes. `judge` asks everything through the view it
     /// is handed and never through this one: a question put to this view while items are being
     /// judged is not in any item's trace, so the items of this call are then saved for nobody and
-    /// judged again on the next run.
+    /// judged again on the next run. An `each` asked of this view from inside an item is such a
+    /// question too, and nothing it does clears the mark.
     ///
     /// Everything the items asked is written into this view's trace too, so a unit whose items did
     /// not move is replayed whole without being split again.
     ///
-    /// An item is saved under the unit, the place of this call among the unit's `each` calls, and
-    /// [`Item::key`], and under nothing else. Whatever `judge` takes from outside the item and the
-    /// view, a table it was built with, a setting, a value worked out before the call, has to be in
-    /// the item's key too, or an item judged under one such value is replayed under another.
+    /// An item is saved under the unit, the place in the source this call is made from (its file,
+    /// line and column), how many calls the unit made from that place before this one, and
+    /// [`Item::key`], and under nothing else. So a call skipped on one run does not hand its saved
+    /// items to another call. Whatever `judge` takes from outside the item and the view, a table it
+    /// was built with, a setting, a value worked out before the call, has to be in the item's key
+    /// too, or an item judged under one such value is replayed under another.
+    ///
+    /// The place is the caller's, found through `#[track_caller]`. A helper function that calls
+    /// `each` for its callers is that place for all of them, unless it is `#[track_caller]` itself,
+    /// and its calls are then told apart only by their count: one call of the helper skipped on a
+    /// run hands its items to the next call of the helper. Mark such a helper `#[track_caller]`, or
+    /// put what tells its calls apart into the item key. A loop calling `each` from one place is
+    /// the same, and its items carry what differs between the turns of the loop.
     ///
     /// The items are handed out in their order to the calling thread, to the run's threads that
     /// are free, and to every thread of the run that finishes its own work while some are not yet
     /// started, so a unit splitting itself while other units are judged gets the threads they
     /// leave and never puts more threads to work than the run has.
+    #[track_caller]
     pub fn each<T, F>(&self, items: &[T], judge: F) -> Vec<Vec<LintError>>
     where
         T: Item + Sync,
         F: Fn(&View<'r>, &T) -> Vec<LintError> + Sync,
     {
         let reading = self.reading();
-        let call = self.calls.fetch_add(1, Ordering::AcqRel).to_string();
-        self.stray.store(false, Ordering::Release);
+        let place = std::panic::Location::caller();
+        let call = {
+            let mut calls = self.calls.lock().unwrap_or_else(PoisonError::into_inner);
+            let n = calls.entry((place.file(), place.line(), place.column())).or_insert(0);
+            *n += 1;
+            format!("{}:{}:{}#{}", place.file(), place.line(), place.column(), *n - 1)
+        };
+        // An `each` asked of this view while another is judging items is a question the outer
+        // items do not hold, as any other question to this view then is.
+        if self.busy.load(Ordering::Acquire) > 0 {
+            self.stray.fetch_add(1, Ordering::AcqRel);
+        }
+        let strays = self.stray.load(Ordering::Acquire);
         self.busy.fetch_add(1, Ordering::AcqRel);
         let judged: Vec<Judged> = pool::each_index(reading.pool(), items.len(), |i| {
             let item = &items[i];
@@ -134,7 +151,7 @@ impl<'r> View<'r> {
             }
         });
         self.busy.fetch_sub(1, Ordering::AcqRel);
-        let stray = self.stray.load(Ordering::Acquire);
+        let stray = self.stray.load(Ordering::Acquire) != strays;
         let mut out = Vec::with_capacity(judged.len());
         for j in judged {
             if let (false, Some((key, prior, took)), Some(u)) = (stray, &j.save, &self.unit) {

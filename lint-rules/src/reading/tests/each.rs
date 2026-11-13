@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
+use crate::reading::Item;
 
 struct PerFile {
     items: Arc<AtomicUsize>,
@@ -232,4 +233,88 @@ fn items_split_inside_running_units_share_the_runs_threads() {
     let most = most.load(Ordering::SeqCst);
     assert!(most <= 4, "{most} items were judged at once on a run of four threads");
     assert!(most >= 2, "the control: the run used its threads ({most})");
+}
+
+/// The items of two `each` calls in one unit, the first made only when `flag` says so.
+fn first_and_second(v: &View<'_>) -> String {
+    let mut out = Vec::new();
+    if v.text("flag") == Some("yes") {
+        out.extend(v.each(&["a"], |iv, f| one(format!("first:{}", iv.text(format!("{f}.txt")).unwrap_or("-")))));
+    }
+    out.extend(v.each(&["a"], |iv, f| one(format!("second:{}", iv.text(format!("{f}.txt")).unwrap_or("-")))));
+    out.into_iter().flatten().map(|e| e.message).collect::<Vec<_>>().join(",")
+}
+
+fn one(message: String) -> Vec<LintError> {
+    vec![LintError::error("workspace".into(), 1, "probe", message)]
+}
+
+/// An `each` skipped on one run does not hand its saved items to the call after it: the items
+/// are keyed by the place each call is made from, and the second call's place never moved.
+#[test]
+fn a_skipped_call_does_not_hand_its_items_to_the_next() {
+    let dir = Dir::new("each-skipped");
+    dir.write("a.txt", "x");
+    dir.write("flag", "yes");
+    let cache = Mem::default();
+    let (probe, _) = Probe::new(first_and_second);
+    let pack = pack_of(probe);
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["first:x,second:x"]);
+    dir.write("flag", "no");
+    let fresh = messages(&run_repo(&dir, &Mem::default(), &pack, None).found);
+    assert_eq!(fresh, ["second:x"], "the control: what a run with nothing saved finds");
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), fresh);
+}
+
+/// An item that asks the outer view a question and then calls `each` on it is still kept from
+/// being saved: the inner call does not clear the mark the question left.
+#[test]
+fn an_each_inside_an_item_keeps_the_outer_question_marked() {
+    fn ask(outer: &View<'_>) -> String {
+        outer
+            .each(&["a"], |iv, f| {
+                let side = outer.text("side.txt").unwrap_or("-").to_string();
+                let _ = outer.each(&["z"], |_, _| Vec::new());
+                one(format!("{f}:{}+{side}", iv.text(format!("{f}.txt")).unwrap_or("-")))
+            })
+            .into_iter()
+            .flatten()
+            .map(|e| e.message)
+            .collect()
+    }
+    let dir = Dir::new("each-stray-nested");
+    dir.write("a.txt", "x");
+    dir.write("side.txt", "s");
+    let cache = Mem::default();
+    let (probe, _) = Probe::new(ask);
+    let pack = pack_of(probe);
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["a:x+s"]);
+    dir.write("side.txt", "t");
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["a:x+t"]);
+}
+
+/// Whether `T` is an [`Item`], answered without needing it to be one: the inherent method is
+/// taken where the bound holds and the trait's otherwise.
+struct IsItem<T: ?Sized>(std::marker::PhantomData<T>);
+
+trait NotItem {
+    fn holds(&self) -> bool {
+        false
+    }
+}
+
+impl<T: ?Sized> NotItem for IsItem<T> {}
+
+impl<T: Item + ?Sized> IsItem<T> {
+    fn holds(&self) -> bool {
+        true
+    }
+}
+
+/// A pair is no item: keyed on its first half alone, a second half worked out from what the unit
+/// read would replay stale. An item carries what tells it apart in its key.
+#[test]
+fn a_pair_is_not_an_item() {
+    assert!(!IsItem::<(&str, usize)>(std::marker::PhantomData).holds());
+    assert!(IsItem::<&str>(std::marker::PhantomData).holds(), "the control");
 }

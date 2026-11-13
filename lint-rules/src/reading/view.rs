@@ -7,7 +7,8 @@
 //! asks.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use super::disk::{CrateFiles, Kind};
@@ -29,9 +30,13 @@ pub struct View<'r> {
     /// How many `each` calls are judging items right now, during which a question put to this view
     /// rather than to an item's own is one the items' traces do not hold.
     pub(crate) busy:  AtomicUsize,
-    pub(crate) stray: AtomicBool,
-    /// How many `each` calls this view has made, which tells the items of one call from another's.
-    pub(crate) calls: AtomicUsize,
+    /// How many questions were put to this view while an `each` was judging items, an `each` of
+    /// its own among them. A call whose count moved while it ran saves none of its items. It only
+    /// grows, so no call can clear what another call's items asked.
+    pub(crate) stray: AtomicUsize,
+    /// How many `each` calls this view has made from each place in the source, which tells the
+    /// items of one call from another's.
+    pub(crate) calls: Mutex<HashMap<(&'static str, u32, u32), usize>>,
 }
 
 impl<'r> View<'r> {
@@ -41,8 +46,8 @@ impl<'r> View<'r> {
             unit,
             trace: Mutex::new(Trace::default()),
             busy: AtomicUsize::new(0),
-            stray: AtomicBool::new(false),
-            calls: AtomicUsize::new(0),
+            stray: AtomicUsize::new(0),
+            calls: Mutex::new(HashMap::new()),
         }
     }
 
@@ -52,7 +57,7 @@ impl<'r> View<'r> {
 
     pub(crate) fn record(&self, q: Question) {
         if self.busy.load(Ordering::Acquire) > 0 {
-            self.stray.store(true, Ordering::Release);
+            self.stray.fetch_add(1, Ordering::AcqRel);
         }
         self.trace.lock().unwrap_or_else(PoisonError::into_inner).questions.insert(q);
     }
