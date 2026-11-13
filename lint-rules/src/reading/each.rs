@@ -85,9 +85,10 @@ impl<'r> View<'r> {
     /// view, a table it was built with, a setting, a value worked out before the call, has to be in
     /// the item's key too, or an item judged under one such value is replayed under another.
     ///
-    /// The items run on the threads of the run that are free, the calling one among them, and
-    /// one after another on the calling thread when none is free, so a unit splitting itself while
-    /// other units are judged never puts more threads to work than the run has.
+    /// The items are handed out in their order to the calling thread, to the run's threads that
+    /// are free, and to every thread of the run that finishes its own work while some are not yet
+    /// started, so a unit splitting itself while other units are judged gets the threads they
+    /// leave and never puts more threads to work than the run has.
     pub fn each<T, F>(&self, items: &[T], judge: F) -> Vec<Vec<LintError>>
     where
         T: Item + Sync,

@@ -16,6 +16,7 @@ mod moved;
 mod order;
 mod overlay;
 mod sharing;
+mod spread;
 
 use std::collections::{BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
