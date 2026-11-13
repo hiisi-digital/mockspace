@@ -256,8 +256,16 @@ fn phase_gate_exit(cfg: &Config, req: &Request) -> u8 {
         let Some(text) = after(req, || std::fs::read_to_string(place).ok()) else {
             continue;
         };
+        // Only an edit the tool refuses itself goes unjudged. A place the gate cannot
+        // address is a question with no answer, and passing it would fail open.
         let Ok(rel) = place.strip_prefix(&mock_dir) else {
-            continue;
+            eprintln!(
+                "mock check-edit: `{}` is not under the mock dir `{}`, so the phase gate cannot \
+                 address it.",
+                place.display(),
+                mock_dir.display()
+            );
+            return 2;
         };
         let rel = rel.to_string_lossy().replace('\\', "/");
         if !mockspace_lint_rules::changelist_required::admits_edit(&mock_dir, &src_dirs, &rel, &text) {

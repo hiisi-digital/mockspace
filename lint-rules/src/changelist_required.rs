@@ -131,11 +131,11 @@ impl RepoLint for ChangelistRequired {
 }
 
 /// Whether a source file the gate would otherwise refuse passes in a phase
-/// other than IMPL, given the `content` it carries.
+/// other than IMPL, given the `content` it carries, `None` for a removal.
 ///
-/// Two things pass. A file in a nuked crate, since intentionally wiped source
-/// is not a phase violation; the crate's `lib.rs` carries the marker. And a
-/// file declaring nothing, which is not the source this gate protects: it
+/// Two things pass. A removal from a nuked crate, since intentionally wiped
+/// source is not a phase violation; the crate's `lib.rs` carries the marker. And
+/// a file declaring nothing, which is not the source this gate protects: it
 /// wires a crate into the workspace so the dependency graph, the layer
 /// numbering and the structure documents have real edges to read. That second
 /// arm is how a design round adds a crate: its doc phase commits the manifest
@@ -147,11 +147,17 @@ fn passes_outside_impl(
     file: &str,
     content: Option<&str>,
 ) -> bool {
-    let nuked = layout
-        .package_dir(workspace_root, file)
-        .and_then(|d| std::fs::read_to_string(d.join("src/lib.rs")).ok())
-        .is_some_and(|s| s.contains("Nuked by"));
-    nuked || content.is_some_and(declares_nothing)
+    match content {
+        Some(text) => declares_nothing(text),
+        // A nuke removes a crate's files and writes a comment-only stub, which
+        // the arm above passes, so the marker excuses removals and nothing
+        // else. Read from disk, a marker excusing written files would let any
+        // item through behind a stub somebody wrote first.
+        None => layout
+            .package_dir(workspace_root, file)
+            .and_then(|d| std::fs::read_to_string(d.join("src/lib.rs")).ok())
+            .is_some_and(|s| s.contains("Nuked by")),
+    }
 }
 
 /// The gate's verdict on one source file as an edit not yet made would leave
@@ -209,40 +215,23 @@ pub(crate) fn staged_or_worktree(
 
 /// Whether a Rust file declares nothing at all.
 ///
-/// Conservative by construction: everything except comments, inner attributes,
-/// and blank lines counts as a declaration, so any real item trips it. This is
-/// a scaffold test, not a parser, and it errs toward calling a file source.
+/// Read from the parse tree: every top-level node is a comment or an inner
+/// attribute, and the text parses. A line scanner skipping lines that start
+/// with `#![` let an item written after the attribute on the same line through,
+/// and text that does not parse is not known to declare nothing, so it counts
+/// as source.
 fn declares_nothing(src: &str) -> bool {
-    let mut in_block = false;
-    for raw in src.lines() {
-        let l = raw.trim();
-        if in_block {
-            // Only a line that ends the block and carries nothing after it is
-            // still comment. `*/ pub fn real() {}` is code.
-            if let Some(rest) = l.split_once("*/") {
-                if !rest.1.trim().is_empty() {
-                    return false;
-                }
-                in_block = false;
-            }
-            continue;
-        }
-        if l.is_empty() || l.starts_with("//") || l.starts_with("#![") {
-            continue;
-        }
-        if l.starts_with("/*") {
-            match l.split_once("*/") {
-                Some((_, rest)) if rest.trim().is_empty() => continue,
-                Some(_) => return false,
-                None => {
-                    in_block = true;
-                    continue;
-                },
-            }
-        }
+    let Some(tree) = crate::make_parser().parse(src, None) else {
+        return false;
+    };
+    let root = tree.root_node();
+    if root.has_error() {
         return false;
     }
-    true
+    let mut cursor = root.walk();
+    root.children(&mut cursor).all(|n| {
+        matches!(n.kind(), "line_comment" | "block_comment" | "inner_attribute_item")
+    })
 }
 
 #[cfg(test)]
@@ -365,6 +354,40 @@ mod tests {
         assert!(item);
     }
 
+    /// An item on the same line as an inner attribute is an item. The line
+    /// scanner this replaced skipped every line starting `#![`, so both of these
+    /// read as declaring nothing and walked past the gate.
+    #[test]
+    fn an_item_after_an_inner_attribute_on_its_line_is_an_item() {
+        assert!(!declares_nothing("#![no_std] pub fn a() {}\n"));
+        assert!(!declares_nothing("//! d\n#![doc = \"x\"] mod evil { pub fn f(){} }\n"));
+        // The controls: docs, attributes and comments alone.
+        assert!(declares_nothing("//! d\n#![no_std]\n#![doc = \"x\"]\n/* c */\n// c\n"));
+        assert!(declares_nothing(""));
+    }
+
+    /// Text that does not parse is not known to declare nothing.
+    #[test]
+    fn text_that_does_not_parse_declares_something() {
+        assert!(!declares_nothing("//! d\n#![no_std\n"));
+    }
+
+    /// A nuke deletes a crate's files and writes a comment-only stub, so the
+    /// marker excuses a removal and nothing else. Before, a `lib.rs` carrying the
+    /// marker on disk excused any item written anywhere in the crate.
+    #[test]
+    fn the_nuke_marker_excuses_a_removal_and_never_an_item() {
+        let (root, src) = round_at("nuke", &["202601010000_changelist.doc.md"]);
+        std::fs::create_dir_all(root.join("crates/born/src")).unwrap();
+        std::fs::write(root.join("crates/born/src/lib.rs"), "//! Nuked by x\n").unwrap();
+        let layout = SrcLayout::new(&root, &src);
+        let item = admits_edit(&root, &src, "crates/born/src/other.rs", ONE_ITEM);
+        let removal = passes_outside_impl(&root, &layout, "crates/born/src/other.rs", None);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!item, "a marker on disk must not excuse an item");
+        assert!(removal, "a nuke's removals still pass");
+    }
+
     /// A path outside the source directories, or not Rust, is not the gate's.
     #[test]
     fn a_file_the_gate_does_not_hold_is_admitted() {
@@ -415,7 +438,6 @@ mod tests {
         );
     }
 }
-
 
 #[cfg(test)]
 #[path = "changelist_required_fmt_tests.rs"]

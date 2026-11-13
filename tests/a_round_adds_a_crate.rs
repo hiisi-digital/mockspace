@@ -91,13 +91,23 @@ fn lock(r: &Repo, cl: &str) {
     r.git(&["commit", "-q", "--no-verify", "-m", "docs: lock"]);
 }
 
-/// The generated write guard's verdict on an agent writing `content` to the crate's `lib.rs`.
-fn guard_admits(r: &Repo, content: &str) -> (bool, String) {
-    let lib = r.root.join(format!("mock/crates/{CRATE}/src/lib.rs"));
+/// What the generated write guard said.
+#[derive(Debug)]
+enum Verdict {
+    Admitted,
+    Refused(String),
+}
+
+/// The generated write guard's verdict on `tool` carrying `input`.
+///
+/// Only the two shapes the guard prints count: the bare allow, or a deny with its reason.
+/// Anything else, a non-zero exit or output of another shape, fails the test, so a hook that
+/// crashed never reads as one that admitted.
+fn guard(r: &Repo, tool: &str, input: serde_json::Value) -> Verdict {
     let payload = serde_json::json!({
         "hook_event_name": "PreToolUse",
-        "tool_name": "Write",
-        "tool_input": { "file_path": lib.display().to_string(), "content": content },
+        "tool_name": tool,
+        "tool_input": input,
     })
     .to_string();
     let mut child = r
@@ -116,8 +126,43 @@ fn guard_admits(r: &Repo, content: &str) -> (bool, String) {
         .write_all(payload.as_bytes())
         .unwrap();
     let out = child.wait_with_output().unwrap();
-    let text = said(&out);
-    (!text.contains("permissionDecision"), text)
+    assert!(
+        out.status.success(),
+        "the guard itself failed: {}",
+        said(&out)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("the guard printed no decision ({e}): {}", said(&out)));
+    let hso = &json["hookSpecificOutput"];
+    match hso.get("permissionDecision").and_then(|d| d.as_str()) {
+        None if hso.as_object().is_some_and(|o| o.len() == 1) => Verdict::Admitted,
+        Some("deny") => {
+            Verdict::Refused(
+                hso["permissionDecisionReason"]
+                    .as_str()
+                    .unwrap_or("")
+                    .into(),
+            )
+        },
+        _ => panic!("the guard printed a decision of another shape: {stdout}"),
+    }
+}
+
+fn lib_path(r: &Repo) -> String {
+    r.root
+        .join(format!("mock/crates/{CRATE}/src/lib.rs"))
+        .display()
+        .to_string()
+}
+
+/// An agent's Write of `content` to the new crate's `lib.rs`.
+fn write_lib(r: &Repo, content: &str) -> Verdict {
+    guard(
+        r,
+        "Write",
+        serde_json::json!({ "file_path": lib_path(r), "content": content }),
+    )
 }
 
 /// The control for the gate arms: with the doc changelist naming no crate, the same
@@ -195,15 +240,61 @@ fn a_round_cannot_lock_over_a_crate_it_left_empty() {
 #[test]
 fn the_write_guard_admits_a_lib_rs_of_documentation_in_the_doc_phase() {
     let r = doc_phase();
-    let (admitted, text) = guard_admits(&r, DOCS_ONLY);
-    assert!(admitted, "{text}");
+    let v = write_lib(&r, DOCS_ONLY);
+    assert!(matches!(v, Verdict::Admitted), "{v:?}");
 }
 
-/// And refuses the twin carrying one item, naming the phase.
+/// And refuses the twin carrying one item, in the lint's own words, which only the
+/// answer from `check-edit` carries.
 #[test]
 fn the_write_guard_refuses_one_item_in_the_doc_phase() {
     let r = doc_phase();
-    let (admitted, text) = guard_admits(&r, ONE_ITEM);
-    assert!(!admitted, "{text}");
-    assert!(text.contains("not in IMPL phase"), "{text}");
+    match write_lib(&r, ONE_ITEM) {
+        Verdict::Refused(why) => assert!(why.contains("would declare items"), "{why}"),
+        v => panic!("{v:?}"),
+    }
+}
+
+/// An Edit is judged by the file it would leave: adding an item to a `lib.rs` of docs
+/// is refused, and adding a doc line is admitted.
+#[test]
+fn the_write_guard_judges_an_edit_by_the_file_it_leaves() {
+    let r = doc_phase();
+    scaffold(&r, DOCS_ONLY);
+    let edit = |new: &str| {
+        guard(
+            &r,
+            "Edit",
+            serde_json::json!({
+                "file_path": lib_path(&r),
+                "old_string": "#![no_std]\n",
+                "new_string": new,
+            }),
+        )
+    };
+    let docs = edit("#![no_std]\n//! One more line of the crate's docs.\n");
+    let item = edit("#![no_std]\npub fn born() {}\n");
+    assert!(matches!(docs, Verdict::Admitted), "{docs:?}");
+    match item {
+        Verdict::Refused(why) => assert!(why.contains("would declare items"), "{why}"),
+        v => panic!("{v:?}"),
+    }
+}
+
+/// A Bash command writing the file carries no text to ask about, so it keeps the phase rule.
+#[test]
+fn a_bash_write_of_the_lib_rs_keeps_the_phase_rule() {
+    let r = doc_phase();
+    scaffold(&r, DOCS_ONLY);
+    let v = guard(
+        &r,
+        "Bash",
+        serde_json::json!({
+            "command": format!("sed -i 's/x/y/' {}", lib_path(&r)),
+        }),
+    );
+    match v {
+        Verdict::Refused(why) => assert!(why.contains("not in IMPL phase"), "{why}"),
+        v => panic!("{v:?}"),
+    }
 }

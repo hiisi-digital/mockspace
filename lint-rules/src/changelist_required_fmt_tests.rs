@@ -5,7 +5,6 @@
 
 //! The fmt-only exemption of `changelist-required`, judged on what a commit carries.
 
-#[cfg(test)]
 mod fmt_only_exemption {
     use std::process::Command;
 
@@ -137,7 +136,6 @@ mod fmt_only_exemption {
     }
 }
 
-#[cfg(test)]
 mod fmt_only_judges_the_committed_content {
     use std::process::Command;
 
