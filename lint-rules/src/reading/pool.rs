@@ -16,9 +16,9 @@
 //!
 //! A thread takes the items of its own batch first. Once those are all handed out it takes items
 //! of any batch asked for as deep in work as its own or deeper, and waits only when there are none
-//! while some of its own are still being judged or a thread it started has not yet ended. So a thread inside a unit helps the `each` calls
-//! of other units, and is never caught judging a unit of the run around it while its own call has
-//! not returned.
+//! while some of its own are still being judged or a thread it started has not yet ended. So a
+//! thread inside a unit helps the `each` calls of other units, and is never caught judging a unit
+//! of the run around it while its own call has not returned.
 
 use std::any::Any;
 use std::cell::Cell;

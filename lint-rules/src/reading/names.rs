@@ -6,9 +6,10 @@
 //! The text a path is known by in a key or a trace, one text for one path.
 //!
 //! A path that is text is its own text. One that is not, a file name with bytes no encoding reads,
-//! is a NUL and its bytes in hex, which no path that is text can be, since no path holds a NUL. Two
-//! paths that are not text therefore never share a text, as they would if each were made into text
-//! by putting a stand-in character for what does not read.
+//! is a NUL and its bytes in hex, or on windows its sixteen-bit units in hex, which no path that is
+//! text can be, since no path holds a NUL. Two paths that are not text therefore never share a
+//! text, as they would if each were made into text by putting a stand-in character for what does
+//! not read.
 
 use std::borrow::Cow;
 use std::ffi::OsStr;
@@ -18,39 +19,64 @@ use std::path::PathBuf;
 pub(crate) fn text_of(name: &OsStr) -> Cow<'_, str> {
     match name.to_str() {
         Some(text) => Cow::Borrowed(text),
-        None => {
-            let mut out = String::from("\0");
-            for b in name.as_encoded_bytes() {
-                out.push_str(&format!("{b:02x}"));
-            }
-            Cow::Owned(out)
-        },
+        None => Cow::Owned(escaped(name)),
     }
 }
 
-/// The path `text` is known by, the inverse of [`text_of`].
+/// The path `text` is known by, the inverse of [`text_of`]. A text that opens with a NUL and does
+/// not decode, a store written elsewhere or damaged, is taken as it reads, a path no file has.
 pub(crate) fn path_of(text: &str) -> PathBuf {
-    let Some(hex) = text.strip_prefix('\0') else { return PathBuf::from(text) };
-    let bytes: Option<Vec<u8>> = (0 .. hex.len() / 2)
-        .map(|i| hex.get(2 * i .. 2 * i + 2).and_then(|h| u8::from_str_radix(h, 16).ok()))
-        .collect();
-    match bytes {
-        Some(bytes) if hex.len() % 2 == 0 => from_bytes(bytes),
-        _ => PathBuf::from(text),
+    text.strip_prefix('\0').and_then(unescaped).unwrap_or_else(|| PathBuf::from(text))
+}
+
+/// The hex digits of `hex` in fours or twos as `width` says, or nothing where any does not decode.
+fn units(hex: &str, width: usize) -> Option<Vec<u32>> {
+    if hex.is_empty() || hex.len() % width != 0 || !hex.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return None;
     }
+    (0 .. hex.len() / width)
+        .map(|i| hex.get(width * i .. width * (i + 1)).and_then(|h| u32::from_str_radix(h, 16).ok()))
+        .collect()
+}
+
+/// A name on unix is bytes, each two hex digits.
+#[cfg(unix)]
+fn escaped(name: &OsStr) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    std::iter::once("\0".to_string()).chain(name.as_bytes().iter().map(|b| format!("{b:02x}"))).collect()
 }
 
 #[cfg(unix)]
-fn from_bytes(bytes: Vec<u8>) -> PathBuf {
+fn unescaped(hex: &str) -> Option<PathBuf> {
     use std::os::unix::ffi::OsStringExt;
-    PathBuf::from(std::ffi::OsString::from_vec(bytes))
+    let bytes = units(hex, 2)?.into_iter().map(|u| u as u8).collect();
+    Some(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
 }
 
-#[cfg(not(unix))]
-fn from_bytes(bytes: Vec<u8>) -> PathBuf {
-    // SAFETY: the bytes are what `as_encoded_bytes` gave on this machine, written by `text_of` into
-    // a store this machine keeps, so they are an encoding this platform made.
-    PathBuf::from(unsafe { std::ffi::OsString::from_encoded_bytes_unchecked(bytes) })
+/// A name on windows is sixteen-bit units, each four hex digits, and any sequence of them is a
+/// name.
+#[cfg(windows)]
+fn escaped(name: &OsStr) -> String {
+    use std::os::windows::ffi::OsStrExt;
+    std::iter::once("\0".to_string()).chain(name.encode_wide().map(|u| format!("{u:04x}"))).collect()
+}
+
+#[cfg(windows)]
+fn unescaped(hex: &str) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    let wide: Vec<u16> = units(hex, 4)?.into_iter().map(|u| u as u16).collect();
+    Some(PathBuf::from(std::ffi::OsString::from_wide(&wide)))
+}
+
+/// Elsewhere a name that is not text is known as it reads, and two such names can share a text.
+#[cfg(not(any(unix, windows)))]
+fn escaped(name: &OsStr) -> String {
+    name.to_string_lossy().into_owned()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn unescaped(_: &str) -> Option<PathBuf> {
+    None
 }
 
 #[cfg(test)]
@@ -73,5 +99,12 @@ mod tests {
         assert_ne!(text_of(a), text_of(b));
         assert_eq!(path_of(&text_of(a)), PathBuf::from(a));
         assert_eq!(path_of(&text_of(b)), PathBuf::from(b));
+    }
+
+    #[test]
+    fn a_text_that_does_not_decode_is_taken_as_it_reads() {
+        for damaged in ["\0", "\0zz", "\0abc", "\0+1"] {
+            assert_eq!(path_of(damaged), PathBuf::from(damaged), "{damaged:?}");
+        }
     }
 }

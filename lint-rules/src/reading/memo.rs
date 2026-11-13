@@ -57,7 +57,8 @@ impl<K: Eq + Hash, V> Memo<K, V> {
             let slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
             &**slots.get(key)?
         };
-        // SAFETY: as in `get_or`.
+        // SAFETY: as in `slot`: the slot is boxed, and no slot is removed or replaced while the
+        // map lives.
         let slot = unsafe { &*slot };
         slot.get()
     }
