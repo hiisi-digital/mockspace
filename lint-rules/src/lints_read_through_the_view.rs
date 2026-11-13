@@ -45,9 +45,11 @@
 //! repository keeps them in `<mock>/tools/`, which the repo lint never reads.
 //!
 //! A lint that truly has to read outside the view says so with [`View::untraced`], and the unit
-//! that asks it is never saved, so it reads afresh on every run. A function calling `untraced` is
-//! therefore not read: the call and the reads it covers sit in one function, and a helper reading
-//! for it calls `untraced` itself.
+//! that asks it is never saved, so it reads afresh on every run. What a function reads after a
+//! statement that is a call of `untraced` and nothing else, at the top of its body, is therefore
+//! not looked at, since that call runs whenever the reads after it do. A call in a branch, a
+//! closure or a nested block exempts nothing, and neither does one after the read. A helper
+//! reading for a function calls `untraced` itself.
 //!
 //! Severity: Error (blocks commit, push, and build).
 
@@ -267,7 +269,18 @@ fn visit(node: Node, scan: &Scan, report: &mut impl FnMut(Node, String)) {
         return;
     }
     match node.kind() {
-        "function_item" if calls_untraced(node, scan) => return,
+        "function_item" => {
+            let body = node.child_by_field_name("body");
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if Some(child) == body {
+                    visit_body(child, scan, report);
+                } else {
+                    visit(child, scan, report);
+                }
+            }
+            return;
+        },
         "use_declaration" => {
             if let Some(arg) = node.child_by_field_name("argument") {
                 let mut paths = Vec::new();
@@ -301,18 +314,35 @@ fn visit(node: Node, scan: &Scan, report: &mut impl FnMut(Node, String)) {
     }
 }
 
-/// Whether a function calls `untraced` on its view, which keeps its unit from being saved, so
-/// whatever it reads around the view is read again on every run.
-fn calls_untraced(node: Node, scan: &Scan) -> bool {
-    if node.kind() == "call_expression"
-        && let Some(function) = node.child_by_field_name("function")
-        && function.kind() == "field_expression"
-        && function.child_by_field_name("field").is_some_and(|f| scan.text(f) == "untraced")
-    {
-        return true;
+/// A function's body, statement by statement, up to a statement that calls `untraced` and nothing
+/// else. Such a call always runs once it is reached, and it keeps the unit from being saved, so
+/// what the function reads after it is read again on every run and is not looked at. A call in a
+/// branch, a closure or any expression that may not run exempts nothing, and a read before the
+/// call is read as any other.
+fn visit_body(body: Node, scan: &Scan, report: &mut impl FnMut(Node, String)) {
+    let mut cursor = body.walk();
+    for statement in body.children(&mut cursor) {
+        if calls_untraced(statement, scan) {
+            return;
+        }
+        visit(statement, scan, report);
     }
-    let mut cursor = node.walk();
-    node.children(&mut cursor).any(|child| calls_untraced(child, scan))
+}
+
+/// Whether `statement` is a call of `untraced` standing alone, `view.untraced(reason);`.
+fn calls_untraced(statement: Node, scan: &Scan) -> bool {
+    let call = match statement.kind() {
+        "expression_statement" => statement.named_child(0),
+        "call_expression" => Some(statement),
+        _ => None,
+    };
+    call.is_some_and(|call| {
+        call.kind() == "call_expression"
+            && call.child_by_field_name("function").is_some_and(|f| {
+                f.kind() == "field_expression"
+                    && f.child_by_field_name("field").is_some_and(|name| scan.text(name) == "untraced")
+            })
+    })
 }
 
 /// Whether the file declares a type named `name` of its own.

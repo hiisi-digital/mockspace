@@ -331,3 +331,18 @@ fn other() -> Option<String> {
 "#;
     assert_eq!(found(source), ["7:std::env"]);
 }
+
+/// Only an `untraced` that always runs before the read exempts it: one in a branch, in a closure
+/// or after the read leaves the read to be refused.
+#[test]
+fn an_untraced_that_may_not_run_exempts_nothing() {
+    let conditional = "fn f(view: &View, bad: bool) -> String {\n    if bad { view.untraced(\"x\"); }\n    std::fs::read_to_string(\"a\").unwrap()\n}\n";
+    assert_eq!(found(conditional), ["3:std::fs"]);
+    let closure = "fn f(view: &View) -> String {\n    let _ = || view.untraced(\"x\");\n    std::fs::read_to_string(\"a\").unwrap()\n}\n";
+    assert_eq!(found(closure), ["3:std::fs"]);
+    let after = "fn f(view: &View) -> String {\n    let s = std::fs::read_to_string(\"a\").unwrap();\n    view.untraced(\"x\");\n    s\n}\n";
+    assert_eq!(found(after), ["2:std::fs"]);
+    // The control: the same read after an `untraced` standing first is let through.
+    let first = "fn f(view: &View) -> String {\n    view.untraced(\"x\");\n    std::fs::read_to_string(\"a\").unwrap()\n}\n";
+    assert_eq!(found(first), Vec::<String>::new());
+}
