@@ -169,9 +169,10 @@ fn an_incremental_run_equals_a_full_one_over_a_history() {
     // the control: a walk where nothing was ever replayed compares a full run with a cold one
     assert!(replays > 0, "no verdict was replayed after the first commit, so the walk tested nothing");
 
-    // the control that the comparison can fail: every saved verdict replaced by a wrong one must
-    // show up as a different report at the last commit.
-    let planted = "verdict-v2 1\nplanted\t1\tplanted\tEEE\t~\t~\tplanted by the test\n";
+    // the control that the comparison can fail: every saved unit replaced by one whose trace asks
+    // nothing, so it always holds, and whose findings are wrong, must show up as a different report
+    // at the last commit.
+    let planted = "unit-v1 1\nalt 0 0\nverdict-v2 1\nplanted\t1\tplanted\tEEE\t~\t~\tplanted by the test\n";
     for file in stored(store.path()) {
         std::fs::write(file, planted).unwrap();
     }

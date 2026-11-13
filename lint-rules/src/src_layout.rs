@@ -31,8 +31,8 @@
 //! caring about: source for one, doc templates for another.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+use crate::View;
 use crate::merge;
 
 /// Why a `src_dirs` entry is not written the way git reports a path, or `None`
@@ -202,6 +202,7 @@ pub static NO_REF_FILES: RefFiles = RefFiles {
 /// unstaged edit to a file the phase forbids blocks the commit too, because
 /// otherwise the rule is only ever enforced against whoever remembered to stage.
 pub fn changed_files(
+    view: &View<'_>,
     mock_dir: &Path,
     layout: &SrcLayout,
     refs: &RefFiles,
@@ -244,7 +245,7 @@ pub fn changed_files(
     for (args, source) in diffs {
         let mut argv: Vec<&str> = args.to_vec();
         argv.extend(specs.iter().map(String::as_str));
-        let Some(output) = run_git(mock_dir, &argv) else {
+        let Some(output) = run_git(view, mock_dir, &argv) else {
             continue;
         };
         for line in output.lines() {
@@ -265,7 +266,7 @@ pub fn changed_files(
     {
         let mut argv: Vec<&str> = vec!["ls-files", "--others", "--exclude-standard", "--"];
         argv.extend(specs.iter().map(String::as_str));
-        if let Some(output) = run_git(mock_dir, &argv) {
+        if let Some(output) = run_git(view, mock_dir, &argv) {
             for line in output.lines() {
                 let file = line.trim();
                 if keep(file) && !files.iter().any(|(f, _)| f == file) {
@@ -282,9 +283,9 @@ pub fn changed_files(
     //
     // Costs one `git rev-parse` off the merge path and nothing per file, since
     // `Merge::detect` finds no MERGE_HEAD and `inherited` is then constant.
-    let merge = merge::Merge::detect(mock_dir);
+    let merge = merge::Merge::detect(view, mock_dir);
     if merge.in_progress() {
-        files.retain(|(file, source)| source != "staged" || !merge.inherited(mock_dir, file));
+        files.retain(|(file, source)| source != "staged" || !merge.inherited(view, mock_dir, file));
     }
 
     for file in &refs.changed {
@@ -347,13 +348,9 @@ fn changed_path(line: &str) -> Option<&str> {
     (!path.is_empty()).then_some(path)
 }
 
-fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    Some(String::from_utf8_lossy(&output.stdout).to_string())
+pub(crate) fn run_git(view: &View<'_>, cwd: &Path, args: &[&str]) -> Option<String> {
+    let answer = view.git_in(cwd, args);
+    answer.started().then(|| String::from_utf8_lossy(answer.stdout()).into_owned())
 }
 
 #[cfg(test)]
@@ -418,7 +415,7 @@ mod merge_walk_tests {
         }
 
         fn walk(&self) -> Vec<(String, String)> {
-            changed_files(&self.mock(), &self.layout(), &NO_REF_FILES, |_| true)
+            changed_files(&crate::Reading::new(&self.root).view(), &self.mock(), &self.layout(), &NO_REF_FILES, |_| true)
         }
     }
 
@@ -658,7 +655,7 @@ mod tests {
         // the real repo is this checkout, so a walk that ignored the guard would
         // return a great many files rather than none
         let cwd = std::env::current_dir().unwrap();
-        assert!(changed_files(&cwd, &l, &NO_REF_FILES, |_| true).is_empty());
+        assert!(changed_files(&crate::Reading::new(&cwd).view(), &cwd, &l, &NO_REF_FILES, |_| true).is_empty());
     }
 
     #[test]

@@ -13,6 +13,8 @@
 
 use std::path::Path;
 
+use crate::{Entry, View};
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -133,19 +135,15 @@ fn parse_new_format_suffix(suffix: &str, full_name: &str) -> Option<ParsedChange
 
 /// Scan the design_rounds directory for all changelists.
 /// Only returns root-level files (not in subdirectories: those are archived).
-pub fn find_changelists(design_rounds: &Path) -> Vec<ParsedChangelist> {
-    let entries = match std::fs::read_dir(design_rounds) {
-        Ok(e) => e,
-        Err(_) => return Vec::new(),
+pub fn find_changelists(view: &View<'_>, design_rounds: &Path) -> Vec<ParsedChangelist> {
+    let Some(listing) = view.list(design_rounds) else {
+        return Vec::new();
     };
-
-    entries
-        .flatten()
-        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            parse_changelist(&name)
-        })
+    listing
+        .entries()
+        .iter()
+        .filter(|e| Entry::is_file(e))
+        .filter_map(|e| parse_changelist(e.name()))
         .collect()
 }
 
@@ -154,29 +152,29 @@ pub fn find_changelists(design_rounds: &Path) -> Vec<ParsedChangelist> {
 // ---------------------------------------------------------------------------
 
 /// Find an active (unlocked, non-deprecated) doc changelist.
-pub fn find_active_doc_cl(design_rounds: &Path) -> Option<ParsedChangelist> {
-    find_changelists(design_rounds)
+pub fn find_active_doc_cl(view: &View<'_>, design_rounds: &Path) -> Option<ParsedChangelist> {
+    find_changelists(view, design_rounds)
         .into_iter()
         .find(|cl| cl.kind == ClKind::Doc && cl.status == ClStatus::Active)
 }
 
 /// Find a locked doc changelist.
-pub fn find_locked_doc_cl(design_rounds: &Path) -> Option<ParsedChangelist> {
-    find_changelists(design_rounds)
+pub fn find_locked_doc_cl(view: &View<'_>, design_rounds: &Path) -> Option<ParsedChangelist> {
+    find_changelists(view, design_rounds)
         .into_iter()
         .find(|cl| cl.kind == ClKind::Doc && cl.status == ClStatus::Locked)
 }
 
 /// Find an active (unlocked, non-deprecated) src changelist.
-pub fn find_active_src_cl(design_rounds: &Path) -> Option<ParsedChangelist> {
-    find_changelists(design_rounds)
+pub fn find_active_src_cl(view: &View<'_>, design_rounds: &Path) -> Option<ParsedChangelist> {
+    find_changelists(view, design_rounds)
         .into_iter()
         .find(|cl| cl.kind == ClKind::Src && cl.status == ClStatus::Active)
 }
 
 /// Find a locked src changelist.
-pub fn find_locked_src_cl(design_rounds: &Path) -> Option<ParsedChangelist> {
-    find_changelists(design_rounds)
+pub fn find_locked_src_cl(view: &View<'_>, design_rounds: &Path) -> Option<ParsedChangelist> {
+    find_changelists(view, design_rounds)
         .into_iter()
         .find(|cl| cl.kind == ClKind::Src && cl.status == ClStatus::Locked)
 }
@@ -186,8 +184,8 @@ pub fn find_locked_src_cl(design_rounds: &Path) -> Option<ParsedChangelist> {
 /// A round has one changelist of each kind, so an unlocked one next to a locked one is not the
 /// round's record: a stub, which `deprecate` retires when it is a bare title. They are what `changelist-seal` names,
 /// and what `deprecate` retires whatever the phase says.
-pub fn stray_active_changelists(design_rounds: &Path) -> Vec<ParsedChangelist> {
-    let cls = find_changelists(design_rounds);
+pub fn stray_active_changelists(view: &View<'_>, design_rounds: &Path) -> Vec<ParsedChangelist> {
+    let cls = find_changelists(view, design_rounds);
     let locked = |kind: ClKind| {
         cls.iter()
             .any(|cl| cl.kind == kind && cl.status == ClStatus::Locked)
@@ -205,15 +203,15 @@ pub fn stray_active_changelists(design_rounds: &Path) -> Vec<ParsedChangelist> {
 }
 
 /// Whether any non-deprecated changelist exists.
-pub fn has_any_changelist(design_rounds: &Path) -> bool {
-    find_changelists(design_rounds)
+pub fn has_any_changelist(view: &View<'_>, design_rounds: &Path) -> bool {
+    find_changelists(view, design_rounds)
         .iter()
         .any(|cl| cl.status != ClStatus::Deprecated)
 }
 
 /// Determine the current phase based on changelist state.
-pub fn current_phase(design_rounds: &Path) -> Phase {
-    let cls = find_changelists(design_rounds);
+pub fn current_phase(view: &View<'_>, design_rounds: &Path) -> Phase {
+    let cls = find_changelists(view, design_rounds);
 
     // Filter out deprecated CLs: they don't count.
     let active_doc = cls
@@ -243,8 +241,8 @@ pub fn current_phase(design_rounds: &Path) -> Phase {
 }
 
 /// Collect all frozen changelist filenames (locked + deprecated).
-pub fn frozen_changelists(design_rounds: &Path) -> Vec<ParsedChangelist> {
-    find_changelists(design_rounds)
+pub fn frozen_changelists(view: &View<'_>, design_rounds: &Path) -> Vec<ParsedChangelist> {
+    find_changelists(view, design_rounds)
         .into_iter()
         .filter(|cl| cl.status == ClStatus::Locked || cl.status == ClStatus::Deprecated)
         .collect()

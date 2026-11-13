@@ -14,7 +14,6 @@
 //! one walk.
 
 use super::defs::{Item, collect_sources};
-use crate::CrateSourceFile;
 pub use super::shape::{Member as DeclaredMember, Parts as DeclaredParts};
 
 /// One struct, enum, trait or union a crate defines outside test code.
@@ -44,10 +43,10 @@ impl DeclaredType {
     }
 }
 
-/// Every type the crate defines outside test code, from its source files (crate-relative paths such
-/// as `src/lib.rs`).
+/// Every type the crate defines outside test code, from its source files: each a crate-relative path
+/// such as `src/lib.rs` and the file's text.
 #[must_use]
-pub fn declared_types(crate_name: &str, sources: &[CrateSourceFile]) -> Vec<DeclaredType> {
+pub fn declared_types(crate_name: &str, sources: &[(&std::path::Path, &str)]) -> Vec<DeclaredType> {
     collect_sources(crate_name, sources)
         .into_iter()
         .filter_map(|def| {

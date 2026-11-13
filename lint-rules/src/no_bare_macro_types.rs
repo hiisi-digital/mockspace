@@ -47,10 +47,6 @@ const FORBIDDEN_CALLS: &[(&str, &[&str])] = &[
 pub struct NoBareMacroTypes;
 
 impl Lint for NoBareMacroTypes {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
@@ -63,7 +59,7 @@ impl Lint for NoBareMacroTypes {
 impl CrateLint for NoBareMacroTypes {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
-        visit_nodes(ctx.tree.root_node(), ctx, &mut errors);
+        visit_nodes(ctx.tree().root_node(), ctx, &mut errors);
         errors
     }
 }
@@ -92,7 +88,7 @@ fn check_call(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
         None => return,
     };
 
-    let text = txt(func, ctx.source);
+    let text = txt(func, ctx.source());
 
     for &(pattern, exempt_suffixes) in FORBIDDEN_CALLS {
         let is_exempt = exempt_suffixes.iter().any(|s| {
@@ -104,7 +100,7 @@ fn check_call(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
         }
         if text == pattern || text.ends_with(&format!("::{}", pattern)) {
             let line_idx = node.start_position().row;
-            let line = ctx.source.lines().nth(line_idx).unwrap_or("");
+            let line = ctx.source().lines().nth(line_idx).unwrap_or("");
             if crate::line_lint_allowed(line, "no_bare_macro_types") {
                 errors.push(LintError::warning(
                     ctx.crate_name.to_string(),
@@ -139,7 +135,7 @@ fn check_struct_literal(node: Node, ctx: &LintContext, errors: &mut Vec<LintErro
         None => return,
     };
 
-    let text = txt(name_node, ctx.source);
+    let text = txt(name_node, ctx.source());
     let bare_name = text.rsplit("::").next().unwrap_or(text);
 
     for &(pattern, exempt_suffixes) in FORBIDDEN_CALLS {
@@ -153,7 +149,7 @@ fn check_struct_literal(node: Node, ctx: &LintContext, errors: &mut Vec<LintErro
         // Only match struct literal patterns (no :: in pattern = struct name)
         if !pattern.contains("::") && bare_name == pattern {
             let line_idx = node.start_position().row;
-            let line = ctx.source.lines().nth(line_idx).unwrap_or("");
+            let line = ctx.source().lines().nth(line_idx).unwrap_or("");
             if crate::line_lint_allowed(line, "no_bare_macro_types") {
                 errors.push(LintError::warning(
                     ctx.crate_name.to_string(),

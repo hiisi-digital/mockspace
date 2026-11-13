@@ -34,10 +34,6 @@ const LINT_NAME: &str = "undocumented-type";
 pub struct UndocumentedType;
 
 impl Lint for UndocumentedType {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::Workspace
-    }
-
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::BUILD_GATE
     }
@@ -56,11 +52,13 @@ impl WorkspaceLint for UndocumentedType {
         // Pass 1: collect all type names mentioned in ALL doc files.
         let mut documented_types: HashSet<String> = HashSet::new();
         for &(_, ctx) in crates {
-            collect_type_names_from_docs(ctx.all_doc_content, &mut documented_types);
-            if let Some(design) = ctx.design_doc {
+            for doc in ctx.doc_templates() {
+                collect_type_names_from_docs(doc, &mut documented_types);
+            }
+            if let Some(design) = ctx.design_doc() {
                 collect_type_names_from_docs(design, &mut documented_types);
             }
-            if let Some(shame) = ctx.shame_doc {
+            if let Some(shame) = ctx.shame_doc() {
                 collect_type_names_from_docs(shame, &mut documented_types);
             }
         }
@@ -82,7 +80,7 @@ impl WorkspaceLint for UndocumentedType {
                 }
 
                 // Check SHAME.md.tmpl for an entry.
-                if let Some(shame) = ctx.shame_doc {
+                if let Some(shame) = ctx.shame_doc() {
                     if let Some(explanation) = find_shame_entry(shame, &type_name) {
                         let word_count = explanation.split_whitespace().count();
                         if word_count >= 50 {
@@ -162,8 +160,8 @@ fn is_type_name(word: &str) -> bool {
 // misses most of them in a multi-file crate. tracked: #33
 fn collect_source_type_defs(ctx: &LintContext) -> Vec<(String, usize)> {
     let mut defs = Vec::new();
-    let root = ctx.tree.root_node();
-    collect_defs(root, ctx.source, &mut defs);
+    let root = ctx.tree().root_node();
+    collect_defs(root, ctx.source(), &mut defs);
     defs
 }
 
@@ -227,33 +225,14 @@ fn find_shame_entry<'a>(shame_content: &'a str, type_name: &str) -> Option<&'a s
 
 #[cfg(test)]
 mod cfg_test_module_tests {
-    use std::collections::{BTreeMap, BTreeSet};
-
     use super::*;
+    use crate::testkit::LintFixture;
 
     /// Build a context whose tree is parsed from the source under test.
     /// `file_size`'s helper parses an empty string, which is fine for a lint
     /// that only counts lines and useless for one that walks the AST.
     fn ctx_for(source: &'static str, design: &'static str) -> LintContext<'static> {
-        let mut parser = crate::make_parser();
-        let tree = parser.parse(source, None).unwrap();
-        LintContext {
-            crate_name: "test-crate",
-            short_name: "test-crate",
-            source,
-            tree: Box::leak(Box::new(tree)),
-            all_sources: &[],
-            deps: &[],
-            all_crates: Box::leak(Box::new(BTreeSet::new())),
-            design_doc: Some(design),
-            all_doc_content: design,
-            shame_doc: None,
-            workspace_root: std::path::Path::new("/tmp"),
-            proc_macro_crates: &[],
-            crate_prefix: "test",
-            lint_proc_macro_source: false,
-            primitive_introductions: Box::leak(Box::new(BTreeMap::new())),
-        }
+        Box::leak(Box::new(LintFixture::new(source).with_design_doc(design))).ctx()
     }
 
     fn reported(source: &'static str, design: &'static str) -> Vec<String> {

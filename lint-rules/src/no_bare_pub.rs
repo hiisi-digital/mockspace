@@ -21,10 +21,6 @@ use crate::{CrateLint, Lint, LintContext, LintError};
 pub struct NoBarePublic;
 
 impl Lint for NoBarePublic {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
@@ -45,7 +41,7 @@ impl CrateLint for NoBarePublic {
         let mut brace_depth_macro: i32 = 0;
         let mut module_depth: i32 = 0;
 
-        for (line_num, line) in ctx.source.lines().enumerate() {
+        for (line_num, line) in ctx.source().lines().enumerate() {
             let trimmed = line.trim();
 
             // Skip comments
@@ -71,7 +67,7 @@ impl CrateLint for NoBarePublic {
             // Only check items at module level (depth 0).
             // Items inside impl blocks, inner mods, cfg blocks, etc. are deeper.
             if module_depth == 0 && is_bare_pub(trimmed) {
-                let has_api_attr = has_visibility_attribute(ctx.source, line_num);
+                let has_api_attr = has_visibility_attribute(ctx.source(), line_num);
                 if !has_api_attr {
                     let item_preview: String = trimmed.chars().take(60).collect();
                     errors.push(LintError {

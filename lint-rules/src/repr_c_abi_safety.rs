@@ -50,10 +50,6 @@ const ABI_UNSAFE_TYPES: &[(&str, &str)] = &[
 pub struct ReprCAbiSafety;
 
 impl Lint for ReprCAbiSafety {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn name(&self) -> &'static str {
         LINT_NAME
     }
@@ -72,7 +68,7 @@ impl CrateLint for ReprCAbiSafety {
         }
 
         let mut errors = Vec::new();
-        let root = ctx.tree.root_node();
+        let root = ctx.tree().root_node();
         visit_structs(root, ctx, &mut errors);
         errors
     }
@@ -82,7 +78,7 @@ fn visit_structs(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == "struct_item" {
-            if has_repr_c(child, ctx.source) {
+            if has_repr_c(child, ctx.source()) {
                 check_fields(child, ctx, errors);
             }
         }
@@ -129,7 +125,7 @@ fn has_repr_c(struct_node: Node, source: &str) -> bool {
 fn check_fields(struct_node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     let struct_name = struct_node
         .child_by_field_name("name")
-        .map(|n| &ctx.source[n.byte_range()])
+        .map(|n| &ctx.source()[n.byte_range()])
         .unwrap_or("<unknown>");
 
     let mut cursor = struct_node.walk();
@@ -155,7 +151,7 @@ fn check_single_field(
     ctx: &LintContext,
     errors: &mut Vec<LintError>,
 ) {
-    let field_text = &ctx.source[field.byte_range()];
+    let field_text = &ctx.source()[field.byte_range()];
     let line = field.start_position().row + 1;
 
     // Check for ABI-unsafe types in the field's type annotation

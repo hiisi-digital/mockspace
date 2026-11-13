@@ -182,6 +182,7 @@ fn the_forbidden_imports_check_reaches_a_crate_under_each_source_directory() {
             &crates,
             &cfg.src_dirs,
             &cfg.mock_dir,
+            &cfg.repo_root,
             &cfg.proc_macro_crates,
             cfg.lint_proc_macro_source,
             &cfg.crate_prefix,

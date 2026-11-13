@@ -15,10 +15,6 @@ use crate::{CrateLint, Lint, LintContext, LintError};
 pub struct NoManualId;
 
 impl Lint for NoManualId {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
@@ -35,7 +31,7 @@ impl CrateLint for NoManualId {
         }
 
         let mut errors = Vec::new();
-        let root = ctx.tree.root_node();
+        let root = ctx.tree().root_node();
         visit_structs(root, ctx, &mut errors);
         errors
     }
@@ -59,14 +55,14 @@ fn check_struct(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     }
 
     let name = match node.child_by_field_name("name") {
-        Some(n) => txt(n, ctx.source),
+        Some(n) => txt(n, ctx.source()),
         None => return,
     };
 
     if name.len() > 2 && name.ends_with("Id") {
         // Check for lint:allow(no_manual_id) on the line
         let line_idx = node.start_position().row;
-        let line = ctx.source.lines().nth(line_idx).unwrap_or("");
+        let line = ctx.source().lines().nth(line_idx).unwrap_or("");
         if crate::line_lint_allowed(line, "no_manual_id") {
             errors.push(LintError::warning(
                 ctx.crate_name.to_string(),

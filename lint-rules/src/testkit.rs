@@ -1,243 +1,336 @@
 //! Building a [`LintContext`] outside the engine, so a lint can be tested.
 //!
-//! A [`CrateLint`](crate::CrateLint) takes a `LintContext`, and that
-//! context holds a `&tree_sitter::Tree`. The engine builds one per crate
-//! while it walks the workspace. A test has no workspace to walk, and
-//! the generated cdylib a repo's own `mock/lints/*.rs` compile into
-//! depends on this crate and on the declared packs, so a consumer had
-//! no route to a `Tree` at all. Source-side lints were untestable
-//! everywhere as a consequence, which is why the repos that carry them
-//! have tests on their `RepoLint`s and none on their `CrateLint`s.
-//!
-//! [`LintFixture`] owns the parsed tree and every collection the
-//! context borrows, and hands out a context that borrows from it:
+//! A [`CrateLint`](crate::CrateLint) takes a `LintContext`, which is a view of
+//! a [`Reading`] plus the values the engine computed for the crate. A test has
+//! no workspace to read, so [`LintFixture`] holds a reading whose every file is
+//! given in memory, at a root that does not exist on disk, and hands out a
+//! context over it:
 //!
 //! ```
 //! use mockspace_lint_rules::testkit::LintFixture;
 //!
 //! let fixture = LintFixture::new("use std::fmt;\n");
 //! let ctx = fixture.ctx();
-//! assert_eq!(ctx.source, "use std::fmt;\n");
+//! assert_eq!(ctx.source(), "use std::fmt;\n");
 //! ```
 //!
-//! The source is parsed, so a lint that reads `ctx.tree` sees the AST
-//! of the text it was given rather than an empty one.
+//! The source is parsed by the reading, so a lint that reads `ctx.tree()` sees
+//! the syntax tree of the text it was given rather than an empty one.
 //!
 //! # Why this is not behind a feature
 //!
 //! It compiles into every consumer's generated cdylib, including when that
 //! cdylib is built to run the gate rather than to run tests, and nothing in the
 //! dispatch path ever touches it. A `testkit` feature defaulting off would keep
-//! it out of the gate build, and it cannot: the engine generates **one** crate
-//! with one manifest and uses it for both, so `cargo mock test` and a pre-commit
-//! run are the same artifact built twice. Defaulting the feature off would hide
-//! the fixture from exactly the tests it exists for, and defaulting it on would
-//! ship it anyway.
-//!
-//! Separating them means the generator writing a different feature list per
-//! entry point, which is an engine change out of proportion to what is being
-//! avoided: the cdylib is a local build artifact, rebuilt per repository, and
-//! never distributed anywhere.
+//! it out of the gate build, and it cannot: the engine generates one crate with
+//! one manifest and uses it for both, so `cargo mock test` and a pre-commit run
+//! are the same artifact built twice.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
-use crate::{CrateSourceFile, LintContext};
+use crate::context::{CrateInput, RepoInput, WorkspaceInput};
+use crate::reading::{Reading, View};
+use crate::{CrateSourceFile, LintContext, LintError, RepoContext, RepoLint};
+
+/// Where a fixture's files sit. Nothing is ever read from here on disk.
+const ROOT: &str = "/nonexistent-lint-fixture";
+
+/// What a context over the fixture borrows, built on first use.
+///
+/// Fields drop in order, so the sources and the view go before the reading
+/// they borrow, and the reading is boxed so moving the fixture leaves it where
+/// they point.
+struct Built {
+    sources: Vec<CrateSourceFile<'static>>,
+    view:    View<'static>,
+    reading: Owned,
+}
+
+/// The fixture's reading, on the heap and held by a pointer rather than a `Box`, so that moving it
+/// asserts nothing about the references into it.
+struct Owned(std::ptr::NonNull<Reading>);
+
+impl Owned {
+    fn get(&self) -> &Reading {
+        // SAFETY: the pointer came from `Box::into_raw` and is freed only by `drop`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl Drop for Owned {
+    fn drop(&mut self) {
+        // SAFETY: made by `Box::into_raw` in `built`, and dropped once.
+        drop(unsafe { Box::from_raw(self.0.as_ptr()) });
+    }
+}
 
 /// Owns everything a [`LintContext`] borrows, for use in a test.
 ///
-/// Built with [`new`](Self::new) and narrowed with the `with_*`
-/// methods, each of which takes and returns `self` so they chain.
-/// [`ctx`](Self::ctx) then borrows the whole thing.
+/// Built with [`new`](Self::new) and narrowed with the `with_*` methods, each
+/// of which takes and returns `self` so they chain. [`ctx`](Self::ctx) then
+/// borrows the whole thing.
 pub struct LintFixture {
-    crate_name:              String,
-    short_name:              String,
-    source:                  String,
-    tree:                    tree_sitter::Tree,
-    all_sources:             Vec<CrateSourceFile>,
-    deps:                    Vec<String>,
-    all_crates:              BTreeSet<String>,
-    design_doc:              Option<String>,
-    all_doc_content:         String,
-    shame_doc:               Option<String>,
-    workspace_root:          PathBuf,
-    proc_macro_crates:       Vec<String>,
-    lint_proc_macro_source:  bool,
-    crate_prefix:            String,
-    primitive_introductions: BTreeMap<String, Vec<String>>,
+    built: OnceLock<Built>,
+    krate: CrateInput,
+    ws:    WorkspaceInput,
+    root:  String,
+    files: Vec<(PathBuf, String)>,
+    docs:  BTreeMap<String, String>,
 }
 
 impl LintFixture {
-    /// A fixture over one crate root, with the source parsed.
+    /// A fixture over one crate root, with the source as `src/lib.rs`.
     ///
-    /// Defaults: crate name `test-crate`, prefix `test`, no
-    /// dependencies, no documents, workspace root `/nonexistent`, and
-    /// `all_sources` holding the one file as `src/lib.rs`. A lint
-    /// iterating `all_sources` and one reading `source` therefore see
-    /// the same text, which is what the engine does for a crate whose
-    /// only file is its root.
-    ///
-    /// # Panics
-    ///
-    /// If the Rust grammar fails to load, which cannot happen with the
-    /// grammar this crate is built against.
+    /// Defaults: crate name `test-crate`, prefix `test`, no dependencies, no
+    /// documents, workspace root `/nonexistent`, and `all_sources` holding the
+    /// one file. A lint iterating `all_sources` and one reading `source`
+    /// therefore see the same text, which is what the engine does for a crate
+    /// whose only file is its root.
     #[must_use]
     pub fn new(source: &str) -> Self {
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_rust::LANGUAGE.into())
-            .expect("the bundled Rust grammar loads");
-        let tree = parser
-            .parse(source, None)
-            .expect("tree-sitter returns a tree for any input");
-
         Self {
-            crate_name: "test-crate".to_string(),
-            short_name: "test-crate".to_string(),
-            source: source.to_string(),
-            tree,
-            all_sources: vec![CrateSourceFile {
-                rel_path: PathBuf::from("src/lib.rs"),
-                text:     source.to_string(),
-            }],
-            deps: Vec::new(),
-            all_crates: BTreeSet::new(),
-            design_doc: None,
-            all_doc_content: String::new(),
-            shame_doc: None,
-            workspace_root: PathBuf::from("/nonexistent"),
-            proc_macro_crates: Vec::new(),
-            lint_proc_macro_source: false,
-            crate_prefix: "test".to_string(),
-            primitive_introductions: BTreeMap::new(),
+            built: OnceLock::new(),
+            krate: CrateInput {
+                name:       "test-crate".to_string(),
+                short_name: "test-crate".to_string(),
+                deps:       Vec::new(),
+                dir:        Path::new(ROOT).join("test-crate"),
+            },
+            ws: WorkspaceInput {
+                workspace_root: PathBuf::from("/nonexistent"),
+                crate_prefix: "test".to_string(),
+                ..WorkspaceInput::default()
+            },
+            root: source.to_string(),
+            files: vec![(PathBuf::from("src/lib.rs"), source.to_string())],
+            docs: BTreeMap::new(),
         }
+    }
+
+    fn change(mut self, f: impl FnOnce(&mut Self)) -> Self {
+        self.built = OnceLock::new();
+        f(&mut self);
+        self
     }
 
     /// Name the crate, and its short name with the prefix stripped.
     #[must_use]
-    pub fn with_crate_name(mut self, name: &str, short: &str) -> Self {
-        self.crate_name = name.to_string();
-        self.short_name = short.to_string();
-        self
+    pub fn with_crate_name(self, name: &str, short: &str) -> Self {
+        self.change(|f| {
+            f.krate.name = name.to_string();
+            f.krate.short_name = short.to_string();
+            f.krate.dir = Path::new(ROOT).join(name);
+        })
     }
 
-    /// Replace the module files under the crate.
+    /// Replace the files `all_sources` holds, each a crate-relative path and its text.
     ///
-    /// The root stays whatever [`new`](Self::new) was given, so a lint
-    /// that reads only `source` and one that walks `all_sources`
-    /// disagree exactly where the engine would have them disagree.
-    /// That difference is the point: it is what a test for the
-    /// root-only blindness looks like.
+    /// The root stays whatever [`new`](Self::new) was given, so a lint that
+    /// reads only `source` and one that walks `all_sources` disagree where the
+    /// test sets them up to.
     #[must_use]
-    pub fn with_sources(mut self, sources: Vec<CrateSourceFile>) -> Self {
-        self.all_sources = sources;
-        self
+    pub fn with_sources(self, sources: &[(&str, &str)]) -> Self {
+        self.change(|f| {
+            f.files = sources
+                .iter()
+                .map(|(p, t)| (PathBuf::from(p), (*t).to_string()))
+                .collect();
+        })
     }
 
     /// Add one module file beside the root.
     #[must_use]
-    pub fn with_module(mut self, rel_path: &str, text: &str) -> Self {
-        self.all_sources.push(CrateSourceFile {
-            rel_path: PathBuf::from(rel_path),
-            text:     text.to_string(),
-        });
-        self
+    pub fn with_module(self, rel_path: &str, text: &str) -> Self {
+        self.change(|f| f.files.push((PathBuf::from(rel_path), text.to_string())))
     }
 
     /// Name the crates this one depends on, by directory name.
     #[must_use]
-    pub fn with_deps(mut self, deps: &[&str]) -> Self {
-        self.deps = deps.iter().map(|d| (*d).to_string()).collect();
-        self
+    pub fn with_deps(self, deps: &[&str]) -> Self {
+        self.change(|f| f.krate.deps = deps.iter().map(|d| (*d).to_string()).collect())
     }
 
     /// Name every crate in the workspace, by directory name.
     #[must_use]
-    pub fn with_all_crates(mut self, crates: &[&str]) -> Self {
-        self.all_crates = crates.iter().map(|c| (*c).to_string()).collect();
-        self
+    pub fn with_all_crates(self, crates: &[&str]) -> Self {
+        self.change(|f| f.ws.all_crates = crates.iter().map(|c| (*c).to_string()).collect())
     }
 
-    /// Set the crate's `DESIGN.md.tmpl` content.
+    /// Put a document in the crate's directory, `README.md.tmpl` or `DEEPDIVE_x.md.tmpl`.
     #[must_use]
-    pub fn with_design_doc(mut self, doc: &str) -> Self {
-        self.design_doc = Some(doc.to_string());
-        self
+    pub fn with_doc(self, name: &str, text: &str) -> Self {
+        self.change(|f| {
+            f.docs.insert(name.to_string(), text.to_string());
+        })
     }
 
-    /// Set the concatenation of every doc template for the crate.
+    /// Set the crate's `DESIGN.md.tmpl`.
     #[must_use]
-    pub fn with_doc_content(mut self, doc: &str) -> Self {
-        self.all_doc_content = doc.to_string();
-        self
+    pub fn with_design_doc(self, doc: &str) -> Self {
+        self.with_doc("DESIGN.md.tmpl", doc)
     }
 
-    /// Set the crate's `SHAME.md.tmpl` content.
+    /// Set the crate's `SHAME.md.tmpl`.
     #[must_use]
-    pub fn with_shame_doc(mut self, doc: &str) -> Self {
-        self.shame_doc = Some(doc.to_string());
-        self
+    pub fn with_shame_doc(self, doc: &str) -> Self {
+        self.with_doc("SHAME.md.tmpl", doc)
     }
 
     /// Set the crate prefix, as `crate_prefix` in `mockspace.toml`.
     #[must_use]
-    pub fn with_crate_prefix(mut self, prefix: &str) -> Self {
-        self.crate_prefix = prefix.to_string();
-        self
+    pub fn with_crate_prefix(self, prefix: &str) -> Self {
+        self.change(|f| f.ws.crate_prefix = prefix.to_string())
     }
 
     /// Mark crates as proc-macro crates, by directory name.
     #[must_use]
-    pub fn with_proc_macro_crates(mut self, crates: &[&str]) -> Self {
-        self.proc_macro_crates = crates.iter().map(|c| (*c).to_string()).collect();
-        self
+    pub fn with_proc_macro_crates(self, crates: &[&str]) -> Self {
+        self.change(|f| f.ws.proc_macro_crates = crates.iter().map(|c| (*c).to_string()).collect())
     }
 
     /// Whether source lints run against proc-macro crate source.
     #[must_use]
-    pub fn with_lint_proc_macro_source(mut self, lint: bool) -> Self {
-        self.lint_proc_macro_source = lint;
-        self
+    pub fn with_lint_proc_macro_source(self, lint: bool) -> Self {
+        self.change(|f| f.ws.lint_proc_macro_source = lint)
     }
 
     /// Set the workspace root the lint resolves paths against.
     #[must_use]
-    pub fn with_workspace_root(mut self, root: &Path) -> Self {
-        self.workspace_root = root.to_path_buf();
-        self
+    pub fn with_workspace_root(self, root: &Path) -> Self {
+        self.change(|f| f.ws.workspace_root = root.to_path_buf())
     }
 
     /// Declare the primitives a crate legitimately introduces.
     #[must_use]
-    pub fn with_primitive_introductions(
-        mut self,
-        introductions: BTreeMap<String, Vec<String>>,
-    ) -> Self {
-        self.primitive_introductions = introductions;
-        self
+    pub fn with_primitive_introductions(self, introductions: BTreeMap<String, Vec<String>>) -> Self {
+        self.change(|f| f.ws.primitive_introductions = introductions)
+    }
+
+    /// The reading the context is a view of, for a test that counts what it did.
+    #[must_use]
+    pub fn reading(&self) -> &Reading {
+        self.built().reading.get()
     }
 
     /// The context, borrowing everything this fixture owns.
     #[must_use]
     pub fn ctx(&self) -> LintContext<'_> {
-        LintContext {
-            crate_name:              &self.crate_name,
-            short_name:              &self.short_name,
-            source:                  &self.source,
-            tree:                    &self.tree,
-            all_sources:             &self.all_sources,
-            deps:                    &self.deps,
-            all_crates:              &self.all_crates,
-            design_doc:              self.design_doc.as_deref(),
-            all_doc_content:         &self.all_doc_content,
-            shame_doc:               self.shame_doc.as_deref(),
-            workspace_root:          &self.workspace_root,
-            proc_macro_crates:       &self.proc_macro_crates,
-            lint_proc_macro_source:  self.lint_proc_macro_source,
-            crate_prefix:            &self.crate_prefix,
-            primitive_introductions: &self.primitive_introductions,
-        }
+        let built = self.built();
+        LintContext::new(&built.view, &self.krate, &self.ws, Path::new("src/lib.rs")).narrowed_to(&built.sources)
     }
+
+    /// `reading` with this fixture's files laid over it. A context reads the root from `src/lib.rs`
+    /// whatever `all_sources` holds, so `root` lays it there over any file of that name; a run
+    /// walks the crate, so without `root` the crate is exactly its files, and the root only where
+    /// there are none.
+    fn overlay(&self, mut reading: Reading, root: bool) -> Reading {
+        let dir = &self.krate.dir;
+        for (rel, text) in &self.files {
+            reading = reading.with_overlay(dir.join(rel), text.clone());
+        }
+        if root || self.files.is_empty() {
+            reading = reading.with_overlay(dir.join("src/lib.rs"), self.root.clone());
+        }
+        for (name, text) in &self.docs {
+            reading = reading.with_overlay(dir.join(name), text.clone());
+        }
+        reading
+    }
+
+    fn built(&self) -> &Built {
+        self.built.get_or_init(|| {
+            let dir = &self.krate.dir;
+            let reading = self.overlay(Reading::new(ROOT), true);
+            let reading = Owned(std::ptr::NonNull::from(Box::leak(Box::new(reading))));
+            // SAFETY: every reference made `'static` here points into heap memory this fixture
+            // owns and does not touch until `built` is reset: the reading behind `Owned`, and the buffers of
+            // `files` and of the crate's directory. `change` resets `built` before mutating
+            // anything, the fixture never hands out `&mut`, and `built` is declared first so it is
+            // dropped before what it points into.
+            let r: &'static Reading = unsafe { reading.0.as_ref() };
+            let dir: &'static Path = unsafe { &*std::ptr::from_ref::<Path>(dir.as_path()) };
+            let sources = self
+                .files
+                .iter()
+                .map(|(rel, text)| {
+                    let rel: &'static Path = unsafe { &*std::ptr::from_ref::<Path>(rel.as_path()) };
+                    let text: &'static str = unsafe { &*std::ptr::from_ref::<str>(text.as_str()) };
+                    CrateSourceFile::new(rel, text, crate::reading::TreeCell::of(r, &dir.join(rel)))
+                })
+                .collect();
+            Built {
+                sources,
+                view: r.view(),
+                reading,
+            }
+        })
+    }
+}
+
+/// What `lint` finds over the repository `input` describes, judged through a view of a reading
+/// rooted at its `repo_root`, as the runner judges it but with no store.
+#[must_use]
+pub fn check_repo(lint: &dyn RepoLint, input: RepoInput<'_>) -> Vec<LintError> {
+    let reading = Reading::new(input.repo_root);
+    let view = reading.view();
+    let wanted = lint.invocation_wanted();
+    let input = RepoInput {
+        invocation: if wanted { input.invocation } else { None },
+        ..input
+    };
+    lint.check_repo(&RepoContext::new(&view, input, wanted))
+}
+
+/// Every lint over the crates `fixtures` describe, through the runner, as one workspace of one
+/// reading with no store: crate lints crate by crate in the order given, then workspace lints.
+///
+/// The crates' workspace values are the first fixture's, with every fixture's crate counted in
+/// `all_crates`. A fixture's `all_sources` is what the reading finds under its `src/`, root
+/// included, since the runner walks the crate as the engine does.
+#[must_use]
+pub fn run(fixtures: &[LintFixture], overrides: Option<&crate::LintConfig>, pack: Option<&crate::LintPack>) -> Vec<LintError> {
+    let mut reading = Reading::new(ROOT);
+    let mut crates = Vec::with_capacity(fixtures.len());
+    let mut ws = fixtures.first().map(|f| f.ws.clone()).unwrap_or_default();
+    for f in fixtures {
+        reading = f.overlay(reading, false);
+        ws.all_crates.insert(f.krate.name.clone());
+        crates.push(f.krate.clone());
+    }
+    let input = crate::RunInput {
+        reading: &reading,
+        cache: None,
+        overrides,
+        doc_only: false,
+        workspace: &ws,
+        crates: &crates,
+        scope: None,
+        repo: None,
+        only: None,
+    };
+    crate::run(&input, pack)
+}
+
+/// Every repo lint, built-in and from `pack`, over `input`, through the runner with no crates and
+/// no store, the reading rooted at `input.repo_root`.
+#[must_use]
+pub fn run_repo(input: RepoInput<'_>, overrides: Option<&crate::LintConfig>, pack: Option<&crate::LintPack>) -> Vec<LintError> {
+    let reading = Reading::new(input.repo_root);
+    let ws = WorkspaceInput::default();
+    let input = crate::RunInput {
+        reading: &reading,
+        cache: None,
+        overrides,
+        doc_only: false,
+        workspace: &ws,
+        crates: &[],
+        scope: None,
+        repo: Some(input),
+        only: None,
+    };
+    crate::run(&input, pack)
 }
 
 #[cfg(test)]
@@ -258,7 +351,7 @@ mod tests {
     #[test]
     fn the_tree_is_a_parse_of_the_source() {
         let fixture = LintFixture::new("fn a() {}\nfn b() {}\n");
-        let root = fixture.ctx().tree.root_node();
+        let root = fixture.ctx().tree().root_node();
         assert_eq!(root.kind(), "source_file");
         assert_eq!(root.child_count(), 2, "two items were given");
     }
@@ -266,7 +359,7 @@ mod tests {
     #[test]
     fn an_empty_source_parses_to_an_empty_root() {
         let fixture = LintFixture::new("");
-        assert_eq!(fixture.ctx().tree.root_node().child_count(), 0);
+        assert_eq!(fixture.ctx().tree().root_node().child_count(), 0);
     }
 
     /// A syntax error is a tree with an error in it, not a panic and
@@ -276,16 +369,16 @@ mod tests {
     #[test]
     fn unparseable_source_still_yields_a_tree() {
         let fixture = LintFixture::new("fn ( { ] unclosed");
-        assert!(fixture.ctx().tree.root_node().has_error());
+        assert!(fixture.ctx().tree().root_node().has_error());
     }
 
     #[test]
     fn the_root_is_the_only_source_by_default() {
         let fixture = LintFixture::new("fn a() {}\n");
         let ctx = fixture.ctx();
-        assert_eq!(ctx.all_sources.len(), 1);
-        assert_eq!(ctx.all_sources[0].rel_path, PathBuf::from("src/lib.rs"));
-        assert_eq!(ctx.all_sources[0].text, ctx.source);
+        assert_eq!(ctx.all_sources().len(), 1);
+        assert_eq!(ctx.all_sources()[0].rel_path, PathBuf::from("src/lib.rs"));
+        assert_eq!(ctx.all_sources()[0].text, ctx.source());
     }
 
     /// A module added beside the root leaves the root's text alone, so
@@ -299,23 +392,20 @@ mod tests {
             LintFixture::new("pub mod inner;\n").with_module("src/inner.rs", "use std::fmt;\n");
         let ctx = fixture.ctx();
 
-        assert!(!ctx.source.contains("use std::"), "the root is untouched");
-        assert_eq!(ctx.all_sources.len(), 2);
+        assert!(!ctx.source().contains("use std::"), "the root is untouched");
+        assert_eq!(ctx.all_sources().len(), 2);
         assert!(
-            ctx.all_sources.iter().any(|f| f.text.contains("use std::")),
+            ctx.all_sources().iter().any(|f| f.text.contains("use std::")),
             "the module carries it"
         );
     }
 
     #[test]
     fn with_sources_replaces_rather_than_appends() {
-        let fixture = LintFixture::new("fn a() {}\n").with_sources(vec![CrateSourceFile {
-            rel_path: PathBuf::from("src/only.rs"),
-            text:     "fn b() {}\n".to_string(),
-        }]);
+        let fixture = LintFixture::new("fn a() {}\n").with_sources(&[("src/only.rs", "fn b() {}\n")]);
         let ctx = fixture.ctx();
-        assert_eq!(ctx.all_sources.len(), 1);
-        assert_eq!(ctx.all_sources[0].rel_path, PathBuf::from("src/only.rs"));
+        assert_eq!(ctx.all_sources().len(), 1);
+        assert_eq!(ctx.all_sources()[0].rel_path, PathBuf::from("src/only.rs"));
     }
 
     /// With no `proc_macro_crates` set the context falls back to a
@@ -376,17 +466,17 @@ mod tests {
     #[test]
     fn the_documents_are_absent_until_set() {
         let bare = LintFixture::new("");
-        assert!(bare.ctx().design_doc.is_none());
-        assert!(bare.ctx().shame_doc.is_none());
-        assert_eq!(bare.ctx().all_doc_content, "");
+        assert!(bare.ctx().design_doc().is_none());
+        assert!(bare.ctx().shame_doc().is_none());
+        assert!(bare.ctx().doc_templates().is_empty());
 
         let filled = LintFixture::new("")
             .with_design_doc("# Design\n")
             .with_shame_doc("# Shame\n")
-            .with_doc_content("# Design\n# Shame\n");
-        assert_eq!(filled.ctx().design_doc, Some("# Design\n"));
-        assert_eq!(filled.ctx().shame_doc, Some("# Shame\n"));
-        assert!(filled.ctx().all_doc_content.contains("Shame"));
+            .with_doc("README.md.tmpl", "# Readme\n");
+        assert_eq!(filled.ctx().design_doc(), Some("# Design\n"));
+        assert_eq!(filled.ctx().shame_doc(), Some("# Shame\n"));
+        assert_eq!(filled.ctx().doc_templates(), ["# Readme\n", "# Design\n"], "readme, then design, and never shame");
     }
 
     #[test]
@@ -396,10 +486,10 @@ mod tests {
             .with_all_crates(&["acme-core", "acme-other", "test-crate"]);
         let ctx = fixture.ctx();
 
-        assert_eq!(ctx.deps, ["acme-core"]);
-        assert_eq!(ctx.all_crates.len(), 3);
+        assert_eq!(ctx.deps(), ["acme-core"]);
+        assert_eq!(ctx.all_crates().len(), 3);
         assert!(
-            !ctx.all_crates.contains("acme-nonexistent"),
+            !ctx.all_crates().contains("acme-nonexistent"),
             "membership is what was named"
         );
     }
@@ -420,6 +510,6 @@ mod tests {
     #[test]
     fn the_workspace_root_is_what_was_set() {
         let fixture = LintFixture::new("").with_workspace_root(Path::new("/tmp/somewhere"));
-        assert_eq!(fixture.ctx().workspace_root, Path::new("/tmp/somewhere"));
+        assert_eq!(fixture.ctx().workspace_root(), Path::new("/tmp/somewhere"));
     }
 }

@@ -67,7 +67,7 @@ fn git(root: &Path, args: &[&str]) {
 fn gate(root: &Path) -> Vec<LintError> {
     let crates = std::collections::BTreeSet::new();
     let src_dirs = [root.join("crates")];
-    ChangelistRequired.check_repo(&RepoContext {
+    crate::testkit::check_repo(&ChangelistRequired, crate::RepoInput {
         mock_dir:    root,
         repo_root:   root,
         all_crates:  &crates,
@@ -77,12 +77,13 @@ fn gate(root: &Path) -> Vec<LintError> {
         open_panels: &[],
         ref_files:   &crate::src_layout::NO_REF_FILES,
         registry:    &Default::default(),
-        verdicts:    None,
     })
 }
 
+/// The edit question over a fresh reading of `root`, as the write guard asks it.
 fn admits(root: &Path, file: &str, text: &str) -> bool {
-    admits_edit(root, &[root.join("crates")], file, text)
+    let reading = crate::Reading::new(root);
+    admits_edit(&reading.view(), root, &[root.join("crates")], file, text)
 }
 
 fn done(root: PathBuf) {

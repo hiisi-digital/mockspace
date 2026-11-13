@@ -1626,3 +1626,22 @@ fn the_reference_syntax_skill_states_the_time_form_the_pattern_holds() {
         "the pattern no longer allows a fraction, so the skill's words are stale: {pattern}"
     );
 }
+
+// The rule for lint authors names the hard error that holds them to it, so a
+// session writing a lint meets the view contract where it opens the file.
+#[test]
+fn the_lint_authoring_rule_names_the_view_and_its_guard() {
+    let cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
+    let rule = builtins
+        .rules
+        .iter()
+        .find(|r| r.name == "lints-read-through-the-view")
+        .expect("the builtin rules carry one for lint authors");
+    assert!(rule.apply_to.iter().all(|g| g.ends_with("/lints/**")), "{:?}", rule.apply_to);
+    for needed in ["ctx.view()", "`lints-read-through-the-view`", "view.untraced", "view.each"] {
+        assert!(rule.body.contains(needed), "the rule does not name {needed}");
+    }
+    let guard = mockspace_lint_rules::lints_read_through_the_view::LintsReadThroughTheView;
+    assert_eq!(mockspace_lint_rules::Lint::name(&guard), "lints-read-through-the-view");
+}

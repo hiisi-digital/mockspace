@@ -440,6 +440,15 @@ Fires while a design round is open, and before opening a changelist in one.
             body: "## Per-crate documentation templates\n- `README.md.tmpl` is 3-10 lines: the crate's purpose, what it depends on, what depends on it.\n- It is inserted into the generated DESIGN.md via {{crate_summaries}}.\n- Detailed design goes in `DESIGN.md.tmpl` or `DEEPDIVE_*.md.tmpl`.".to_string(),
     });
 
+    // What a lint written in this repository may read, and through what. The
+    // hard error `lints-read-through-the-view` runs over `<mock>/lints/`, so the
+    // rule loads where such a file is opened.
+    rules.push(BuiltinRule {
+            name: "lints-read-through-the-view".to_string(),
+            apply_to: vec![format!("{mock_rel}/lints/**")],
+            body: "## A lint reads the repository only through its view\n\n- `ctx.view()` is the one way a lint reads: `text`, `bytes`, `list`, `walk`, `glob`, `exists`, `is_file`, `is_dir`, `rust`, `toml`, `git`, `git_in`, `run`. What was a field of the context is a method (`ctx.source()`, `ctx.tree()`, `ctx.all_sources()`, `ctx.registry()`).\n- The run saves a lint's findings under what it asked of the view and replays them while those answers hold, so a read around the view is replayed stale.\n- The lint `lints-read-through-the-view` is a hard error on `std::fs`, `std::process`, `std::env`, `read_dir`, a walker crate or `Path::is_file()` in lint code. Test code and tool crates are left alone.\n- A lint that blames the machine and not the tree calls `view.untraced(reason)` first, and is then never saved.\n- Separable work goes through `view.each(items, judge)`, which runs in parallel and saves per item.\n- A lint is `Send + Sync`. Tests build a context with `mockspace::testkit`.".to_string(),
+    });
+
     // On by default, from `mock/agent/config.toml`. A generated snapshot of what
     // this repository itself declares: its project tools and the lints it set,
     // with `mock tools` and `mock lints` named as the live answer once the
