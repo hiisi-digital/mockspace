@@ -18,7 +18,7 @@ use crate::config::Config;
 
 /// The rule body for `cfg` against the loaded `pack`.
 ///
-/// Names only: a project tool's usage and summary, and a lint's reach and source column, are
+/// Names only: a project tool's usage and summary, and a lint's source column, are
 /// what `mock tools` and `mock lints` print on demand, and the rule is read again for every
 /// worktree path a session touches. A tool is named, a lint is named under the severity it
 /// runs at, and the rest is one command away.
@@ -80,7 +80,7 @@ pub(crate) fn body(cfg: &Config, pack: &LintPack) -> String {
     };
     format!(
         "## What is available here, and what is checking you\n\n\
-         `mock tools` says what each tool does and `mock lints` lists every lint with its severity and reach. Below are only the names this repository declares, as of the last `cargo mock`; the lints that run at the pack's default are not listed.\n\n\
+         `mock tools` says what each tool does and `mock lints` lists every lint with its severity and where it comes from. Below are only the names this repository declares, as of the last `cargo mock`; the lints that run at the pack's default are not listed.\n\n\
          A tool reads its configuration from `[tools.<name>]` in `mockspace.toml`; `mock help <tool>` names the keys it reads, and a key it does not read stops it running.\n\n\
          ```\nPROJECT TOOLS: {tools_line}\n{tools_set}\nLINTS SET HERE\n{set_here}```\n"
     )

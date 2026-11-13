@@ -43,10 +43,6 @@ const FORBIDDEN_IMPLS: &[(&str, &str)] = &[
 pub struct NoManualImpl;
 
 impl Lint for NoManualImpl {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn name(&self) -> &'static str {
         "no-manual-impl"
     }
@@ -62,7 +58,7 @@ impl Lint for NoManualImpl {
 impl CrateLint for NoManualImpl {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
-        let root = ctx.tree.root_node();
+        let root = ctx.tree().root_node();
         visit_impls(root, ctx, &mut errors);
         errors
     }
@@ -85,7 +81,7 @@ fn check_impl(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
         return;
     }
 
-    let impl_text = txt(node, ctx.source);
+    let impl_text = txt(node, ctx.source());
 
     if !impl_text.contains(" for ") {
         return;
@@ -121,7 +117,7 @@ fn check_impl(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
 
             // Check for lint:allow(no_manual_impl) on the impl line
             let line_idx = node.start_position().row;
-            let line = ctx.source.lines().nth(line_idx).unwrap_or("");
+            let line = ctx.source().lines().nth(line_idx).unwrap_or("");
             if crate::line_lint_allowed(line, "no_manual_impl") {
                 errors.push(LintError::warning(
                     ctx.crate_name.to_string(),

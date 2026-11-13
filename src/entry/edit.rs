@@ -251,6 +251,10 @@ fn phase_gate_exit(cfg: &Config, req: &Request) -> u8 {
         return 2;
     };
     let mock_dir = cfg.mock_dir.canonicalize().unwrap_or_else(|_| cfg.mock_dir.clone());
+    let repo_root = cfg.repo_root.canonicalize().unwrap_or_else(|_| cfg.repo_root.clone());
+    // One reading for the edit, so every place of it asks the repository once.
+    let reading = mockspace_lint_rules::Reading::new(&repo_root);
+    let view = reading.view();
     let mut blocked = false;
     for place in &places {
         let Some(text) = after(req, || std::fs::read_to_string(place).ok()) else {
@@ -268,7 +272,7 @@ fn phase_gate_exit(cfg: &Config, req: &Request) -> u8 {
             return 2;
         };
         let rel = rel.to_string_lossy().replace('\\', "/");
-        if !mockspace_lint_rules::changelist_required::admits_edit(&mock_dir, &src_dirs, &rel, &text) {
+        if !mockspace_lint_rules::changelist_required::admits_edit(&view, &mock_dir, &src_dirs, &rel, &text) {
             eprintln!(
                 "`{rel}` would declare items, and source waits for the IMPL phase. Outside it a \
                  source file may carry only comments, module docs and inner attributes, which is \
@@ -316,6 +320,8 @@ fn exit_of(cfg: &Config, pack: &LintPack, req: &Request) -> u8 {
         return 2;
     };
 
+    let repo_root = cfg.repo_root.canonicalize().unwrap_or_else(|_| cfg.repo_root.clone());
+
     let crates = crate::parse::discover_crates_in(&src_dirs, &cfg.crate_prefix);
     // The gate lints a file once in every crate that reaches it, so the edit is refused when
     // any of those places would block.
@@ -328,6 +334,7 @@ fn exit_of(cfg: &Config, pack: &LintPack, req: &Request) -> u8 {
             &crates,
             &src_dirs,
             &cfg.mock_dir,
+            &repo_root,
             &cfg.proc_macro_crates,
             cfg.lint_proc_macro_source,
             &cfg.crate_prefix,

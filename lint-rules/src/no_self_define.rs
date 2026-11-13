@@ -65,10 +65,6 @@ const MACRO_OWNERS: &[(&str, &[&str])] = &[
 pub struct NoSelfDefine;
 
 impl Lint for NoSelfDefine {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
@@ -103,7 +99,7 @@ impl CrateLint for NoSelfDefine {
         }
 
         let mut errors = Vec::new();
-        let root = ctx.tree.root_node();
+        let root = ctx.tree().root_node();
         find_self_invocations(root, ctx, &owned, &mut errors);
         errors
     }
@@ -122,7 +118,7 @@ fn find_self_invocations(
         }
 
         if let Some(name_node) = node.child_by_field_name("macro") {
-            let raw_name = &ctx.source[name_node.byte_range()];
+            let raw_name = &ctx.source()[name_node.byte_range()];
             // Handle both `define_foo!` and `<prefix>_storage::define_foo!` forms.
             let clean = extract_macro_name(raw_name);
             if owned_macros.contains(&clean) {
@@ -130,7 +126,7 @@ fn find_self_invocations(
 
                 // Check for lint:allow suppression with 50+ word explanation.
                 // Large look-back because 50+ word explanations span many comment lines.
-                let context = gather_context_lines(ctx.source, line_idx, 15);
+                let context = gather_context_lines(ctx.source(), line_idx, 15);
                 if let Some(explanation) = extract_allow_explanation(&context, "no_self_define") {
                     let word_count = explanation.split_whitespace().count();
                     if word_count >= 50 {

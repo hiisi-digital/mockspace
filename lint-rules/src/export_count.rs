@@ -33,10 +33,6 @@ const COUNTABLE_KINDS: &[&str] = &[
 pub struct ExportCount;
 
 impl Lint for ExportCount {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::Crate
-    }
-
     /// Crate-scoped. The guideline counts a crate's exports. Per file it
     /// would count each module's, which is a different number about a
     /// different thing.
@@ -55,8 +51,8 @@ impl Lint for ExportCount {
 
 impl CrateLint for ExportCount {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
-        let root = ctx.tree.root_node();
-        let count = count_pub_exports(root, ctx.source);
+        let root = ctx.tree().root_node();
+        let count = count_pub_exports(root, ctx.source());
 
         if count > MAX_EXPORTS {
             vec![LintError {

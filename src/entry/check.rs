@@ -225,7 +225,7 @@ pub(crate) fn cmd_check(cfg: &Config) -> ExitCode {
 
     // --- phase detection ---
     let design_rounds = cfg.mock_dir.join("design_rounds");
-    let phase = changelist_helpers::current_phase(&design_rounds);
+    let phase = changelist_helpers::current_phase(&crate::design_round::reading_of(&design_rounds).view(), &design_rounds);
     print_row("phase", CheckResult::Pass, phase.label());
 
     // --- cargo check ---

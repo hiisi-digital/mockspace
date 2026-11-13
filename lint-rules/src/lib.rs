@@ -58,8 +58,6 @@ pub use changelist_seal::{active_round_findings, says_nothing};
 /// because a pack's own tests read it and no lint is promised anything by it.
 #[doc(hidden)]
 pub mod agent_identity_conformance;
-mod crate_sources;
-pub use crate_sources::collect_crate_sources;
 mod deprecation_comparison;
 mod owed_comparison;
 pub use owed_comparison::{OwedComparison, owed_comparison};
@@ -88,24 +86,16 @@ mod no_self_define;
 mod no_todo;
 pub mod path_filter;
 pub mod round_id;
+pub mod lints_read_through_the_view;
+pub use lints_read_through_the_view::{Bypass, assert_lints_read_through_the_view, bypasses, bypasses_under};
 mod registrable_completeness;
 mod repr_c_abi_safety;
 mod single_source;
 pub use single_source::declared::{DeclaredMember, DeclaredParts, DeclaredType, declared_types};
 pub mod src_layout;
 pub mod timing;
-mod dispatch;
-pub mod reach;
-pub mod reach_check;
-#[cfg(test)]
-mod reach_tests;
-#[cfg(test)]
-mod reads_tests;
-#[cfg(test)]
-mod saving_tests;
 pub mod verdict;
 
-pub use reach::{Reach, Touched};
 pub mod testkit;
 pub mod the_mock_toolchain_matches_the_root;
 pub mod tool;
@@ -117,8 +107,8 @@ mod undocumented_type;
 #[path = "../../tests/common/ambient.rs"]
 mod test_ambient;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 
 pub use path_filter::{CrateFilters, PathFilter, PathFilters, glob_match, glob_match_anchored};
 pub mod allow;
@@ -140,9 +130,7 @@ pub use tool::{
     missing_required,
     usage_line,
 };
-use tree_sitter::Tree;
 
-use crate::dispatch::{check_every_file, parse_sources};
 // Re-exported so a consumer whose `mock/lints/*.rs` compile into the
 // generated cdylib can name the grammar types. That cdylib depends on
 // this crate and on the declared packs, so without this there is no
@@ -157,128 +145,12 @@ pub use {tree_sitter, tree_sitter_rust};
 /// the project-specific list via `LintContext::proc_macro_crates`.
 pub const PROC_MACRO_CRATES: &[&str] = &[];
 
-// ---------------------------------------------------------------------------
-// Lint trait and context
-// ---------------------------------------------------------------------------
-
-/// A single source file surfaced to lints: its repo-relative path
-/// and its full text.
-#[derive(Debug, Clone)]
-pub struct CrateSourceFile {
-    /// Crate-relative path (e.g. `src/lib.rs`, `src/bits.rs`).
-    pub rel_path: std::path::PathBuf,
-    /// Full file contents.
-    pub text:     String,
-}
-
-/// Context provided to each lint for a single crate.
-///
-/// `Copy` so the dispatcher can hand a lint the same context with `source` and
-/// `tree` swapped for one module file, which is how a per-file lint sees past
-/// the crate root without every lint re-parsing files for itself.
-#[derive(Clone, Copy)]
-pub struct LintContext<'a> {
-    /// Directory name of the crate (e.g. "<prefix>-signal").
-    pub crate_name:              &'a str,
-    /// Short name (e.g. "signal").
-    pub short_name:              &'a str,
-    /// The raw source text of `src/lib.rs` (back-compat; lints that
-    /// want to scan every module file should use `all_sources`).
-    pub source:                  &'a str,
-    /// The tree-sitter AST of `src/lib.rs`.
-    pub tree:                    &'a Tree,
-    /// Every `.rs` file under the crate's `src/**`, in path order.
-    /// The first entry is always `src/lib.rs`. Lints that used to
-    /// inspect only `source` should iterate over this to catch drift
-    /// in module files (`bits.rs`, `prim.rs`, etc.).
-    pub all_sources:             &'a [CrateSourceFile],
-    /// Names of all crates this crate depends on (directory names).
-    pub deps:                    &'a [String],
-    /// Set of all crate directory names in the workspace.
-    pub all_crates:              &'a BTreeSet<String>,
-    /// Content of DESIGN.md.tmpl for this crate, if it exists.
-    pub design_doc:              Option<&'a str>,
-    /// Concatenated content of ALL doc templates for this crate
-    /// (README.md.tmpl + DESIGN.md.tmpl + DEEPDIVE_*.md.tmpl).
-    pub all_doc_content:         &'a str,
-    /// Content of SHAME.md.tmpl for this crate, if it exists.
-    pub shame_doc:               Option<&'a str>,
-    /// Root directory of the mock workspace.
-    pub workspace_root:          &'a Path,
-    /// Crates exempt from collection/box/float lints (proc-macro crates).
-    /// Falls back to PROC_MACRO_CRATES if empty.
-    pub proc_macro_crates:       &'a [String],
-    /// Whether source-scanning lints should run against proc-macro crate
-    /// source. Default false: skip source lints for proc-macro crates
-    /// because their heap-using parsers do not ship with consumer binaries.
-    /// Set true (via mockspace.toml `lint_proc_macro_source = true`) to
-    /// force source lints to apply to proc-macro crates as well.
-    ///
-    /// Independent of expansion-based linting (future feature): what a
-    /// macro emits must always satisfy consumer-crate rules because the
-    /// emitted code compiles into consumer binaries.
-    pub lint_proc_macro_source:  bool,
-    /// Crate name prefix (e.g. "acme"). Used to build expected crate
-    /// names dynamically instead of hardcoding project-specific names.
-    pub crate_prefix:            &'a str,
-    /// Per-crate primitive-introductions map from mockspace.toml's
-    /// `[primitive-introductions]` section. Key: crate directory
-    /// name; value: list of primitive tokens the crate legitimately
-    /// introduces. Lints that enforce "no bare primitives" should
-    /// call [`LintContext::introduces`] to check whether the current
-    /// crate legitimately uses a given primitive token.
-    ///
-    /// This explicit map is the belt-and-suspenders path. Long-term
-    /// the introductions set should be *detected* from each crate's
-    /// DESIGN.md.tmpl / source parse, not declared in a parallel
-    /// TOML table. See the `Config.primitive_introductions` docs on
-    /// the mockspace crate for the future direction: once that
-    /// lands, the TOML map becomes additive rather than the sole
-    /// source of truth.
-    pub primitive_introductions: &'a BTreeMap<String, Vec<String>>,
-}
-
-impl<'a> LintContext<'a> {
-    /// Whether source-scanning lints should skip this crate because it is
-    /// a proc-macro crate AND the project has not opted into linting
-    /// proc-macro source. This is the helper source-scanning lints should
-    /// call to decide whether to short-circuit. Use this instead of
-    /// [`Self::is_proc_macro_crate`] for the skip decision; that method
-    /// answers the narrower question "is this a proc-macro crate?"
-    /// without consulting the project's lint-behavior preference.
-    #[must_use]
-    pub fn should_skip_proc_macro_source_lint(&self) -> bool {
-        !self.lint_proc_macro_source && self.is_proc_macro_crate()
-    }
-
-    /// Whether this crate is a proc-macro crate. Does NOT consider the
-    /// `lint_proc_macro_source` preference; callers that want the
-    /// "should I skip this source lint" decision should use
-    /// [`Self::should_skip_proc_macro_source_lint`].
-    #[must_use]
-    pub fn is_proc_macro_crate(&self) -> bool {
-        if self.proc_macro_crates.is_empty() {
-            PROC_MACRO_CRATES.iter().any(|c| *c == self.crate_name)
-        } else {
-            self.proc_macro_crates.iter().any(|c| c == self.crate_name)
-        }
-    }
-
-    /// Whether the current crate legitimately introduces the given
-    /// primitive token per the `[primitive-introductions]` config.
-    /// Lints that enforce "no bare primitives" should skip a specific
-    /// token on a specific crate when this returns `true`.
-    ///
-    /// Example: `ctx.introduces("u8")` returns `true` when the crate
-    /// is `numerics` and `numerics = ["u8", ...]` is configured in mockspace.toml.
-    #[must_use]
-    pub fn introduces(&self, primitive: &str) -> bool {
-        self.primitive_introductions
-            .get(self.crate_name)
-            .map(|list| list.iter().any(|p| p == primitive))
-            .unwrap_or(false)
-    }
-}
+mod context;
+pub use context::{CrateInput, CrateSourceFile, LintContext, RepoContext, RepoInput, WorkspaceInput};
+pub mod reading;
+pub use reading::{Answer, Entry, Item, Listing, Reading, Trace, View};
+pub mod run;
+pub use run::{RunInput, run};
 
 // ---------------------------------------------------------------------------
 // Severity system: per-gate levels
@@ -455,15 +327,9 @@ pub fn is_shame_template(file: &str) -> bool {
 /// agree with the gates on every platform, and the direction is the safe
 /// one: a misspelled file is inert rather than secretly authoritative.
 #[must_use]
-pub fn read_shame_template(dir: &std::path::Path) -> Option<String> {
-    let exact = std::fs::read_dir(dir)
-        .ok()?
-        .flatten()
-        .any(|e| e.file_name() == std::ffi::OsStr::new("SHAME.md.tmpl"));
-    if !exact {
-        return None;
-    }
-    std::fs::read_to_string(dir.join("SHAME.md.tmpl")).ok()
+pub fn read_shame_template<'r>(view: &View<'r>, dir: &std::path::Path) -> Option<&'r str> {
+    view.list(dir)?.get("SHAME.md.tmpl")?;
+    view.text(dir.join("SHAME.md.tmpl"))
 }
 
 /// Whether a source line carries `lint:allow(<rule_name>)`, including
@@ -810,7 +676,7 @@ mod is_shame_template_tests {
         // A misspelled file is inert.
         std::fs::write(dir.join("shame.md.tmpl"), "## thing\nreason\n").unwrap();
         assert_eq!(
-            read_shame_template(&dir),
+            read_shame_template(&crate::Reading::new(&dir).view(), &dir),
             None,
             "a lowercase spelling must not be honoured; the gates refuse it"
         );
@@ -831,13 +697,13 @@ mod is_shame_template_tests {
         std::fs::remove_file(dir.join("shame.md.tmpl")).unwrap();
         std::fs::write(dir.join("SHAME.md.tmpl"), "## thing\nreason\n").unwrap();
         assert_eq!(
-            read_shame_template(&dir).as_deref(),
+            read_shame_template(&crate::Reading::new(&dir).view(), &dir),
             Some("## thing\nreason\n")
         );
 
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(
-            read_shame_template(&dir),
+            read_shame_template(&crate::Reading::new(&dir).view(), &dir),
             None,
             "a missing dir reads as absent"
         );
@@ -1362,7 +1228,7 @@ impl std::fmt::Display for LintError {
 /// were previously duplicated verbatim between the crate and cross-crate traits,
 /// and `finding_kinds`, `config_keys` and `configure` existed on only one of
 /// them, which meant a cross-crate lint could not be configured at all.
-pub trait Lint {
+pub trait Lint: Send + Sync {
     /// Human-readable name for error reporting. Also the key a lint is
     /// configured under.
     fn name(&self) -> &'static str;
@@ -1454,17 +1320,6 @@ pub trait Lint {
     fn invocation_wanted(&self) -> bool {
         false
     }
-
-    /// What this lint's verdict depends on, which is what lets the engine skip it when none of
-    /// that moved. See [`Reach`].
-    ///
-    /// **The default is the widest**, [`Reach::Repository`], which is never saved: a lint that
-    /// says nothing is run on every gate as it always was. Declaring a narrower reach is a promise
-    /// that the lint reads nothing outside it. The `reach_tests` hold the built-in lints to it by
-    /// sampling, and a pack puts its own lints through [`reach_check`] in its own tests.
-    fn reach(&self) -> Reach {
-        Reach::Repository
-    }
 }
 
 /// A lint handed one crate at a time.
@@ -1503,105 +1358,6 @@ pub trait RepoLint: Lint {
     /// own path (falling back to `"unknown"`), which is what these lints already
     /// did. There is no separate error type.
     fn check_repo(&self, ctx: &RepoContext) -> Vec<LintError>;
-}
-
-/// Context for a [`RepoLint`]: the paths, and nothing crate-shaped.
-pub struct RepoContext<'a> {
-    /// Root directory of the mock workspace, where `design_rounds/` lives.
-    pub mock_dir:    &'a Path,
-    /// Root of the repository containing the mock workspace.
-    pub repo_root:   &'a Path,
-    /// Every crate directory name in the workspace. Empty is a legitimate
-    /// state, and a repo lint must behave correctly when it is.
-    pub all_crates:  &'a BTreeSet<String>,
-    /// Every directory holding source packages, absolute, in config order.
-    ///
-    /// The same list `mockspace.toml` names and `Config::src_dirs` carries, in
-    /// the same form, so there is one spelling of it rather than an absolute
-    /// one out here and a relative one in the lints. A lint wanting a git
-    /// pathspec strips `mock_dir` off itself.
-    ///
-    /// Empty is legitimate and means a project with no source at all, which is
-    /// what a documentation repository is.
-    pub src_dirs:    &'a [PathBuf],
-    /// The invocation that triggered this run, when there was one and the lint
-    /// asked for it via [`Lint::invocation_wanted`].
-    pub invocation:  Option<Invocation<'a>>,
-    /// The globs a project declares as its canon, from `canon_paths`. Empty
-    /// where a project has not said what its canon is, which is most of them.
-    pub canon_paths: &'a [String],
-    /// The slugs of every panel presently open, computed by the engine because
-    /// the panel ledger lives there. Empty where none is.
-    pub open_panels: &'a [String],
-    /// The files of the mock directory that a data ref holds, read off the instances by the engine.
-    /// Empty where the project declares no data ref.
-    pub ref_files:   &'a crate::src_layout::RefFiles,
-    /// The project's registry, flattened, with the reverse edges computed.
-    ///
-    /// Empty where the project declares no registry, which is legitimate and
-    /// which every accessor answers without a special case.
-    pub registry:    &'a crate::RegistryView,
-    /// The store saved verdicts live in, absent when the run keeps none. A lint reads it through
-    /// [`RepoContext::remembered`] and never directly.
-    pub verdicts:    Option<&'a dyn verdict::VerdictCache>,
-}
-
-impl RepoContext<'_> {
-    /// The key one item's verdict is saved under, which `remembered` and `remembered_batch` both make.
-    fn item_key(cache: &dyn verdict::VerdictCache, lint: &str, parts: &[&[u8]]) -> String {
-        let mut all: Vec<&[u8]> = Vec::with_capacity(parts.len() + 2);
-        all.push(b"remembered-v1");
-        all.push(lint.as_bytes());
-        all.extend_from_slice(parts);
-        cache.digest(&all)
-    }
-
-    /// `compute`'s findings for the item named by `parts`, replayed from the store when the same
-    /// parts were judged before.
-    ///
-    /// **A repo lint is the widest reach there is and is never cached whole**, so one that spends
-    /// its time on separable items (a shader compiled, a file hashed against a table) decomposes
-    /// itself and asks here per item. `parts` is everything the item's verdict depends on, and
-    /// nothing else: the item's bytes, whatever it imports, the version of any tool it runs. A part
-    /// left out makes a stale verdict replay as fresh. Nothing here checks the parts: `reach_check` covers
-    /// crate and workspace lints and has no entry point for a repo lint, so a pack tests its own
-    /// decomposition (change one input, expect a recompute). `lint` is the lint's name, mixed into the key so
-    /// two lints asking with the same bytes do not share an answer.
-    pub fn remembered(
-        &self,
-        lint: &str,
-        parts: &[&[u8]],
-        compute: impl FnOnce() -> Vec<LintError>,
-    ) -> Vec<LintError> {
-        let Some(cache) = self.verdicts else {
-            return compute();
-        };
-        let key = Self::item_key(cache, lint, parts);
-        verdict::replay_or(cache, &key, lint, || Some(compute())).unwrap_or_default()
-    }
-
-    /// [`Self::remembered`] for many items at once: the findings of each, in the order given.
-    ///
-    /// Every item's key is asked of the store first, the misses are then computed at the same time
-    /// on the machine's threads, each distinct key once, and the new verdicts are saved after. A
-    /// lint that spends its time on separable items (a shader compiled each, a tool run per file)
-    /// asks here instead of looping over `remembered`, which can only run one miss after another
-    /// since the store is not `Sync`. `parts[n]` is everything item `n`'s verdict depends on, as
-    /// for `remembered`, and `compute(n)` judges item `n`; it runs on a worker thread, so it holds
-    /// no state it shares unguarded. The keys are the ones `remembered` makes, so a verdict saved by
-    /// either form replays in the other.
-    pub fn remembered_batch(
-        &self,
-        lint: &str,
-        parts: &[Vec<&[u8]>],
-        compute: impl Fn(usize) -> Vec<LintError> + Sync,
-    ) -> Vec<Vec<LintError>> {
-        let Some(cache) = self.verdicts else {
-            return verdict::parallel_map(&(0 .. parts.len()).collect::<Vec<_>>(), &compute);
-        };
-        let keys: Vec<String> = parts.iter().map(|item| Self::item_key(cache, lint, item)).collect();
-        verdict::replay_or_batch(cache, &keys, lint, compute)
-    }
 }
 
 /// A lint handed an authored message rather than anything in the worktree.
@@ -2017,387 +1773,8 @@ pub fn all_repo_lints() -> Vec<Box<dyn RepoLint>> {
         Box::new(changelist_immutability::ChangelistImmutability),
         Box::new(changelist_seal::ChangelistSeal),
         Box::new(the_mock_toolchain_matches_the_root::TheMockToolchainMatchesTheRoot),
+        Box::new(lints_read_through_the_view::LintsReadThroughTheView),
     ]
-}
-
-/// Run all per-crate lints on a single crate, returning violations.
-///
-/// When `doc_only` is true, skip lints that only inspect source code.
-/// This allows doc-only commits during DOC-EXEC phase without being
-/// blocked by pre-existing source issues.
-///
-/// When `overrides` is provided, lint severities can be overridden:
-/// - If a lint name maps to a severity where all gates are `Pass`, the lint
-///   is skipped entirely.
-/// - If a lint name maps to another severity, all errors from that lint use
-///   the configured severity.
-/// - If a lint is not in the map, its `default_severity()` decides whether it
-///   runs at all. It does not yet decide what its findings mean: each finding
-///   keeps the severity its constructor chose, so a declared default is
-///   honoured as on or off rather than per gate. See task #28.
-pub fn check_crate(
-    ctx: &LintContext,
-    doc_only: bool,
-    overrides: Option<&LintConfig>,
-) -> Vec<LintError> {
-    check_crate_with_extra(ctx, doc_only, overrides, &[])
-}
-
-/// Hand each of a freshly-constructed builtin set its configured parameters.
-///
-/// The builtins are built anew inside every check function, so they are
-/// configured there rather than once at load, which is the pack's route
-/// ([`LintPack::configure_from`]). Both go through
-/// [`LintConfig::apply_params_to`], so there is one place that knows how a
-/// lint's parameters are found and two that know when.
-///
-/// It takes already-upcast references because the four builtin sets are boxed
-/// as four different trait objects, and a generic over `Box<L>` cannot coerce
-/// `&mut L` to `&mut dyn Lint` without a bound naming the coercion.
-fn configure_all<'a>(
-    lints: impl IntoIterator<Item = &'a mut dyn Lint>,
-    overrides: Option<&LintConfig>,
-) {
-    let Some(cfg) = overrides else { return };
-    for lint in lints {
-        cfg.apply_params_to(lint);
-    }
-}
-
-/// Run all per-crate lints plus any custom lints on a single crate, returning violations.
-pub fn check_crate_with_extra(
-    ctx: &LintContext,
-    doc_only: bool,
-    overrides: Option<&LintConfig>,
-    extra_lints: &[Box<dyn CrateLint>],
-) -> Vec<LintError> {
-    check_crate_selected(ctx, doc_only, overrides, extra_lints, None, None)
-}
-
-/// [`check_crate_with_extra`], answering from saved verdicts where `saved` is given.
-///
-/// A lint is answered from the store only if it declared `Reach::File` or `Reach::Crate`; one that
-/// declared nothing is the widest and runs as it always did, and a crate lint declaring
-/// `Reach::Workspace` is not saved here, since that reach belongs to the workspace runner. A
-/// file-reach lint is saved per file, a crate-reach lint per crate. What a hit replays is the
-/// lint's own findings before the runner applies markers and severities, so those are applied to a
-/// replay exactly as to a fresh run.
-pub fn check_crate_saving(
-    ctx: &LintContext,
-    doc_only: bool,
-    overrides: Option<&LintConfig>,
-    extra_lints: &[Box<dyn CrateLint>],
-    saved: Option<&dyn verdict::VerdictCache>,
-) -> Vec<LintError> {
-    check_crate_selected(ctx, doc_only, overrides, extra_lints, saved, None)
-}
-
-/// Run the one per-crate lint answering to `name`, through the same path
-/// [`check_crate_with_extra`] takes every lint through: the same configuration,
-/// the same binding to crates, the same file filters, the same `lint:allow`
-/// markers. An agent hook that is named after a lint calls this, so its verdict
-/// is the lint's and not a second implementation of it.
-///
-/// It takes no store: the run is always fresh, neither reading a saved verdict
-/// nor writing one, so a saved verdict can never answer differently from the
-/// hook's run, and the hook cannot put a one-file view of a crate into a store
-/// that keys whole-crate verdicts.
-///
-/// Empty when no per-crate lint answers to `name`, which is also what a lint that
-/// found nothing returns; a caller that must tell the two apart asks
-/// [`all_lints`] and the pack first.
-pub fn check_crate_named(
-    ctx: &LintContext,
-    name: &str,
-    overrides: Option<&LintConfig>,
-    extra_lints: &[Box<dyn CrateLint>],
-) -> Vec<LintError> {
-    check_crate_selected(ctx, false, overrides, extra_lints, None, Some(name))
-}
-
-fn check_crate_selected(
-    ctx: &LintContext,
-    doc_only: bool,
-    overrides: Option<&LintConfig>,
-    extra_lints: &[Box<dyn CrateLint>],
-    saved: Option<&dyn verdict::VerdictCache>,
-    only: Option<&str>,
-) -> Vec<LintError> {
-    let mut lints = all_lints();
-    configure_all(
-        lints.iter_mut().map(|l| l.as_mut() as &mut dyn Lint),
-        overrides,
-    );
-
-    let mut errors = Vec::new();
-
-    // One parse per file, shared by every per-file lint below, and made only when a lint has
-    // a file it could not answer from the store.
-    let parsed = parse_sources(ctx.all_sources);
-    // What every crate-reach lint's key shares, hashed once per crate and not once per lint.
-    let crate_key = std::cell::OnceCell::new();
-
-    for (origin, lint) in lints
-        .iter()
-        .map(|l| (verdict::Origin::BuiltIn, l.as_ref()))
-        .chain(extra_lints.iter().map(|l| (verdict::Origin::Pack, l.as_ref())))
-        .filter(|(_, lint)| only.is_none_or(|name| lint.name() == name))
-    {
-        // A lint bound to other crates is not run here at all, rather than run and
-        // silenced: the crate is outside what the configuration says the lint is
-        // about, and a finding from it would be a claim about a crate the lint was
-        // told nothing of.
-        if overrides.is_some_and(|cfg| !cfg.binds_crate(lint.name(), ctx.crate_name)) {
-            continue;
-        }
-        let filter = overrides.and_then(|cfg| cfg.filter_for(lint.name()));
-        run_with_overrides(lint, doc_only, overrides, &mut errors, || {
-            let found = match (saved, lint.reach()) {
-                (Some(cache), Reach::File) if lint.per_file() => {
-                    let file_cache = dispatch::FileCache {
-                        cache,
-                        behaviour: verdict::behaviour_material(lint.name(), origin, overrides),
-                        scalars: verdict::file_scalars(ctx),
-                    };
-                    dispatch::check_every_file_saving(lint, ctx, &parsed, filter, Some(&file_cache))
-                },
-                // A lint declaring a file reach that is not per-file judges the whole crate,
-                // so it is saved at the crate and never at a file.
-                (Some(cache), Reach::File | Reach::Crate) => {
-                    let key = cache.digest(&[
-                        b"crate",
-                        verdict::behaviour_material(lint.name(), origin, overrides).as_bytes(),
-                        crate_key
-                            .get_or_init(|| verdict::crate_digest(cache, ctx))
-                            .as_bytes(),
-                    ]);
-                    verdict::replay_or(cache, &key, lint.name(), || {
-                        Some(check_every_file(lint, ctx, &parsed, filter))
-                    })
-                    .unwrap_or_default()
-                },
-                _ => check_every_file(lint, ctx, &parsed, filter),
-            };
-            if !lint.markers_decide() {
-                return found;
-            }
-            honour_allows(found, lint.name(), |err| {
-                source_in(ctx, lint, err.path.as_deref())
-            })
-        });
-    }
-    errors
-}
-
-/// The text a finding's line is in: the named file among the crate's sources,
-/// or, for a lint that judges one file at a time, the crate root where the
-/// finding names no file, since that is the file it was about.
-///
-/// A crate-scoped lint's finding with no path is about the crate and not
-/// about the root: `file-size` names the file in its message and reports
-/// line 1. Reading that as line 1 of `src/lib.rs` would let one marker on the
-/// copyright banner silence the lint for every file, so such a finding has
-/// no source here and stands.
-fn source_in<'c>(ctx: &'c LintContext<'c>, lint: &dyn Lint, path: Option<&str>) -> Option<&'c str> {
-    match path {
-        None if lint.per_file() => Some(ctx.source),
-        None => None,
-        Some(p) => {
-            ctx.all_sources
-                .iter()
-                .find(|s| s.rel_path.to_string_lossy() == p)
-                .map(|s| s.text.as_str())
-        },
-    }
-}
-
-/// Run all cross-crate lints, returning violations.
-///
-/// When `doc_only` is true, skip lints that only inspect source code.
-///
-/// When `overrides` is provided, lint severities can be overridden
-/// (same semantics as `check_crate`).
-pub fn check_workspace(
-    crates: &[(&str, &LintContext)],
-    doc_only: bool,
-    overrides: Option<&LintConfig>,
-) -> Vec<LintError> {
-    check_workspace_with_extra(crates, doc_only, overrides, &[])
-}
-
-/// Run all repo lints, returning violations. Involves no crates.
-pub fn check_repo(
-    ctx: &RepoContext,
-    doc_only: bool,
-    overrides: Option<&LintConfig>,
-) -> Vec<LintError> {
-    check_repo_with_extra(ctx, doc_only, overrides, &[], &Touched::Everything)
-}
-
-/// Decide whether a lint runs, and apply the configured severity overrides to
-/// whatever it found.
-///
-/// `run` is only called when the lint is not skipped, so a lint that is off
-/// costs nothing. Shared by every runner below: expressible only because
-/// the [`Lint`] supertrait now carries `name` and `source_only` for all of them,
-/// where previously each trait declared its own copy and each runner its own
-/// duplicate of this logic.
-///
-/// Enablement resolves config first, then the lint's own declared default. That
-/// second half was missing and made [`Lint::default_severity`] decorative for
-/// the `off` case: fourteen project-specific lints declared `OFF`, stamped
-/// `HARD_ERROR` onto their findings anyway, and fired as hard errors in every
-/// repo that had not explicitly overridden them. A fresh repo with no `[lints]`
-/// section therefore inherited a framework's house rules (`define_error!`,
-/// `#[public_api]`, `Collection<T>`) it had never opted into.
-///
-/// Only an explicit override restamps a finding's severity. A lint's own
-/// per-finding levels are deliberate gradation, a build gate and an advisory
-/// coming out of one lint, and flattening them onto the lint's default would
-/// erase it.
-/// The lints a project may not turn off or lower.
-fn run_with_overrides(
-    lint: &dyn Lint,
-    doc_only: bool,
-    overrides: Option<&LintConfig>,
-    out: &mut Vec<LintError>,
-    run: impl FnOnce() -> Vec<LintError>,
-) {
-    if doc_only && lint.source_only() {
-        return;
-    }
-
-    let base_override = overrides.and_then(|cfg| cfg.base.get(lint.name()).copied());
-
-    // A configured override wins; absent one, the lint's own declared default
-    // decides whether it runs at all. Naming a lint in any section counts as
-    // asking for it: a consumer can configure only `findings` or only
-    // `params`, which populates neither `base` nor anything else the override
-    // lookup sees, and reading that as silence would make the configuration
-    // inert without saying so.
-    let named_in_config = overrides.is_some_and(|cfg| {
-        cfg.base.contains_key(lint.name())
-            || cfg.findings.contains_key(lint.name())
-            || cfg.params.contains_key(lint.name())
-            || cfg.paths.contains_key(lint.name())
-            || cfg.crates.contains_key(lint.name())
-    });
-    if !named_in_config && lint.default_severity().is_off() {
-        return;
-    }
-    if base_override.is_some_and(|sev| sev.is_off()) {
-        return;
-    }
-
-    let mut lint_errors = if timing::enabled() {
-        timing::time(&format!("lint:{}", lint.name()), run)
-    } else {
-        run()
-    };
-
-    if let Some(cfg) = overrides {
-        for err in &mut lint_errors {
-            let effective = if let (Some(kind), Some(finding_map)) =
-                (err.finding_kind, cfg.findings.get(lint.name()))
-            {
-                finding_map.get(kind).copied().or(base_override)
-            } else {
-                base_override
-            };
-            if let Some(sev) = effective {
-                err.severity = sev;
-            }
-        }
-    }
-
-    out.extend(lint_errors);
-}
-
-// FIXME: no per-file dispatch here: no-duplicate-fn and undocumented-type
-// read each crate's root tree only, so they miss module files that the
-// per-crate path now covers. A naive per-file expansion of the pairs corrupts
-// no-duplicate-fn's crate-keyed suppression lookup, so the fix is per-lint
-// collection with file-attributed items, which single-source now does (its
-// `defs` module). tracked: #33
-/// Run all workspace lints plus any custom ones, returning violations.
-pub fn check_workspace_with_extra(
-    crates: &[(&str, &LintContext)],
-    doc_only: bool,
-    overrides: Option<&LintConfig>,
-    extra_lints: &[Box<dyn WorkspaceLint>],
-) -> Vec<LintError> {
-    check_workspace_saving(crates, doc_only, overrides, extra_lints, None)
-}
-
-/// [`check_workspace_with_extra`], answering from saved verdicts where `saved` is given.
-///
-/// Only a lint declaring [`Reach::Workspace`] is saved, keyed on the digest of every crate it is
-/// handed. A change to any one crate therefore reruns it; narrowing that is a lint's own
-/// decomposition, not something the runner can assume.
-pub fn check_workspace_saving(
-    crates: &[(&str, &LintContext)],
-    doc_only: bool,
-    overrides: Option<&LintConfig>,
-    extra_lints: &[Box<dyn WorkspaceLint>],
-    saved: Option<&dyn verdict::VerdictCache>,
-) -> Vec<LintError> {
-    let mut lints = all_workspace_lints();
-    // Each crate hashed once however many workspace lints are saved.
-    let mut digests: HashMap<String, String> = HashMap::new();
-    configure_all(
-        lints.iter_mut().map(|l| l.as_mut() as &mut dyn Lint),
-        overrides,
-    );
-    let mut errors = Vec::new();
-    for (origin, lint) in lints
-        .iter()
-        .map(|l| (verdict::Origin::BuiltIn, l.as_ref()))
-        .chain(extra_lints.iter().map(|l| (verdict::Origin::Pack, l.as_ref())))
-    {
-        // A cross-crate lint sees the crates its filter admits and no others,
-        // the same narrowing a crate lint gets one function up. Bound to
-        // nothing here, it does not run: a cross-crate check over an empty set
-        // is a pass it never established.
-        let bound: Vec<(&str, &LintContext)> = crates
-            .iter()
-            .filter(|(name, _)| overrides.is_none_or(|cfg| cfg.binds_crate(lint.name(), name)))
-            .copied()
-            .collect();
-        if bound.is_empty() && !crates.is_empty() {
-            continue;
-        }
-        run_with_overrides(lint, doc_only, overrides, &mut errors, || {
-            let found = match (saved, lint.reach()) {
-                (Some(cache), Reach::Workspace) => {
-                    let behaviour = verdict::behaviour_material(lint.name(), origin, overrides);
-                    let mut parts: Vec<&[u8]> = vec![b"workspace", behaviour.as_bytes()];
-                    for (name, c) in &bound {
-                        digests
-                            .entry((*name).to_string())
-                            .or_insert_with(|| verdict::crate_digest(cache, c));
-                    }
-                    for (name, _) in &bound {
-                        parts.push(name.as_bytes());
-                        parts.push(digests[*name].as_bytes());
-                    }
-                    let key = cache.digest(&parts);
-                    verdict::replay_or(cache, &key, lint.name(), || Some(lint.check_all(&bound)))
-                        .unwrap_or_default()
-                },
-                _ => lint.check_all(&bound),
-            };
-            if !lint.markers_decide() {
-                return found;
-            }
-            honour_allows(found, lint.name(), |err| {
-                bound
-                    .iter()
-                    .find(|(name, _)| *name == err.crate_name)
-                    .and_then(|(_, c)| source_in(c, lint, err.path.as_deref()))
-            })
-        });
-    }
-    errors
 }
 
 /// Run all message lints plus any custom ones, returning violations.
@@ -2421,59 +1798,12 @@ pub fn check_message_with_extra(
         }
         // `doc_only` is false: a message is never a doc template, so the
         // source-only skip does not apply to this domain.
-        run_with_overrides(lint, false, overrides, &mut errors, || {
-            lint.check_message(ctx)
-        });
-    }
-    errors
-}
-
-/// Run all repo lints plus any custom ones, returning violations.
-///
-/// Takes no crates, by design. These lints inspect repository state, so they
-/// must keep working in a repo whose crate list is empty.
-///
-/// `touched` is what the run changes: a lint declaring [`Reach::Paths`] runs only when it meets
-/// them, every other lint always runs.
-pub fn check_repo_with_extra(
-    ctx: &RepoContext,
-    doc_only: bool,
-    overrides: Option<&LintConfig>,
-    extra_lints: &[Box<dyn RepoLint>],
-    touched: &Touched,
-) -> Vec<LintError> {
-    let mut lints = all_repo_lints();
-    configure_all(
-        lints.iter_mut().map(|l| l.as_mut() as &mut dyn Lint),
-        overrides,
-    );
-    let mut errors = Vec::new();
-    let built_in = lints.iter().map(|l| (verdict::Origin::BuiltIn, l.as_ref()));
-    let packed = extra_lints.iter().map(|l| (verdict::Origin::Pack, l.as_ref()));
-    for (origin, lint) in built_in.chain(packed) {
-        // A lint declaring the paths it reads is not run by a commit touching none of them.
-        if !lint.reach().runs_for(touched) {
+        if !run::enabled(lint, false, overrides) {
             continue;
         }
-        // What the lint was configured with is part of every verdict it saves. It lives in the
-        // lint and not in the context, so the store each lint is handed carries it.
-        let salted = ctx.verdicts.map(|inner| verdict::Salted {
-            inner,
-            salt: verdict::behaviour_material(lint.name(), origin, overrides),
-        });
-        let own = RepoContext {
-            mock_dir:    ctx.mock_dir,
-            repo_root:   ctx.repo_root,
-            all_crates:  ctx.all_crates,
-            src_dirs:    ctx.src_dirs,
-            invocation:  ctx.invocation,
-            canon_paths: ctx.canon_paths,
-            open_panels: ctx.open_panels,
-            ref_files: ctx.ref_files,
-            registry:    ctx.registry,
-            verdicts:    salted.as_ref().map(|s| s as &dyn verdict::VerdictCache),
-        };
-        run_with_overrides(lint, doc_only, overrides, &mut errors, || lint.check_repo(&own));
+        let mut found = timing::time(&format!("lint:{}", lint.name()), || lint.check_message(ctx));
+        run::restamp(lint, overrides, &mut found);
+        errors.extend(found);
     }
     errors
 }
@@ -2606,6 +1936,8 @@ mod pack_tests {
 /// exactly the state that shipped.
 #[cfg(test)]
 mod pack_configuration_tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     /// One lint body, four kinds. Each reports `configured: <value>` when it has
@@ -2689,29 +2021,14 @@ mod pack_configuration_tests {
     }
 
     fn empty_lint_context() -> LintContext<'static> {
-        let mut parser = make_parser();
-        let tree = parser.parse("", None).expect("the empty source parses");
-        LintContext {
-            crate_name:              "test-crate",
-            short_name:              "test-crate",
-            source:                  "",
-            tree:                    Box::leak(Box::new(tree)),
-            all_sources:             &[],
-            deps:                    &[],
-            all_crates:              Box::leak(Box::new(BTreeSet::new())),
-            design_doc:              None,
-            all_doc_content:         "",
-            shame_doc:               None,
-            workspace_root:          Path::new("/tmp"),
-            proc_macro_crates:       &[],
-            crate_prefix:            "test",
-            lint_proc_macro_source:  false,
-            primitive_introductions: Box::leak(Box::new(BTreeMap::new())),
-        }
+        Box::leak(Box::new(
+            crate::testkit::LintFixture::new("").with_workspace_root(Path::new("/tmp")),
+        ))
+        .ctx()
     }
 
-    fn empty_repo_context() -> RepoContext<'static> {
-        RepoContext {
+    fn empty_repo_context() -> crate::RepoInput<'static> {
+        crate::RepoInput {
             mock_dir:    Path::new("/tmp"),
             repo_root:   Path::new("/tmp"),
             all_crates:  Box::leak(Box::new(BTreeSet::new())),
@@ -2721,7 +2038,6 @@ mod pack_configuration_tests {
             open_panels: &[],
             ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    Box::leak(Box::new(Default::default())),
-            verdicts:    None,
         }
     }
 
@@ -2764,8 +2080,7 @@ mod pack_configuration_tests {
         assert!(pack.crate_lints[0].check(&empty_lint_context()).is_empty());
         assert!(pack.workspace_lints[0].check_all(&[]).is_empty());
         assert!(
-            pack.repo_lints[0]
-                .check_repo(&empty_repo_context())
+            crate::testkit::check_repo(pack.repo_lints[0].as_ref(), empty_repo_context())
                 .is_empty()
         );
         assert!(
@@ -2799,7 +2114,7 @@ mod pack_configuration_tests {
             "configured: yes"
         );
         assert_eq!(
-            pack.repo_lints[0].check_repo(&empty_repo_context())[0].message,
+            crate::testkit::check_repo(pack.repo_lints[0].as_ref(), empty_repo_context())[0].message,
             "configured: yes"
         );
     }
@@ -2819,8 +2134,7 @@ mod pack_configuration_tests {
         assert!(pack.crate_lints[0].check(&empty_lint_context()).is_empty());
         assert!(pack.workspace_lints[0].check_all(&[]).is_empty());
         assert!(
-            pack.repo_lints[0]
-                .check_repo(&empty_repo_context())
+            crate::testkit::check_repo(pack.repo_lints[0].as_ref(), empty_repo_context())
                 .is_empty()
         );
     }
@@ -2894,6 +2208,9 @@ mod pack_configuration_tests {
 
 #[cfg(test)]
 mod repo_lint_tests {
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
     use super::*;
 
     /// A repo lint that always reports, so the harness can observe whether it
@@ -2943,7 +2260,7 @@ mod repo_lint_tests {
         std::fs::create_dir_all(&tmp).unwrap();
         let no_crates = BTreeSet::new();
         let no_src: [PathBuf; 0] = [];
-        let ctx = RepoContext {
+        let ctx = crate::RepoInput {
             mock_dir:    &tmp,
             repo_root:   &tmp,
             all_crates:  &no_crates,
@@ -2953,11 +2270,10 @@ mod repo_lint_tests {
             open_panels: &[],
             ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    &Default::default(),
-            verdicts:    None,
         };
 
-        let extra: Vec<Box<dyn RepoLint>> = vec![Box::new(AlwaysReports)];
-        let errors = check_repo_with_extra(&ctx, false, None, &extra, &Touched::Everything);
+        let pack = LintPack { repo_lints: vec![Box::new(AlwaysReports)], ..LintPack::default() };
+        let errors = crate::testkit::run_repo(ctx, None, Some(&pack));
         let _ = std::fs::remove_dir_all(&tmp);
 
         assert_eq!(
@@ -3062,7 +2378,7 @@ mod repo_lint_tests {
         std::fs::create_dir_all(&tmp).unwrap();
         let no_crates = BTreeSet::new();
         let no_src: [PathBuf; 0] = [];
-        let ctx = RepoContext {
+        let ctx = crate::RepoInput {
             mock_dir:    &tmp,
             repo_root:   &tmp,
             all_crates:  &no_crates,
@@ -3072,10 +2388,9 @@ mod repo_lint_tests {
             open_panels: &[],
             ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    &Default::default(),
-            verdicts:    None,
         };
-        let extra: Vec<Box<dyn RepoLint>> = vec![lint];
-        let errors = check_repo_with_extra(&ctx, false, cfg, &extra, &Touched::Everything);
+        let pack = LintPack { repo_lints: vec![lint], ..LintPack::default() };
+        let errors = crate::testkit::run_repo(ctx, cfg, Some(&pack));
         let _ = std::fs::remove_dir_all(&tmp);
         errors
     }
@@ -3112,7 +2427,7 @@ mod repo_lint_tests {
 
     /// Catalogued. `include` and `exclude` under a repo lint's name parse, are
     /// carried into `LintConfig`, and are then consulted by nobody, because
-    /// `check_repo_with_extra` hands the lint a context and no file list. The
+    /// the runner hands a repo lint a context and no file list. The
     /// assertion is what it should do; un-ignore it when the filter reaches
     /// repo lints. `path_filter`'s module doc names the same gap.
     #[test]
@@ -3308,7 +2623,11 @@ mod repo_lint_tests {
 
 #[cfg(test)]
 mod declared_default_severity_tests {
-    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::testkit::LintFixture;
 
     use super::*;
 
@@ -3354,26 +2673,25 @@ mod declared_default_severity_tests {
         }
     }
 
-    fn ctx() -> LintContext<'static> {
-        let mut parser = make_parser();
-        let tree = parser.parse("", None).unwrap();
-        LintContext {
-            crate_name:              "test-crate",
-            short_name:              "test-crate",
-            source:                  "",
-            tree:                    Box::leak(Box::new(tree)),
-            all_sources:             &[],
-            deps:                    &[],
-            all_crates:              Box::leak(Box::new(BTreeSet::new())),
-            design_doc:              None,
-            all_doc_content:         "",
-            shame_doc:               None,
-            workspace_root:          std::path::Path::new("/tmp"),
-            proc_macro_crates:       &[],
-            crate_prefix:            "test",
-            lint_proc_macro_source:  false,
-            primitive_introductions: Box::leak(Box::new(BTreeMap::new())),
-        }
+    /// Every lint, built-in and the one crate lint given, over `fixture`.
+    fn run_with(fixture: &LintFixture, lint: Box<dyn CrateLint>, overrides: Option<&LintConfig>) -> Vec<LintError> {
+        let pack = LintPack { crate_lints: vec![lint], ..LintPack::default() };
+        crate::testkit::run(std::slice::from_ref(fixture), overrides, Some(&pack))
+    }
+
+    /// What one lint of the given name found over `fixture`, through the runner.
+    fn found_by(name: &str, fixture: &LintFixture, overrides: Option<&LintConfig>) -> Vec<LintError> {
+        crate::testkit::run(std::slice::from_ref(fixture), overrides, None)
+            .into_iter()
+            .filter(|e| e.lint_name == name)
+            .collect()
+    }
+
+    /// A filter on `name` alone.
+    fn filtered(name: &str, filter: PathFilter) -> LintConfig {
+        let mut cfg = LintConfig::empty();
+        cfg.paths.insert(name.to_string(), filter);
+        cfg
     }
 
     #[test]
@@ -3383,17 +2701,7 @@ mod declared_default_severity_tests {
         // pass, would report the same empty list for a repo the gate should
         // refuse. The fixture below carries a `todo!()`, which `no-todo`
         // gates at push.
-        let files = crate_with_a_dirty_module();
-        let mut parser = make_parser();
-        let tree = parser
-            .parse(&files[0].text, None)
-            .expect("the fixture does not parse");
-        let mut base = ctx();
-        base.source = &files[0].text;
-        base.tree = &tree;
-        base.all_sources = &files;
-
-        let found = check_crate(&base, false, None);
+        let found = crate::testkit::run(&[crate_with_a_dirty_module()], None, None);
         assert!(
             found
                 .iter()
@@ -3403,30 +2711,17 @@ mod declared_default_severity_tests {
     }
 
     /// A crate whose root is clean and whose module file is not.
-    fn crate_with_a_dirty_module() -> Vec<CrateSourceFile> {
-        vec![
-            CrateSourceFile {
-                rel_path: std::path::PathBuf::from("src/lib.rs"),
-                text:     "pub mod env;\n".to_string(),
-            },
-            CrateSourceFile {
-                rel_path: std::path::PathBuf::from("src/env.rs"),
-                text:     "pub fn args() { todo!() }\n".to_string(),
-            },
-        ]
+    fn crate_with_a_dirty_module() -> LintFixture {
+        LintFixture::new("pub mod env;\n").with_module("src/env.rs", "pub fn args() { todo!() }\n")
     }
 
     #[test]
     fn a_per_file_lint_sees_a_module_file() {
-        // The bug this dispatcher exists for. `ctx.source` is the crate root and
+        // The bug this dispatcher exists for. `ctx.source()` is the crate root and
         // nothing else, so every surface lint read `src/lib.rs` and skipped the
         // rest of the crate while the gate reported clean. In one consumer that hid
         // real findings in module files through a full review.
-        let files = crate_with_a_dirty_module();
-        let mut base = ctx();
-        base.all_sources = &files;
-
-        let found = check_every_file(&no_todo::NoTodo, &base, &parse_sources(&files), None);
+        let found = found_by("no-todo", &crate_with_a_dirty_module(), None);
         assert_eq!(
             found.len(),
             1,
@@ -3442,16 +2737,12 @@ mod declared_default_severity_tests {
     #[test]
     fn the_crate_root_alone_would_have_missed_it() {
         // The control, and the proof that the test above is measuring the
-        // dispatcher rather than the lint: the same dirty fixture, dispatched
-        // with only the crate root parsed, finds nothing, because the
-        // violation lives in a module file the root never reads. That is
-        // exactly what shipped before the dispatcher existed.
-        let files = crate_with_a_dirty_module();
-        let mut base = ctx();
-        base.all_sources = &files;
-
-        let root_only = parse_sources(&files[.. 1]);
-        let found = check_every_file(&no_todo::NoTodo, &base, &root_only, None);
+        // runner rather than the lint: the same dirty fixture, judged on the
+        // crate root alone, finds nothing, because the violation lives in a
+        // module file the root never reads. That is exactly what shipped
+        // before the runner judged every file.
+        let fixture = crate_with_a_dirty_module();
+        let found = no_todo::NoTodo.check(&fixture.ctx());
         assert!(
             found.is_empty(),
             "the crate root is clean, so this should find nothing"
@@ -3463,20 +2754,11 @@ mod declared_default_severity_tests {
         // the same dirty fixture as above, which without a filter yields exactly one
         // finding. excluding the file that carries it is the whole mechanism, and the test
         // above is the control that says the finding is there to be suppressed.
-        let files = crate_with_a_dirty_module();
-        let mut base = ctx();
-        base.all_sources = &files;
         let filter = PathFilter {
             include: vec![],
             exclude: vec!["src/env.rs".into()],
         };
-
-        let found = check_every_file(
-            &no_todo::NoTodo,
-            &base,
-            &parse_sources(&files),
-            Some(&filter),
-        );
+        let found = found_by("no-todo", &crate_with_a_dirty_module(), Some(&filtered("no-todo", filter)));
         assert!(
             found.is_empty(),
             "the only dirty file was excluded, got {found:?}"
@@ -3488,7 +2770,7 @@ mod declared_default_severity_tests {
         // the hole worth pinning: a crate-scoped lint ignores the per-file dispatch and
         // reads `all_sources` itself, so unless the runner narrows that too, declaring
         // `per_file = false` is a way around the config.
-        struct CountsSources(std::sync::atomic::AtomicUsize);
+        struct CountsSources(Arc<AtomicUsize>);
         impl Lint for CountsSources {
             fn name(&self) -> &'static str {
                 "counts-sources"
@@ -3500,21 +2782,16 @@ mod declared_default_severity_tests {
         }
         impl CrateLint for CountsSources {
             fn check(&self, ctx: &LintContext) -> Vec<LintError> {
-                self.0
-                    .store(ctx.all_sources.len(), std::sync::atomic::Ordering::SeqCst);
+                self.0.store(ctx.all_sources().len(), Ordering::SeqCst);
                 Vec::new()
             }
         }
 
-        let files = crate_with_a_dirty_module();
-        let mut base = ctx();
-        base.all_sources = &files;
-        let lint = CountsSources(std::sync::atomic::AtomicUsize::new(0));
-        let parsed = parse_sources(&files);
-
-        check_every_file(&lint, &base, &parsed, None);
+        let seen = Arc::new(AtomicUsize::new(0));
+        let fixture = crate_with_a_dirty_module();
+        let _ = run_with(&fixture, Box::new(CountsSources(Arc::clone(&seen))), None);
         assert_eq!(
-            lint.0.load(std::sync::atomic::Ordering::SeqCst),
+            seen.load(Ordering::SeqCst),
             2,
             "unfiltered control"
         );
@@ -3523,9 +2800,9 @@ mod declared_default_severity_tests {
             include: vec!["src/lib.rs".into()],
             exclude: vec![],
         };
-        check_every_file(&lint, &base, &parsed, Some(&filter));
+        let _ = run_with(&fixture, Box::new(CountsSources(Arc::clone(&seen))), Some(&filtered("counts-sources", filter)));
         assert_eq!(
-            lint.0.load(std::sync::atomic::Ordering::SeqCst),
+            seen.load(Ordering::SeqCst),
             1,
             "a crate-scoped lint must be handed the narrowed all_sources, not the full one",
         );
@@ -3551,13 +2828,15 @@ mod declared_default_severity_tests {
             }
         }
 
-        let files = crate_with_a_dirty_module();
-        let mut base = ctx();
-        base.all_sources = &files;
-        let parsed = parse_sources(&files);
-
+        let fixture = crate_with_a_dirty_module();
+        let fired = |cfg: Option<&LintConfig>| {
+            run_with(&fixture, Box::new(AlwaysFires), cfg)
+                .into_iter()
+                .filter(|e| e.lint_name == "always-fires")
+                .count()
+        };
         assert_eq!(
-            check_every_file(&AlwaysFires, &base, &parsed, None).len(),
+            fired(None),
             1,
             "control"
         );
@@ -3566,7 +2845,7 @@ mod declared_default_severity_tests {
             include: vec!["nothing/matches/this".into()],
             exclude: vec![],
         };
-        assert!(check_every_file(&AlwaysFires, &base, &parsed, Some(&filter)).is_empty());
+        assert_eq!(fired(Some(&filtered("always-fires", filter))), 0);
     }
 
     #[test]
@@ -3628,11 +2907,7 @@ mod declared_default_severity_tests {
         // file is found. Today the cross-crate dispatch hands each lint the
         // root tree only; the per-crate dispatcher's fix has no cross-crate
         // counterpart yet, and this flips green when it grows one.
-        let files = crate_with_a_dirty_module();
-        let mut base = ctx();
-        base.all_sources = &files;
-
-        let found = check_workspace(&[("test-crate", &base)], false, None);
+        let found = crate::testkit::run(&[crate_with_a_dirty_module()], None, None);
         assert!(
             found
                 .iter()
@@ -3664,11 +2939,11 @@ mod declared_default_severity_tests {
             }
         }
 
-        let files = crate_with_a_dirty_module();
-        let mut base = ctx();
-        base.all_sources = &files;
         assert_eq!(
-            check_every_file(&CrateScoped, &base, &parse_sources(&files), None).len(),
+            run_with(&crate_with_a_dirty_module(), Box::new(CrateScoped), None)
+                .iter()
+                .filter(|e| e.lint_name == "crate-scoped")
+                .count(),
             1
         );
     }
@@ -3689,8 +2964,7 @@ mod declared_default_severity_tests {
     /// makes of an empty crate.
     fn fired(lint: AlwaysFires, overrides: Option<&LintConfig>) -> usize {
         let name = lint.0;
-        let ctx = ctx();
-        check_crate_with_extra(&ctx, false, overrides, &[Box::new(lint)])
+        run_with(&LintFixture::new(""), Box::new(lint), overrides)
             .into_iter()
             .filter(|e| e.lint_name == name)
             .count()
@@ -3735,17 +3009,9 @@ mod declared_default_severity_tests {
 
     /// A crate whose root allows the lint on line 2 and whose other file does
     /// not, so the two findings want opposite answers from the runner.
-    fn two_files() -> Vec<CrateSourceFile> {
-        vec![
-            CrateSourceFile {
-                rel_path: "src/lib.rs".into(),
-                text:     "// lint:allow(fires-on-two) reason: r\nfn a() {}\n".into(),
-            },
-            CrateSourceFile {
-                rel_path: "src/other.rs".into(),
-                text:     "fn b() {}\nfn c() {}\n".into(),
-            },
-        ]
+    fn two_files() -> LintFixture {
+        LintFixture::new("// lint:allow(fires-on-two) reason: r\nfn a() {}\n")
+            .with_module("src/other.rs", "fn b() {}\nfn c() {}\n")
     }
 
     fn messages(errors: Vec<LintError>) -> Vec<String> {
@@ -3760,18 +3026,13 @@ mod declared_default_severity_tests {
     fn the_runner_honours_a_marker_through_the_crate_dispatch() {
         // the wire between the parser and the dispatch, which is the part a
         // test of `honour_allows` alone never crosses
-        let files = two_files();
-        let mut base = ctx();
-        base.source = &files[0].text;
-        base.all_sources = &files;
+        let fixture = two_files();
 
         let lint = FiresOnTwo {
             markers_decide: true,
             per_file:       false,
         };
-        let kept = messages(check_crate_with_extra(&base, false, None, &[Box::new(
-            lint,
-        )]));
+        let kept = messages(run_with(&fixture, Box::new(lint), None));
         assert_eq!(
             kept,
             ["root", "other"],
@@ -3783,9 +3044,7 @@ mod declared_default_severity_tests {
             markers_decide: true,
             per_file:       true,
         };
-        let kept = messages(check_crate_with_extra(&base, false, None, &[Box::new(
-            lint,
-        )]));
+        let kept = messages(run_with(&fixture, Box::new(lint), None));
         // A per-file lint runs once per file, and the dispatcher stamps a
         // finding from the other file's pass with that file's path. So the
         // pathless finding from the root's pass is about the root and is
@@ -3799,9 +3058,7 @@ mod declared_default_severity_tests {
             markers_decide: false,
             per_file:       true,
         };
-        let kept = messages(check_crate_with_extra(&base, false, None, &[Box::new(
-            lint,
-        )]));
+        let kept = messages(run_with(&fixture, Box::new(lint), None));
         assert_eq!(kept, ["root", "other", "root", "other"]);
     }
 
@@ -3829,23 +3086,15 @@ mod declared_default_severity_tests {
                     .collect()
             }
         }
-        let files = two_files();
-        let mut base = ctx();
-        base.source = &files[0].text;
-        base.all_sources = &files;
-        let kept = messages(check_workspace_with_extra(
-            &[("test-crate", &base)],
-            false,
-            None,
-            &[Box::new(Across)],
-        ));
+        let pack = LintPack { workspace_lints: vec![Box::new(Across)], ..LintPack::default() };
+        let kept = messages(crate::testkit::run(&[two_files()], None, Some(&pack)));
         assert_eq!(kept, ["other"]);
     }
 
     fn fired_across(lint: AlwaysFiresAcross, overrides: Option<&LintConfig>) -> usize {
         let name = lint.0;
-        let ctx = ctx();
-        check_workspace_with_extra(&[("test-crate", &ctx)], false, overrides, &[Box::new(lint)])
+        let pack = LintPack { workspace_lints: vec![Box::new(lint)], ..LintPack::default() };
+        crate::testkit::run(&[LintFixture::new("")], overrides, Some(&pack))
             .into_iter()
             .filter(|e| e.lint_name == name)
             .count()

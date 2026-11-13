@@ -24,17 +24,11 @@
 //! So the excuse is per file and is exactly those tests. It never fires outside
 //! a merge, and it never fires on a hand-written line.
 
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
 
+use crate::View;
 use crate::merge_lines::Verdict;
 
-/// The parents of a merge in progress, or nothing when no merge is in flight.
-///
-/// Cheap to construct and constructed once per lint run, because every query
-/// afterwards is one `git rev-parse` per file per parent.
 #[derive(Debug, Default, Clone)]
 pub struct Merge {
     /// `HEAD` plus every `MERGE_HEAD`. Empty when no merge is in progress,
@@ -44,14 +38,14 @@ pub struct Merge {
 }
 
 impl Merge {
-    /// Read the merge state of the repository containing `dir`.
-    pub fn detect(dir: &Path) -> Self {
+    /// Read the merge state of the repository containing `dir`, through `view`.
+    pub fn detect(view: &View<'_>, dir: &Path) -> Self {
         // The file, not `rev-parse --verify MERGE_HEAD`, which returns the
         // FIRST line only. An octopus writes one sha per parent, and reading
         // just the first would silently gate every file inherited from the
         // second onward. It exists only while a merge is in flight, so its
         // absence is the whole of the off-the-merge-path test.
-        let Some(path) = git(dir, &["rev-parse", "--git-path", "MERGE_HEAD"]) else {
+        let Some(path) = git(view, dir, &["rev-parse", "--git-path", "MERGE_HEAD"]) else {
             return Self::default();
         };
         // `--git-path` answers relative to the working directory it was asked
@@ -62,7 +56,7 @@ impl Merge {
         // worktree case: there `--git-path` answers absolutely and points at
         // that worktree's own MERGE_HEAD rather than the main repository's.
         let path = dir.join(Path::new(path.trim()));
-        let Ok(heads) = std::fs::read_to_string(&path) else {
+        let Some(heads) = view.text(&path) else {
             return Self::default();
         };
         let mut parents: Vec<String> = heads
@@ -74,7 +68,7 @@ impl Merge {
         if parents.is_empty() {
             return Self::default();
         }
-        match git(dir, &["rev-parse", "-q", "--verify", "HEAD"]) {
+        match git(view, dir, &["rev-parse", "-q", "--verify", "HEAD"]) {
             Some(h) if !h.trim().is_empty() => parents.push(h.trim().to_string()),
             // An unborn HEAD cannot be merged into, so there is nothing to add.
             _ => {},
@@ -99,15 +93,15 @@ impl Merge {
     /// A path absent from the index compares equal to a parent that also lacks
     /// it, which is the deletion case: a merge that takes the other side's
     /// removal authored nothing either.
-    pub fn inherited(&self, dir: &Path, file: &str) -> bool {
+    pub fn inherited(&self, view: &View<'_>, dir: &Path, file: &str) -> bool {
         if self.parents.is_empty() {
             return false;
         }
-        let staged = blob(dir, ":", file);
+        let staged = blob(view, dir, ":", file);
         let at_parents: Vec<Option<String>> = self
             .parents
             .iter()
-            .map(|p| blob(dir, &format!("{p}:"), file))
+            .map(|p| blob(view, dir, &format!("{p}:"), file))
             .collect();
         // A path nothing carries is not a match of two absences. It cannot
         // reach here through the index, since a walk over staged changes never
@@ -118,8 +112,8 @@ impl Merge {
         if at_parents.iter().any(|p| *p == staged) {
             return true;
         }
-        self.is_the_auto_merge(dir, file, staged.as_deref())
-            || self.recombines_the_parents(dir, file, staged.is_some())
+        self.is_the_auto_merge(view, dir, file, staged.as_deref(), &at_parents)
+            || self.recombines_the_parents(view, dir, file, staged.is_some())
     }
 
     /// Whether the staged content only recombines what the parents carried.
@@ -143,26 +137,24 @@ impl Merge {
     /// carries stays authored. A parent lacking the path carries no lines,
     /// which empties the minimum: the file was added on one side, and nothing
     /// is then required to remain.
-    fn recombines_the_parents(&self, dir: &Path, file: &str, has_staged: bool) -> bool {
+    fn recombines_the_parents(&self, view: &View<'_>, dir: &Path, file: &str, has_staged: bool) -> bool {
         if !has_staged {
             return false;
         }
-        let Some(staged) = git_bytes(dir, &["show", &format!(":./{file}")]) else {
+        let Some(staged) = git_bytes(view, dir, &["show", &format!(":./{file}")]) else {
             return false;
         };
-        let bodies: Vec<Vec<u8>> = self
+        let bodies: Vec<&[u8]> = self
             .parents
             .iter()
-            .map(|parent| {
-                git_bytes(dir, &["show", &format!("{parent}:./{file}")]).unwrap_or_default()
-            })
+            .map(|parent| git_bytes(view, dir, &["show", &format!("{parent}:./{file}")]).unwrap_or_default())
             .collect();
         let parents: Vec<Vec<&[u8]>> = bodies.iter().map(|b| lines_of(b)).collect();
         // The merge base of all the parents, which bounds how often a line may
         // repeat. Without one the bound would fall back to the sum over the
         // parents, which lets a copy of a line both carry once stand, so the
         // file is not inherited and the gate judges it as authored.
-        let Some(base) = self.base_body(dir, file) else {
+        let Some(base) = self.base_body(view, dir, file) else {
             eprintln!(
                 "mockspace: no merge base could be found for the parents of this merge \
                  (unrelated histories, or a shallow clone that cut it off), so {file} cannot be \
@@ -171,7 +163,7 @@ impl Merge {
             );
             return false;
         };
-        match crate::merge_lines::recombines(&lines_of(&staged), &parents, &lines_of(&base)) {
+        match crate::merge_lines::recombines(&lines_of(staged), &parents, &lines_of(base)) {
             Verdict::Recombines => true,
             Verdict::Authored(why) => {
                 eprintln!(
@@ -196,11 +188,11 @@ impl Merge {
     /// unrelated histories, or a shallow clone that cut the base off. Those two
     /// are different answers, since an absent path is a file both sides added
     /// and a missing base is a bound that cannot be computed.
-    fn base_body(&self, dir: &Path, file: &str) -> Option<Vec<u8>> {
+    fn base_body<'r>(&self, view: &View<'r>, dir: &Path, file: &str) -> Option<&'r [u8]> {
         let mut args = vec!["merge-base", "--octopus"];
         args.extend(self.parents.iter().map(String::as_str));
-        let base = git(dir, &args)?;
-        Some(git_bytes(dir, &["show", &format!("{}:./{file}", base.trim())]).unwrap_or_default())
+        let base = git(view, dir, &args)?;
+        Some(git_bytes(view, dir, &["show", &format!("{}:./{file}", base.trim())]).unwrap_or_default())
     }
 
     /// Whether the staged content is exactly what git's own three-way merge
@@ -208,18 +200,19 @@ impl Merge {
     ///
     /// The byte-identical test above catches a file only one side touched and a
     /// conflict resolved by taking one side whole. It does not catch the common
-    /// case: **both sides changed the file in different places, and git
-    /// combined them**. That result matches neither parent while still being
-    /// something git assembled and nobody wrote, and treating it as authored
-    /// gates most of what an ordinary merge stages.
+    /// case: both sides changed the file in different places, and git combined
+    /// them. That result matches neither parent while still being something git
+    /// assembled and nobody wrote, and treating it as authored gates most of
+    /// what an ordinary merge stages.
     ///
     /// So the question is asked of git directly. Reproduce the merge for this
-    /// one path from the three blobs and compare. A clean reproduction that
-    /// equals what is staged is git's own work. A hand resolution differs,
-    /// which is the whole point, and where it does not differ it *is* the auto
-    /// merge and excusing it is right.
+    /// one path from the three blobs, named by their object ids so nothing is
+    /// written anywhere, and compare. A clean reproduction that equals what is
+    /// staged is git's own work. A hand resolution differs, which is the whole
+    /// point, and where it does not differ it is the auto merge and excusing it
+    /// is right.
     ///
-    /// **Two parents only.** An octopus has no single merge base, so there is
+    /// Two parents only. An octopus has no single merge base, so there is
     /// nothing to reproduce from; the byte comparison and the line test above
     /// serve it instead.
     ///
@@ -230,84 +223,35 @@ impl Merge {
     /// produces a different blob and the file is reported. That is the safe
     /// direction, and it is written down because the visible effect is the gate
     /// firing on an ordinary merge with nothing saying why.
-    fn is_the_auto_merge(&self, dir: &Path, file: &str, staged: Option<&str>) -> bool {
+    fn is_the_auto_merge(
+        &self,
+        view: &View<'_>,
+        dir: &Path,
+        file: &str,
+        staged: Option<&str>,
+        at: &[Option<String>],
+    ) -> bool {
         // `detect` collects MERGE_HEAD first and pushes HEAD last, and git
-        // calls HEAD `ours` and MERGE_HEAD `theirs`. Naming them the other way
-        // round costs nothing today, because a clean `merge-file` is
-        // order-independent, and misleads the next person to reach for a label
-        // flag or `--ours`.
+        // calls HEAD `ours` and MERGE_HEAD `theirs`.
         let (Some(staged), [theirs, ours]) = (staged, &self.parents[..]) else {
             return false;
         };
-        let Some(base) = git(dir, &["merge-base", ours, theirs]) else {
+        let Some(base) = git(view, dir, &["merge-base", ours, theirs]) else {
             return false;
         };
-        let base = base.trim();
-        // `merge-file` wants three files. The blobs go to a scratch directory
-        // that is removed whatever happens below.
-        //
-        // The name carries a counter and not the path, because two calls about
-        // the same path must not share a directory: the first one's cleanup
-        // deletes the second one's inputs mid-run, and the second then reports
-        // an authored change. Found exactly that way, as a test that failed
-        // beside its neighbours and passed alone.
-        static NTH: AtomicU64 = AtomicU64::new(0);
-        let scratch = std::env::temp_dir().join(format!(
-            "mockspace-merge-{}-{}",
-            std::process::id(),
-            NTH.fetch_add(1, Ordering::Relaxed)
-        ));
-        // `create_dir`, not `create_dir_all`. The path is a pid and a small
-        // counter, so it is predictable, and `create_dir_all` succeeds through
-        // a symlink somebody planted there first: three files of repository
-        // content would then land in a directory of their choosing, and the
-        // cleanup below would remove only the link. `create_dir` refuses an
-        // existing entry of any kind.
-        if std::fs::create_dir(&scratch).is_err() {
+        // An absent side is the empty blob, which is what `merge-file` means by
+        // one side having nothing there.
+        let Some(empty) = hash_object(view, dir, b"") else { return false };
+        let side = |id: &Option<String>| id.clone().unwrap_or_else(|| empty.clone());
+        let (o, t) = (side(&at[1]), side(&at[0]));
+        let b = blob(view, dir, &format!("{}:", base.trim()), file).unwrap_or(empty);
+        let out = view.git_in(dir, &["merge-file", "-p", "--quiet", "--object-id", &o, &b, &t]);
+        // A non-zero status is a conflict count, and a conflicted reproduction
+        // is never an excuse, whatever the author staged.
+        if !out.ok() {
             return false;
         }
-        let write = |name: &str, rev: &str| -> Option<PathBuf> {
-            let at = scratch.join(name);
-            // An absent side is an empty file, which is what `merge-file` means
-            // by one side having nothing there. `git show` already fails on an
-            // absent path, so it answers presence and content in one spawn;
-            // asking `rev-parse` first doubled the process count on the hot
-            // path, which is every file the byte test missed at every commit.
-            let body = git_bytes(dir, &["show", &format!("{rev}:./{file}")]).unwrap_or_default();
-            std::fs::write(&at, body).ok()?;
-            Some(at)
-        };
-        let verdict = (|| {
-            let o = write("ours", ours)?;
-            let b = write("base", base)?;
-            let t = write("theirs", theirs)?;
-            let out = Command::new("git")
-                .arg("merge-file")
-                .arg("-p")
-                .arg("--quiet")
-                .arg(&o)
-                .arg(&b)
-                .arg(&t)
-                .current_dir(dir)
-                .output()
-                .ok()?;
-            // A non-zero status is a conflict count. Today no author can match
-            // a conflicted reproduction anyway, because `merge-file` labels its
-            // markers with the paths it was handed and those carry the pid and
-            // counter above, so nobody can stage the same bytes. That makes
-            // this guard redundant and it stays, because the property it would
-            // enforce rests entirely on the scratch name being unpredictable:
-            // give that directory a fixed name and this line is the only thing
-            // standing between a staged conflict and an excuse.
-            if !out.status.success() {
-                return Some(false);
-            }
-            let produced = git_hash_object(dir, &out.stdout)?;
-            Some(produced == staged)
-        })()
-        .unwrap_or(false);
-        let _ = std::fs::remove_dir_all(&scratch);
-        verdict
+        hash_object(view, dir, out.stdout()).is_some_and(|produced| produced == staged)
     }
 }
 
@@ -321,29 +265,20 @@ fn lines_of(body: &[u8]) -> Vec<&[u8]> {
 }
 
 /// The object id `content` would have as a blob, without writing it.
-fn git_hash_object(dir: &Path, content: &[u8]) -> Option<String> {
-    let mut child = Command::new("git")
-        .args(["hash-object", "--stdin"])
-        .current_dir(dir)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .ok()?;
-    child.stdin.take()?.write_all(content).ok()?;
-    let out = child.wait_with_output().ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+///
+/// Any bytes hash, so `git` failing here says nothing of `content`: it is the machine's, a
+/// broken `git` or repository, and the unit is judged again rather than saved with it.
+fn hash_object(view: &View<'_>, dir: &Path, content: &[u8]) -> Option<String> {
+    let out = view.run_with_input("git", &["hash-object", "--stdin"], dir, content, &[]);
+    if out.started() && !out.ok() {
+        view.untraced("`git hash-object` failed, which no content can make it do");
+    }
+    out.ok_text().map(|id| id.trim().to_string())
 }
 
-fn git_bytes(cwd: &Path, args: &[&str]) -> Option<Vec<u8>> {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    out.status.success().then_some(out.stdout)
+fn git_bytes<'r>(view: &View<'r>, cwd: &Path, args: &[&str]) -> Option<&'r [u8]> {
+    let out = view.git_in(cwd, args);
+    out.ok().then(|| out.stdout())
 }
 
 /// The object id of `file` at `rev`, or `None` where the path is absent there.
@@ -355,27 +290,52 @@ fn git_bytes(cwd: &Path, args: &[&str]) -> Option<Vec<u8>> {
 /// resolves from the repository root, so from a mock directory it would read
 /// `<repo>/crates/...` rather than `<repo>/mock/crates/...`, silently comparing
 /// the wrong blob where both exist.
-fn blob(dir: &Path, rev: &str, file: &str) -> Option<String> {
+fn blob(view: &View<'_>, dir: &Path, rev: &str, file: &str) -> Option<String> {
     let spec = format!("{rev}./{file}");
-    let out = git(dir, &["rev-parse", "-q", "--verify", &spec])?;
+    let out = git(view, dir, &["rev-parse", "-q", "--verify", &spec])?;
     let id = out.trim();
     (!id.is_empty()).then(|| id.to_string())
 }
 
-fn git(cwd: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).to_string())
+fn git(view: &View<'_>, cwd: &Path, args: &[&str]) -> Option<String> {
+    let out = view.git_in(cwd, args);
+    out.ok().then(|| String::from_utf8_lossy(out.stdout()).into_owned())
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::process::Command;
+
+    /// A view of a fresh reading of `dir`, so nothing read before a write to the scratch repository is
+    /// remembered after it. Leaked: a test reads a handful.
+    fn view_of(dir: &Path) -> crate::View<'static> {
+        Box::leak(Box::new(crate::Reading::new(dir))).view()
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> Option<String> {
+        super::git(&view_of(dir), dir, args)
+    }
+
+    /// `git hash-object` failing is the machine's, so the unit is not saved with it; hashing,
+    /// the control, keeps the unit saveable.
+    #[test]
+    fn a_failed_hash_is_the_machines_and_keeps_the_unit_unsaved() {
+        let dir = std::env::temp_dir().join(format!("merge-badgit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".git"), "not a gitfile\n").unwrap();
+        let view = view_of(&dir);
+        assert_eq!(super::hash_object(&view, &dir, b"x"), None);
+        assert!(view.trace().untraced.is_some(), "a broken repository was saved as an answer");
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let fine = std::env::temp_dir().join(format!("merge-nogit-{}", std::process::id()));
+        std::fs::create_dir_all(&fine).unwrap();
+        let view = view_of(&fine);
+        assert!(super::hash_object(&view, &fine, b"x").is_some());
+        assert!(view.trace().untraced.is_none());
+        std::fs::remove_dir_all(&fine).unwrap();
+    }
 
     use super::*;
 
@@ -507,9 +467,9 @@ mod tests {
         r.write("crates/foo/src/lib.rs", "pub fn b() {}\n");
         r.git(&["add", "-A"]);
 
-        let m = Merge::detect(&r.mock());
+        let m = Merge::detect(&view_of(&r.mock()), &r.mock());
         assert!(!m.in_progress());
-        assert!(!m.inherited(&r.mock(), "crates/foo/src/lib.rs"));
+        assert!(!m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/lib.rs"));
     }
 
     #[test]
@@ -533,13 +493,13 @@ mod tests {
         r.git(&["switch", "-q", "feature"]);
         r.git(&["merge", "--no-commit", "--no-ff", "trunk"]);
 
-        let m = Merge::detect(&r.mock());
+        let m = Merge::detect(&view_of(&r.mock()), &r.mock());
         assert!(
             m.in_progress(),
             "the fixture did not leave a merge in flight"
         );
         assert!(
-            m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/lib.rs"),
             "a file the branch never touched is not an authored change"
         );
     }
@@ -578,10 +538,10 @@ mod tests {
             "the fixture did not auto-merge both hunks: {body:?}"
         );
 
-        let m = Merge::detect(&r.mock());
+        let m = Merge::detect(&view_of(&r.mock()), &r.mock());
         assert!(m.in_progress());
         assert!(
-            m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/lib.rs"),
             "git assembled this and nobody wrote it"
         );
     }
@@ -621,10 +581,10 @@ mod tests {
             body.contains("ONE") && body.contains("TWO"),
             "the fixture did not combine both hunks: {body:?}"
         );
-        let m = Merge::detect(&r.mock());
+        let m = Merge::detect(&view_of(&r.mock()), &r.mock());
         assert_eq!(m.parents.len(), 3, "HEAD plus both merged heads");
         assert!(
-            m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/lib.rs"),
             "an octopus combined parent lines and wrote none"
         );
 
@@ -634,7 +594,7 @@ mod tests {
         );
         r.git(&["add", "mock/crates/foo/src/lib.rs"]);
         assert!(
-            !m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            !m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/lib.rs"),
             "a line no parent of the octopus carried rode in"
         );
     }
@@ -672,9 +632,9 @@ mod tests {
         );
         r.git(&["add", "mock/crates/foo/src/lib.rs"]);
 
-        let m = Merge::detect(&r.mock());
+        let m = Merge::detect(&view_of(&r.mock()), &r.mock());
         assert!(
-            !m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            !m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/lib.rs"),
             "a line nobody committed on either side rode in under a merge"
         );
     }
@@ -705,9 +665,9 @@ mod tests {
         r.write("crates/foo/src/lib.rs", "one\nBRANCH\nTRUNK\nthree\n");
         r.git(&["add", "mock/crates/foo/src/lib.rs"]);
 
-        let m = Merge::detect(&r.mock());
+        let m = Merge::detect(&view_of(&r.mock()), &r.mock());
         assert!(
-            m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/lib.rs"),
             "keeping both parents' lines authors nothing, and a round could not carry it"
         );
     }
@@ -722,9 +682,9 @@ mod tests {
         );
         r.git(&["add", "mock/crates/foo/src/lib.rs"]);
 
-        let m = Merge::detect(&r.mock());
+        let m = Merge::detect(&view_of(&r.mock()), &r.mock());
         assert!(
-            !m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            !m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/lib.rs"),
             "a line neither parent carried rode in with the consolidation"
         );
     }
@@ -738,9 +698,9 @@ mod tests {
         r.write("crates/foo/src/lib.rs", "one\nBRANCH\nTRUNK\n");
         r.git(&["add", "mock/crates/foo/src/lib.rs"]);
 
-        let m = Merge::detect(&r.mock());
+        let m = Merge::detect(&view_of(&r.mock()), &r.mock());
         assert!(
-            !m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            !m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/lib.rs"),
             "a line both parents carried was deleted by hand"
         );
     }
@@ -765,7 +725,7 @@ mod tests {
     fn staged_is_inherited(r: &Repo, resolution: &str) -> bool {
         r.write("crates/foo/src/lib.rs", resolution);
         r.git(&["add", "mock/crates/foo/src/lib.rs"]);
-        Merge::detect(&r.mock()).inherited(&r.mock(), "crates/foo/src/lib.rs")
+        Merge::detect(&view_of(&r.mock()), &r.mock()).inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/lib.rs")
     }
 
     /// Two histories with no common ancestor, merged with both sides adding the
@@ -960,10 +920,10 @@ mod tests {
         r.write("crates/foo/src/lib.rs", "a third thing nobody committed\n");
         r.git(&["add", "mock/crates/foo/src/lib.rs"]);
 
-        let m = Merge::detect(&r.mock());
+        let m = Merge::detect(&view_of(&r.mock()), &r.mock());
         assert!(m.in_progress());
         assert!(
-            !m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            !m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/lib.rs"),
             "a hand resolution IS an authored change and stays gated"
         );
     }
@@ -977,13 +937,13 @@ mod tests {
         r.git(&["checkout", "--theirs", "--", "mock/crates/foo/src/lib.rs"]);
         r.git(&["add", "mock/crates/foo/src/lib.rs"]);
 
-        let m = Merge::detect(&r.mock());
+        let m = Merge::detect(&view_of(&r.mock()), &r.mock());
         assert_eq!(
             std::fs::read_to_string(r.mock().join("crates/foo/src/lib.rs")).unwrap(),
             "trunk\n",
             "the resolution did not take the other side"
         );
-        assert!(m.inherited(&r.mock(), "crates/foo/src/lib.rs"));
+        assert!(m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/lib.rs"));
     }
 
     #[test]
@@ -999,13 +959,13 @@ mod tests {
         r.git(&["checkout", "--ours", "--", "mock/crates/foo/src/lib.rs"]);
         r.git(&["add", "mock/crates/foo/src/lib.rs"]);
 
-        let m = Merge::detect(&r.mock());
+        let m = Merge::detect(&view_of(&r.mock()), &r.mock());
         assert_eq!(
             std::fs::read_to_string(r.mock().join("crates/foo/src/lib.rs")).unwrap(),
             "branch\n",
             "the resolution did not keep our own side"
         );
-        assert!(m.inherited(&r.mock(), "crates/foo/src/lib.rs"));
+        assert!(m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/lib.rs"));
     }
 
     #[test]
@@ -1027,7 +987,7 @@ mod tests {
         r.git(&["switch", "-q", "trunk"]);
         r.git(&["merge", "--no-commit", "--no-ff", "one", "two"]);
 
-        let m = Merge::detect(&r.mock());
+        let m = Merge::detect(&view_of(&r.mock()), &r.mock());
         assert!(
             m.in_progress(),
             "the fixture did not leave a merge in flight"
@@ -1035,8 +995,8 @@ mod tests {
         assert_eq!(m.parents.len(), 3, "HEAD plus both merged heads");
         // the file from the SECOND merged head is the one a first-line-only
         // reader would report as an authored change
-        assert!(m.inherited(&r.mock(), "crates/foo/src/from_two.rs"));
-        assert!(m.inherited(&r.mock(), "crates/foo/src/from_one.rs"));
+        assert!(m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/from_two.rs"));
+        assert!(m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/from_one.rs"));
     }
 
     #[test]
@@ -1057,9 +1017,9 @@ mod tests {
         r.git(&["switch", "-q", "feature"]);
         r.git(&["merge", "--no-commit", "--no-ff", "trunk"]);
 
-        let m = Merge::detect(&r.mock());
+        let m = Merge::detect(&view_of(&r.mock()), &r.mock());
         assert!(m.in_progress());
-        assert!(m.inherited(&r.mock(), "crates/foo/src/gone.rs"));
+        assert!(m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/gone.rs"));
     }
 
     #[test]
@@ -1079,12 +1039,12 @@ mod tests {
         r.git(&["switch", "-q", "feature"]);
         r.git(&["merge", "--no-commit", "--no-ff", "trunk"]);
 
-        let m = Merge::detect(&r.mock());
+        let m = Merge::detect(&view_of(&r.mock()), &r.mock());
         assert!(m.in_progress());
         // staged and absent from both parents cannot happen through the index,
         // so this asks the question the untracked walk would ask
         assert!(
-            !m.inherited(&r.mock(), "crates/foo/src/never_existed.rs"),
+            !m.inherited(&view_of(&r.mock()), &r.mock(), "crates/foo/src/never_existed.rs"),
             "two absences must not read as a match"
         );
     }
@@ -1101,8 +1061,8 @@ mod tests {
         std::fs::write(r.root.join("crates/foo/src/lib.rs"), "the root copy\n").unwrap();
         r.commit("base");
 
-        let from_mock = blob(&r.mock(), "HEAD:", "crates/foo/src/lib.rs").unwrap();
-        let from_root = blob(&r.root, "HEAD:", "crates/foo/src/lib.rs").unwrap();
+        let from_mock = blob(&view_of(&r.mock()), &r.mock(), "HEAD:", "crates/foo/src/lib.rs").unwrap();
+        let from_root = blob(&view_of(&r.root), &r.root, "HEAD:", "crates/foo/src/lib.rs").unwrap();
         assert_ne!(from_mock, from_root, "the two copies resolved to one blob");
         let mock_body = r.git(&["cat-file", "-p", &from_mock]);
         assert_eq!(mock_body, "the mock copy\n");
@@ -1168,13 +1128,13 @@ mod tests {
              not distinguishable here: {in_the_main:?}"
         );
 
-        let m = Merge::detect(&wt_mock);
+        let m = Merge::detect(&view_of(&wt_mock), &wt_mock);
         assert!(
             m.in_progress(),
             "the merge was not seen from the linked worktree"
         );
         assert!(
-            m.inherited(&wt_mock, "crates/foo/src/other.rs"),
+            m.inherited(&view_of(&wt_mock), &wt_mock, "crates/foo/src/other.rs"),
             "a file the merge brought in whole was judged as authored"
         );
 

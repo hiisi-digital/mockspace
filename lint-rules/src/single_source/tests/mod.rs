@@ -6,12 +6,9 @@
 //! to the rest. Each table row is one crate holding the definition there and one
 //! holding it at its root, in both orders.
 
-use std::path::PathBuf;
-
 use self::placements::{ITEMS, counted_placements, rooted_placements, test_placements};
 use super::*;
 use crate::testkit::LintFixture;
-use crate::{CrateSourceFile, check_workspace};
 
 struct Spec {
     name:    &'static str,
@@ -47,19 +44,11 @@ fn fixtures(specs: &[Spec]) -> Vec<LintFixture> {
     specs
         .iter()
         .map(|s| {
-            let mut files = vec![CrateSourceFile {
-                rel_path: PathBuf::from(s.root_at),
-                text:     s.root.clone(),
-            }];
-            files.extend(s.mods.iter().map(|(p, t)| {
-                CrateSourceFile {
-                    rel_path: PathBuf::from(p),
-                    text:     t.clone(),
-                }
-            }));
+            let mut files: Vec<(&str, &str)> = vec![(s.root_at, s.root.as_str())];
+            files.extend(s.mods.iter().map(|(p, t)| (p.as_str(), t.as_str())));
             LintFixture::new(&s.root)
                 .with_crate_name(s.name, s.name)
-                .with_sources(files)
+                .with_sources(&files)
         })
         .collect()
 }
@@ -86,11 +75,7 @@ fn pub_findings(specs: &[Spec]) -> Vec<LintError> {
 
 /// The same specs through the runner, which is what honours `lint:allow`.
 fn through_the_runner(specs: &[Spec]) -> Vec<LintError> {
-    let fixtures = fixtures(specs);
-    let ctxs: Vec<LintContext> = fixtures.iter().map(LintFixture::ctx).collect();
-    let crates: Vec<(&str, &LintContext)> =
-        specs.iter().zip(&ctxs).map(|(s, c)| (s.name, c)).collect();
-    check_workspace(&crates, false, None)
+    crate::testkit::run(&fixtures(specs), None, None)
         .into_iter()
         .filter(|e| e.lint_name == "single-source")
         .collect()
@@ -282,7 +267,7 @@ fn a_crate_without_module_files_falls_back_to_its_root() {
     let fixture_a = LintFixture::new("struct Dup;").with_crate_name("test-a", "test-a");
     let fixture_b = LintFixture::new("struct Dup;")
         .with_crate_name("test-b", "test-b")
-        .with_sources(Vec::new());
+        .with_sources(&[]);
     let (a, b) = (fixture_a.ctx(), fixture_b.ctx());
     assert_eq!(check(&[("test-a", &a), ("test-b", &b)], false).len(), 1);
 }

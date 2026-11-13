@@ -26,9 +26,9 @@
 //!   `rustfmt` refuses (unparseable source) all report "not fmt-only", so
 //!   the gate refuses exactly as it did before.
 
-use std::io::Write;
-use std::path::Path;
-use std::process::{Command, Stdio};
+use std::path::{Path, PathBuf};
+
+use crate::{Answer, View};
 
 /// Why a change was not fmt-only, for the message the gate prints.
 #[derive(Debug, PartialEq, Eq)]
@@ -55,22 +55,22 @@ pub enum NotFmtOnly {
 ///
 /// Returns [`NotFmtOnly`] rather than a bool so the gate can say which of
 /// the three cases it hit. Every one of them means "refuse".
-pub fn is_fmt_only_change(dir: &Path, file: &str, current: &str) -> Result<(), NotFmtOnly> {
-    let committed = git_show(dir, file).ok_or(NotFmtOnly::Undeterminable)?;
+pub fn is_fmt_only_change(view: &View<'_>, dir: &Path, file: &str, current: &str) -> Result<(), NotFmtOnly> {
+    let committed = git_show(view, dir, file).ok_or(NotFmtOnly::Undeterminable)?;
 
     // Cheap exit: unchanged content is trivially fmt-only and needs no rustfmt.
     if committed == current {
         return Ok(());
     }
 
-    let formatted = rustfmt(dir, &committed)?;
+    let formatted = rustfmt(view, dir, committed)?;
     if formatted == current { Ok(()) } else { Err(NotFmtOnly::ContentDiffers) }
 }
 
 /// Drop files whose only change is what `rustfmt` would have produced.
 ///
-/// **The content judged is the content the commit will carry**, resolved by
-/// [`crate::staged_or_worktree`] from the same `source` label the gate
+/// The content judged is the content the commit will carry, resolved by
+/// [`crate::changelist_required::staged_or_worktree`] from the same `source` label the gate
 /// collected the file under. Reading the working tree instead is a bypass and
 /// not a subtle one: stage a semantic edit, restore the worktree to
 /// `rustfmt(HEAD)`, and a predicate judging the worktree drops the file while
@@ -81,16 +81,15 @@ pub fn is_fmt_only_change(dir: &Path, file: &str, current: &str) -> Result<(), N
 /// Fails closed throughout: a missing `rustfmt`, an untracked file, content
 /// that cannot be resolved, or source `rustfmt` will not parse all leave the
 /// file in the list and the gate refuses exactly as before.
-pub fn drop_fmt_only(workspace_root: &Path, files: Vec<(String, String)>) -> Vec<(String, String)> {
+pub fn drop_fmt_only(view: &View<'_>, workspace_root: &Path, files: Vec<(String, String)>) -> Vec<(String, String)> {
     files
         .into_iter()
         .filter(|(file, source)| {
-            let Some(current) =
-                crate::changelist_required::staged_or_worktree(workspace_root, file, source)
+            let Some(current) = crate::changelist_required::staged_or_worktree(view, workspace_root, file, source)
             else {
                 return true; // cannot resolve the content: refuse
             };
-            match is_fmt_only_change(workspace_root, file, &current) {
+            match is_fmt_only_change(view, workspace_root, file, current) {
                 Ok(()) => false,
                 Err(NotFmtOnly::RustfmtMissing) => {
                     // The one case the user can act on: the exemption is
@@ -116,49 +115,61 @@ pub fn drop_fmt_only(workspace_root: &Path, files: Vec<(String, String)>) -> Vec
 /// repository root instead, so from a mock directory it would look for
 /// `<repo>/crates/...` and miss `<repo>/mock/crates/...` entirely, reporting
 /// every file as untracked and refusing every change.
-fn git_show(dir: &Path, file: &str) -> Option<String> {
-    let out = Command::new("git")
-        .args(["show", &format!("HEAD:./{file}")])
-        .current_dir(dir)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    String::from_utf8(out.stdout).ok()
+fn git_show<'r>(view: &View<'r>, dir: &Path, file: &str) -> Option<&'r str> {
+    view.git_in(dir, &["show", &format!("HEAD:./{file}")]).ok_text()
 }
 
 /// Run `rustfmt` over `source`, resolving the repo's own `rustfmt.toml` by
 /// running with `dir` as the working directory.
-fn rustfmt(dir: &Path, source: &str) -> Result<String, NotFmtOnly> {
-    let mut child = Command::new("rustfmt")
-        .arg("--emit=stdout")
-        .arg("--quiet")
-        .current_dir(dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| NotFmtOnly::RustfmtMissing)?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or(NotFmtOnly::Undeterminable)?
-        .write_all(source.as_bytes())
-        .map_err(|_| NotFmtOnly::Undeterminable)?;
-    let out = child
-        .wait_with_output()
-        .map_err(|_| NotFmtOnly::Undeterminable)?;
-    if !out.status.success() {
-        // Unparseable source, or a rustfmt that refused the input.
+///
+/// What its output depends on besides `source` is the configuration it finds,
+/// which is a `rustfmt.toml` or `.rustfmt.toml` in `dir` or any directory
+/// above it up to the repository root, and which `rustfmt` it is, which the
+/// root's `rust-toolchain.toml` pins. Those are the run's inputs, so a saved
+/// verdict is asked again when one of them changes and `rustfmt` is not run
+/// again to find out.
+fn rustfmt<'r>(view: &View<'r>, dir: &Path, source: &str) -> Result<&'r str, NotFmtOnly> {
+    let root = view.root();
+    let mut inputs: Vec<PathBuf> = vec![root.join("rust-toolchain.toml")];
+    let mut at = Some(dir);
+    while let Some(d) = at {
+        inputs.push(d.join("rustfmt.toml"));
+        inputs.push(d.join(".rustfmt.toml"));
+        if d == root {
+            break;
+        }
+        at = d.parent();
+    }
+    let inputs: Vec<&Path> = inputs.iter().map(PathBuf::as_path).collect();
+    let out = view.run_with_input("rustfmt", &["--emit=stdout", "--quiet"], dir, source.as_bytes(), &inputs);
+    formatted(view, out)
+}
+
+/// What `rustfmt` answered, read as the source formatted or why it is not.
+///
+/// A `rustfmt` that could not be started is missing, and its unit is not saved, since it started
+/// nothing. One that refused the source it was handed says where, naming `<stdin>`, and that is
+/// an answer about the source, saved with it. A failure naming no place in the source happened
+/// before the source was read, a pinned toolchain or its `rustfmt` component not installed, and is
+/// the machine's, so the unit is judged again once the machine is put right.
+fn formatted<'r>(view: &View<'r>, out: &'r Answer) -> Result<&'r str, NotFmtOnly> {
+    if !out.started() {
+        return Err(NotFmtOnly::RustfmtMissing);
+    }
+    if !out.ok() {
+        let read_the_source = std::str::from_utf8(out.stderr()).is_ok_and(|e| e.contains("<stdin>"));
+        if !read_the_source {
+            view.untraced("rustfmt failed before reading the source, a toolchain or component missing");
+        }
         return Err(NotFmtOnly::Undeterminable);
     }
-    String::from_utf8(out.stdout).map_err(|_| NotFmtOnly::Undeterminable)
+    out.text().ok_or(NotFmtOnly::Undeterminable)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     /// A git repo with one committed Rust file, deliberately unformatted.
     struct Repo {
@@ -207,7 +218,7 @@ mod tests {
         /// Judge the worktree copy, which is what these unit tests vary.
         fn check(&self) -> Result<(), NotFmtOnly> {
             let cur = std::fs::read_to_string(self.root.join("crates/foo/src/lib.rs")).unwrap();
-            is_fmt_only_change(&self.root, "crates/foo/src/lib.rs", &cur)
+            is_fmt_only_change(&crate::Reading::new(&self.root).view(), &self.root, "crates/foo/src/lib.rs", &cur)
         }
     }
 
@@ -240,7 +251,8 @@ mod tests {
     fn rustfmts_own_output_is_fmt_only() {
         require_rustfmt();
         let r = Repo::new("clean", UGLY);
-        let formatted = rustfmt(&r.root, UGLY).expect("rustfmt runs");
+        let reading = crate::Reading::new(&r.root);
+        let formatted = rustfmt(&reading.view(), &r.root, UGLY).expect("rustfmt runs").to_string();
         assert_ne!(formatted, UGLY, "the fixture must actually be reformatted");
         r.write(&formatted);
         assert_eq!(r.check(), Ok(()));
@@ -253,7 +265,8 @@ mod tests {
         // rustfmt's output, then one semantic character changed. This is the
         // case the whole exemption turns on: it looks formatted, it compiles,
         // and it is not what rustfmt produced.
-        let formatted = rustfmt(&r.root, UGLY).expect("rustfmt runs");
+        let reading = crate::Reading::new(&r.root);
+        let formatted = rustfmt(&reading.view(), &r.root, UGLY).expect("rustfmt runs").to_string();
         r.write(&formatted.replace("x + 1", "x + 2"));
         assert_eq!(r.check(), Err(NotFmtOnly::ContentDiffers));
     }
@@ -277,7 +290,7 @@ mod tests {
         let r = Repo::new("untracked", UGLY);
         std::fs::write(r.root.join("crates/foo/src/new.rs"), UGLY).unwrap();
         assert_eq!(
-            is_fmt_only_change(&r.root, "crates/foo/src/new.rs", UGLY),
+            is_fmt_only_change(&crate::Reading::new(&r.root).view(), &r.root, "crates/foo/src/new.rs", UGLY),
             Err(NotFmtOnly::Undeterminable),
             "a file with no committed version has nothing to compare against"
         );
@@ -293,5 +306,34 @@ mod tests {
             Err(NotFmtOnly::Undeterminable),
             "rustfmt cannot format it, so nothing can be established"
         );
+    }
+
+    /// `rustfmt` refusing unparseable source is an answer about the source, saved with it, and a
+    /// `rustfmt` failing before it read anything is the machine's, which keeps the unit unsaved.
+    #[test]
+    fn a_refused_source_is_an_answer_and_a_failure_before_reading_it_is_the_machines() {
+        require_rustfmt();
+        let r = Repo::new("refused", UGLY);
+        let reading = crate::Reading::new(&r.root);
+        let view = reading.view();
+        assert_eq!(rustfmt(&view, &r.root, "pub fn a( {{{ \n"), Err(NotFmtOnly::Undeterminable));
+        assert!(view.trace().untraced.is_none(), "the source was refused, which is an answer");
+
+        // What a rustup proxy says when the pinned toolchain is not installed: no place in the
+        // source, since none was read.
+        let missing = "echo \"error: toolchain 'x' is not installed\" >&2; exit 1";
+        let reading = crate::Reading::new(&r.root);
+        let view = reading.view();
+        let out = view.run("sh", &["-c", missing], &r.root, &[]);
+        assert_eq!(formatted(&view, out), Err(NotFmtOnly::Undeterminable));
+        assert!(view.trace().untraced.is_some(), "the machine failed, so the unit is not saved");
+
+        // The control: the same failure naming the source it read is an answer.
+        let refused = "echo ' --> <stdin>:1:9' >&2; exit 1";
+        let reading = crate::Reading::new(&r.root);
+        let view = reading.view();
+        let out = view.run("sh", &["-c", refused], &r.root, &[]);
+        assert_eq!(formatted(&view, out), Err(NotFmtOnly::Undeterminable));
+        assert!(view.trace().untraced.is_none());
     }
 }

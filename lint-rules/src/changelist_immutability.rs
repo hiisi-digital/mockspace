@@ -19,9 +19,9 @@
 //! Severity: Error (blocks commit and push).
 
 use std::path::Path;
-use std::process::Command;
 
 use crate::changelist_helpers::{self, ClKind, ClStatus, ParsedChangelist, Phase};
+use crate::src_layout::run_git;
 use crate::{Lint, LintError, RepoContext, RepoLint, Severity};
 
 const LINT_NAME: &str = "changelist-immutability";
@@ -52,14 +52,14 @@ impl RepoLint for ChangelistImmutability {
         let workspace_root = ctx.mock_dir;
 
         let design_rounds = workspace_root.join("design_rounds");
-        let all_cls = changelist_helpers::find_changelists(&design_rounds);
+        let all_cls = changelist_helpers::find_changelists(ctx.view(), &design_rounds);
         if all_cls.is_empty() {
             return Vec::new();
         }
 
-        let phase = changelist_helpers::current_phase(&design_rounds);
+        let phase = changelist_helpers::current_phase(ctx.view(), &design_rounds);
 
-        let modified = get_modified_in_design_rounds(workspace_root);
+        let modified = get_modified_in_design_rounds(ctx.view(), workspace_root);
         if modified.is_empty() {
             return Vec::new();
         }
@@ -144,11 +144,11 @@ fn check_changelist_edit(cl: &ParsedChangelist, phase: Phase) -> Option<String> 
 /// - `A` (added): skip; first appearance of the file
 /// - `M` (modified), `R*` (renamed), `D` (deleted): include; an edit
 ///   to an existing CL file
-fn get_modified_in_design_rounds(workspace_root: &Path) -> Vec<(String, String)> {
+fn get_modified_in_design_rounds(view: &crate::View<'_>, workspace_root: &Path) -> Vec<(String, String)> {
     let mut files: Vec<(String, String)> = Vec::new();
 
     // Staged changes
-    if let Some(output) = run_git(workspace_root, &[
+    if let Some(output) = run_git(view, workspace_root, &[
         "diff",
         "--cached",
         "--name-status",
@@ -160,7 +160,7 @@ fn get_modified_in_design_rounds(workspace_root: &Path) -> Vec<(String, String)>
     }
 
     // Unstaged tracked changes
-    if let Some(output) = run_git(workspace_root, &[
+    if let Some(output) = run_git(view, workspace_root, &[
         "diff",
         "--name-status",
         "--relative",
@@ -173,9 +173,9 @@ fn get_modified_in_design_rounds(workspace_root: &Path) -> Vec<(String, String)>
     // A changelist a merge carried in whole or recombined from its parents is
     // not an edit of this round; `src_layout::changed_files` excuses the same
     // staged entries for the phase gates, and this walk does not go through it.
-    let merge = crate::merge::Merge::detect(workspace_root);
+    let merge = crate::merge::Merge::detect(view, workspace_root);
     if merge.in_progress() {
-        files.retain(|(file, source)| source != "staged" || !merge.inherited(workspace_root, file));
+        files.retain(|(file, source)| source != "staged" || !merge.inherited(view, workspace_root, file));
     }
 
     files
@@ -481,7 +481,7 @@ mod tests {
             let (_tmp, mock) = conflicted();
             write(&mock, "one\nBRANCH\nTRUNK\nthree\n");
             must(&mock, &["add", CL]);
-            assert!(get_modified_in_design_rounds(&mock).is_empty());
+            assert!(get_modified_in_design_rounds(&crate::Reading::new(&mock).view(), &mock).is_empty());
         }
 
         #[test]
@@ -489,7 +489,7 @@ mod tests {
             let (_tmp, mock) = conflicted();
             write(&mock, "one\nBRANCH\nTRUNK\nSMUGGLED\nthree\n");
             must(&mock, &["add", CL]);
-            let files = get_modified_in_design_rounds(&mock);
+            let files = get_modified_in_design_rounds(&crate::Reading::new(&mock).view(), &mock);
             assert_eq!(files, vec![(CL.to_string(), "staged".to_string())]);
         }
 
@@ -506,16 +506,7 @@ mod tests {
             must(root, &["commit", "-q", "-m", "base"]);
             write(&mock, "one\ntwo\nthree\n");
             must(&mock, &["add", CL]);
-            assert_eq!(get_modified_in_design_rounds(&mock).len(), 1);
+            assert_eq!(get_modified_in_design_rounds(&crate::Reading::new(&mock).view(), &mock).len(), 1);
         }
     }
-}
-
-fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    Some(String::from_utf8_lossy(&output.stdout).to_string())
 }

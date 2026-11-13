@@ -54,7 +54,7 @@ fn commit_all(root: &Path) {
 
 fn check_in(mock: &Path, root: &Path) -> Vec<LintError> {
     let crates = BTreeSet::new();
-    ChangelistSeal.check_repo(&RepoContext {
+    crate::testkit::check_repo(&ChangelistSeal, crate::RepoInput {
         mock_dir:    mock,
         repo_root:   root,
         all_crates:  &crates,
@@ -64,7 +64,6 @@ fn check_in(mock: &Path, root: &Path) -> Vec<LintError> {
         open_panels: &[],
         ref_files: &crate::src_layout::NO_REF_FILES,
         registry:    &Default::default(),
-        verdicts:    None,
     })
 }
 
@@ -376,7 +375,7 @@ fn the_messages_name_a_verb_that_exists() {
     let dir = repo();
     put(dir.path(), "202609181236_changelist.doc.lock.md", TEMPLATE);
     put(dir.path(), "202609181236_changelist.doc.md", TEXT);
-    let findings = active_round_findings(&dir.path().join("design_rounds"));
+    let findings = active_round_findings(&crate::Reading::new(dir.path()).view(), &dir.path().join("design_rounds"));
     assert_eq!(findings.len(), 2, "{findings:?}");
     for finding in findings {
         assert!(finding.contains("`cargo mock unlock`"), "{finding}");
@@ -428,9 +427,9 @@ fn only_a_bare_title_says_nothing() {
 #[test]
 fn a_file_that_cannot_be_read_is_not_called_empty() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(!says_nothing(&dir.path().join("absent.md")));
+    assert!(!says_nothing(&crate::Reading::new(dir.path()).view(), &dir.path().join("absent.md")));
     std::fs::write(dir.path().join("empty.md"), "").unwrap();
-    assert!(says_nothing(&dir.path().join("empty.md")));
+    assert!(says_nothing(&crate::Reading::new(dir.path()).view(), &dir.path().join("empty.md")));
 }
 
 #[test]
