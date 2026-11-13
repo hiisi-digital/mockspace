@@ -9,6 +9,7 @@
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicUsize;
 use std::time::SystemTime;
 
 use super::process::{self, Answer};
@@ -140,7 +141,6 @@ pub(crate) struct Read {
 /// A crate's Rust files under `src/`, relative to the crate, the root first, and the directories
 /// walked to find them.
 pub(crate) struct CrateFiles {
-    pub(crate) dir:    PathBuf,
     pub(crate) files:  Vec<PathBuf>,
     pub(crate) listed: Vec<PathBuf>,
 }
@@ -148,6 +148,46 @@ pub(crate) struct CrateFiles {
 thread_local! {
     /// Each thread's own parser: a parser cannot be shared, the trees it makes can.
     static PARSER: RefCell<tree_sitter::Parser> = RefCell::new(crate::make_parser());
+}
+
+fn parse(text: &str) -> Option<tree_sitter::Tree> {
+    crate::timing::time("parse:rust", || PARSER.with(|p| p.borrow_mut().parse(text, None)))
+}
+
+/// The tree of the empty source, for a file that has none. One for the process.
+pub(crate) fn empty_tree() -> &'static tree_sitter::Tree {
+    static EMPTY: std::sync::OnceLock<tree_sitter::Tree> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(|| parse("").expect("tree-sitter returns a tree for the empty source"))
+}
+
+/// Where one file's tree is parsed once for the run: its cell in the reading's memo of trees and
+/// the counter of parses. Both are boxed inside the reading, so a `TreeCell` points at nothing
+/// that moves when the reading does, which is what lets a [`CrateSourceFile`] the reading keeps
+/// hold one.
+#[derive(Clone, Copy)]
+pub(crate) struct TreeCell<'r> {
+    cell:   &'r std::sync::OnceLock<Option<tree_sitter::Tree>>,
+    parses: &'r AtomicUsize,
+}
+
+impl<'r> TreeCell<'r> {
+    pub(crate) fn of(reading: &'r Reading, abs: &Path) -> Self {
+        Self {
+            cell:   reading.trees.slot(abs.to_path_buf()),
+            parses: &reading.counters.parses,
+        }
+    }
+
+    /// The tree, parsed from `text` by whichever asker comes first; `None` where there is no text.
+    pub(crate) fn get<'t>(self, text: impl FnOnce() -> Option<&'t str>) -> Option<&'r tree_sitter::Tree> {
+        self.cell
+            .get_or_init(|| {
+                let text = text()?;
+                Counters::bump(self.parses);
+                parse(text)
+            })
+            .as_ref()
+    }
 }
 
 impl Reading {
@@ -292,29 +332,13 @@ impl Reading {
     }
 
     pub(crate) fn tree(&self, abs: &Path) -> Option<&tree_sitter::Tree> {
-        self.trees
-            .get_or(abs.to_path_buf(), || {
-                let text = self.text(abs)?;
-                Counters::bump(&self.counters.parses);
-                crate::timing::time("parse:rust", || PARSER.with(|p| p.borrow_mut().parse(text, None)))
-            })
-            .as_ref()
+        TreeCell::of(self, abs).get(|| self.text(abs))
     }
 
     /// A tree of `text`, which is no file and is parsed every time it is asked.
     pub(crate) fn parse_text(&self, text: &str) -> tree_sitter::Tree {
         Counters::bump(&self.counters.parses);
-        PARSER
-            .with(|p| p.borrow_mut().parse(text, None))
-            .unwrap_or_else(|| self.empty_tree().clone())
-    }
-
-    pub(crate) fn empty_tree(&self) -> &tree_sitter::Tree {
-        self.empty_tree.get_or_init(|| {
-            PARSER
-                .with(|p| p.borrow_mut().parse("", None))
-                .expect("tree-sitter returns a tree for the empty source")
-        })
+        parse(text).unwrap_or_else(|| empty_tree().clone())
     }
 
     pub(crate) fn toml(&self, abs: &Path) -> Option<&Result<toml::Table, String>> {
@@ -386,7 +410,6 @@ impl Reading {
                 abs.iter().filter_map(|p| p.strip_prefix(crate_dir).ok().map(Path::to_path_buf)).collect();
             files.sort_by(|a, b| (a.as_path() != lib, a).cmp(&(b.as_path() != lib, b)));
             CrateFiles {
-                dir: crate_dir.to_path_buf(),
                 files,
                 listed,
             }
@@ -404,9 +427,12 @@ impl Reading {
             for rel in &found.files {
                 let abs = crate_dir.join(rel);
                 let Some(text) = self.text(&abs) else { continue };
-                let file = CrateSourceFile::new(self, rel, text, &found.dir);
-                // SAFETY: every reference in the file points into this reading's own memo, whose
-                // values are boxed, never moved and never dropped before the reading is. The
+                let file = CrateSourceFile::new(rel, text, TreeCell::of(self, &abs));
+                // SAFETY: every reference the file holds points into memory the reading boxed and
+                // keeps until it is dropped: the path into the boxed `crate_files` entry, the text
+                // into the boxed `files` entry, the tree's cell into the boxed `trees` slot and the
+                // counter into the boxed counters. None points at the `Reading` itself, which may
+                // move after this call, so moving the reading leaves every one of them good. The
                 // lifetime is shortened back to the borrow of `self` before anything sees it.
                 out.push(unsafe { std::mem::transmute::<CrateSourceFile<'_>, CrateSourceFile<'static>>(file) });
             }

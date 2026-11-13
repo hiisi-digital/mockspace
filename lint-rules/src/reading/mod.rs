@@ -35,6 +35,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub use disk::{Entry, Listing};
+pub(crate) use disk::{TreeCell, empty_tree};
 pub use each::Item;
 pub use process::Answer;
 pub(crate) use question::Question;
@@ -107,7 +108,9 @@ pub struct Reading {
     root:     PathBuf,
     overlay:  BTreeMap<PathBuf, String>,
     threads:  usize,
-    counters: Counters,
+    /// Boxed, so a [`crate::CrateSourceFile`] the reading keeps can count its parse here and not
+    /// point at the reading itself, which may move.
+    counters: Box<Counters>,
 
     listings:      Memo<PathBuf, Option<Listing>>,
     stats:         Memo<PathBuf, Option<disk::Stat>>,
@@ -118,7 +121,6 @@ pub struct Reading {
     runs:          Memo<(String, Vec<String>, String, Option<String>), Answer>,
     crate_files:   Memo<PathBuf, disk::CrateFiles>,
     crate_sources: Memo<PathBuf, Vec<crate::CrateSourceFile<'static>>>,
-    empty_tree:    std::sync::OnceLock<tree_sitter::Tree>,
 }
 
 impl Reading {
@@ -129,7 +131,7 @@ impl Reading {
             root:          normalise(&root.into()),
             overlay:       BTreeMap::new(),
             threads:       thread_count(),
-            counters:      Counters::default(),
+            counters:      Box::default(),
             listings:      Memo::new(),
             stats:         Memo::new(),
             files:         Memo::new(),
@@ -139,7 +141,6 @@ impl Reading {
             runs:          Memo::new(),
             crate_files:   Memo::new(),
             crate_sources: Memo::new(),
-            empty_tree:    std::sync::OnceLock::new(),
         }
     }
 

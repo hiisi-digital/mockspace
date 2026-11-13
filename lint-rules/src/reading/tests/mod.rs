@@ -12,6 +12,7 @@ mod each;
 mod history;
 mod invalidation;
 mod keys;
+mod moved;
 mod order;
 mod overlay;
 mod sharing;

@@ -257,7 +257,7 @@ impl LintFixture {
                 .map(|(rel, text)| {
                     let rel: &'static Path = unsafe { &*std::ptr::from_ref::<Path>(rel.as_path()) };
                     let text: &'static str = unsafe { &*std::ptr::from_ref::<str>(text.as_str()) };
-                    CrateSourceFile::new(r, rel, text, dir)
+                    CrateSourceFile::new(rel, text, crate::reading::TreeCell::of(r, &dir.join(rel)))
                 })
                 .collect();
             Built {

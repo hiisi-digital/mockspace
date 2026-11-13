@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use tree_sitter::Tree;
 
-use crate::reading::{Reading, View};
+use crate::reading::{TreeCell, View, empty_tree};
 use crate::{Invocation, PROC_MACRO_CRATES, RegistryView};
 
 /// One source file of a crate, borrowed from the run's reading.
@@ -21,8 +21,7 @@ pub struct CrateSourceFile<'r> {
     pub rel_path: &'r Path,
     /// The file's text, held once for the run.
     pub text:     &'r str,
-    crate_dir:    &'r Path,
-    reading:      &'r Reading,
+    tree:         TreeCell<'r>,
 }
 
 impl std::fmt::Debug for CrateSourceFile<'_> {
@@ -35,20 +34,19 @@ impl std::fmt::Debug for CrateSourceFile<'_> {
 }
 
 impl<'r> CrateSourceFile<'r> {
-    pub(crate) fn new(reading: &'r Reading, rel_path: &'r Path, text: &'r str, crate_dir: &'r Path) -> Self {
+    pub(crate) fn new(rel_path: &'r Path, text: &'r str, tree: TreeCell<'r>) -> Self {
         Self {
             rel_path,
             text,
-            crate_dir,
-            reading,
+            tree,
         }
     }
 
     /// The file's syntax tree, parsed once for the run whoever asks first.
     #[must_use]
     pub fn tree(&self) -> &'r Tree {
-        let abs = self.crate_dir.join(self.rel_path);
-        self.reading.tree(&abs).unwrap_or_else(|| self.reading.empty_tree())
+        let text = self.text;
+        self.tree.get(|| Some(text)).unwrap_or_else(|| empty_tree())
     }
 }
 
@@ -160,7 +158,7 @@ impl<'a> LintContext<'a> {
     pub fn tree(&self) -> &'a Tree {
         self.view
             .rust(self.krate.dir.join(self.file))
-            .unwrap_or_else(|| self.view.reading().empty_tree())
+            .unwrap_or_else(|| empty_tree())
     }
 
     /// Every `.rs` file under the crate's `src/`, `src/lib.rs` first and the rest in path order.
@@ -168,13 +166,7 @@ impl<'a> LintContext<'a> {
     #[must_use]
     pub fn all_sources(&self) -> &'a [CrateSourceFile<'a>] {
         let reading = self.view.reading();
-        let found = reading.crate_files(&self.krate.dir);
-        for d in &found.listed {
-            self.view.list(d);
-        }
-        if found.listed.is_empty() {
-            self.view.list(self.krate.dir.join("src"));
-        }
+        let found = self.view.crate_files(&self.krate.dir);
         if let Some(files) = self.narrowed {
             for f in files {
                 self.view.text(self.krate.dir.join(f.rel_path));

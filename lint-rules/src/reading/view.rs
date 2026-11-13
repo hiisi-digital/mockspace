@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use super::disk::Kind;
+use super::disk::{CrateFiles, Kind};
 use super::{Answer, Entry, Listing, Question, Reading, Trace, UnitKey};
 
 /// One unit of work's view of the reading.
@@ -150,6 +150,19 @@ impl<'r> View<'r> {
         out.sort();
         out.dedup();
         out
+    }
+
+    /// A crate's Rust files under `src/`, with every directory walked to find them written down,
+    /// so a file appearing or going reruns the unit.
+    pub(crate) fn crate_files(&self, crate_dir: &Path) -> &'r CrateFiles {
+        let found = self.reading.crate_files(crate_dir);
+        for d in &found.listed {
+            self.record(Question::List(self.reading.key(d)));
+        }
+        if found.listed.is_empty() {
+            self.record(Question::List(self.reading.key(&crate_dir.join("src"))));
+        }
+        found
     }
 
     fn kind(&self, path: &Path) -> Option<Kind> {

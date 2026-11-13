@@ -32,16 +32,23 @@ impl<K: Eq + Hash, V> Memo<K, V> {
     /// two keys are made at the same time, and two askers of one key meet at the slot's own
     /// once-cell, where the second waits for the first.
     pub(crate) fn get_or(&self, key: K, make: impl FnOnce() -> V) -> &V {
+        self.slot(key).get_or_init(make)
+    }
+
+    /// The cell `key`'s value is made in, added empty where the key is new. The cell is boxed and
+    /// never removed, so it stays where it is however the map grows and wherever the map itself
+    /// is moved, and a reference to it is good for as long as the map lives.
+    pub(crate) fn slot(&self, key: K) -> &OnceLock<V> {
         let slot: *const OnceLock<V> = {
             let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
             let boxed = slots.entry(key).or_insert_with(|| Box::new(OnceLock::new()));
             &**boxed
         };
-        // SAFETY: the slot is boxed, so it does not move when the map grows, and no slot is ever
-        // removed or replaced while the map lives. The pointer is therefore valid for as long as
-        // `self` is borrowed, which is the lifetime the returned reference carries.
-        let slot = unsafe { &*slot };
-        slot.get_or_init(make)
+        // SAFETY: the slot is boxed, so it does not move when the map grows or the map is moved,
+        // and no slot is ever removed or replaced while the map lives. The pointer is therefore
+        // valid for as long as `self` is borrowed, which is the lifetime the returned reference
+        // carries.
+        unsafe { &*slot }
     }
 
     /// The value under `key` when somebody has made it, without making it.
