@@ -1,0 +1,5 @@
+fresh temp index (read-tree HEAD), ms: 209 193 207
+copied worktree index, ms:            17 14 12
+trees equal: yes
+== racy case: same-size edit in the same second as the index write
+snapshot has r.txt = BBBB   (BBBB is correct; AAAA would be a stale snapshot)

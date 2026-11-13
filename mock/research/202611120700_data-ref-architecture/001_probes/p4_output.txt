@@ -1,0 +1,11 @@
+== (a) data branch in two worktrees
+first rc=0
+fatal: 'mock/research' is already used by worktree at '/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/001/p4/w1/data'
+second rc=128 (refused without -f)
+forced rc=0
+commit in w1/data, then look at w2/data
+w2 status after w1 moved the shared branch:
+M  NOTES.md
+d1371ed w1 edit
+010471a data
+dirty-looking: 

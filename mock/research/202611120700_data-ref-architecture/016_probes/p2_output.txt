@@ -1,0 +1,25 @@
+== setup: epoch 0 line s1 < s2 (s2 holds a secret in f); everyone fetched s2
+B makes a local, unpushed, legitimate edit on top of s2
+D has fetched the code tree after the purge (witness epoch 1); E has not
+== 1 A purges: new root p (epoch 1, secret removed), the hook rule, then the push
+hook: ALLOW  epoch-1 new root over epoch-0 tip
+hook: REFUSE same-epoch non-ff (a rewind to s1)
+remote now 0887c37 epoch 1
+== 2 B (stale, epoch 0, with a local unpushed commit) runs repair: must adopt, never push
+B: ADOPT purge epoch 1: mirror := 0887c37; local-only commits carried: 1 of 1; old-epoch refs scrubbed
+remote still 0887c37; B has the secret blob: no; B keeps its note: B local note
+== 3 a plain clone's mirror push deletes the remote ref
+remote now: none
+D (stale epoch 0, but its code tree names epoch 1):
+D: r=none, s is epoch 0 < known epoch 1 -> REFUSE to republish
+E (stale epoch 0, has seen no witness at all): the limit
+E: r=none -> PUSH s=3760f7b (epoch 0)
+remote now 3760f7b epoch 0
+== 3a E has republished the old epoch-0 tip (secret back on the remote); A repairs it by the extended order
+A: r=3760f7b < s=0887c37 -> PUSH (repair)
+remote now 0887c37 epoch 0; secret blob still on remote objects until its gc: yes
+== 3b the same, but A repairs first
+A: r=none -> PUSH s=0887c37 (epoch 1)
+remote now 0887c37 = p (0887c37)
+== 4 idempotence: every clone repairs twice more
+remote still 0887c37

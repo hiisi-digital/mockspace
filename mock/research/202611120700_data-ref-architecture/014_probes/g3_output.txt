@@ -1,0 +1,7 @@
+[@]       diff={'git <command> [<revision>...] -- [<file>...]'} log={fatal: ambiguous argument '@': both revision and filename} checkout={Note: switching to '@'.} edit-after-checkout=1 HEAD=DETACHED
+[@@]      diff={ 1 file changed, 1 insertion(+)} log={8c08c9b s} checkout={Updated 1 path from the index} edit-after-checkout=0 HEAD=refs/heads/dev
+[@git]    diff={ 1 file changed, 1 insertion(+)} log={83e5194 s} checkout={Updated 1 path from the index} edit-after-checkout=0 HEAD=refs/heads/dev
+[@tree]   diff={ 1 file changed, 1 insertion(+)} log={76351c1 s} checkout={Updated 1 path from the index} edit-after-checkout=0 HEAD=refs/heads/dev
+[_git]    diff={ 1 file changed, 1 insertion(+)} log={579488e s} checkout={Updated 1 path from the index} edit-after-checkout=0 HEAD=refs/heads/dev
+[=git]    diff={ 1 file changed, 1 insertion(+)} log={ed93c91 s} checkout={Updated 1 path from the index} edit-after-checkout=0 HEAD=refs/heads/dev
+[git-tree] diff={ 1 file changed, 1 insertion(+)} log={57c651b s} checkout={Updated 1 path from the index} edit-after-checkout=0 HEAD=refs/heads/dev

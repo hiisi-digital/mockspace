@@ -1,0 +1,5 @@
+FAILED A cd into the link, cargo metadata (physical cwd): error: failed to load manifest for dependency `lib`
+OK     B from the root, --manifest-path through the link
+FAILED C shell cat ../../../crates/lib/Cargo.toml in the link: cat: ../../../crates/lib/Cargo.toml: No such file or directory
+OK     D cd -P not needed: PWD logical, cargo --manifest-path Cargo.toml
+OK     E control, real directory, cd + cargo metadata
