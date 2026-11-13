@@ -1,0 +1,6 @@
+gitlink: checkout OLD        rc=1 edit_survives=1  error: The following untracked working tree files would be overwritten by checkout: 	mock/research/NOTES.md 
+ m mock/research
+gitlink: checkout -f OLD     rc=0 edit_survives=0  warning: unable to rmdir 'mock/research': Directory not empty Note: switching to '3caa388224e26d961607c4e0c90525ab79593c
+gitlink: reset --hard OLD    rc=0 edit_survives=0  warning: unable to rmdir 'mock/research': Directory not empty HEAD is now at 3caa388 old 
+gitlink: switch --detach OLD rc=1 edit_survives=1  error: The following untracked working tree files would be overwritten by checkout: 	mock/research/NOTES.md 
+ m mock/research

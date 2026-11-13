@@ -1,0 +1,34 @@
+remote tip c3 = 31dc0a9, c2 = 0c588ab
+O: git push --mirror origin   rc=0   remote refs/mock/x after: ABSENT
+      hook stdin: refs/remotes/mock/x <sha> refs/remotes/mock/x <sha>
+      hook stdin: refs/remotes/origin/HEAD <sha> refs/remotes/origin/HEAD <sha>
+      hook stdin: refs/remotes/origin/dev <sha> refs/remotes/origin/dev <sha>
+Q: git push --mirror origin   rc=0   remote refs/mock/x after: ABSENT
+      hook stdin: refs/remotes/mock/x <sha> refs/remotes/mock/x <sha>
+P: git push --mirror origin   rc=0   remote refs/mock/x after: ABSENT
+      (hook not called)
+O: git push origin --delete refs/mock/x   rc=1   remote refs/mock/x after: 31dc0a9
+      hook stdin: (delete) <sha> refs/mock/x <sha>
+      hook stdin: REFUSE-delete
+O: git push origin :refs/mock/x   rc=1   remote refs/mock/x after: 31dc0a9
+      hook stdin: (delete) <sha> refs/mock/x <sha>
+      hook stdin: REFUSE-delete
+Q: git push -f origin refs/remotes/mock/x:refs/mock/x   rc=1   remote refs/mock/x after: 31dc0a9
+      hook stdin: refs/remotes/mock/x <sha> refs/mock/x <sha>
+      hook stdin: REFUSE-nonff
+O: git push --no-verify --mirror origin   rc=0   remote refs/mock/x after: ABSENT
+      (hook not called)
+O: git push --all origin   rc=0   remote refs/mock/x after: 31dc0a9
+== does the refusal print anything the person sees?
+To file:///tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/013/p1/origin.git
+ - [deleted]         refs/mock/x
+== P has no hook and no ref: the clone we cannot guard
+P: git push --mirror origin   rc=0   remote refs/mock/x after: ABSENT
+      (hook not called)
+== S: opted in with an IDENTITY mapping (local refs/mock/x), STALE at c2, hook installed: mirror push rewinds the remote
+S: git push --mirror origin   rc=1   remote refs/mock/x after: 31dc0a9
+      hook stdin: refs/mock/x <sha> refs/mock/x <sha>
+      hook stdin: REFUSE-nonff
+== R: hook installed, local refs equal to the remote's heads, NO other ref to create or update: a mirror that only deletes
+R: remote refs/mock/x after: ABSENT; hook stdin:
+      --- pre-push remote=origin url-kind=file://

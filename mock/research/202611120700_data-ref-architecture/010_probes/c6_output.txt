@@ -1,0 +1,9 @@
+symbolic-ref HEAD -> refs/worktree/mock/research: {} status: On branch refs/worktree/mock/research
+commit moved it: yes
+visible from main dir for-each-ref: [] from data wt: [refs/worktree/mock/research ]
+fetch --prune in mirror: {} ref after: 6e3a996
+gc --prune=now from main: commit commit
+gc --prune=now from the code worktree: commit commit
+remote refs after push --mirror from main: refs/heads/dev refs/mock/research 
+remote refs after push --mirror from the data worktree: refs/heads/dev refs/mock/research refs/worktree/mock/research 
+rev-list --all from main counts the commit: 0

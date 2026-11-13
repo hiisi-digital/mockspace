@@ -1,0 +1,3 @@
+merge polluted             on disk edit=0 data file=POLLUTION| | cache copies holding the edit: 1
+checkout -q polluted       on disk edit=0 data file=POLLUTION| | cache copies holding the edit: 1
+reset -q --hard polluted   on disk edit=0 data file=POLLUTION| | cache copies holding the edit: 1

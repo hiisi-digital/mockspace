@@ -1,0 +1,17 @@
+status: [ M mock/rdata ] submodule status: [fatal: no submodule mapping found in .gitmodules for path 'mock/rdata' ] data .git: gitdir: <scratch>/a7/c/m/.git/worktrees/rdata
+G' git checkout -f OLD; git checkout -f dev -> kept=1 data-wt=mock/research {Switched to branch 'dev'}
+G' git reset --hard OLD; git reset --hard placeholder -> kept=1 data-wt=mock/research {HEAD is now at 4b25b1e placeholder}
+G' git reset --hard -> kept=1 data-wt=mock/research {HEAD is now at 4b25b1e placeholder}
+G' git clean -ffdx -> kept=1 data-wt=mock/research {}
+G' git clean -ffd -> kept=1 data-wt=mock/research {}
+G' git stash -a; git stash pop -> kept=1 data-wt=mock/research {No stash entries found.}
+G' git submodule update --init --force --checkout -> kept=1 data-wt=mock/research {fatal: No url found for submodule path 'mock/rdata' in .gitmodules}
+G' git submodule deinit -f --all -> kept=1 data-wt=mock/research {}
+G' git submodule foreach true -> kept=1 data-wt=mock/research {fatal: No url found for submodule path 'mock/rdata' in .gitmodules}
+G' git read-tree -u --reset OLD; git read-tree -u --reset dev -> kept=1 data-wt=mock/research {warning: unable to rmdir 'mock/rdata': Directory not empty}
+== uninstantiated clone, hand-written file, add -A
+(status)
+On branch dev
+160000 commit eb81ae6087aa6336638c6276254652998414278e	mock/rdata
+== add -A in the instantiated clone after the data advanced
+Mm mock/rdata 

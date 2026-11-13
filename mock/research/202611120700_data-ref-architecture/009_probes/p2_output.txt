@@ -1,0 +1,16 @@
+== (a) per candidate name N: add -f of N/x, update-index of N/x, crafted tree checkout -f
+git~1      dir creatable=yes add -f: error: invalid path 'git~1/x'                    | update-index: error: Invalid path 'git~1/x'                | checkout -f crafted: refused: error: invalid path 'git~1/x'
+GIT~1      dir creatable=yes add -f: error: invalid path 'GIT~1/x'                    | update-index: error: Invalid path 'GIT~1/x'                | checkout -f crafted: refused: error: invalid path 'GIT~1/x'
+.git.      dir creatable=yes add -f: error: invalid path '.git./x'                    | update-index: error: Invalid path '.git./x'                | checkout -f crafted: refused: error: invalid path '.git./x'
+.git       dir creatable=yes add -f: error: invalid path '.git /x'                    | update-index: error: Invalid path '.git /x'                | checkout -f crafted: refused: error: invalid path '.git /x'
+.GIT       dir creatable=yes add -f: error: invalid path '.GIT/x'                     | update-index: error: Invalid path '.GIT/x'                 | checkout -f crafted: refused: error: invalid path '.GIT/x'
+git~2      dir creatable=yes add -f: accepted                                         | update-index: accepted                                     | checkout -f crafted: accepted
+git~       dir creatable=yes add -f: accepted                                         | update-index: accepted                                     | checkout -f crafted: accepted
+gi~1       dir creatable=yes add -f: accepted                                         | update-index: accepted                                     | checkout -f crafted: accepted
+research   dir creatable=yes add -f: accepted                                         | update-index: accepted                                     | checkout -f crafted: accepted
+== (a2) the same with core.protectNTFS=false (a person who turned it off)
+rc after add -f with protectNTFS=false: 1
+== (b) tracked .gitignore on the code branch, fresh clone that never ran the engine, an agent writes research at the path
+add -A staged: []
+The following paths are ignored by one of your .gitignore files:
+after add -f staged: [mock/study/N.md ]

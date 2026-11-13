@@ -1,0 +1,18 @@
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/p5/x.git                     (bare)
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/p5/x-dev                     774de7a [dev]
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/p5/x-feat                    774de7a [feat]
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/p5/x.git/mock-data-research  113b581 [mock/research]
+== (c) both linked worktrees see the data:
+a b a b 
+== status of the bare-clone worktrees (symlink untracked, no sparse, no per-worktree config):
+?? research-link
+0
+== (b) after gc --prune=now: a b x 
+Auto-merging log.md
+== (a) merged through the data branch's own driver, plain git pull:
+a b x y 
+*   176d126 Merge branch 'mock/research' of /tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/p5/origin into mock/research
+|\  
+| * 7786482 y
+* | ef7b671 x
+|/  

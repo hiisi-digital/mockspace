@@ -1,0 +1,4 @@
+fatal: HEAD not found below refs/heads!
+Auto-merging log.md
+merged through the main repo's driver config, via a different remote URL: a b x y 
+origin.git refs: refs/heads/dev    datarepo.git refs: refs/heads/data 
