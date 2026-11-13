@@ -588,7 +588,7 @@ The `design-round` skill carries the conversation flow and file layout.
 - Types and traits: `<crate directory>/src/*.rs`.
 - Framework-wide docs: root `*.md.tmpl`.
 - Agent rules and skills: templates in `agent/`.
-- New crate: a directory under one of {src_dirs} and an entry in the `Cargo.toml` members list.
+- New crate: a round whose doc changelist names it. DOC commits its directory under one of {src_dirs}, its `Cargo.toml`, the members entry and a `src/lib.rs` of module docs and inner attributes only; IMPL commits the items. `no-empty-crate` passes the docs alone while the round is open and holds the crate again once both changelists lock.
 
 ## Validate and regenerate
 
