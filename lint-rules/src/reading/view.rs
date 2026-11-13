@@ -264,7 +264,9 @@ impl<'r> View<'r> {
 
     /// The output of `program` with `args`, run in `cwd`, once for the run. `inputs` are the files
     /// the output depends on, and they are what answers for it later: the command is never run
-    /// again to check a trace, so a dependency left out of `inputs` replays a stale finding.
+    /// again to check a trace, so a dependency left out of `inputs` replays a stale finding. The
+    /// repository root is in the trace too, since the program is started under it, so a unit that
+    /// ran a program is not replayed in another checkout.
     ///
     /// Its exit status is part of the answer. A command that exited non-zero is saved with the
     /// unit and replayed until its inputs move, the same as one that exited zero, so a failure that
@@ -298,6 +300,9 @@ impl<'r> View<'r> {
         stdin: Option<&[u8]>,
         inputs: &[&Path],
     ) -> &'r Answer {
+        // The program is started in an absolute directory whatever name the trace gives it, and what
+        // it prints can carry that directory, so the root is in the trace as `root()` puts it there.
+        self.record_value("root");
         let cwd = self.reading.key(cwd);
         let args: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
         let stdin_key = stdin.map(stdin_digest);

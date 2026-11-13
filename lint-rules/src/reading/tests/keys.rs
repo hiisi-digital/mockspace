@@ -297,3 +297,51 @@ fn a_unit_handed_an_absolute_path_replays_only_under_its_own_root() {
     assert_eq!(of("where-rel", &at_two), of("where-rel", &at_one));
     assert_eq!(rel.load(Ordering::SeqCst), 1, "the control: a unit that read only files replays in the other checkout");
 }
+
+/// A crate lint naming the directory a program it starts finds itself in, asked by a path relative
+/// to the repository root.
+struct Pwd;
+
+impl Lint for Pwd {
+    fn name(&self) -> &'static str {
+        "pwd"
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
+    }
+
+    fn per_file(&self) -> bool {
+        false
+    }
+}
+
+impl CrateLint for Pwd {
+    fn check(&self, ctx: &LintContext) -> Vec<LintError> {
+        let out = ctx.view().run("pwd", &[], std::path::Path::new("crates"), &[]);
+        let shown = out.text().unwrap_or_default().trim().to_string();
+        vec![LintError::error(ctx.crate_name.to_string(), 1, "pwd", shown)]
+    }
+}
+
+/// A program is started in an absolute directory however its directory was named, so what it says
+/// can carry the checkout, and a unit that started one replays only under its own root.
+#[test]
+fn a_unit_that_started_a_program_replays_only_under_its_own_root() {
+    let files: &[(&str, &[(&str, &str)])] = &[("alpha", &[("src/lib.rs", "pub fn f() {}\n")])];
+    let one = Workspace::new("pwd-one", files);
+    let two = Workspace::new("pwd-two", files);
+    let cache = Mem::default();
+    let pack = LintPack {
+        crate_lints: vec![Box::new(Pwd)],
+        ..LintPack::default()
+    };
+    let dir = |w: &Workspace| {
+        let real = std::fs::canonicalize(w.dir.0.join("crates")).unwrap();
+        [real.display().to_string(), w.dir.0.join("crates").display().to_string()]
+    };
+    let at_one = of("pwd", &one.run(Some(&cache), None, Some(&pack)));
+    let at_two = of("pwd", &two.run(Some(&cache), None, Some(&pack)));
+    assert!(dir(&one).iter().any(|d| at_one == [format!("{d}:None")]), "the control: {at_one:?}");
+    assert!(dir(&two).iter().any(|d| at_two == [format!("{d}:None")]), "named the checkout it ran in: {at_two:?}");
+}
