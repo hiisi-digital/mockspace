@@ -108,6 +108,9 @@ pub struct Reading {
     root:     PathBuf,
     overlay:  BTreeMap<PathBuf, String>,
     threads:  usize,
+    /// The threads beside the asking one that are free to take work, shared by the run's units and
+    /// every `each` inside them.
+    pool:     pool::Budget,
     /// Boxed, so a [`crate::CrateSourceFile`] the reading keeps can count its parse here and not
     /// point at the reading itself, which may move.
     counters: Box<Counters>,
@@ -127,10 +130,12 @@ impl Reading {
     /// A reading of the repository at `root`, using [`thread_count`] threads.
     #[must_use]
     pub fn new(root: impl Into<PathBuf>) -> Self {
+        let threads = thread_count();
         Self {
-            root:          normalise(&root.into()),
-            overlay:       BTreeMap::new(),
-            threads:       thread_count(),
+            root: normalise(&root.into()),
+            overlay: BTreeMap::new(),
+            threads,
+            pool: pool::Budget::new(threads),
             counters:      Box::default(),
             listings:      Memo::new(),
             stats:         Memo::new(),
@@ -157,6 +162,7 @@ impl Reading {
     #[must_use]
     pub fn with_threads(mut self, threads: usize) -> Self {
         self.threads = threads.max(1);
+        self.pool = pool::Budget::new(self.threads);
         self
     }
 
@@ -166,7 +172,12 @@ impl Reading {
         &self.root
     }
 
-    /// How many threads the run and every `each` in it use.
+    /// The run's one budget of threads, which its units and every `each` inside them share.
+    pub(crate) fn pool(&self) -> &pool::Budget {
+        &self.pool
+    }
+
+    /// How many threads the run and every `each` in it use, all together.
     #[must_use]
     pub fn threads(&self) -> usize {
         self.threads

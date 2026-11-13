@@ -79,18 +79,30 @@ impl<'r> View<'r> {
     ///
     /// Everything the items asked is written into this view's trace too, so a unit whose items did
     /// not move is replayed whole without being split again.
+    ///
+    /// An item is saved under the unit, the place of this call among the unit's `each` calls, and
+    /// [`Item::key`], and under nothing else. Whatever `judge` takes from outside the item and the
+    /// view, a table it was built with, a setting, a value worked out before the call, has to be in
+    /// the item's key too, or an item judged under one such value is replayed under another.
+    ///
+    /// The items run on the threads of the run that are free, the calling one among them, and
+    /// one after another on the calling thread when none is free, so a unit splitting itself while
+    /// other units are judged never puts more threads to work than the run has.
     pub fn each<T, F>(&self, items: &[T], judge: F) -> Vec<Vec<LintError>>
     where
         T: Item + Sync,
         F: Fn(&View<'r>, &T) -> Vec<LintError> + Sync,
     {
         let reading = self.reading();
+        let call = self.calls.fetch_add(1, Ordering::AcqRel).to_string();
         self.stray.store(false, Ordering::Release);
         self.busy.fetch_add(1, Ordering::AcqRel);
-        let judged: Vec<Judged> = pool::each_index(reading.threads(), items.len(), |i| {
+        let judged: Vec<Judged> = pool::each_index(reading.pool(), items.len(), |i| {
             let item = &items[i];
             let unit = self.unit.as_ref().map(|u| {
-                let key = u.store.unit_key(&[u.key.as_bytes(), b"item", item.key().as_bytes()]);
+                let key = u
+                    .store
+                    .unit_key(&[u.key.as_bytes(), b"item", call.as_bytes(), item.key().as_bytes()]);
                 UnitKey {
                     store: u.store,
                     key,

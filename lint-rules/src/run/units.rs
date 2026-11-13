@@ -343,7 +343,7 @@ impl<'a> Runner<'a> {
         let lookups: Vec<Lookup> = match store {
             Some(s) => {
                 timing::time("phase:verify", || {
-                    pool::each_index(threads, units.len(), |i| {
+                    pool::each_index(self.input.reading.pool(), units.len(), |i| {
                         let found = s.lookup(&units[i].key);
                         s.cache().tally(found.hit.is_some(), units[i].lint.name());
                         found
@@ -390,7 +390,7 @@ impl<'a> Runner<'a> {
             order.sort_by_key(|&j| Reverse(misses[j].1.unwrap_or(Duration::MAX)));
         }
         let reading = self.input.reading;
-        let judged = pool::in_order(threads, misses.len(), &order, |j| {
+        let judged = pool::in_order(self.input.reading.pool(), misses.len(), &order, |j| {
             let (i, _, prior) = &misses[j];
             let unit = &units[*i];
             let at = store.map(|s| {

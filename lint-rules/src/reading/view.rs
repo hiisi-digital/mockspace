@@ -30,6 +30,8 @@ pub struct View<'r> {
     /// rather than to an item's own is one the items' traces do not hold.
     pub(crate) busy:  AtomicUsize,
     pub(crate) stray: AtomicBool,
+    /// How many `each` calls this view has made, which tells the items of one call from another's.
+    pub(crate) calls: AtomicUsize,
 }
 
 impl<'r> View<'r> {
@@ -40,6 +42,7 @@ impl<'r> View<'r> {
             trace: Mutex::new(Trace::default()),
             busy: AtomicUsize::new(0),
             stray: AtomicBool::new(false),
+            calls: AtomicUsize::new(0),
         }
     }
 
