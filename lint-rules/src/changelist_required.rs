@@ -93,7 +93,18 @@ impl RepoLint for ChangelistRequired {
                 // would let someone stage real source, overwrite the worktree
                 // copy with comments, and commit past the gate.
                 let content = staged_or_worktree(workspace_root, file, source);
-                !passes_outside_impl(workspace_root, &layout, file, content.as_deref())
+                let passes = passes_outside_impl(workspace_root, &layout, file, content.as_deref());
+                // A staged file edited again in the working tree is listed
+                // once, as staged. `git commit -a`, the push gate and a build
+                // carry the working-tree text, so outside IMPL it is judged too.
+                let worktree = (source == "staged")
+                    .then(|| std::fs::read_to_string(workspace_root.join(file)).ok())
+                    .flatten()
+                    .filter(|w| Some(w) != content.as_ref());
+                !(passes
+                    && worktree.is_none_or(|w| {
+                        passes_outside_impl(workspace_root, &layout, file, Some(&w))
+                    }))
             })
             .map(|(file, source)| {
                 let crate_name = layout

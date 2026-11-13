@@ -147,3 +147,46 @@ fn a_whole_nuke_passes() {
     done(root);
     assert!(found.is_empty(), "{found:?}");
 }
+
+/// `x` nuked: the stub staged over `lib.rs` and `more.rs` removed.
+fn nuked(tag: &str) -> PathBuf {
+    let root = committed(tag);
+    std::fs::write(root.join("crates/x/src/lib.rs"), STUB).unwrap();
+    git(&root, &["rm", "-q", "crates/x/src/more.rs"]);
+    git(&root, &["add", "-A"]);
+    root
+}
+
+/// A nuke excuses removals and the stub, never new items in the crate.
+#[test]
+fn items_written_into_a_nuked_crate_are_refused_by_the_guard() {
+    let root = nuked("guard");
+    let over_lib = admits(&root, "crates/x/src/lib.rs", "pub fn back() {}\n");
+    let beside = admits(&root, "crates/x/src/evil.rs", "pub fn evil() {}\n");
+    let stub = admits(&root, "crates/x/src/lib.rs", STUB);
+    done(root);
+    assert!(!over_lib, "items over the stub");
+    assert!(!beside, "items in a new file");
+    assert!(stub, "the stub itself");
+}
+
+/// Code outside `src`, beside a nuke, is judged on its own text.
+#[test]
+fn code_outside_src_beside_a_nuke_is_refused() {
+    let root = nuked("outside");
+    std::fs::write(root.join("crates/x/build.rs"), "fn main() {}\n").unwrap();
+    git(&root, &["add", "-A"]);
+    let found = gate(&root);
+    done(root);
+    assert_eq!(found.len(), 1, "{found:?}");
+}
+
+/// Items written over a staged stub and left unstaged are refused.
+#[test]
+fn unstaged_items_over_a_nuke_stub_are_refused() {
+    let root = nuked("unstaged");
+    std::fs::write(root.join("crates/x/src/lib.rs"), "pub fn back() {}\n").unwrap();
+    let found = gate(&root);
+    done(root);
+    assert!(!found.is_empty(), "{found:?}");
+}

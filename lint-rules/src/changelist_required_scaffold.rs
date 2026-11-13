@@ -5,7 +5,7 @@
 
 //! What `changelist-required` passes outside IMPL: scaffolding, and a nuke.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::staged_or_worktree;
@@ -17,25 +17,45 @@ const NUKE_MARKER: &str = "Nuked by";
 /// Whether a source file the gate would otherwise refuse passes in a phase
 /// other than IMPL, given the `content` it carries, `None` for a removal.
 ///
-/// Two things pass. Every change to a crate that is being nuked, judged by the
-/// whole shape a nuke leaves. And scaffolding: a file declaring nothing, where
-/// `HEAD` does not hold it or holds it declaring nothing too. Scaffolding is
-/// not the source this gate protects: it wires a crate into the workspace so the
-/// dependency graph, the layer numbering and the structure documents have real
-/// edges to read, and it is how a design round adds a crate, its doc phase
-/// committing the manifest and a `lib.rs` of the crate's documentation. A file
-/// that held items and is cut down to a comment is a source change like any
-/// other, so the judgement is of both sides.
+/// Three things pass. A removal from a crate being nuked, and the nuke stub
+/// written as that crate's `lib.rs`, both judged by the whole shape a nuke
+/// leaves. And scaffolding: a file declaring nothing, where `HEAD` does not
+/// hold it or holds it declaring nothing too. Scaffolding is not the source
+/// this gate protects: it wires a crate into the workspace so the dependency
+/// graph, the layer numbering and the structure documents have real edges to
+/// read, and it is how a design round adds a crate, its doc phase committing
+/// the manifest and a `lib.rs` of the crate's documentation. A file that held
+/// items and is cut down to a comment is a source change like any other, so
+/// the judgement is of both sides. Any other text in a nuked crate, a build
+/// script or a test beside the stub included, is judged as scaffolding.
 pub(super) fn passes_outside_impl(
     workspace_root: &Path,
     layout: &SrcLayout,
     file: &str,
     content: Option<&str>,
 ) -> bool {
-    if crate_is_nuked(workspace_root, layout, file) {
-        return true;
+    match content {
+        None => crate_is_nuked(workspace_root, layout, file),
+        Some(text) => {
+            let stub_at_lib = is_stub(text)
+                && lib_of(layout, file).is_some_and(|(src, lib)| {
+                    lib == file && nothing_else_left(workspace_root, &src, &lib)
+                });
+            stub_at_lib || (declares_nothing(text) && nothing_at_head(workspace_root, file))
+        }
     }
-    content.is_some_and(|text| declares_nothing(text) && nothing_at_head(workspace_root, file))
+}
+
+/// Whether `text` is the stub a nuke writes over `lib.rs`.
+fn is_stub(text: &str) -> bool {
+    text.contains(NUKE_MARKER) && declares_nothing(text)
+}
+
+/// The `src` directory and `lib.rs` path of the package holding `file`.
+fn lib_of(layout: &SrcLayout, file: &str) -> Option<(PathBuf, String)> {
+    let src = layout.package_dir(Path::new(""), file)?.join("src");
+    let lib = src.join("lib.rs").to_string_lossy().replace('\\', "/");
+    Some((src, lib))
 }
 
 /// Whether `HEAD` holds nothing that declares anything at `file`: the path is
@@ -56,21 +76,22 @@ fn nothing_at_head(workspace_root: &Path, file: &str) -> bool {
 }
 
 /// Whether the crate holding `file` is being nuked: what the commit carries as
-/// its `lib.rs` is a stub declaring nothing with the nuke marker in it, and no
-/// other Rust file of its `src` is left, in the index or on disk.
+/// its `lib.rs` is the nuke stub, and no other Rust file of its `src` is left.
 ///
 /// The marker alone proves nothing, since writing it is itself a change the
-/// scaffolding arm would judge. Only the whole shape is a nuke.
+/// scaffolding arm would judge. Only the whole shape is a nuke. The stub is
+/// read from the index; a `lib.rs` changed past it in the working tree is a
+/// changed file of its own and is judged on its own text.
 fn crate_is_nuked(workspace_root: &Path, layout: &SrcLayout, file: &str) -> bool {
-    let Some(dir) = layout.package_dir(Path::new(""), file) else {
-        return false;
-    };
-    let src = dir.join("src");
-    let lib = src.join("lib.rs").to_string_lossy().replace('\\', "/");
-    let stub = staged_or_worktree(workspace_root, &lib, "staged")
-        .is_some_and(|t| t.contains(NUKE_MARKER) && declares_nothing(&t));
-    stub && !other_source_in_index(workspace_root, &src, &lib)
-        && !other_source_on_disk(&workspace_root.join(&src))
+    lib_of(layout, file).is_some_and(|(src, lib)| {
+        staged_or_worktree(workspace_root, &lib, "staged").is_some_and(|t| is_stub(&t))
+            && nothing_else_left(workspace_root, &src, &lib)
+    })
+}
+
+/// Whether `src` holds no Rust file other than `lib`, in the index or on disk.
+fn nothing_else_left(workspace_root: &Path, src: &Path, lib: &str) -> bool {
+    !other_source_in_index(workspace_root, src, lib) && !other_source_on_disk(&workspace_root.join(src))
 }
 
 /// Whether the index holds a Rust file under `src` other than `lib`, both
