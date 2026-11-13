@@ -243,9 +243,14 @@ impl<'a> Runner<'a> {
                 krate,
                 filter: Some(filter),
             } => {
-                // Which file `source()` reads follows from what is in the crate, so the listing is
-                // in the trace: a file sorting first reruns the lint.
-                let _ = view.crate_files(&krate.dir);
+                // Which file `source()` reads follows from what is in the crate and which of its
+                // files can be read as text, so the listing and every file the filter admits are in
+                // the trace: a file sorting first, or one turning readable, reruns the lint.
+                for rel in &view.crate_files(&krate.dir).files {
+                    if filter.allows(rel) {
+                        let _ = view.text(krate.dir.join(rel));
+                    }
+                }
                 let allowed: Vec<_> = view
                     .reading()
                     .crate_sources(&krate.dir)

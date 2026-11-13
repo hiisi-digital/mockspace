@@ -200,6 +200,35 @@ fn a_file_sorting_first_under_a_filter_reruns_the_lint() {
     );
 }
 
+/// A file the filter admits that cannot be read as text is left out of the files a crate-scoped
+/// lint is shown, so its turning readable changes which file is first and reruns the lint.
+#[test]
+fn a_file_turning_readable_under_a_filter_reruns_the_lint() {
+    let w = Workspace::new("keys-readable", &[("alpha", &[("src/lib.rs", "pub mod mz;\n"), ("src/mz.rs", "z\n")])]);
+    let cache = Mem::default();
+    let pack = LintPack {
+        crate_lints: vec![Box::new(First)],
+        ..LintPack::default()
+    };
+    let mut filtered = LintConfig::empty();
+    filtered.paths.insert("first".into(), PathFilter {
+        include: vec!["src/m*.rs".into()],
+        exclude: vec![],
+    });
+    std::fs::write(w.dir.0.join("crates/alpha/src/ma.rs"), [0xff, 0xfe, b'\n']).unwrap();
+    assert_eq!(
+        of("first", &w.run(Some(&cache), Some(&filtered), Some(&pack))),
+        ["src/mz.rs=z:None"],
+        "the control: a file that is not text is not shown"
+    );
+    w.write("alpha", "src/ma.rs", "a\n");
+    assert_eq!(
+        of("first", &w.run(Some(&cache), Some(&filtered), Some(&pack))),
+        ["src/ma.rs=a:None"],
+        "the file that turned readable is the one shown"
+    );
+}
+
 /// A crate lint carrying the crate's absolute directory into its finding, or not, counting its
 /// judgings.
 struct Where {
