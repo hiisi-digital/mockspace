@@ -149,13 +149,25 @@ impl Reading {
         }
     }
 
-    /// This reading with `path` answering `text` in place of whatever is on disk there, a file
-    /// that does not exist yet included. Relative paths are taken against the root.
+    /// A reading of the same root with the same threads and overlays, and `path` answering `text`
+    /// in place of whatever is on disk there, a file that does not exist yet included. Relative
+    /// paths are taken against the root.
+    ///
+    /// Nothing this reading has read is carried over: the reading given back starts empty, so an
+    /// answer read before the overlay was added is never handed out in place of it.
     #[must_use]
-    pub fn with_overlay(mut self, path: impl AsRef<Path>, text: impl Into<String>) -> Self {
+    pub fn with_overlay(self, path: impl AsRef<Path>, text: impl Into<String>) -> Self {
         let abs = self.absolute(path.as_ref());
-        self.overlay.insert(abs, text.into());
-        self
+        let Self {
+            root,
+            mut overlay,
+            threads,
+            ..
+        } = self;
+        overlay.insert(abs, text.into());
+        let mut fresh = Self::new(root).with_threads(threads);
+        fresh.overlay = overlay;
+        fresh
     }
 
     /// This reading with `threads` threads, at least one.

@@ -49,3 +49,20 @@ fn an_overlay_adds_a_file_to_the_listing_it_sits_in() {
         .collect();
     assert_eq!(names, ["a.txt", "new.txt"]);
 }
+
+#[test]
+fn an_overlay_added_after_a_read_is_what_the_next_read_answers() {
+    let dir = Dir::new("overlay-late");
+    dir.write("a.txt", "on disk").write("d/b.txt", "");
+    let reading = Reading::new(&dir.0).with_threads(3);
+    assert_eq!(reading.view().text("a.txt"), Some("on disk"), "the control: the disk is read first");
+    let names = |r: &Reading| -> Vec<String> {
+        r.view().list("d").unwrap().entries().iter().map(|e| e.name().to_string()).collect()
+    };
+    assert_eq!(names(&reading), ["b.txt"]);
+
+    let reading = reading.with_overlay("a.txt", "the edit").with_overlay("d/c.txt", "x");
+    assert_eq!(reading.view().text("a.txt"), Some("the edit"));
+    assert_eq!(names(&reading), ["b.txt", "c.txt"], "a listing read before the overlay is not kept");
+    assert_eq!(reading.threads(), 3, "the threads are kept");
+}
