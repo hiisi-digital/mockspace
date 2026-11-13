@@ -130,10 +130,6 @@ const VALUE_WIDTH: usize = 48;
 pub struct SingleSource;
 
 impl Lint for SingleSource {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::Workspace
-    }
-
     fn name(&self) -> &'static str {
         "single-source"
     }

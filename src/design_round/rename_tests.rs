@@ -62,7 +62,7 @@ fn the_renamed_round_still_reads_as_a_round() {
     let dr = tmp.path();
     closed_round(dr, "202610221529");
     rename_round_on_disk(dr, "202610221529", "202610221529-kx3f").unwrap();
-    let cls = changelist_helpers::find_changelists(&dr.join("202610221529-kx3f"));
+    let cls = changelist_helpers::find_changelists(&crate::design_round::reading_of(dr).view(), &dr.join("202610221529-kx3f"));
     assert_eq!(cls.len(), 2);
     assert!(lint_rules::round_id::is_round_dir("202610221529-kx3f"));
 }

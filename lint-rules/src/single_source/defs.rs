@@ -21,7 +21,7 @@ use tree_sitter::Node;
 
 use super::shape::{Parts, canonical_declaration, canonical_parts};
 use super::value::{canonical_type, canonical_value};
-use crate::{CrateSourceFile, LintContext, attribute_is_cfg_test, is_cfg_test_mod, make_parser};
+use crate::{LintContext, attribute_is_cfg_test, is_cfg_test_mod, make_parser};
 
 /// One definition found in a crate.
 pub(super) struct Def {
@@ -80,44 +80,46 @@ const CROSS_CRATE_TYPES: &[(&str, &str)] = &[
 struct File<'a> {
     key:       String,
     text:      &'a str,
-    tree:      tree_sitter::Tree,
+    tree:      &'a tree_sitter::Tree,
     /// `#![cfg(test)]` at the top of the file.
     test_only: bool,
 }
 
-/// Every definition the crate makes outside test code.
-pub(super) fn collect_crate(crate_name: &str, ctx: &LintContext) -> Vec<Def> {
-    let fallback;
-    let sources: &[CrateSourceFile] = if ctx.all_sources.is_empty() {
-        fallback = [CrateSourceFile {
-            rel_path: PathBuf::from("src/lib.rs"),
-            text:     ctx.source.to_string(),
-        }];
-        &fallback
-    } else {
-        ctx.all_sources
-    };
-    collect_sources(crate_name, sources)
+impl<'a> File<'a> {
+    fn new(rel: &Path, text: &'a str, tree: &'a tree_sitter::Tree) -> Self {
+        Self {
+            key: normalise(rel),
+            text,
+            test_only: has_inner_cfg_test(tree.root_node(), text),
+            tree,
+        }
+    }
 }
 
-/// Every definition a crate makes outside test code, read from its source files directly. A tool
-/// has no `LintContext` and reads a crate's files itself, so it comes in here; a lint comes in
-/// through `collect_crate`, and both read a crate the same way.
-pub(super) fn collect_sources(crate_name: &str, sources: &[CrateSourceFile]) -> Vec<Def> {
+/// Every definition the crate makes outside test code, read from the trees the run parsed once.
+pub(super) fn collect_crate(crate_name: &str, ctx: &LintContext) -> Vec<Def> {
+    let sources = ctx.all_sources();
+    let files: Vec<File> = if sources.is_empty() {
+        vec![File::new(Path::new("src/lib.rs"), ctx.source(), ctx.tree())]
+    } else {
+        sources.iter().map(|s| File::new(s.rel_path, s.text, s.tree())).collect()
+    };
+    collect_files(crate_name, files)
+}
+
+/// Every definition a crate makes outside test code, read from its source files as given: each a
+/// crate-relative path and its text. A tool has no `LintContext` and reads a crate's files itself,
+/// so it comes in here; a lint comes in through `collect_crate`, and both read a crate the same way.
+pub(super) fn collect_sources(crate_name: &str, sources: &[(&Path, &str)]) -> Vec<Def> {
     let mut parser = make_parser();
-    let files: Vec<File> = sources
+    let parsed: Vec<(&Path, &str, tree_sitter::Tree)> = sources
         .iter()
-        .filter_map(|s| {
-            let tree = parser.parse(&s.text, None)?;
-            let test_only = has_inner_cfg_test(tree.root_node(), &s.text);
-            Some(File {
-                key: normalise(&s.rel_path),
-                text: &s.text,
-                tree,
-                test_only,
-            })
-        })
+        .filter_map(|&(rel, text)| Some((rel, text, parser.parse(text, None)?)))
         .collect();
+    collect_files(crate_name, parsed.iter().map(|(rel, text, tree)| File::new(rel, text, tree)).collect())
+}
+
+fn collect_files(crate_name: &str, files: Vec<File<'_>>) -> Vec<Def> {
     let index: HashMap<&str, usize> = files
         .iter()
         .enumerate()

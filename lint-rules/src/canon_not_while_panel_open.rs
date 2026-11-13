@@ -25,7 +25,6 @@
 //! unconfigured feature on every run is noise nobody asked for.
 
 use std::path::Path;
-use std::process::Command;
 
 use crate::path_filter::glob_match;
 use crate::{Lint, LintError, RepoContext, RepoLint, Severity};
@@ -50,17 +49,13 @@ impl Lint for CanonNotWhilePanelOpen {
 /// escapes, which match no glob, so the check passes on exactly the paths a
 /// Finnish-named project is most likely to have. `-z` emits the raw bytes with
 /// a NUL terminator and no quoting at all.
-pub fn staged_paths(repo_root: &Path) -> Option<Vec<String>> {
-    let out = Command::new("git")
-        .args(["diff", "--cached", "--name-only", "--no-renames", "-z"])
-        .current_dir(repo_root)
-        .output()
-        .ok()?;
-    if !out.status.success() {
+pub fn staged_paths(view: &crate::View<'_>, repo_root: &Path) -> Option<Vec<String>> {
+    let out = view.git_in(repo_root, &["diff", "--cached", "--name-only", "--no-renames", "-z"]);
+    if !out.ok() {
         return None;
     }
     Some(
-        String::from_utf8_lossy(&out.stdout)
+        String::from_utf8_lossy(out.stdout())
             .split('\0')
             .filter(|s| !s.is_empty())
             .map(str::to_string)
@@ -108,13 +103,13 @@ fn authored_canon(
 
 impl RepoLint for CanonNotWhilePanelOpen {
     fn check_repo(&self, ctx: &RepoContext) -> Vec<LintError> {
-        if ctx.canon_paths.is_empty() || ctx.open_panels.is_empty() {
+        if ctx.canon_paths().is_empty() || ctx.open_panels().is_empty() {
             return Vec::new();
         }
         // A git call that fails is not a commit with nothing staged. Reporting
         // it as clean would be a positive assertion this did not establish,
         // which is the failure the readiness report's own error arm had.
-        let Some(staged) = staged_paths(ctx.repo_root) else {
+        let Some(staged) = staged_paths(ctx.view(), ctx.repo_root) else {
             return vec![LintError::with_severity(
                 "unknown".to_string(),
                 0,
@@ -131,10 +126,10 @@ impl RepoLint for CanonNotWhilePanelOpen {
         // The merge filter runs on the canon hits alone, since it spawns git
         // for every path it is asked about and the rest of the index is none
         // of this lint's business.
-        let merge = crate::merge::Merge::detect(ctx.repo_root);
+        let merge = crate::merge::Merge::detect(ctx.view(), ctx.repo_root);
         let in_merge = merge.in_progress();
-        let Some(hits) = authored_canon(&staged, ctx.canon_paths, |file| {
-            in_merge && merge.inherited(ctx.repo_root, file)
+        let Some(hits) = authored_canon(&staged, ctx.canon_paths(), |file| {
+            in_merge && merge.inherited(ctx.view(), ctx.repo_root, file)
         }) else {
             return Vec::new();
         };
@@ -145,7 +140,7 @@ impl RepoLint for CanonNotWhilePanelOpen {
             format!(
                 "canon is staged while {} is open: {}. A panel proposes; somebody else admits. \
                  Consolidate the panel, or make this edit outside it.",
-                ctx.open_panels.join(", "),
+                ctx.open_panels().join(", "),
                 hits.join(", ")
             ),
         )]
@@ -217,7 +212,7 @@ mod tests {
             vec!["mock/canon/**".to_string()],
             vec!["a-panel".to_string()],
         );
-        CanonNotWhilePanelOpen.check_repo(&RepoContext {
+        crate::testkit::check_repo(&CanonNotWhilePanelOpen, crate::RepoInput {
             mock_dir:    &root.join("mock"),
             repo_root:   root,
             all_crates:  &crates,
@@ -227,7 +222,6 @@ mod tests {
             open_panels: &panels,
             ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    &Default::default(),
-            verdicts:    None,
         })
     }
 
@@ -287,7 +281,7 @@ mod tests {
         must(root, &["commit", "-q", "-m", "base"]);
         std::fs::create_dir_all(root.join("docs")).unwrap();
         must(root, &["mv", CANON, "docs/a.md"]);
-        let staged = staged_paths(root).unwrap();
+        let staged = staged_paths(&crate::Reading::new(root).view(), root).unwrap();
         assert!(staged.contains(&CANON.to_string()), "the source is a deletion: {staged:?}");
         assert!(!findings(root).is_empty(), "the move changed the canon");
     }

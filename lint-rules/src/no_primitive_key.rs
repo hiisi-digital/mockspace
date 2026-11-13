@@ -23,10 +23,6 @@ const PRIMITIVE_KEY_TYPES: &[&str] = &[
 pub struct NoPrimitiveKey;
 
 impl Lint for NoPrimitiveKey {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
@@ -44,13 +40,13 @@ impl CrateLint for NoPrimitiveKey {
 
         let mut errors = Vec::new();
 
-        for (line_num, line) in ctx.source.lines().enumerate() {
+        for (line_num, line) in ctx.source().lines().enumerate() {
             let trimmed = line.trim();
 
             if trimmed.starts_with("//") || trimmed.starts_with("///") {
                 continue;
             }
-            if is_in_macro_def_line(ctx.source, line_num) {
+            if is_in_macro_def_line(ctx.source(), line_num) {
                 continue;
             }
 

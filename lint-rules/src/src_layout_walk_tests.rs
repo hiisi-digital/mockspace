@@ -72,7 +72,7 @@ fn changed(root: &Path) -> Vec<(String, String)> {
 fn changed_in(root: &Path, dirs: &[&str], keep: impl Fn(&str) -> bool) -> Vec<(String, String)> {
     let abs: Vec<PathBuf> = dirs.iter().map(|d| root.join(d)).collect();
     let layout = SrcLayout::new(root, &abs);
-    changed_files(root, &layout, &crate::src_layout::NO_REF_FILES, keep)
+    changed_files(&crate::Reading::new(root).view(), root, &layout, &crate::src_layout::NO_REF_FILES, keep)
 }
 
 fn move_to_new(root: &Path, name: &str) {
@@ -353,7 +353,7 @@ fn a_file_a_ref_holds_is_judged_by_its_instance_and_not_by_git() {
     // the migration: the template leaves the index and stays on disk
     git(root, &["rm", "-q", "--cached", "crates/old/DESIGN.md.tmpl"]);
     let layout = SrcLayout::new(root, &[root.join("crates")]);
-    let walk = |refs: &RefFiles| changed_files(root, &layout, refs, |_| true);
+    let walk = |refs: &RefFiles| changed_files(&crate::Reading::new(root).view(), root, &layout, refs, |_| true);
 
     let held: std::collections::BTreeSet<String> = ["crates/old/DESIGN.md.tmpl".to_string()].into();
     let clean = RefFiles {
@@ -368,7 +368,7 @@ fn a_file_a_ref_holds_is_judged_by_its_instance_and_not_by_git() {
     };
     assert_eq!(walk(&edited), [("crates/old/DESIGN.md.tmpl".to_string(), "changed on its ref".to_string())]);
     // the filter the caller gives still decides
-    assert_eq!(changed_files(root, &layout, &edited, |f| f.ends_with(".rs")), Vec::new());
+    assert_eq!(changed_files(&crate::Reading::new(root).view(), root, &layout, &edited, |f| f.ends_with(".rs")), Vec::new());
 
     // the control: with no ref holding it, git's view stands and the removal is a change
     let seen = walk(&super::NO_REF_FILES);

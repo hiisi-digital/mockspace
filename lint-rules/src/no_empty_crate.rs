@@ -33,7 +33,7 @@ use std::path::Path;
 use tree_sitter::Node;
 
 use crate::changelist_helpers::{self, Phase};
-use crate::{CrateLint, Lint, LintContext, LintError, make_parser};
+use crate::{CrateLint, Lint, LintContext, LintError, View};
 
 const LINT_NAME: &str = "no-empty-crate";
 
@@ -56,10 +56,6 @@ const SUBSTANTIVE_KINDS: &[&str] = &[
 pub struct NoEmptyCrate;
 
 impl Lint for NoEmptyCrate {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::Crate
-    }
-
     /// Crate-scoped. Whether a crate is empty is a fact about the crate; per
     /// file it would call every module file an empty crate.
     fn per_file(&self) -> bool {
@@ -79,7 +75,7 @@ impl CrateLint for NoEmptyCrate {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         // lib.rs tree is already parsed: check it first so the common case
         // of a populated lib.rs avoids re-parsing every module.
-        if has_substantive_content(ctx.tree.root_node()) {
+        if has_substantive_content(ctx.tree().root_node()) {
             return Vec::new();
         }
 
@@ -87,21 +83,18 @@ impl CrateLint for NoEmptyCrate {
         // substantive content. Handles the `pub mod foo; pub use foo::*;`
         // re-export pattern where lib.rs itself holds nothing substantive
         // but the crate clearly has an API surface.
-        let mut parser = make_parser();
-        for file in ctx.all_sources {
-            // Skip lib.rs: already checked via ctx.tree above.
+        for file in ctx.all_sources() {
+            // Skip lib.rs: already checked via ctx.tree() above.
             if file.rel_path.file_name().and_then(|n| n.to_str()) == Some("lib.rs") {
                 continue;
             }
-            let Some(tree) = parser.parse(&file.text, None) else {
-                continue;
-            };
+            let tree = file.tree();
             if has_substantive_content(tree.root_node()) {
                 return Vec::new();
             }
         }
 
-        if born_in_the_open_round(ctx.workspace_root, ctx.crate_name) {
+        if born_in_the_open_round(ctx.view(), ctx.workspace_root(), ctx.crate_name) {
             return Vec::new();
         }
 
@@ -121,32 +114,31 @@ impl CrateLint for NoEmptyCrate {
 /// Whether the round open under `mock_dir` is adding `crate_name`: HEAD holds
 /// no source for it, its phase is DOC, DRAFT or IMPL, and its doc changelist
 /// names the crate. An existing crate the changelist mentions is not shielded.
-fn born_in_the_open_round(mock_dir: &Path, crate_name: &str) -> bool {
-    if head_holds_source(mock_dir, crate_name) {
+fn born_in_the_open_round(view: &View<'_>, mock_dir: &Path, crate_name: &str) -> bool {
+    if head_holds_source(view, mock_dir, crate_name) {
         return false;
     }
     let rounds = mock_dir.join("design_rounds");
     if !matches!(
-        changelist_helpers::current_phase(&rounds),
+        changelist_helpers::current_phase(view, &rounds),
         Phase::Doc | Phase::SrcPlan | Phase::Src
     ) {
         return false;
     }
-    changelist_helpers::find_active_doc_cl(&rounds)
-        .or_else(|| changelist_helpers::find_locked_doc_cl(&rounds))
-        .and_then(|cl| std::fs::read_to_string(rounds.join(cl.filename)).ok())
-        .is_some_and(|text| names_crate(&text, crate_name))
+    changelist_helpers::find_active_doc_cl(view, &rounds)
+        .or_else(|| changelist_helpers::find_locked_doc_cl(view, &rounds))
+        .and_then(|cl| view.text(rounds.join(cl.filename)))
+        .is_some_and(|text| names_crate(text, crate_name))
 }
-
 
 /// Whether `HEAD` holds source for `crate_name`: a manifest under `mock_dir`
 /// naming the package, whose `src` holds a file with substantive content.
 /// The doc phase of the round adding the crate commits its manifest and a
 /// docs-only `lib.rs`, so the crate being in `HEAD` is not enough. A query
 /// that fails proves nothing, so it answers yes.
-fn head_holds_source(mock_dir: &Path, crate_name: &str) -> bool {
+fn head_holds_source(view: &View<'_>, mock_dir: &Path, crate_name: &str) -> bool {
     let pattern = format!(r#"^name[[:space:]]*=[[:space:]]*"{crate_name}"[[:space:]]*$"#);
-    let Some(grep) = git_out(mock_dir, &["grep", "-l", "-E", &pattern, "HEAD", "--", "*Cargo.toml"])
+    let Some(grep) = git_out(view, mock_dir, &["grep", "-l", "-E", &pattern, "HEAD", "--", "*Cargo.toml"])
     else {
         return true;
     };
@@ -155,34 +147,36 @@ fn head_holds_source(mock_dir: &Path, crate_name: &str) -> bool {
         Err(1) => return false, // no manifest names it: a crate HEAD does not hold
         Err(_) => return true,
     };
-    let mut parser = make_parser();
     for manifest in manifests.lines().filter_map(|l| l.strip_prefix("HEAD:")) {
         let src = Path::new(manifest).parent().unwrap_or(Path::new("")).join("src");
         let src = src.to_string_lossy();
-        let Some(Ok(files)) = git_out(mock_dir, &["ls-tree", "-r", "--name-only", "HEAD", "--", &src])
+        let Some(Ok(files)) = git_out(view, mock_dir, &["ls-tree", "-r", "--name-only", "HEAD", "--", &src])
         else {
             return true;
         };
         for file in files.lines().filter(|f| f.ends_with(".rs")) {
-            let Some(Ok(text)) = git_out(mock_dir, &["show", &format!("HEAD:./{file}")]) else {
+            let Some(Ok(text)) = git_out(view, mock_dir, &["show", &format!("HEAD:./{file}")]) else {
                 return true;
             };
-            match parser.parse(&text, None) {
-                Some(tree) if !has_substantive_content(tree.root_node()) => {},
-                _ => return true,
+            if has_substantive_content(view.parse(&text).root_node()) {
+                return true;
             }
         }
     }
     false
 }
 
-/// Run git in `dir`: `None` when it cannot start, `Err(code)` on a failing exit.
-fn git_out(dir: &Path, args: &[&str]) -> Option<Result<String, i32>> {
-    let out = std::process::Command::new("git").args(args).current_dir(dir).output().ok()?;
-    if out.status.success() {
-        Some(Ok(String::from_utf8_lossy(&out.stdout).into_owned()))
+/// Ask git in `dir` through the view: `None` when it cannot start, `Err(code)`
+/// on a failing exit.
+fn git_out(view: &View<'_>, dir: &Path, args: &[&str]) -> Option<Result<String, i32>> {
+    let out = view.git_in(dir, args);
+    if !out.started() {
+        return None;
+    }
+    if out.ok() {
+        Some(Ok(String::from_utf8_lossy(out.stdout()).into_owned()))
     } else {
-        Some(Err(out.status.code().unwrap_or(-1)))
+        Some(Err(out.code().unwrap_or(-1)))
     }
 }
 
@@ -214,60 +208,29 @@ fn has_substantive_content(node: Node) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
     use std::path::PathBuf;
 
     use super::*;
-    use crate::CrateSourceFile;
+    use crate::testkit::LintFixture;
 
-    fn make_ctx(
-        lib_src: &str,
-        extra: &[(&str, &str)],
-    ) -> (tree_sitter::Tree, LintContext<'static>) {
-        make_ctx_at(PathBuf::from("/tmp"), lib_src, extra)
+    fn make_ctx(lib_src: &str, extra: &[(&str, &str)]) -> LintFixture {
+        extra
+            .iter()
+            .fold(LintFixture::new(lib_src).with_crate_name("test-crate", "test"), |f, (name, body)| {
+                f.with_module(&format!("src/{name}"), body)
+            })
     }
 
-    fn make_ctx_at(
-        mock_dir: PathBuf,
-        lib_src: &str,
-        extra: &[(&str, &str)],
-    ) -> (tree_sitter::Tree, LintContext<'static>) {
-        let mut parser = make_parser();
-        let tree = parser.parse(lib_src, None).unwrap();
-        let tree = Box::leak(Box::new(tree));
-        let mut sources: Vec<CrateSourceFile> = vec![CrateSourceFile {
-            rel_path: PathBuf::from("src/lib.rs"),
-            text:     lib_src.to_string(),
-        }];
-        for (name, body) in extra {
-            sources.push(CrateSourceFile {
-                rel_path: PathBuf::from(format!("src/{}", name)),
-                text:     body.to_string(),
-            });
-        }
-        let ctx = LintContext {
-            crate_name: "test-crate",
-            short_name: "test",
-            source: Box::leak(lib_src.to_string().into_boxed_str()),
-            tree,
-            all_sources: Box::leak(Box::new(sources)),
-            deps: Box::leak(Box::new(Vec::new())),
-            all_crates: Box::leak(Box::new(BTreeSet::new())),
-            design_doc: None,
-            all_doc_content: Box::leak("".to_string().into_boxed_str()),
-            shame_doc: None,
-            workspace_root: Box::leak(Box::new(mock_dir)),
-            proc_macro_crates: Box::leak(Box::new(Vec::new())),
-            crate_prefix: "test",
-            lint_proc_macro_source: false,
-            primitive_introductions: Box::leak(Box::new(std::collections::BTreeMap::new())),
-        };
-        (unsafe { std::ptr::read(tree as *const _) }, ctx)
+    /// [`make_ctx`] with the mock dir at `mock_dir`, where a round and a
+    /// repository can stand.
+    fn make_ctx_at(mock_dir: &std::path::Path, lib_src: &str, extra: &[(&str, &str)]) -> LintFixture {
+        make_ctx(lib_src, extra).with_workspace_root(mock_dir)
     }
 
     #[test]
     fn populated_lib_rs_passes() {
-        let (_t, ctx) = make_ctx("pub struct Foo;", &[]);
+        let fixture = make_ctx("pub struct Foo;", &[]);
+        let ctx = fixture.ctx();
         assert!(NoEmptyCrate.check(&ctx).is_empty());
     }
 
@@ -279,7 +242,8 @@ mod tests {
         // flagged as a false positive.
         let lib = "pub mod inner;\npub use inner::Thing;\n";
         let inner = "pub struct Thing;\n";
-        let (_t, ctx) = make_ctx(lib, &[("inner.rs", inner)]);
+        let fixture = make_ctx(lib, &[("inner.rs", inner)]);
+        let ctx = fixture.ctx();
         assert!(NoEmptyCrate.check(&ctx).is_empty());
     }
 
@@ -288,14 +252,16 @@ mod tests {
         // lib.rs and the only submodule are both empty shells.
         let lib = "//! only a doc comment\n";
         let inner = "//! nothing here either\n";
-        let (_t, ctx) = make_ctx(lib, &[("inner.rs", inner)]);
+        let fixture = make_ctx(lib, &[("inner.rs", inner)]);
+        let ctx = fixture.ctx();
         let errs = NoEmptyCrate.check(&ctx);
         assert_eq!(errs.len(), 1);
     }
 
     #[test]
     fn lib_rs_only_with_docs_flags() {
-        let (_t, ctx) = make_ctx("//! just docs\n", &[]);
+        let fixture = make_ctx("//! just docs\n", &[]);
+        let ctx = fixture.ctx();
         assert_eq!(NoEmptyCrate.check(&ctx).len(), 1);
     }
 
@@ -342,8 +308,8 @@ mod tests {
     const NAMES_IT: &str = "## Changes\n\nA new crate, `test-crate`, holds the thing.\n";
 
     fn findings_in(root: PathBuf) -> usize {
-        let (_t, ctx) = make_ctx_at(root.clone(), "//! The crate's documentation.\n", &[]);
-        let n = NoEmptyCrate.check(&ctx).len();
+        let fixture = make_ctx_at(&root, "//! The crate's documentation.\n", &[]);
+        let n = NoEmptyCrate.check(&fixture.ctx()).len();
         let _ = std::fs::remove_dir_all(&root);
         n
     }

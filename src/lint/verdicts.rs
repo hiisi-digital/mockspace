@@ -89,31 +89,10 @@ impl DiskVerdicts {
         &self.dir
     }
 
-    /// A digest naming this engine and the packs loaded with it, and nothing else: what moves
-    /// when the lint set does, a branch-pinned pack re-resolved included.
-    #[must_use]
-    pub fn lint_set_key(&self) -> String {
-        self.digest(&[b"lint-set"])
-    }
-
-    /// The kept keys of last full runs (see `lint::touched`): one file per worktree and mode, which
-    /// goes when nothing has read it in [`STALE_AFTER`], when the worktree it names is gone, and when
-    /// it is in no shape this version writes.
+    /// The keys an older engine kept of its last full runs, one file per worktree and mode, which
+    /// nothing writes or reads any more: a saved unit now carries its own trace. Removed whole.
     fn sweep_last_full_runs(&self) {
-        let Ok(entries) = fs::read_dir(self.dir.join("last-full-run")) else { return };
-        for entry in entries.flatten() {
-            let stale = entry
-                .metadata()
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| t.elapsed().ok())
-                .is_some_and(|age| age > STALE_AFTER);
-            let kept = fs::read_to_string(entry.path()).unwrap_or_default();
-            let worktree = kept.lines().nth(2).map(Path::new);
-            if stale || !worktree.is_some_and(Path::exists) {
-                let _ = fs::remove_file(entry.path());
-            }
-        }
+        let _ = fs::remove_dir_all(self.dir.join("last-full-run"));
     }
 
     fn path_of(&self, key: &str) -> PathBuf {

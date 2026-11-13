@@ -58,7 +58,7 @@ mod fmt_only_exemption {
     fn blocked(root: &std::path::Path) -> Vec<LintError> {
         let crates = std::collections::BTreeSet::new();
         let src_dirs = [root.join("crates")];
-        let ctx = RepoContext {
+        let ctx = crate::RepoInput {
             mock_dir:    root,
             repo_root:   root,
             all_crates:  &crates,
@@ -68,9 +68,8 @@ mod fmt_only_exemption {
             open_panels: &[],
             ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    &Default::default(),
-            verdicts:    None,
         };
-        ChangelistRequired.check_repo(&ctx)
+        crate::testkit::check_repo(&ChangelistRequired, ctx)
     }
 
     const UGLY: &str = "pub fn a(  x:u8 )->u8{x+1}\n";
@@ -181,7 +180,7 @@ mod fmt_only_judges_the_committed_content {
     fn gate(root: &std::path::Path) -> Vec<LintError> {
         let crates = std::collections::BTreeSet::new();
         let src_dirs = [root.join("crates")];
-        ChangelistRequired.check_repo(&RepoContext {
+        crate::testkit::check_repo(&ChangelistRequired, crate::RepoInput {
             mock_dir:    root,
             repo_root:   root,
             all_crates:  &crates,
@@ -191,7 +190,6 @@ mod fmt_only_judges_the_committed_content {
             open_panels: &[],
             ref_files: &crate::src_layout::NO_REF_FILES,
             registry:    &Default::default(),
-            verdicts:    None,
         })
     }
 

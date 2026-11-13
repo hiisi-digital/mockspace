@@ -450,10 +450,10 @@ fn reading_the_phase_writes_nothing() {
         v
     };
     let before = snapshot(&dr);
-    let _ = h::current_phase(&dr);
-    let _ = h::find_changelists(&dr);
-    let _ = h::stray_active_changelists(&dr);
-    let _ = mockspace_lint_rules::active_round_findings(&dr);
+    let _ = h::current_phase(&crate::design_round::reading_of(&dr).view(), &dr);
+    let _ = h::find_changelists(&crate::design_round::reading_of(&dr).view(), &dr);
+    let _ = h::stray_active_changelists(&crate::design_round::reading_of(&dr).view(), &dr);
+    let _ = mockspace_lint_rules::active_round_findings(&crate::design_round::reading_of(&dr).view(), &dr);
     assert_eq!(snapshot(&dr), before);
 }
 

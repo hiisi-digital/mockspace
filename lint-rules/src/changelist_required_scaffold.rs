@@ -6,10 +6,11 @@
 //! What `changelist-required` passes outside IMPL: scaffolding, and a nuke.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use super::staged_or_worktree;
+use crate::reading::Entry;
 use crate::src_layout::SrcLayout;
+use crate::View;
 
 /// The marker a nuked crate's `lib.rs` stub carries, and the one place it is
 /// spelled: the launcher's config defaults to it and `cargo mock --nuke`
@@ -43,19 +44,20 @@ pub fn nuke_stub(name: &str, proc_macro: bool, marker: &str) -> String {
 /// the judgement is of both sides. Any other text in a nuked crate, a build
 /// script or a test beside the stub included, is judged as scaffolding.
 pub(super) fn passes_outside_impl(
+    view: &View<'_>,
     workspace_root: &Path,
     layout: &SrcLayout,
     file: &str,
     content: Option<&str>,
 ) -> bool {
     match content {
-        None => crate_is_nuked(workspace_root, layout, file),
+        None => crate_is_nuked(view, workspace_root, layout, file),
         Some(text) => {
             let stub_at_lib = is_stub(text)
                 && lib_of(layout, file).is_some_and(|(src, lib)| {
-                    lib == file && nothing_else_left(workspace_root, &src, &lib)
+                    lib == file && nothing_else_left(view, workspace_root, &src, &lib)
                 });
-            stub_at_lib || (declares_nothing(text) && nothing_at_head(workspace_root, file))
+            stub_at_lib || (declares_nothing(text) && nothing_at_head(view, workspace_root, file))
         },
     }
 }
@@ -80,19 +82,16 @@ fn lib_of(layout: &SrcLayout, file: &str) -> Option<(PathBuf, String)> {
 
 /// Whether `HEAD` holds nothing that declares anything at `file`: the path is
 /// not in `HEAD`, or the blob there declares nothing.
-fn nothing_at_head(workspace_root: &Path, file: &str) -> bool {
-    let Ok(out) = Command::new("git")
-        .args(["show", &format!("HEAD:./{file}")])
-        .current_dir(workspace_root)
-        .output()
-    else {
+fn nothing_at_head(view: &View<'_>, workspace_root: &Path, file: &str) -> bool {
+    let out = view.git_in(workspace_root, &["show", &format!("HEAD:./{file}")]);
+    if !out.started() {
         return false;
-    };
-    if !out.status.success() {
+    }
+    if !out.ok() {
         // Not in HEAD, or no HEAD yet: a file this change creates.
         return true;
     }
-    String::from_utf8(out.stdout).is_ok_and(|s| declares_nothing(&s))
+    out.text().is_some_and(declares_nothing)
 }
 
 /// Whether the crate holding `file` is being nuked: what the commit carries as
@@ -102,34 +101,28 @@ fn nothing_at_head(workspace_root: &Path, file: &str) -> bool {
 /// scaffolding arm would judge. Only the whole shape is a nuke. The stub is
 /// read from the index; a `lib.rs` changed past it in the working tree is a
 /// changed file of its own and is judged on its own text.
-fn crate_is_nuked(workspace_root: &Path, layout: &SrcLayout, file: &str) -> bool {
+fn crate_is_nuked(view: &View<'_>, workspace_root: &Path, layout: &SrcLayout, file: &str) -> bool {
     lib_of(layout, file).is_some_and(|(src, lib)| {
-        staged_or_worktree(workspace_root, &lib, "staged").is_some_and(|t| is_stub(&t))
-            && nothing_else_left(workspace_root, &src, &lib)
+        staged_or_worktree(view, workspace_root, &lib, "staged").is_some_and(is_stub)
+            && nothing_else_left(view, workspace_root, &src, &lib)
     })
 }
 
 /// Whether `src` holds no Rust file other than `lib`, in the index or on disk.
-fn nothing_else_left(workspace_root: &Path, src: &Path, lib: &str) -> bool {
-    !other_source_in_index(workspace_root, src, lib)
-        && !other_source_on_disk(&workspace_root.join(src))
+fn nothing_else_left(view: &View<'_>, workspace_root: &Path, src: &Path, lib: &str) -> bool {
+    !other_source_in_index(view, workspace_root, src, lib)
+        && !other_source_on_disk(view, &workspace_root.join(src))
 }
 
 /// Whether the index holds a Rust file under `src` other than `lib`, both
 /// relative to `workspace_root`. A failing query proves nothing, so it answers yes.
-fn other_source_in_index(workspace_root: &Path, src: &Path, lib: &str) -> bool {
-    let Ok(out) = Command::new("git")
-        .args(["ls-files", "-z", "--"])
-        .arg(src)
-        .current_dir(workspace_root)
-        .output()
-    else {
-        return true;
-    };
-    if !out.status.success() {
+fn other_source_in_index(view: &View<'_>, workspace_root: &Path, src: &Path, lib: &str) -> bool {
+    let src = src.to_string_lossy();
+    let out = view.git_in(workspace_root, &["ls-files", "-z", "--", &src]);
+    if !out.ok() {
         return true;
     }
-    out.stdout
+    out.stdout()
         .split(|b| *b == 0)
         .filter(|p| !p.is_empty())
         .map(String::from_utf8_lossy)
@@ -137,32 +130,24 @@ fn other_source_in_index(workspace_root: &Path, src: &Path, lib: &str) -> bool {
 }
 
 /// Whether the directory `src` holds, at any depth, a Rust file other than its `lib.rs`.
-fn other_source_on_disk(src: &Path) -> bool {
-    let Ok(read) = std::fs::read_dir(src) else {
+fn other_source_on_disk(view: &View<'_>, src: &Path) -> bool {
+    let Some(listing) = view.list(src) else {
         return false;
     };
-    read.flatten().any(|e| {
-        let p = e.path();
-        if p.is_dir() {
-            walk_has_rust(&p)
+    listing.entries().iter().any(|e| {
+        if Entry::is_dir(e) {
+            walk_has_rust(view, &src.join(e.name()))
         } else {
-            p.extension().is_some_and(|x| x == "rs") && p.file_name().is_some_and(|n| n != "lib.rs")
+            e.name().ends_with(".rs") && e.name() != "lib.rs"
         }
     })
 }
 
 /// Whether `dir` holds a Rust file at any depth.
-fn walk_has_rust(dir: &Path) -> bool {
-    std::fs::read_dir(dir).is_ok_and(|read| {
-        read.flatten().any(|e| {
-            let p = e.path();
-            if p.is_dir() {
-                walk_has_rust(&p)
-            } else {
-                p.extension().is_some_and(|x| x == "rs")
-            }
-        })
-    })
+fn walk_has_rust(view: &View<'_>, dir: &Path) -> bool {
+    view.walk(dir, |_, _| false)
+        .iter()
+        .any(|p| p.extension().is_some_and(|x| x == "rs"))
 }
 
 /// Whether a Rust file declares nothing at all.

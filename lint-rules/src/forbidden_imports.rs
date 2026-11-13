@@ -53,10 +53,6 @@ impl ForbiddenImports {
 }
 
 impl Lint for ForbiddenImports {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn name(&self) -> &'static str {
         "forbidden-imports"
     }
@@ -224,7 +220,7 @@ fn check_module_path(
     let use_pattern = format!("use {module_prefix}::");
     let path_pattern = format!("{module_prefix}::");
 
-    for (line_num, line) in ctx.source.lines().enumerate() {
+    for (line_num, line) in ctx.source().lines().enumerate() {
         let trimmed = line.trim();
 
         // Skip comments
@@ -266,7 +262,7 @@ fn check_keyword_pattern(
     keyword: &str,
     errors: &mut Vec<LintError>,
 ) {
-    for (line_num, line) in ctx.source.lines().enumerate() {
+    for (line_num, line) in ctx.source().lines().enumerate() {
         let trimmed = line.trim();
 
         // Skip comments
@@ -305,7 +301,7 @@ fn check_type_name(
     type_name: &str,
     errors: &mut Vec<LintError>,
 ) {
-    for (line_num, line) in ctx.source.lines().enumerate() {
+    for (line_num, line) in ctx.source().lines().enumerate() {
         let trimmed = line.trim();
 
         // Skip comments
