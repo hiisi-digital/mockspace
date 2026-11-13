@@ -318,3 +318,61 @@ fn a_pair_is_not_an_item() {
     assert!(!IsItem::<(&str, usize)>(std::marker::PhantomData).holds());
     assert!(IsItem::<&str>(std::marker::PhantomData).holds(), "the control");
 }
+
+/// Two paths that are not text and differ only where they are not: what `bad_paths` names.
+#[cfg(unix)]
+fn bad_paths() -> [PathBuf; 2] {
+    use std::os::unix::ffi::OsStrExt;
+    [b"n\xfe".as_slice(), b"n\xff".as_slice()].map(|b| PathBuf::from(std::ffi::OsStr::from_bytes(b)))
+}
+
+/// Each item reads the file its path names.
+#[cfg(unix)]
+fn read_bad_paths(v: &View<'_>) -> String {
+    v.each(&bad_paths(), |iv, p| one(iv.text(p).unwrap_or("-").to_string()))
+        .into_iter()
+        .flatten()
+        .map(|e| e.message)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Two paths that are not text are two items, though both read the same when made into text.
+#[cfg(unix)]
+#[test]
+fn paths_that_are_not_text_keep_their_items_apart() {
+    let dir = Dir::new("each-bad-paths");
+    let [a, b] = bad_paths();
+    std::fs::write(dir.0.join(&a), "one").unwrap();
+    std::fs::write(dir.0.join(&b), "two").unwrap();
+    // A file named as either would be if made into text, which a lossy name would check in place
+    // of the item's own file.
+    std::fs::write(dir.0.join("n\u{fffd}"), "decoy").unwrap();
+    let cache = Mem::default();
+    let (probe, _) = Probe::new(read_bad_paths);
+    let pack = pack_of(probe);
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["one,two"]);
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["one,two"], "each item replays its own");
+    std::fs::write(dir.0.join(&a), "three").unwrap();
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["three,two"], "a change to one is seen");
+}
+
+/// A walk hands back the paths of files whose names are not text as they are on disk, so what is
+/// read through them is the file and not a name like it.
+#[cfg(unix)]
+#[test]
+fn a_walk_reads_a_file_whose_name_is_not_text() {
+    let dir = Dir::new("walk-bad-name");
+    let [a, _] = bad_paths();
+    std::fs::create_dir_all(dir.0.join("d")).unwrap();
+    std::fs::write(dir.0.join("d").join(&a), "one").unwrap();
+    let cache = Mem::default();
+    let (probe, _) = Probe::new(|v| {
+        let files = v.walk("d", |_, _| false);
+        files.iter().map(|f| v.text(f).unwrap_or("-").to_string()).collect::<Vec<_>>().join(",")
+    });
+    let pack = pack_of(probe);
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["one"]);
+    std::fs::write(dir.0.join("d").join(&a), "two").unwrap();
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["two"], "the change is seen");
+}

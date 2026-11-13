@@ -8,6 +8,7 @@
 
 use crate::context::{CrateInput, RepoInput, WorkspaceInput};
 use crate::reading::Values;
+use crate::reading::names::text_of;
 
 /// The values of one run, under the names the contexts write them down by.
 pub(crate) struct RunValues<'a> {
@@ -35,8 +36,8 @@ impl Values for RunValues<'_> {
         let ws = self.ws;
         Some(match key {
             "all_crates" => joined(&ws.all_crates.iter().collect::<Vec<_>>()),
-            "workspace_root" => ws.workspace_root.to_string_lossy().into_owned().into_bytes(),
-            "root" => self.root.to_string_lossy().into_owned().into_bytes(),
+            "workspace_root" => text_of(ws.workspace_root.as_os_str()).into_owned().into_bytes(),
+            "root" => text_of(self.root.as_os_str()).into_owned().into_bytes(),
             "proc_macro_crates" => joined(&ws.proc_macro_crates),
             "primitive_introductions" => format!("{:?}", ws.primitive_introductions).into_bytes(),
             "invocation:unwanted" => Vec::new(),

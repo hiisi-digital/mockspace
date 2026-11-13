@@ -157,7 +157,7 @@ impl<'a> Runner<'a> {
                 let root = [PathBuf::from(ROOT)];
                 let kept: Vec<&PathBuf> = if kept.is_empty() { root.iter().collect() } else { kept };
                 for file in kept {
-                    let rel = file.to_string_lossy();
+                    let rel = crate::reading::names::text_of(file.as_os_str());
                     out.push(Unit {
                         what: What::File {
                             lint,
@@ -206,8 +206,8 @@ impl<'a> Runner<'a> {
                 .iter()
                 .map(|l| (Origin::BuiltIn, l.as_ref()))
                 .chain(pack.repos.iter().map(|l| (Origin::Pack, l.as_ref())));
-            let root = repo.repo_root.to_string_lossy();
-            let mock = repo.mock_dir.to_string_lossy();
+            let root = crate::reading::names::text_of(repo.repo_root.as_os_str());
+            let mock = crate::reading::names::text_of(repo.mock_dir.as_os_str());
             for (origin, lint) in repo_lints {
                 if !self.wanted(lint) {
                     continue;

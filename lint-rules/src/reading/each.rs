@@ -38,13 +38,13 @@ impl Item for String {
 
 impl Item for Path {
     fn key(&self) -> Cow<'_, str> {
-        self.to_string_lossy()
+        crate::reading::names::text_of(self.as_os_str())
     }
 }
 
 impl Item for PathBuf {
     fn key(&self) -> Cow<'_, str> {
-        self.to_string_lossy()
+        crate::reading::names::text_of(self.as_os_str())
     }
 }
 

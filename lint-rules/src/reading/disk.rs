@@ -83,6 +83,8 @@ fn identity(_: &std::fs::Metadata) -> Option<(i128, u64)> {
 #[derive(Debug, Clone)]
 pub struct Entry {
     name: String,
+    /// The name as a key knows it, one for one name where the name is not text.
+    key:  String,
     stat: Stat,
 }
 
@@ -137,7 +139,7 @@ impl Listing {
     pub(crate) fn material(&self) -> Vec<u8> {
         let mut out = Vec::new();
         for e in &self.entries {
-            out.extend_from_slice(e.name.as_bytes());
+            out.extend_from_slice(e.key.as_bytes());
             out.push(0);
             out.extend_from_slice(e.stat.kind.letter());
             out.push(0);
@@ -265,8 +267,10 @@ impl Reading {
                         },
                         |m| Stat::of(&m),
                     );
+                    let file_name = entry.file_name();
                     entries.push(Entry {
-                        name: entry.file_name().to_string_lossy().into_owned(),
+                        name: file_name.to_string_lossy().into_owned(),
+                        key: super::names::text_of(&file_name).into_owned(),
                         stat,
                     });
                 }
@@ -277,6 +281,7 @@ impl Reading {
                     let mut parts = rest.components();
                     let Some(first) = parts.next() else { continue };
                     let name = first.as_os_str().to_string_lossy().into_owned();
+                    let key = super::names::text_of(first.as_os_str()).into_owned();
                     let stat = if parts.next().is_none() {
                         Stat {
                             kind:     Kind::File,
@@ -295,10 +300,11 @@ impl Reading {
                     // A file overlaid here replaces what is on disk; a directory leading to one
                     // keeps a directory already there.
                     let keep_existing = stat.kind == Kind::Dir;
-                    entries.retain(|e| e.name != name || keep_existing && e.stat.kind == Kind::Dir);
-                    if !entries.iter().any(|e| e.name == name) {
+                    entries.retain(|e| e.key != key || keep_existing && e.stat.kind == Kind::Dir);
+                    if !entries.iter().any(|e| e.key == key) {
                         entries.push(Entry {
                             name,
+                            key,
                             stat,
                         });
                     }
@@ -307,7 +313,7 @@ impl Reading {
                 if !listed && !added {
                     return None;
                 }
-                entries.sort_by(|a, b| a.name.cmp(&b.name));
+                entries.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.key.cmp(&b.key)));
                 Some(Listing {
                     entries,
                 })
@@ -424,7 +430,7 @@ impl Reading {
         let Some(listing) = self.listing(dir) else { return };
         listed.push(dir.to_path_buf());
         for e in listing.entries() {
-            let path = dir.join(&e.name);
+            let path = dir.join(super::names::path_of(&e.key));
             if skip(&path, e) {
                 continue;
             }

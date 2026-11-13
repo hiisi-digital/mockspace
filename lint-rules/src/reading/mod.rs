@@ -19,6 +19,7 @@
 mod disk;
 mod each;
 mod memo;
+pub(crate) mod names;
 pub(crate) mod pool;
 mod process;
 mod question;
@@ -229,19 +230,23 @@ impl Reading {
     }
 
     /// The name a trace writes `path` under: relative to the root with `/` between components when
-    /// it is under the root, the absolute path otherwise.
+    /// it is under the root, the absolute path otherwise, and one name for one path when the path
+    /// is not text ([`names`]).
     pub(crate) fn key(&self, path: &Path) -> String {
         let abs = self.absolute(path);
         match abs.strip_prefix(&self.root) {
-            Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
-            Err(_) => abs.to_string_lossy().into_owned(),
+            Ok(rel) => match names::text_of(rel.as_os_str()) {
+                std::borrow::Cow::Borrowed(text) => text.replace('\\', "/"),
+                std::borrow::Cow::Owned(escaped) => escaped,
+            },
+            Err(_) => names::text_of(abs.as_os_str()).into_owned(),
         }
     }
 
     /// The path a trace's name for it means in this reading.
     pub(crate) fn path_of(&self, key: &str) -> PathBuf {
-        let p = Path::new(key);
-        if p.is_absolute() { p.to_path_buf() } else { self.root.join(p) }
+        let p = names::path_of(key);
+        if p.is_absolute() { p } else { self.root.join(p) }
     }
 }
 

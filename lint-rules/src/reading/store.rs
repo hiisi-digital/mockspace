@@ -65,7 +65,7 @@ pub struct Store<'r> {
 
 impl<'r> Store<'r> {
     pub(crate) fn new(reading: &'r Reading, cache: &'r dyn VerdictCache, values: &'r dyn Values) -> Self {
-        let table = Table::load(cache, &reading.root().to_string_lossy());
+        let table = Table::load(cache, &super::names::text_of(reading.root().as_os_str()));
         Self {
             reading,
             cache,
