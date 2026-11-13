@@ -197,6 +197,11 @@ pub struct Config {
     /// Empty if no `[lints]` section is present (all lints use defaults).
     pub lint_overrides: LintConfig,
 
+    // --- Tool parameters ---
+    /// What each tool is handed from its `[tools.<name>]` table. Empty where there is no `[tools]`
+    /// table, and every tool runs on its own defaults.
+    pub tool_params: mockspace_lint_rules::tool::ToolConfig,
+
     // --- Domain-specific config ---
     /// Macro icon+label for STRUCTURE.md domain items.
     /// e.g. "define_signal" -> "signal"
@@ -1008,6 +1013,7 @@ impl Config {
         let crate_colors = convert_color_section(raw.crate_colors);
 
         let lint_overrides = parse_lints_from_document(&toml_content, &crate_prefix, &toml_path);
+        let tool_params = crate::tool_config::parse(&toml_content, &crate_prefix, &toml_path);
 
         let primary_domain_label = raw
             .primary_domain_label
@@ -1113,6 +1119,7 @@ impl Config {
             deny_check: raw.deny_check.unwrap_or(true),
             agent,
             lint_overrides,
+            tool_params,
             domain_kinds,
             known_macros,
             agent_macros,
@@ -2283,7 +2290,9 @@ mod key_lists_cannot_rot {
             // declaration as discarded. This guard is what catches the opposite
             // mistake, and it fired the moment the key was added, which is the
             // guard working.
-            if *k == "lints" || *k == "lint-crates" || launcher.iter().any(|l| l == k) {
+            // `tools` is read through toml_edit for the reason `lints` is, its values being a
+            // scalar or an array per key (`tool_config::parse`).
+            if *k == "lints" || *k == "lint-crates" || *k == "tools" || launcher.iter().any(|l| l == k) {
                 continue;
             }
             assert!(

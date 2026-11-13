@@ -206,6 +206,31 @@ pub(crate) fn run(
         return ExitCode::from(2);
     }
 
+    // A key its `[tools.<name>]` table sets and the tool does not read was never
+    // handed to it, so running would report over a configuration it never applied.
+    let undeclared = cfg.tool_params.undeclared(tool.as_ref());
+    if !undeclared.is_empty() {
+        eprintln!(
+            "mock: [tools.{name}] sets {}, which `{name}` does not read.",
+            undeclared
+                .iter()
+                .map(|k| format!("`{k}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let keys = tool.config_keys();
+        if keys.is_empty() {
+            eprintln!("  `{name}` reads no configuration; remove the table.");
+        } else {
+            eprintln!("  the keys it reads:");
+            for k in keys {
+                eprintln!("    {}  {}", k.name, k.description);
+            }
+        }
+        eprintln!("  `{name}` was not run.");
+        return ExitCode::from(2);
+    }
+
     let missing = missing_required(tool.as_ref(), args);
     if !missing.is_empty() {
         eprintln!("mock: `{name}` needs {} more argument(s).", missing.len());
@@ -470,6 +495,9 @@ fn read_stdin() -> Option<String> {
     Some(s)
 }
 
+#[cfg(test)]
+#[path = "tool_config_tests.rs"]
+mod tool_config_tests;
 #[cfg(test)]
 #[path = "tool_tests.rs"]
 mod tool_tests;
