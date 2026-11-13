@@ -51,6 +51,10 @@ pub(crate) struct Stat {
     pub(crate) size:     u64,
     /// `None` for an overlaid path, whose content is never found by its time.
     pub(crate) modified: Option<SystemTime>,
+    /// On unix, the time of the last change to the file or its inode, in nanoseconds, and its inode
+    /// number: what a rewrite that keeps the size and puts the modification time back still moves.
+    /// `None` elsewhere and for an overlaid path.
+    pub(crate) identity: Option<(i128, u64)>,
 }
 
 impl Stat {
@@ -59,8 +63,20 @@ impl Stat {
             kind:     Kind::of(meta.file_type()),
             size:     meta.len(),
             modified: meta.modified().ok(),
+            identity: identity(meta),
         }
     }
+}
+
+#[cfg(unix)]
+fn identity(meta: &std::fs::Metadata) -> Option<(i128, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    Some((i128::from(meta.ctime()) * 1_000_000_000 + i128::from(meta.ctime_nsec()), meta.ino()))
+}
+
+#[cfg(not(unix))]
+fn identity(_: &std::fs::Metadata) -> Option<(i128, u64)> {
+    None
 }
 
 /// One name in a directory.
@@ -208,6 +224,7 @@ impl Reading {
                         kind:     Kind::File,
                         size:     text.len() as u64,
                         modified: None,
+                        identity: None,
                     });
                 }
                 Counters::bump(&self.counters.stats);
@@ -217,6 +234,7 @@ impl Reading {
                         kind:     Kind::Dir,
                         size:     0,
                         modified: None,
+                        identity: None,
                     }),
                     Err(_) => None,
                 }
@@ -243,6 +261,7 @@ impl Reading {
                             kind:     Kind::Other,
                             size:     0,
                             modified: None,
+                            identity: None,
                         },
                         |m| Stat::of(&m),
                     );
@@ -263,12 +282,14 @@ impl Reading {
                             kind:     Kind::File,
                             size:     text.len() as u64,
                             modified: None,
+                            identity: None,
                         }
                     } else {
                         Stat {
                             kind:     Kind::Dir,
                             size:     0,
                             modified: None,
+                            identity: None,
                         }
                     };
                     // A file overlaid here replaces what is on disk; a directory leading to one

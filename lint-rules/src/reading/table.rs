@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-//! The digests of files already taken, found again by path, size and modification time.
+//! The digests of files already taken, found again by path, size, modification time and, on unix,
+//! change time and inode.
 //!
 //! Asking a saved trace whether a file moved would cost a read of the file if every digest had to
 //! be taken anew. The table keeps the digest each file had with the size and time it had then, so
@@ -28,12 +29,14 @@ use crate::verdict::VerdictCache;
 /// than any file system this runs on keeps times.
 pub(crate) const GRANULARITY: Duration = Duration::from_secs(2);
 
-const FORMAT: &str = "file-digests-v1";
+const FORMAT: &str = "file-digests-v2";
 
 #[derive(Clone)]
 struct Row {
     size:   u64,
     mtime:  u128,
+    /// The change time and inode on unix, `-` where there are none.
+    ident:  String,
     taken:  u128,
     digest: String,
 }
@@ -49,6 +52,11 @@ fn nanos(t: SystemTime) -> Option<u128> {
     t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_nanos())
 }
 
+/// A file's change time and inode as a table column, `-` where the system gives none.
+fn ident(stat: &Stat) -> String {
+    stat.identity.map_or_else(|| "-".to_string(), |(ctime, ino)| format!("{ctime}:{ino}"))
+}
+
 impl Table {
     /// The table kept for `root` in `cache`, empty where none is kept or it is in no shape this
     /// version writes.
@@ -60,7 +68,7 @@ impl Table {
             if lines.next() == Some(FORMAT) {
                 for line in lines {
                     let f: Vec<&str> = line.split('\t').collect();
-                    let [path, size, mtime, taken, digest] = f[..] else { continue };
+                    let [path, size, mtime, ident, taken, digest] = f[..] else { continue };
                     let (Ok(size), Ok(mtime), Ok(taken)) = (size.parse(), mtime.parse(), taken.parse()) else {
                         continue;
                     };
@@ -68,6 +76,7 @@ impl Table {
                     rows.insert(path, Row {
                         size,
                         mtime,
+                        ident: ident.to_string(),
                         taken,
                         digest: digest.to_string(),
                     });
@@ -81,14 +90,17 @@ impl Table {
         }
     }
 
-    /// The digest kept for `path`, when the file still has the size and time it had then and the
-    /// digest was taken far enough after that time to be trusted.
+    /// The digest kept for `path`, when the file still has the size, the modification time and,
+    /// on unix, the change time and inode it had then, and the digest was taken far enough after
+    /// the modification time to be trusted. The change time is what a rewrite that keeps the size
+    /// and sets the modification time back (`cp -p`, `tar`, `touch -d`) cannot put back.
     pub(crate) fn trusted(&self, path: &str, stat: &Stat) -> Option<String> {
         let mtime = nanos(stat.modified?)?;
+        let ident = ident(stat);
         let rows = self.rows.lock().unwrap_or_else(PoisonError::into_inner);
         let row = rows.get(path)?;
         let racy = row.taken < mtime + GRANULARITY.as_nanos();
-        (row.size == stat.size && row.mtime == mtime && !racy).then(|| row.digest.clone())
+        (row.size == stat.size && row.mtime == mtime && row.ident == ident && !racy).then(|| row.digest.clone())
     }
 
     /// Keep `digest` for `path`, taken at `taken` of a file whose size and time were `stat`.
@@ -100,12 +112,13 @@ impl Table {
         let row = Row {
             size: stat.size,
             mtime: modified,
+            ident: ident(stat),
             taken,
             digest: digest.to_string(),
         };
-        let same = rows
-            .get(path)
-            .is_some_and(|r| r.size == row.size && r.mtime == row.mtime && r.taken == row.taken && r.digest == row.digest);
+        let same = rows.get(path).is_some_and(|r| {
+            r.size == row.size && r.mtime == row.mtime && r.ident == row.ident && r.taken == row.taken && r.digest == row.digest
+        });
         if !same {
             rows.insert(path.to_string(), row);
             self.changed.store(true, Ordering::Release);
@@ -126,7 +139,7 @@ impl Table {
             let r = &rows[p];
             let mut esc = String::new();
             super::question::escape_into(p, &mut esc);
-            out.push_str(&format!("{esc}\t{}\t{}\t{}\t{}\n", r.size, r.mtime, r.taken, r.digest));
+            out.push_str(&format!("{esc}\t{}\t{}\t{}\t{}\t{}\n", r.size, r.mtime, r.ident, r.taken, r.digest));
         }
         cache.remember(&self.key, &out);
     }

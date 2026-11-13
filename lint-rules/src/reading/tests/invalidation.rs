@@ -211,3 +211,28 @@ fn an_input_written_while_the_command_runs_is_saved_as_it_was_before() {
     assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["new"], "the control: unmoved, it replays");
     assert_eq!(judged.load(Ordering::SeqCst), 2);
 }
+
+/// A rewrite that keeps the size and puts the modification time back, as `cp -p`, `tar` or
+/// `touch -d` do, long after the digest was taken, still moves the change time, so the file is read
+/// again and not answered from the table.
+#[cfg(unix)]
+#[test]
+fn a_rewrite_with_its_old_time_put_back_is_read_again() {
+    let dir = Dir::new("ctime");
+    let file = dir.0.join("a.txt");
+    dir.write("a.txt", "one");
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    let set_old = || std::fs::File::options().write(true).open(&file).unwrap().set_modified(old).unwrap();
+    set_old();
+    let cache = Mem::default();
+    let (probe, judged) = Probe::new(|v| v.text("a.txt").unwrap_or("absent").to_string());
+    let pack = pack_of(probe);
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["one"]);
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["one"]);
+    assert_eq!(judged.load(Ordering::SeqCst), 1, "the control: an untouched file is answered from the table");
+
+    dir.write("a.txt", "two");
+    set_old();
+    assert_eq!(messages(&run_repo(&dir, &cache, &pack, None).found), ["two"]);
+    assert_eq!(judged.load(Ordering::SeqCst), 2);
+}
