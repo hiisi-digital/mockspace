@@ -262,6 +262,7 @@ fn exit_of(cfg: &Config, pack: &LintPack, req: &Request) -> u8 {
         .map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()))
         .collect();
     let places = through_directory_links(&file, &src_dirs);
+    let repo_root = cfg.repo_root.canonicalize().unwrap_or_else(|_| cfg.repo_root.clone());
 
     let crates = crate::parse::discover_crates_in(&src_dirs, &cfg.crate_prefix);
     // The gate lints a file once in every crate that reaches it, so the edit is refused when
@@ -275,6 +276,7 @@ fn exit_of(cfg: &Config, pack: &LintPack, req: &Request) -> u8 {
             &crates,
             &src_dirs,
             &cfg.mock_dir,
+            &repo_root,
             &cfg.proc_macro_crates,
             cfg.lint_proc_macro_source,
             &cfg.crate_prefix,

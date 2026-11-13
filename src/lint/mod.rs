@@ -75,9 +75,11 @@ fn crate_input(name: &str, info: &crate::model::CrateInfo, dir: PathBuf) -> Crat
 /// naming `file` are returned. Nothing is subtracted for what the file already holds: the verdict
 /// is the lint's, as the gate would give it.
 ///
-/// This is the same runner [`run_lints`] uses, over a [`Reading`] with `text` laid over `file`, so
-/// the verdict is the lint's and nothing here re-judges it. A unit the edit does not reach is
-/// replayed from the store where its trace holds; the overlaid run saves nothing. Meant for lints
+/// This is the same runner [`run_lints`] uses, over a [`Reading`] rooted where its reading is, at
+/// `repo_root`, with `text` laid over `file`, so the verdict is the lint's and nothing here
+/// re-judges it. The two readings have one root so their traces name a file alike, and a unit the
+/// edit does not reach is replayed from what the last run saved; the overlaid run saves nothing.
+/// `repo_root` and `src_dirs` are both real paths or both as configured. Meant for lints
 /// that judge one file at a time, whose findings name the file they are in. `None` when `file` is
 /// in no crate this repository has, or is not one of a crate's Rust sources. A `lint_name` that is
 /// no crate lint finds nothing.
@@ -86,6 +88,7 @@ pub fn lint_edit(
     crates: &CrateMap,
     src_dirs: &[PathBuf],
     mock_dir: &Path,
+    repo_root: &Path,
     proc_macro_crates: &[String],
     lint_proc_macro_source: bool,
     crate_prefix: &str,
@@ -110,7 +113,7 @@ pub fn lint_edit(
         return None;
     }
     let crate_name = crate_dir.file_name()?.to_str()?;
-    let reading = Reading::new(mock_dir).with_overlay(crate_dir.join(&rel_path), text);
+    let reading = Reading::new(repo_root).with_overlay(crate_dir.join(&rel_path), text);
     // Discovery takes a real crate directory holding a `src/lib.rs`, and nothing else is a
     // crate to the gate. A crate with no root yet has no entry; the edit that writes the root
     // makes it one, built from the text about to be written. Any other file of a directory
