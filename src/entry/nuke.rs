@@ -451,23 +451,7 @@ pub(crate) fn apply(plan: &NukePlan, cfg: &Config) -> ExitCode {
             }
         }
 
-        let stub = if c.is_proc {
-            format!(
-                "//! {}: proc macro crate.\n\
-                 //!\n\
-                 //! {}. Rewrite from design docs (mechanical, no reinterpretation).\n\
-                 \n\
-                 extern crate proc_macro;\n",
-                c.name, cfg.nuke_marker
-            )
-        } else {
-            format!(
-                "//! {}: nuked.\n\
-                 //!\n\
-                 //! {}. Rewrite from design docs (mechanical, no reinterpretation).\n",
-                c.name, cfg.nuke_marker
-            )
-        };
+        let stub = mockspace_lint_rules::changelist_required::nuke_stub(&c.name, c.is_proc, &cfg.nuke_marker);
         if c.stub.exists() {
             nuked_files += 1;
         }

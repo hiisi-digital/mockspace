@@ -46,7 +46,7 @@ mod changelist_doc_gate;
 pub mod changelist_helpers;
 mod changelist_immutability;
 mod changelist_lock;
-pub(crate) mod changelist_required;
+pub mod changelist_required;
 mod changelist_seal;
 /// What `lock` asks before sealing a doc changelist: the design templates the
 /// gate would still let through uncommitted.
