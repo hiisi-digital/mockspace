@@ -841,6 +841,10 @@ pub fn run_orchestrator(
                     for line in stdout.trim().lines() {
                         if line.starts_with("TIMEOUT") {
                             eprintln!("  {}", line);
+                            let why = String::from_utf8_lossy(&output.stderr);
+                            if !why.trim().is_empty() {
+                                eprintln!("  {}", why.trim());
+                            }
                             continue;
                         }
                         let parts: Vec<&str> = line.split('\t').collect();
@@ -896,6 +900,12 @@ pub fn run_orchestrator(
 
     let total_secs = total_start.elapsed().as_secs_f64();
     eprintln!("  Total: {:.1}s", total_secs);
+
+    if all_samples.is_empty() {
+        return Err(BenchError::NoSamples {
+            bench: config.bench_name.clone(),
+        });
+    }
 
     Ok(BenchResult {
         title:       config.title.clone(),

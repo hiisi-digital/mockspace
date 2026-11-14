@@ -51,6 +51,12 @@ pub enum BenchError {
         variant: String,
         reason:  String,
     },
+    /// The run ended with no sample from any variant: every worker failed
+    /// to load its variant or was killed. The lines printed during the run
+    /// carry each worker's reason.
+    NoSamples {
+        bench: String,
+    },
     /// A subprocess worker crashed or returned a non-zero exit code.
     WorkerFailed {
         variant:   String,
@@ -110,6 +116,10 @@ impl fmt::Display for BenchError {
             } => {
                 write!(f, "validation failed for variant {variant}: {reason}")
             },
+            BenchError::NoSamples { bench } => write!(
+                f,
+                "bench {bench} produced no samples: no variant loaded or ran, see the worker lines above"
+            ),
             BenchError::WorkerFailed {
                 variant,
                 exit_code,
