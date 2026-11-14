@@ -57,6 +57,7 @@ pub mod quality;
 pub mod report;
 pub mod sample;
 pub mod spec;
+pub mod stage;
 pub mod summary;
 pub mod test_baseline;
 pub mod test_sample;
