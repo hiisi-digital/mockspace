@@ -19,6 +19,7 @@ mockspace-bench-core = { path = "../bench-core", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 libloading = "0.8"
+sha2 = "0.10"
 
 [features]
 default = []
@@ -26,6 +27,9 @@ default = []
 # perf_event_open). Off by default; opt in via
 # `cargo build --features mockspace-bench-harness/perf-counters`.
 perf-counters = []
+# `Stage::link_into`, pointing a member's `target` at its stage. Off by
+# default; built only on the targets `build.rs` names.
+stage-link = []
 
 [dev-dependencies]
 # The scrub of the environment a test runs in, the one copy of it.

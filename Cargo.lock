@@ -269,6 +269,7 @@ dependencies = [
  "mockspace-bench-core",
  "mockspace-manifest",
  "serde",
+ "sha2",
  "toml",
 ]
 
