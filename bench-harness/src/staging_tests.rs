@@ -108,7 +108,10 @@ fn a_record_without_the_running_driver_is_refused() {
     match build.verify() {
         Err(StagingError::DriverNotRecorded {
             driver,
-        }) => assert_eq!(driver, "release/driver"),
+        }) => assert_eq!(
+            driver,
+            std::path::Path::new(RELEASE).join("driver").display().to_string()
+        ),
         other => panic!("a record without the driver verified: {other:?}"),
     }
     std::fs::remove_dir_all(&dir).ok();
