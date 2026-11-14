@@ -16,9 +16,10 @@
 //! loads, the same shape as the target directory so the driver finds its arms
 //! beside itself. Beside `release/` are two records: `binaries.sha256`, one line
 //! per staged file in the format `sha256sum` writes (the hex digest, two spaces,
-//! the path relative to `<dir>` with no `..`), and `build.txt`, naming the
-//! commit the binaries were built from and whatever was dirty against it. The
-//! consumer's staging step writes it; this module reads it.
+//! the path relative to `<dir>`, plain names only: no `..`, no leading `./`, no
+//! root), and `build.txt`, naming the commit the binaries were built from and
+//! whatever was dirty against it. The consumer's staging step writes it; this
+//! module reads it.
 //!
 //! [`StagedBuild::of_current_exe`] refuses a driver that was not started from a
 //! staged build, and [`StagedBuild::verify`] checks that every recorded file,
@@ -163,8 +164,9 @@ fn io(path: &Path) -> impl FnOnce(std::io::Error) -> StagingError + '_ {
 pub struct StagedBuild {
     /// The staged build's root, with every link in the path resolved.
     dir:    PathBuf,
-    /// The driver's path relative to `dir`, as the checksum record names it.
-    driver: String,
+    /// The driver's path relative to `dir`, compared with each record line by
+    /// its components, so the record may spell the separator either way.
+    driver: PathBuf,
 }
 
 impl StagedBuild {
@@ -201,7 +203,7 @@ impl StagedBuild {
             .ok_or_else(not_staged)?;
         Ok(Self {
             dir:    dir.to_path_buf(),
-            driver: format!("{RELEASE}/{name}"),
+            driver: Path::new(RELEASE).join(name),
         })
     }
 
@@ -233,7 +235,7 @@ impl StagedBuild {
         for line in record.lines().filter(|l| !l.is_empty()) {
             let (want, file) = parse_line(line)?;
             named += 1;
-            driver_named |= file == self.driver;
+            driver_named |= Path::new(file).components().eq(self.driver.components());
             let ok = std::fs::read(self.dir.join(file))
                 .is_ok_and(|bytes| hex(&Sha256::digest(&bytes)).eq_ignore_ascii_case(want));
             if !ok {
@@ -245,7 +247,7 @@ impl StagedBuild {
         }
         if !driver_named {
             return Err(StagingError::DriverNotRecorded {
-                driver: self.driver.clone(),
+                driver: self.driver.display().to_string(),
             });
         }
         if changed.is_empty() {
@@ -296,6 +298,9 @@ fn hex(bytes: &[u8]) -> String {
 pub struct StageLink {
     link: PathBuf,
     to:   PathBuf,
+    /// Whether this call made the link. A link found already pointing here
+    /// belongs to the run that made it, and only that run removes it.
+    made: bool,
 }
 
 #[cfg(any(stage_link = "unix", stage_link = "windows"))]
@@ -303,10 +308,11 @@ impl Drop for StageLink {
     /// Removes the link if it still points at the staged build; a link
     /// something else has since replaced is left to whoever made it.
     fn drop(&mut self) {
-        let ours = self
-            .link
-            .symlink_metadata()
-            .is_ok_and(|m| m.file_type().is_symlink())
+        let ours = self.made
+            && self
+                .link
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink())
             && std::fs::read_link(&self.link).is_ok_and(|to| to == self.to);
         if ours {
             let _ = link_os::remove(&self.link);
@@ -321,7 +327,9 @@ impl Drop for StageLink {
 impl StagedBuild {
     /// Point the link at `link` (a member's `./target`) at this staged build
     /// until the returned [`StageLink`] is dropped, so a manifest naming arms
-    /// under `target/` reads the ones staged beside the driver.
+    /// under `target/` reads the ones staged beside the driver. Only the
+    /// [`StageLink`] of the call that made the link removes it; a call finding
+    /// it already pointing here returns one that leaves it to that run.
     ///
     /// A link left by an earlier run points at that run's build, which is the
     /// stale set of arms staging exists to keep out, so a link pointing
@@ -329,9 +337,10 @@ impl StagedBuild {
     /// is. Anything that is not a link, a directory or a file, is refused
     /// rather than removed: it is somebody's, not a link a driver made.
     pub fn link_into(&self, link: &Path) -> Result<StageLink, StagingError> {
-        let held = StageLink {
+        let mut held = StageLink {
             link: link.to_path_buf(),
             to:   self.dir.clone(),
+            made: false,
         };
         match link.symlink_metadata() {
             Ok(meta) if meta.file_type().is_symlink() => {
@@ -348,6 +357,7 @@ impl StagedBuild {
             Err(_) => {},
         }
         link_os::make(&self.dir, link).map_err(io(link))?;
+        held.made = true;
         Ok(held)
     }
 }

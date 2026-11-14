@@ -114,6 +114,29 @@ fn a_record_without_the_running_driver_is_refused() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// The record names the driver by its path, so a spelling of the same path
+/// with a doubled separator still names it.
+#[test]
+fn the_driver_is_found_by_its_path_not_by_its_spelling() {
+    let dir = scratch("spelling");
+    write_stage(&dir, &format!("{ABC}  release//driver\n"));
+    let build = StagedBuild::of_executable(&dir.join("release/driver")).unwrap();
+    assert!(build.verify().is_ok(), "{:?}", build.verify());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A record written on Windows by a tool that separates with `\`, such as
+/// PowerShell, names the driver as `release\driver.exe`.
+#[cfg(windows)]
+#[test]
+fn a_record_separated_by_backslashes_names_the_driver() {
+    let dir = scratch("backslash");
+    write_stage(&dir, &format!("{ABC}  release\\driver\n"));
+    let build = StagedBuild::of_executable(&dir.join("release/driver")).unwrap();
+    assert!(build.verify().is_ok(), "{:?}", build.verify());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn a_malformed_line_is_refused() {
     let short = &ABC[.. 63];
@@ -212,7 +235,12 @@ fn a_link_is_made_kept_replaced_when_stale_removed_after_and_never_over_a_non_li
         first,
         "a current link is kept, not remade"
     );
-    std::mem::forget(again);
+    drop(again);
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        dir,
+        "a run that found the link already there removed it under the run that made it"
+    );
     drop(held);
     assert!(
         link.symlink_metadata().is_err(),
@@ -269,7 +297,12 @@ fn a_driver_started_through_the_link_finds_the_staged_build_behind_it() {
         "the link points at itself"
     );
     assert_eq!(std::fs::read(link.join("release/driver")).unwrap(), b"abc");
-    std::mem::forget(again);
+    drop(again);
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        dir,
+        "the second run removed the link the first still holds"
+    );
     drop(held);
     std::fs::remove_dir_all(&member).ok();
     std::fs::remove_dir_all(&dir).ok();
