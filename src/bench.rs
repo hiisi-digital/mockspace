@@ -28,7 +28,7 @@ use mockspace_bench_harness::config::BuildSection;
 use mockspace_bench_harness::tree as bench_tree;
 
 use crate::config::Config;
-use crate::{bench_gen, bench_rev};
+use crate::{bench_gen, bench_rev, bench_variants};
 
 /// Splits one subcommand's argv into positional names and flags to
 /// forward, with one shared grammar rather than the two independent
@@ -167,19 +167,8 @@ fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
         return run_generated(cfg, &bench_dir, &names, &extra, false);
     }
 
-    let dirs = if names.is_empty() {
-        None
-    } else {
-        match variant_dirs_for(&bench_dir, &names) {
-            Ok(d) => Some(d),
-            Err(e) => {
-                eprintln!("error: {e}");
-                return ExitCode::FAILURE;
-            },
-        }
-    };
     let profile = consumer_tree_profile(&bench_dir);
-    let bin_path = match build_variants_and_bin_filtered(&bench_dir, dirs.as_deref(), &profile) {
+    let bin_path = match build_variants_and_bin(&bench_dir, &names, &profile) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("error: {e}");
@@ -666,101 +655,6 @@ fn parse_test_result_lines(stdout: &str) -> (u64, u64, u64) {
 
 // ── helpers ──
 
-/// Read `bench.toml` and map the named benches to the variant
-/// directories their entries reference. Short names map to
-/// `variants/<name>`; path entries starting with `variants/` map to
-/// their first two components; anything else is ignored (an
-/// out-of-tree path is not ours to build).
-fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, String> {
-    let text = fs::read_to_string(bench_dir.join("bench.toml"))
-        .map_err(|e| format!("reading bench.toml: {e}"))?;
-    let doc: toml_edit::DocumentMut = text
-        .parse()
-        .map_err(|e| format!("parsing bench.toml: {e}"))?;
-    let bench = doc
-        .get("bench")
-        .and_then(|b| b.as_table())
-        .ok_or_else(|| "bench.toml has no [bench.*] sections".to_string())?;
-    let mut dirs: Vec<String> = Vec::new();
-    let mut ignored: usize = 0;
-    let mut push_entry = |entry: &str, dirs: &mut Vec<String>, ignored: &mut usize| {
-        let dir = if !entry.contains('/') {
-            Some(entry.to_string())
-        } else {
-            entry
-                .strip_prefix("variants/")
-                .and_then(|rest| rest.split('/').next())
-                .map(|d| d.to_string())
-        };
-        match dir {
-            Some(d) => {
-                if !dirs.contains(&d) {
-                    dirs.push(d);
-                }
-            },
-            None => *ignored += 1,
-        }
-    };
-    let collect_array =
-        |item: Option<&toml_edit::Item>,
-         dirs: &mut Vec<String>,
-         ignored: &mut usize,
-         push: &mut dyn FnMut(&str, &mut Vec<String>, &mut usize)| {
-            if let Some(arr) = item.and_then(|v| v.as_array()) {
-                for v in arr.iter() {
-                    if let Some(sv) = v.as_str() {
-                        push(sv, dirs, ignored);
-                    }
-                }
-            }
-        };
-    for name in names {
-        let section = bench.get(name).ok_or_else(|| {
-            let available: Vec<&str> = bench.iter().map(|(k, _)| k).collect();
-            format!(
-                "bench `{name}` not found in bench.toml. Available: {}",
-                available.join(", ")
-            )
-        })?;
-        collect_array(
-            section.get("variants"),
-            &mut dirs,
-            &mut ignored,
-            &mut push_entry,
-        );
-        if let Some(sizes) = section.get("sizes") {
-            if let Some(arr) = sizes.as_array_of_tables() {
-                for t in arr.iter() {
-                    collect_array(t.get("variants"), &mut dirs, &mut ignored, &mut push_entry);
-                }
-            }
-            if let Some(arr) = sizes.as_array() {
-                for v in arr.iter() {
-                    if let Some(t) = v.as_inline_table() {
-                        if let Some(tv) = t.get("variants").and_then(|x| x.as_array()) {
-                            for e in tv.iter() {
-                                if let Some(sv) = e.as_str() {
-                                    push_entry(sv, &mut dirs, &mut ignored);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    if ignored > 0 {
-        // The silent version of this measured stale artifacts: a
-        // filtered run built nothing for path-style entries and then
-        // timed whatever dylibs were already on disk.
-        eprintln!(
-            "warning: {ignored} variant entr{} outside variants/ were not rebuilt for this filtered run; their artifacts may be stale. Run without bench names to rebuild everything, or move them under variants/.",
-            if ignored == 1 { "y" } else { "ies" }
-        );
-    }
-    Ok(dirs)
-}
-
 /// The effective release profile for a **consumer-owned-driver** tree.
 ///
 /// `[build]` reached only the generated path: `profile_args_for` had one
@@ -869,36 +763,47 @@ fn cargo_build_json(manifest: &Path, what: &str, profile: &[String]) -> Result<V
     Ok(out.stdout)
 }
 
-fn build_variants_and_bin_filtered(
-    bench_dir: &Path,
-    only_dirs: Option<&[String]>,
-    profile: &[String],
-) -> Result<PathBuf, String> {
+/// Build the variant crates the named benches use, or every crate under
+/// `variants/` when `names` is empty, each into the target directory its
+/// `bench.toml` entries name, so the harness finds it where the entry says.
+fn build_variants(bench_dir: &Path, names: &[&str], profile: &[String]) -> Result<(), String> {
     let variants_dir = bench_dir.join("variants");
-    if variants_dir.exists() {
-        for entry in
-            fs::read_dir(&variants_dir).map_err(|e| format!("reading variants dir: {e}"))?
-        {
-            let entry = entry.map_err(|e| format!("variants dir entry: {e}"))?;
-            let path = entry.path();
-            if let Some(dirs) = only_dirs {
-                let dir_name = path
-                    .file_name()
-                    .and_then(|f| f.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                if !dirs.contains(&dir_name) {
-                    continue;
-                }
-            }
-            let manifest = path.join("Cargo.toml");
-            if manifest.exists() {
-                eprintln!("  building variant {}...", path.display());
-                cargo_build_json(&manifest, &format!("variant {}", path.display()), profile)?;
-            }
+    if !variants_dir.exists() {
+        return Ok(());
+    }
+    let plan = bench_variants::plan_for(bench_dir, names)?;
+    if plan.unmatched > 0 {
+        eprintln!(
+            "warning: {} variant entr{} name no crate under variants/ and were not built; their artifacts may be stale. Name the crate, or give it the `[lib] name` the entry's file names.",
+            plan.unmatched,
+            if plan.unmatched == 1 { "y" } else { "ies" }
+        );
+    }
+    let mut dirs: Vec<String> = Vec::new();
+    for entry in fs::read_dir(&variants_dir).map_err(|e| format!("reading variants dir: {e}"))? {
+        let entry = entry.map_err(|e| format!("variants dir entry: {e}"))?;
+        dirs.push(entry.file_name().to_string_lossy().into_owned());
+    }
+    dirs.sort();
+    for dir in dirs {
+        if !names.is_empty() && !plan.builds.iter().any(|b| b.dir == dir) {
+            continue;
+        }
+        let path = variants_dir.join(&dir);
+        let manifest = path.join("Cargo.toml");
+        if !manifest.exists() {
+            continue;
+        }
+        for b in plan.builds_of(&dir) {
+            eprintln!("  building variant {}...", path.display());
+            cargo_build_at(&manifest, &format!("variant {}", path.display()), profile, b.target_dir.as_deref())?;
         }
     }
+    Ok(())
+}
 
+fn build_variants_and_bin(bench_dir: &Path, names: &[&str], profile: &[String]) -> Result<PathBuf, String> {
+    build_variants(bench_dir, names, profile)?;
     build_bin_only(bench_dir, profile)
 }
 
@@ -1153,7 +1058,7 @@ fn run_generated(
             .filter(|n| plan.manifest.nested.get(*n).is_none() && !n.contains('/'))
             .collect();
         if names.is_empty() || !root_names.is_empty() {
-            if let Err(e) = build_flat_variants(bench_dir, &root_names, &profile) {
+            if let Err(e) = build_variants(bench_dir, &root_names, &profile) {
                 eprintln!("error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -1164,7 +1069,7 @@ fn run_generated(
                     continue;
                 }
             }
-            if let Err(e) = build_flat_variants(&bench_dir.join(member), &[], &profile) {
+            if let Err(e) = build_variants(&bench_dir.join(member), &[], &profile) {
                 eprintln!("error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -1306,41 +1211,6 @@ fn check_arm_lib_name(arm: &bench_tree::ArmSource) -> Result<(), String> {
             ))
         },
     }
-}
-
-/// Build the `variants/` directories of a flat tree (the legacy
-/// resolution keeps pointing into their own target dirs).
-fn build_flat_variants(bench_dir: &Path, names: &[&str], profile: &[String]) -> Result<(), String> {
-    let only_dirs = if names.is_empty() { None } else { Some(variant_dirs_for(bench_dir, names)?) };
-    let variants_dir = bench_dir.join("variants");
-    if !variants_dir.exists() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(&variants_dir).map_err(|e| format!("reading variants dir: {e}"))? {
-        let entry = entry.map_err(|e| format!("variants dir entry: {e}"))?;
-        let path = entry.path();
-        if let Some(dirs) = &only_dirs {
-            let dir_name = path
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or("")
-                .to_string();
-            if !dirs.contains(&dir_name) {
-                continue;
-            }
-        }
-        let manifest = path.join("Cargo.toml");
-        if manifest.exists() {
-            eprintln!("  building variant {}...", path.display());
-            cargo_build_at(
-                &manifest,
-                &format!("variant {}", path.display()),
-                profile,
-                None,
-            )?;
-        }
-    }
-    Ok(())
 }
 
 // ── init ──
