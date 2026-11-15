@@ -8,11 +8,18 @@
 //! The arms and the generated driver build in the target directory cargo
 //! resolves for the machine, so every dependency they share is compiled once:
 //! the one `CARGO_TARGET_DIR` or `build.target-dir` names, and otherwise the
-//! mock directory's own `target/`. A run records what it built from cargo's
-//! artifact records, and once the driver has exited and the results are
-//! written it removes those and nothing else in the target, unless
-//! `--keep-builds` asked to keep them for a second run.
+//! mock directory's own `target/`. A run records each package it built, by the
+//! `package_id` of cargo's `compiler-artifact` record and the files that record
+//! names, and once the driver has exited and the results are written it removes
+//! those files, the `deps/` file each is a link of, and the other files and the
+//! fingerprint directory of the metadata hash in that file's name. `--keep-builds`
+//! keeps them for a second run.
+//!
+//! A cdylib has no hash in its file name, so `release/lib<arm>.so` is the same
+//! path for every arm of that name in every tree sharing the target. A package
+//! whose uplifted file now is one this run did not write is left alone.
 
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -33,31 +40,50 @@ pub(crate) fn take_keep_flag<'a>(args: &[&'a str]) -> (Vec<&'a str>, bool) {
     (args.iter().copied().filter(|a| *a != KEEP_BUILDS).collect(), keep)
 }
 
-/// One package cargo built for the run: where its sources are, and what cargo
-/// said it wrote.
+/// Device and inode of a file: which file it is, whatever its name.
+type FileId = (u64, u64);
+
+fn file_id(path: &Path) -> Option<FileId> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// One package cargo built for the run.
 struct Built {
-    name:    String,
-    /// How the package's main source reads in a dependency record: the absolute
-    /// path, and the path from the package directory, which is how rustc writes a
-    /// source under the directory it runs in.
-    sources: [Vec<u8>; 2],
-    files:   Vec<PathBuf>,
+    package_id: String,
+    /// The library or binary name, underscored: the name of its `.d` in `deps/`.
+    crate_name: String,
+    /// What cargo said it wrote, each with the file it was when recorded.
+    files:      Vec<(PathBuf, Option<FileId>)>,
 }
 
 /// What a run built, held until the run is over. Dropping it removes the
 /// builds unless it was asked to keep them.
 pub(crate) struct Builds {
-    keep:  bool,
-    built: Vec<Built>,
+    keep:    bool,
+    built:   Vec<Built>,
     /// The `target/mock-arms/<bench>/<arm>` directories the driver is pointed at.
-    links: Vec<PathBuf>,
+    links:   Vec<PathBuf>,
     /// `<benches>/target`, pruned when the links leave it empty.
     links_root: PathBuf,
 }
 
 impl Builds {
     pub(crate) fn new(bench_dir: &Path, keep: bool) -> Self {
-        Self { keep, built: Vec::new(), links: Vec::new(), links_root: bench_dir.join("target") }
+        Self {
+            keep,
+            built: Vec::new(),
+            links: Vec::new(),
+            links_root: bench_dir.join("target"),
+        }
     }
 
     /// Remember what the build of `manifest` wrote, from its cargo output.
@@ -81,6 +107,7 @@ impl Builds {
         let dylib = built
             .iter()
             .flat_map(|b| b.files.iter())
+            .map(|(f, _)| f)
             .find(|f| f.extension().is_some_and(|e| e == std::env::consts::DLL_EXTENSION))
             .cloned()
             .ok_or_else(|| format!("arm {}/arms/{} built no cdylib", arm.bench, arm.arm))?;
@@ -99,8 +126,23 @@ impl Builds {
     }
 
     fn sweep(&mut self) {
-        for built in self.built.drain(..) {
-            remove_built(&built);
+        let built = std::mem::take(&mut self.built);
+        // every file any package of this run wrote: an arm built after another
+        // of the same library name owns the one path they share, and that is
+        // still this run's
+        let ours: HashSet<FileId> = built.iter().flat_map(|b| b.files.iter()).filter_map(|(_, id)| *id).collect();
+        for b in &built {
+            let foreign = b.files.iter().any(|(path, recorded)| {
+                recorded.is_some() && file_id(path).is_some_and(|now| !ours.contains(&now))
+            });
+            if foreign {
+                eprintln!(
+                    "  leaving {}: a build outside this run replaced what it wrote",
+                    b.package_id
+                );
+                continue;
+            }
+            Self::remove(b);
         }
         for dir in self.links.drain(..) {
             let _ = std::fs::remove_dir_all(&dir);
@@ -115,6 +157,62 @@ impl Builds {
             }
         }
     }
+
+    /// Remove what the package wrote and what cargo kept beside it, named by
+    /// file identity and by the hash in the file names, never by a crate name or
+    /// a source path: the uplifted files, the file each is a link of in `deps/`,
+    /// and, where that name carries cargo's metadata hash, the other files of the
+    /// stem and the fingerprint directory of the hash.
+    fn remove(b: &Built) {
+        let ids: Vec<FileId> = b.files.iter().filter_map(|(_, id)| *id).collect();
+        for (path, _) in &b.files {
+            let Some(profile) = path.parent() else { continue };
+            let deps = profile.join("deps");
+            for e in std::fs::read_dir(&deps).into_iter().flatten().flatten() {
+                if file_id(&e.path()).is_some_and(|id| ids.contains(&id)) {
+                    remove_stem(profile, &e.file_name().to_string_lossy(), &b.crate_name);
+                }
+            }
+            let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(path.with_extension("d"));
+        }
+    }
+}
+
+/// Remove the `deps/` file `file` and what shares its stem. A name `<stem>-<hash>`
+/// is one package's alone, so its other files and the fingerprint directory
+/// ending in the hash go too. A name with no hash (a cdylib) is shared by every
+/// package of that library name, so only the file itself and the crate's own
+/// `.d` go, and its fingerprint directory, whose hash is not in any file name,
+/// stays: it is a few small files, and cargo takes a missing output for stale.
+fn remove_stem(profile: &Path, file: &str, crate_name: &str) {
+    let deps = profile.join("deps");
+    let stem = file.split('.').next().unwrap_or(file);
+    match stem.rsplit_once('-') {
+        Some((_, hash)) if is_hash(hash) => {
+            for e in std::fs::read_dir(&deps).into_iter().flatten().flatten() {
+                let n = e.file_name().to_string_lossy().into_owned();
+                if n == stem || n.strip_prefix(stem).is_some_and(|r| r.starts_with('.')) {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+            for e in std::fs::read_dir(profile.join(".fingerprint")).into_iter().flatten().flatten() {
+                let n = e.file_name().to_string_lossy().into_owned();
+                if n.rsplit_once('-').is_some_and(|(_, h)| h == hash) {
+                    let _ = std::fs::remove_dir_all(e.path());
+                }
+            }
+        },
+        _ => {
+            let _ = std::fs::remove_file(deps.join(file));
+            let _ = std::fs::remove_file(deps.join(format!("{crate_name}.d")));
+        },
+    }
+}
+
+/// `s` is cargo's metadata hash: sixteen hex digits.
+fn is_hash(s: &str) -> bool {
+    s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 impl Drop for Builds {
@@ -126,11 +224,11 @@ impl Drop for Builds {
 }
 
 /// The packages `manifest` built according to cargo's `compiler-artifact`
-/// records, with the files each named.
+/// records, one per package id, with the files each named.
 fn artifacts_of(manifest: &Path, stdout: &[u8]) -> Vec<Built> {
     let manifest = manifest.canonicalize().unwrap_or_else(|_| manifest.to_path_buf());
-    let manifest_dir = manifest.parent().map(Path::to_path_buf).unwrap_or_default();
-    String::from_utf8_lossy(stdout)
+    let mut out: Vec<Built> = Vec::new();
+    for v in String::from_utf8_lossy(stdout)
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
         .filter(|v| v.get("reason").and_then(|r| r.as_str()) == Some("compiler-artifact"))
@@ -139,118 +237,30 @@ fn artifacts_of(manifest: &Path, stdout: &[u8]) -> Vec<Built> {
                 .and_then(|m| m.as_str())
                 .is_some_and(|m| Path::new(m).canonicalize().unwrap_or_else(|_| PathBuf::from(m)) == manifest)
         })
-        .filter_map(|v| {
-            let name = v.get("target")?.get("name")?.as_str()?.to_string();
-            let mut files: Vec<PathBuf> = v
-                .get("filenames")
-                .and_then(|f| f.as_array())
-                .map(|a| a.iter().filter_map(|f| f.as_str()).map(PathBuf::from).collect())
-                .unwrap_or_default();
-            if let Some(exe) = v.get("executable").and_then(|e| e.as_str()) {
-                files.push(PathBuf::from(exe));
-            }
-            let src = PathBuf::from(v.get("target")?.get("src_path")?.as_str()?);
-            let rel = src.strip_prefix(&manifest_dir).unwrap_or(&src).to_path_buf();
-            let bytes = |p: &Path| p.to_string_lossy().into_owned().into_bytes();
-            Some(Built { name, sources: [bytes(&src), bytes(&rel)], files })
-        })
-        .collect()
-}
-
-/// `s` is `<sixteen hex digits>`, cargo's metadata hash.
-fn is_hash(s: &str) -> bool {
-    s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-/// Whether `name` is `<crate>` or `<crate>-<hash>` for a fingerprint directory.
-fn names_the_crate(name: &str, crates: &[String]) -> bool {
-    crates.iter().any(|c| {
-        name == c || name.strip_prefix(c.as_str()).and_then(|r| r.strip_prefix('-')).is_some_and(is_hash)
-    })
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    !needle.is_empty() && haystack.windows(needle.len()).any(|w| w == needle)
-}
-
-/// Whether the dependency record in `file` names the package's own source.
-fn names_the_source(file: &Path, built: &Built) -> bool {
-    std::fs::read(file).is_ok_and(|d| built.sources.iter().any(|s| contains(&d, s)))
-}
-
-/// Whether `a` and `b` are one file, which is what a hard link makes of the
-/// uplifted artifact and the one cargo keeps in `deps/`.
-fn same_file(a: &Path, b: &Path) -> bool {
-    #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
-        match (std::fs::metadata(a), std::fs::metadata(b)) {
-            (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
-            _ => false,
+        let Some(package_id) = v.get("package_id").and_then(|p| p.as_str()) else { continue };
+        let Some(crate_name) = v.get("target").and_then(|t| t.get("name")).and_then(|n| n.as_str()) else {
+            continue;
+        };
+        let mut paths: Vec<PathBuf> = v
+            .get("filenames")
+            .and_then(|f| f.as_array())
+            .map(|a| a.iter().filter_map(|f| f.as_str()).map(PathBuf::from).collect())
+            .unwrap_or_default();
+        if let Some(exe) = v.get("executable").and_then(|e| e.as_str()) {
+            paths.push(PathBuf::from(exe));
+        }
+        let files = paths.into_iter().map(|p| (p.clone(), file_id(&p))).collect::<Vec<_>>();
+        match out.iter_mut().find(|b| b.package_id == package_id) {
+            Some(b) => b.files.extend(files),
+            None => out.push(Built {
+                package_id: package_id.to_string(),
+                crate_name: crate_name.replace('-', "_"),
+                files,
+            }),
         }
     }
-    #[cfg(not(unix))]
-    {
-        a.file_name() == b.file_name() && b.is_file()
-    }
-}
-
-/// Remove what cargo wrote for one package of the run, and only that.
-///
-/// In `deps/` that is the file the uplifted artifact is a link of, and the
-/// `<crate>.d` beside it. In `.fingerprint/` it is the directory of the crate's
-/// name whose dependency record names the package's own source. A dependency
-/// that shares the arm's crate name has a record naming another source and is
-/// left alone, and where one is matched anyway the loss is a rebuild, because
-/// cargo takes a missing output for a stale one.
-fn remove_built(built: &Built) {
-    let underscored = built.name.replace('-', "_");
-    let fingerprint_names = [built.name.clone(), underscored.clone()];
-    let mut profile_dirs: Vec<PathBuf> =
-        built.files.iter().filter_map(|f| f.parent().map(Path::to_path_buf)).collect();
-    profile_dirs.sort();
-    profile_dirs.dedup();
-    for profile in &profile_dirs {
-        let deps = profile.join("deps");
-        let mut stems: Vec<String> = vec![underscored.clone()];
-        if let Ok(entries) = std::fs::read_dir(&deps) {
-            for e in entries.flatten() {
-                if built.files.iter().any(|f| same_file(f, &e.path())) {
-                    if let Some(stem) = e.file_name().to_string_lossy().split('.').next() {
-                        stems.push(stem.to_string());
-                    }
-                    let _ = std::fs::remove_file(e.path());
-                }
-            }
-        }
-        for stem in stems {
-            let record = deps.join(format!("{stem}.d"));
-            if names_the_source(&record, built) {
-                let _ = std::fs::remove_file(record);
-            }
-        }
-        if let Ok(entries) = std::fs::read_dir(profile.join(".fingerprint")) {
-            for e in entries.flatten() {
-                let name = e.file_name().to_string_lossy().into_owned();
-                if !names_the_crate(&name, &fingerprint_names) {
-                    continue;
-                }
-                let ours = std::fs::read_dir(e.path()).is_ok_and(|inner| {
-                    inner.flatten().any(|f| {
-                        f.file_name().to_string_lossy().starts_with("dep-") && names_the_source(&f.path(), built)
-                    })
-                });
-                if ours {
-                    let _ = std::fs::remove_dir_all(e.path());
-                }
-            }
-        }
-    }
-    // the uplifted files cargo named, and the `.d` it writes beside each
-    for f in &built.files {
-        let _ = std::fs::remove_file(f);
-        let _ = std::fs::remove_file(f.with_extension("d"));
-    }
+    out
 }
 
 #[cfg(test)]

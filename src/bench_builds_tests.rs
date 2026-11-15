@@ -76,15 +76,17 @@ fn is_bench_core_rlib(name: &str) -> bool {
     name.starts_with("libmockspace_bench_core-") && name.ends_with(".rlib")
 }
 
-fn is_a_bench_build(name: &str) -> bool {
-    name.starts_with("mockspace-bench-driver-")
-        || name.starts_with("mockspace_bench_driver_")
-        || name == "liba.so"
-        || name == "libb.so"
-        || name.starts_with("liba-")
-        || name.starts_with("libb-")
-        || name.starts_with("a-")
-        || name.starts_with("b-")
+/// Whether `name` is something cargo wrote for one of `crates` (crate names with
+/// underscores): an artifact, a dependency record or a fingerprint directory.
+fn is_a_build_of(name: &str, crates: &[String]) -> bool {
+    crates.iter().any(|c| {
+        let stem = name.split('.').next().unwrap_or(name);
+        let stem = stem.strip_prefix("lib").unwrap_or(stem);
+        let dashed = c.replace('_', "-");
+        stem == c
+            || stem.strip_prefix(c.as_str()).is_some_and(|r| r.starts_with('-'))
+            || stem.strip_prefix(dashed.as_str()).is_some_and(|r| r.starts_with('-'))
+    })
 }
 
 /// One bench of two arms, run through `mock bench run`. The shared target is
@@ -110,11 +112,17 @@ fn a_run_leaves_no_arm_or_driver_build_and_compiles_the_shared_dependency_once()
              harness_runs = 1\ncooldowns_ms = [0]\n"
         ),
     );
+    // crate names of this test alone, so a build beside it in the shared target
+    // is not mistaken for ours
+    let arms = [format!("armx{}a", std::process::id()), format!("armx{}b", std::process::id())];
     write(
         &bench_dir.join("pair").join("bench.toml"),
-        "title = \"Pair\"\nworkload = \"default\"\narms = [\"a\", \"b\"]\npoints = [64]\nmaster_seed = 7\n",
+        &format!(
+            "title = \"Pair\"\nworkload = \"default\"\narms = [\"{}\", \"{}\"]\npoints = [64]\nmaster_seed = 7\n",
+            arms[0], arms[1]
+        ),
     );
-    for arm in ["a", "b"] {
+    for arm in &arms {
         write(
             &bench_dir.join("pair").join("arms").join(arm).join("src").join("lib.rs"),
             &ARM_LIB.replace("NAME", arm),
@@ -134,8 +142,15 @@ fn a_run_leaves_no_arm_or_driver_build_and_compiles_the_shared_dependency_once()
     );
 
     // no arm target, no driver build, in the fixture or the shared target
-    let left = found(&[root, &shared], &is_a_bench_build);
-    let left: Vec<_> = left.iter().filter(|p| !p.starts_with(bench_dir.join("results"))).collect();
+    let driver = crate::bench_gen::driver_name(&bench_dir);
+    let crates = [arms[0].clone(), arms[1].clone(), driver.clone(), driver.replace('-', "_")];
+    // builds only: not the arms' source directories, nor the fingerprint directory
+    // of a cdylib arm, whose hash is in no file name and which is a few small files
+    let left = found(&[&bench_dir.join("target"), &shared], &|n| is_a_build_of(n, &crates));
+    let left: Vec<_> = left
+        .iter()
+        .filter(|p| !p.components().any(|c| c.as_os_str() == ".fingerprint" || c.as_os_str() == "mockspace-bench-arms"))
+        .collect();
     assert!(left.is_empty(), "arm or driver builds left behind: {left:#?}");
     assert!(!bench_dir.join("target").join("mock-arms").exists(), "the per-arm target stays");
     assert!(!own_target.join("mockspace-bench").join("target").exists(), "the driver's own target stays");
@@ -163,86 +178,166 @@ fn the_keep_flag_is_taken_off_the_driver_args_before_the_separator_only() {
     assert_eq!(take_keep_flag(&["--", KEEP_BUILDS]).1, false, "after `--` it is not ours");
 }
 
-fn built(name: &str, src: &Path, files: Vec<PathBuf>) -> Built {
-    Built {
-        name: name.into(),
-        sources: [src.display().to_string().into_bytes(), b"src/lib.rs".to_vec()],
-        files,
-    }
-}
-
-/// What a sweep removes is the package's own: a dependency of the same crate
-/// name, whose dependency record names a source elsewhere, stays.
-#[test]
-fn a_sweep_removes_the_arms_files_and_leaves_a_dependency_of_the_same_name() {
-    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
-    let release = tmp.path().join("target").join("release");
-    let arm_src = tmp.path().join("mock").join("pair").join("a").join("src").join("lib.rs");
-    let other = "fedcba9876543210";
-    let deps = release.join("deps");
-    let fp = release.join(".fingerprint");
-    // the arm, a cdylib named `a`: cargo keeps `deps/liba.so` and links it up
-    write(&deps.join("liba.so"), "arm");
-    std::fs::hard_link(deps.join("liba.so"), release.join("liba.so")).unwrap();
-    write(&release.join("liba.d"), "arm");
-    write(&deps.join("a.d"), &format!("deps/a.d: {}\n", arm_src.display()));
-    write(&fp.join("a-0123456789abcdef").join("dep-lib-a"), &arm_src.display().to_string());
-    // a dependency also named `a`, from elsewhere
-    write(&deps.join(format!("liba-{other}.rlib")), "dependency");
-    write(&deps.join(format!("liba-{other}.d")), &format!("deps/liba-{other}.d: /registry/a/src/main.rs\n"));
-    write(&fp.join(format!("a-{other}")).join("dep-lib-a"), "/registry/a/other.rs");
-    write(&release.join("libzed.so"), "someone else's");
-
-    let mut builds = Builds::new(&tmp.path().join("mock"), false);
-    builds.built.push(built("a", &arm_src, vec![release.join("liba.so")]));
-    drop(builds);
-
-    let left = found(&[tmp.path()], &|_| true);
-    let left: Vec<String> = left
-        .iter()
-        .filter(|p| p.is_file())
-        .map(|p| p.strip_prefix(tmp.path()).unwrap().display().to_string())
-        .collect();
-    assert_eq!(
-        left,
-        vec![
-            format!("target/release/.fingerprint/a-{other}/dep-lib-a"),
-            format!("target/release/deps/liba-{other}.d"),
-            format!("target/release/deps/liba-{other}.rlib"),
-            "target/release/libzed.so".to_string(),
-        ]
+/// A package of its own workspace, `kind` the list of its `[lib]` crate types, in `dir`.
+fn crate_at(dir: &Path, name: &str, version: &str, kind: &str, deps: &str) -> PathBuf {
+    write(
+        &dir.join("Cargo.toml"),
+        &format!(
+            "[workspace]\n\n[package]\nname = \"{name}\"\nversion = \"{version}\"\nedition = \"2021\"\n\
+             publish = false\n\n[lib]\ncrate-type = [{kind}]\n\n[dependencies]\n{deps}"
+        ),
     );
+    write(&dir.join("src").join("lib.rs"), "pub fn f() {}\n");
+    dir.join("Cargo.toml")
 }
 
-/// A binary keeps a hashed file in `deps/`, and its record names its source as
-/// rustc wrote it, relative to the package directory.
+/// Build `manifest` into `target` the way the run does, and return cargo's output.
+fn cargo_build(manifest: &Path, target: &Path) -> Vec<u8> {
+    let out = std::process::Command::new("cargo")
+        .args(["build", "--release", "--offline", "--message-format=json-render-diagnostics"])
+        .arg("--target-dir")
+        .arg(target)
+        .arg("--manifest-path")
+        .arg(manifest)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    out.stdout
+}
+
+fn builds(tmp: &Path, keep: bool) -> Builds {
+    Builds::new(&tmp.join("mock").join("benches"), keep)
+}
+
+/// Entries of `dir` whose names satisfy `pred`.
+fn entries(dir: &Path, pred: &dyn Fn(&str) -> bool) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| pred(n))
+        .collect();
+    v.sort();
+    v
+}
+
+/// A binary package of its own workspace, in `dir`.
+fn bin_at(dir: &Path, name: &str) -> PathBuf {
+    write(
+        &dir.join("Cargo.toml"),
+        &format!("[workspace]\n\n[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n"),
+    );
+    write(&dir.join("src").join("main.rs"), "fn main() {}\n");
+    dir.join("Cargo.toml")
+}
+
+/// A dependency named `a`, as a registry crate reads (`src/lib.rs`), built in the
+/// shared target, then the package `make` writes, also named `a`, built and
+/// swept as an arm or the driver is. Returns the scratch guard and the target's
+/// `release` directory, after the sweep.
+fn sweep_beside_a_same_named_dependency(make: &dyn Fn(&Path) -> PathBuf) -> (tempfile::TempDir, PathBuf) {
+    let guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let tmp = guard.path().to_path_buf();
+    let target = tmp.join("target");
+    let release = target.join("release");
+    let dep = crate_at(&tmp.join("registry").join("a-1.0.0"), "a", "1.0.0", "\"rlib\"", "");
+    let user = crate_at(
+        &tmp.join("user"),
+        "user",
+        "0.0.0",
+        "\"rlib\"",
+        &format!("a = {{ path = {:?} }}\n", dep.parent().unwrap()),
+    );
+    let ours = make(&tmp.join("ours"));
+    cargo_build(&user, &target);
+    let mut run = builds(&tmp, false);
+    run.record(&ours, &cargo_build(&ours, &target));
+    let a = |n: &str| n.starts_with("a-");
+    assert_eq!(entries(&release.join(".fingerprint"), &a).len(), 2, "the package's and the dependency's");
+    drop(run);
+    (guard, release)
+}
+
+/// What a sweep removes is the package it built, and a dependency of the same
+/// crate name stays whatever source it reads: `src/lib.rs`, like every arm.
+/// The arm is a cdylib, which has no hash in its file names, so its fingerprint
+/// directory is the one thing left of it: the same directory serves every arm
+/// of that name, whichever tree built it.
 #[test]
-fn a_sweep_removes_a_hashed_binary_and_its_relative_source_record() {
+fn a_sweep_removes_a_hashless_arm_and_leaves_a_dependency_of_the_same_crate_name() {
+    let (_guard, release) =
+        sweep_beside_a_same_named_dependency(&|dir| crate_at(dir, "a", "0.0.0", "\"cdylib\"", ""));
+    assert!(!release.join("liba.so").exists(), "the arm's uplifted file");
+    assert!(!release.join("deps").join("liba.so").exists(), "the arm's own file");
+    assert!(!release.join("deps").join("a.d").exists(), "the arm's record");
+    let deps = entries(&release.join("deps"), &|n| n.starts_with("a-") || n.starts_with("liba-"));
+    assert_eq!(deps.len(), 3, "the dependency's record, rlib and rmeta stay: {deps:?}");
+}
+
+/// A binary's file names carry the metadata hash, so the files of its stem and
+/// its fingerprint directory go by that hash, and the dependency's, of the same
+/// crate name, stay.
+#[test]
+fn a_sweep_removes_a_hashed_binary_by_its_hash_and_leaves_a_dependency_of_the_same_crate_name() {
+    let (_guard, release) = sweep_beside_a_same_named_dependency(&|dir| bin_at(dir, "a"));
+    assert!(!release.join("a").exists(), "the binary's uplifted file");
+    let fingerprints = entries(&release.join(".fingerprint"), &|n| n.starts_with("a-"));
+    assert_eq!(fingerprints.len(), 1, "the binary's fingerprint goes and the dependency's stays: {fingerprints:?}");
+    let deps = entries(&release.join("deps"), &|n| n.starts_with("a-") || n.starts_with("liba-"));
+    assert_eq!(deps.len(), 3, "only the dependency's record, rlib and rmeta stay: {deps:?}");
+    let record = entries(&release.join("deps"), &|n| n.starts_with("a-") && n.ends_with(".d"));
+    let text = std::fs::read_to_string(release.join("deps").join(&record[0])).unwrap();
+    assert!(text.contains("a-1.0.0"), "the survivor is the dependency's: {text}");
+}
+
+/// A cdylib has no hash in its name, so a build of another tree, or an earlier
+/// kept run, owns `release/lib<arm>.so` once it has written it. A sweep that did
+/// not write what is there leaves it.
+#[test]
+fn a_sweep_leaves_the_file_a_build_outside_the_run_replaced() {
     let tmp = mockspace_manifest::scratch::tempdir().unwrap();
-    let release = tmp.path().join("target").join("release");
-    let src = tmp.path().join("gen").join("src").join("lib.rs");
-    let deps = release.join("deps");
-    let hash = "0123456789abcdef";
-    write(&deps.join(format!("drv_x-{hash}")), "bin");
-    std::fs::hard_link(deps.join(format!("drv_x-{hash}")), release.join("drv-x")).unwrap();
-    write(&release.join("drv-x.d"), "x");
-    write(&deps.join(format!("drv_x-{hash}.d")), "deps/drv_x.d: src/lib.rs\n");
-    write(&release.join(".fingerprint").join(format!("drv-x-{hash}")).join("dep-bin-drv-x"), "src/lib.rs");
-    let mut builds = Builds::new(&tmp.path().join("mock"), false);
-    builds.built.push(built("drv-x", &src, vec![release.join("drv-x")]));
-    drop(builds);
-    let left: Vec<PathBuf> = found(&[&release], &|_| true).into_iter().filter(|p| p.is_file()).collect();
-    assert!(left.is_empty(), "{left:#?}");
+    let target = tmp.path().join("target");
+    let release = target.join("release");
+    let arm = crate_at(&tmp.path().join("arm"), "a", "0.0.0", "\"cdylib\"", "");
+    let mut run = builds(tmp.path(), false);
+    run.record(&arm, &cargo_build(&arm, &target));
+    // another tree's arm of the same name, built after this one
+    for f in [release.join("liba.so"), release.join("deps").join("liba.so")] {
+        std::fs::remove_file(&f).unwrap();
+        write(&f, "another tree's arm");
+    }
+    drop(run);
+    assert_eq!(std::fs::read_to_string(release.join("liba.so")).unwrap(), "another tree's arm");
+    assert!(release.join("deps").join("liba.so").is_file());
+}
+
+/// Two arms of one library name in one run write the one path between them, and
+/// both are the run's: the sweep removes both.
+#[test]
+fn a_sweep_removes_every_arm_of_one_library_name_the_run_built() {
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
+    let target = tmp.path().join("target");
+    let release = target.join("release");
+    let first = crate_at(&tmp.path().join("one").join("a"), "a", "0.0.0", "\"cdylib\"", "");
+    let second = crate_at(&tmp.path().join("two").join("a"), "a", "0.0.0", "\"cdylib\"", "");
+    let mut run = builds(tmp.path(), false);
+    run.record(&first, &cargo_build(&first, &target));
+    run.record(&second, &cargo_build(&second, &target));
+    assert!(release.join("liba.so").is_file());
+    drop(run);
+    assert!(!release.join("liba.so").exists());
+    assert!(!release.join("deps").join("liba.so").exists());
 }
 
 /// `--keep-builds` leaves the builds.
 #[test]
 fn keeping_the_builds_removes_nothing() {
     let tmp = mockspace_manifest::scratch::tempdir().unwrap();
-    let release = tmp.path().join("target").join("release");
-    write(&release.join("libx.so"), "arm");
-    let mut builds = Builds::new(&tmp.path().join("mock"), true);
-    builds.built.push(built("x", &tmp.path().join("x"), vec![release.join("libx.so")]));
-    drop(builds);
-    assert!(release.join("libx.so").is_file());
+    let target = tmp.path().join("target");
+    let arm = crate_at(&tmp.path().join("arm"), "a", "0.0.0", "\"cdylib\"", "");
+    let mut run = builds(tmp.path(), true);
+    run.record(&arm, &cargo_build(&arm, &target));
+    drop(run);
+    assert!(target.join("release").join("liba.so").is_file());
 }
