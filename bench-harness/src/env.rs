@@ -5,7 +5,7 @@
 
 //! Environment metadata captured once per harness run.
 //!
-//! Recorded into the CSV cache alongside each sample so historical
+//! Recorded into each run's `meta.json` beside its samples so historical
 //! comparisons can isolate hardware / toolchain / commit drift.
 //! Round 1 ships the type and a stub collector that returns empty
 //! strings; Round 3 wires up the real `sysctl` / `/proc/cpuinfo` /

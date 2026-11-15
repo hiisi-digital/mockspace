@@ -8,7 +8,8 @@
 //! Loads variant cdylibs in subprocess isolation, drives them with
 //! workload programs, collects per-batch samples, validates outputs
 //! across variants, runs Pareto + multi-dim analysis, and emits
-//! findings.md plus a CSV cache for historical comparison.
+//! each run's samples, meta, `report.md` and `summary.tsv` into a run directory
+//! of its own, which the history is read across.
 //!
 //! ## Two entry points, and only one of them validates
 //!
@@ -192,9 +193,7 @@ pub fn run(
 /// [`generate_report`], and write it to `path`.
 ///
 /// `mode` selects which subset of samples feeds the analysis.
-/// Mockspace consumers typically call this twice (once per mode) and
-/// emit `findings_warm.md` + `findings_cold.md`, or pick the mode
-/// most representative of their workload.
+/// The driver calls it once, for `"warm"`, writing the run's `report.md`.
 ///
 /// **Throughput tables**: this variant does not auto-fill
 /// `DataSet.meta.ops_per_call`, so the report skips the throughput /
@@ -203,12 +202,12 @@ pub fn run(
 pub fn write_report(result: &BenchResult, mode: &str, path: &str) -> Result<(), BenchError> {
     let ds = result.dataset(mode);
     let md = generate_report(&ds, &result.title);
-    std::fs::write(path, md).map_err(|e| BenchError::io("writing findings.md", e))?;
+    std::fs::write(path, md).map_err(|e| BenchError::io("writing report.md", e))?;
     Ok(())
 }
 
 /// Routine-aware [`write_report`]: auto-fills `meta.ops_per_call`
-/// from the [`RoutineSpec`] bridge so `findings.md` includes
+/// from the [`RoutineSpec`] bridge so the report includes
 /// throughput / Gops/s tables when the routine declares ops.
 pub fn write_report_for_routine(
     result: &BenchResult,
@@ -218,11 +217,11 @@ pub fn write_report_for_routine(
 ) -> Result<(), BenchError> {
     let ds = result.dataset_for_routine(routine, mode);
     let md = generate_report(&ds, &result.title);
-    std::fs::write(path, md).map_err(|e| BenchError::io("writing findings.md", e))?;
+    std::fs::write(path, md).map_err(|e| BenchError::io("writing report.md", e))?;
     Ok(())
 }
 
-/// Generate `findings.md` from a CSV cache file without re-running
+/// Generate a run's report from its `samples.csv` without re-running
 /// the orchestrator (#604: v1-parity bench findings markdown
 /// generator).
 ///

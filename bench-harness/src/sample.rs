@@ -5,7 +5,7 @@
 
 //! Per-call timing record + run-level result aggregate.
 //!
-//! Field shape mirrors polka-dots' `harness::Sample` so the CSV cache
+//! Field shape mirrors polka-dots' `harness::Sample` so the samples CSV
 //! and downstream analysis (Round 5) can read v1 caches written by
 //! polka-dots. Round 3 emits these from the orchestrator; Round 5
 //! aggregates them into `analysis::DataSet`.
@@ -86,7 +86,7 @@ pub struct Sample {
 ///
 /// Round 1 ships the shape; Round 3 starts populating
 /// [`Self::samples`]; Round 5 attaches analysis output; Round 6
-/// attaches the `findings.md` path.
+/// attaches the `report.md` path.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct BenchResult {
     /// Title of the bench run, copied from the [`crate::BenchConfig`].
@@ -98,7 +98,7 @@ pub struct BenchResult {
     /// Path to the CSV the orchestrator wrote, if any. Empty when
     /// the result has not yet been persisted.
     pub cache_path:  String,
-    /// Path to the `findings.md` produced by report generation.
+    /// Path to the `report.md` produced by report generation.
     /// Empty until [`crate::write_report`] runs.
     pub report_path: String,
 }

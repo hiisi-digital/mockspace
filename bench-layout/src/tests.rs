@@ -145,25 +145,38 @@ fn runs_are_found_oldest_first_and_odd_directories_are_passed_over() {
     std::fs::remove_dir_all(&root).ok();
 }
 
-/// Outside `results/`, a file named like an output is one only beside its
-/// meta: input data under `support/` and a golden file under an arm's `tests/`
-/// carry the shape and are not outputs, and the same names beside a meta are.
+/// Inside a crate (under `support/`, under `arms/`, or below a directory with a
+/// `Cargo.toml`), a file named like an output is one only beside its meta:
+/// input data and golden files there carry the shape and are not outputs.
 #[test]
-fn an_output_shaped_file_counts_only_beside_its_meta() {
-    for p in ["support/data/input_n64.csv", "hash/arms/fnv/tests/golden_n64_report.md", "atomic_inc_n1024.csv"] {
-        assert_eq!(among(p, &[]), Placement::NotOutput, "{p}");
+fn inside_a_crate_an_output_shaped_file_counts_only_beside_its_meta() {
+    let engine = ["engine/Cargo.toml"];
+    for (p, present) in [
+        ("support/data/input_n64.csv", &[][..]),
+        ("hash/arms/fnv/tests/golden_n64_report.md", &[][..]),
+        ("engine/data/table_n64.csv", &engine[..]),
+    ] {
+        assert_eq!(among(p, present), Placement::NotOutput, "{p}");
     }
     assert_eq!(
         among("support/data/input_n64.csv", &["support/data/input_n64.meta.json"]),
         Placement::Stray(Stray::Outside)
     );
-    assert_eq!(
-        among("atomic_inc_n1024.csv", &["atomic_inc_n1024.meta.json"]),
-        legacy("atomic_inc", "atomic_inc", 1024, Part::Samples)
-    );
     assert_eq!(among("frame_wide/heavy_n65536.meta.json", &[]), Placement::Stray(Stray::Outside), "a meta is its own anchor");
-    // Under `results/` and in a ledger the meta is not asked: those are outputs
-    // by where they sit.
+}
+
+/// Outside a crate, a runner of its own wrote bare CSVs with no meta beside
+/// them, and those are outputs: at the bench root they translate, anywhere
+/// else they are strays. A `Cargo.toml` at the bench root does not make the
+/// whole tree a crate.
+#[test]
+fn outside_a_crate_a_bare_output_is_still_an_output() {
+    assert_eq!(among("atomic_inc_n1024.csv", &[]), legacy("atomic_inc", "atomic_inc", 1024, Part::Samples));
+    assert_eq!(among("atomic_inc_n1024.csv", &["Cargo.toml"]), legacy("atomic_inc", "atomic_inc", 1024, Part::Samples));
+    assert_eq!(among("runs/run1/rsb_n256.csv", &[]), Placement::Stray(Stray::Outside));
+    assert_eq!(among("frame_wide/heavy_n65536_findings.md", &[]), Placement::Stray(Stray::Outside));
+    // Under `results/` and in a ledger the meta is never asked: those are
+    // outputs by where they sit.
     assert_eq!(among("results/hash/hash_n64.csv", &[]), legacy("hash", "hash", 64, Part::Samples));
     assert_eq!(among(".bench_history/hash_n64.tsv", &[]), legacy("hash", "hash", 64, Part::History));
 }

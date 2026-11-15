@@ -36,7 +36,7 @@ use crate::core::RoutineBridge;
 /// };
 /// ```
 pub struct RoutineSpec {
-    /// Routine display name. Used in CSV cache, findings.md, and CLI
+    /// Routine display name. Used in the samples, the report, and CLI
     /// output. Convention: matches the `Routine` impl type name.
     pub name:   String,
     /// Byte-level dispatch bridge built via
@@ -49,7 +49,7 @@ pub struct RoutineSpec {
 #[derive(Clone, Debug)]
 pub struct VariantSpec {
     /// Short variant name (e.g. `"fnv1a"`, `"xxhash3"`). Used in
-    /// reports and CSV cache.
+    /// reports and the samples.
     pub name:       String,
     /// Filesystem path to the variant cdylib (`.dylib` on macOS,
     /// `.so` on Linux, `.dll` on Windows).

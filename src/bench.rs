@@ -1754,33 +1754,29 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// `test` refuses a runner of the tree's own as `run` and `report` do,
-    /// before it builds anything: a root driver crate is not a crate to test
-    /// beside the arms but the custom runner the generated driver replaces.
+    /// The refusal `run`, `report` and `test` each make first, asked directly:
+    /// a tree carrying a root driver crate is refused, and the control, the
+    /// same tree with the driver taken out and a hooks library and an arm in
+    /// its place, is not.
     #[test]
-    fn every_subcommand_refuses_a_root_driver_crate() {
-        let root = temp_mock("cmd-refuses-root-driver");
+    fn a_root_driver_crate_is_refused_and_a_generated_tree_is_not() {
+        let root = temp_mock("refuses-root-driver");
         let bench_dir = root.join("benches");
         std::fs::create_dir_all(bench_dir.join("src")).unwrap();
         std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
+        std::fs::write(bench_dir.join("src/lib.rs"), "pub fn hooks() {}\n").unwrap();
+        std::fs::create_dir_all(bench_dir.join("hash/arms/fnv/src")).unwrap();
+        std::fs::write(bench_dir.join("hash/arms/fnv/src/lib.rs"), "#![no_std]\n").unwrap();
+        let cfg = Config::from_dir(&root);
+        assert!(refuse_custom_runners(&cfg, &bench_dir).is_ok(), "the control: a tree the generated driver runs");
+
         std::fs::write(
             bench_dir.join("Cargo.toml"),
             "[package]\nname = \"driver\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
         )
         .unwrap();
         std::fs::write(bench_dir.join("src/main.rs"), "fn main() {}\n").unwrap();
-        let cfg = Config::from_dir(&root);
-        for sub in ["test", "run", "report"] {
-            assert_eq!(
-                format!("{:?}", cmd(&cfg, &[sub])),
-                format!("{:?}", ExitCode::FAILURE),
-                "`mock bench {sub}` must refuse a root driver crate"
-            );
-        }
-        assert!(
-            !root.join("target").exists(),
-            "the refusal comes before anything is generated or built"
-        );
+        assert!(refuse_custom_runners(&cfg, &bench_dir).is_err(), "a root driver crate");
         std::fs::remove_dir_all(&root).ok();
     }
 

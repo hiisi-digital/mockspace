@@ -285,11 +285,13 @@ fn old_output(name: &str) -> Option<(&str, Cell, Part)> {
 /// - `history/<bench>/<sweep>_n<point>.tsv`: the nested ledger.
 ///
 /// Every other ledger, every other output and every other file under
-/// `results/` is a [`Stray`]. Outside `results/` an output is only ever a
-/// triple the harness wrote, so a file named like one counts only beside its
-/// `<sweep>_n<point>.meta.json`; a fixture or an input file in a crate that
-/// happens to carry the shape is not an output. `exists` answers whether a path
-/// relative to the bench tree root is there. Callers skip `target/` and `.git/`.
+/// `results/` is a [`Stray`]. Inside a crate, under `support/` or `arms/` or below
+/// any directory holding a `Cargo.toml` other than the bench root, a file named
+/// like an output counts only beside its `<sweep>_n<point>.meta.json`: input
+/// data and golden files there carry the shape and are not outputs. Anywhere
+/// else such a file is one, with its meta or without, since that is where a
+/// runner of its own wrote bare CSVs. `exists` answers whether a path relative
+/// to the bench tree root is there. Callers skip `target/` and `.git/`.
 #[must_use]
 pub fn place(rel: &Path, exists: impl Fn(&Path) -> bool) -> Placement {
     let parts: Vec<&str> = rel.iter().filter_map(|c| c.to_str()).collect();
@@ -325,7 +327,13 @@ pub fn place(rel: &Path, exists: impl Fn(&Path) -> bool) -> Placement {
     }
     if let Some((stem, cell, part)) = old_output(name) {
         let meta = rel.with_file_name(format!("{stem}.meta.json"));
-        if part != Part::Meta && !exists(&meta) {
+        let in_crate = parts.iter().any(|p| *p == "support" || *p == "arms")
+            || rel
+                .ancestors()
+                .skip(1)
+                .filter(|a| !a.as_os_str().is_empty())
+                .any(|a| exists(&a.join("Cargo.toml")));
+        if in_crate && part != Part::Meta && !exists(&meta) {
             return Placement::NotOutput;
         }
         if parts.len() == 1 {

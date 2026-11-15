@@ -64,9 +64,9 @@ checkouts produce the same index once both runs are in, and a report-only pass k
 The generated driver is the only runner. `mock bench run`, `report` and `test` refuse, and the builtin
 lint `a-bench-runs-only-on-the-generated-driver` errors on, a `Cargo.toml` or a `src/main.rs` at the
 bench root; any crate in the tree with a `[[bin]]`, `[[bench]]` or `[[example]]`, a `src/main.rs`, a
-`src/bin/`, or a `benches/` or `examples/` cargo would discover; any script (`.sh`, `.bash`, `.zsh`,
-`.py`, `.nu`, or a file with no extension that opens with a shebang); a `Makefile` or a `justfile`; and
-a `.cargo/config.toml` declaring aliases. `driver::drive` and `DriverRegistry`, the surface a consumer's own
+`src/bin/`, or a `benches/` or `examples/` cargo would discover; any script (any file opening with a shebang, whatever its
+extension, and any `.sh`, `.bash`, `.zsh`, `.py` or `.nu`); a `Makefile` or a `justfile`; and a
+`.cargo/config.toml` declaring aliases or a target `runner`. `driver::drive` and `DriverRegistry`, the surface a consumer's own
 `main` called, are deleted; what a runner did goes in the hooks library.
 
 ## Older layouts and the migration
@@ -96,9 +96,10 @@ hilavitkutin's committed files, copied into `tests/fixtures/bench-migrate/hilavi
 
 A bench and a sweep name each become one directory of every run's path, so the manifest refuses at
 load a name the layout cannot parse back (a slash, a space, a leading dot) and the names the layout
-keeps for itself (`void`, `INDEX.md`, `results`, `history`). Outside `results/`, a file counts as an
-output only beside its `<sweep>_n<point>.meta.json`: input data and golden files that happen to be
-named like an output are not refused.
+keeps for itself (`void`, `INDEX.md`, `results`, `history`). Inside a crate (under `support/`, `arms/`, or below a
+directory with a `Cargo.toml`), a file counts as an output only beside its `<sweep>_n<point>.meta.json`,
+so input data and golden files named like an output are not refused; anywhere else a bare output a
+runner of its own wrote still is.
 
 Each tree's generated driver takes a name of its own, a digest of the tree's path, because the driver
 builds into whatever target directory the cargo configuration around the command names and a shared

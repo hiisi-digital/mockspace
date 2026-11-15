@@ -206,7 +206,7 @@ pub struct DocgenSection {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BenchSection {
-    /// Display title for the bench (used in findings.md).
+    /// Display title for the bench (used in the report).
     pub title:       String,
     /// Workload program identifier (matches a name registered with
     /// the harness's workload module in Round 2).
@@ -908,7 +908,7 @@ pub struct BenchConfig {
     /// The sweep within the bench. Equal to the bench name in a flat
     /// tree, where every section is its own single sweep.
     pub sweep:              String,
-    /// Display title (for findings.md).
+    /// Display title (for the report).
     pub title:              String,
     /// Workload program identifier.
     pub workload:           String,

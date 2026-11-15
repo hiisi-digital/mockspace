@@ -177,7 +177,6 @@ mod tests {
             "history/warm/width-l1_n80003.tsv",
             "results/hash/hash_n64.csv",
             "runs/run1/rsb_n256.csv",
-            "runs/run1/rsb_n256.meta.json",
             "frame_wide/heavy_n65536.meta.json",
             "results/hash/notes.txt",
         ]);
@@ -191,7 +190,6 @@ mod tests {
             "results/hash/hash_n64.csv",
             "results/hash/notes.txt",
             "runs/run1/rsb_n256.csv",
-            "runs/run1/rsb_n256.meta.json",
         ]);
     }
 
@@ -201,7 +199,7 @@ mod tests {
         let m = tmp_msgs("results/hash/hash_n64_findings.md");
         assert!(m[0].contains("mock bench migrate"), "{m:?}");
         assert!(m[0].contains("results/hash/hash_n64/<machine class>/<run>/report.md"), "{m:?}");
-        let m = tmp_msgs("runs/run1/rsb_n256.meta.json");
+        let m = tmp_msgs("runs/run1/rsb_n256.csv");
         assert!(m[0].contains("by hand"), "{m:?}");
         assert!(!m[0].contains("mock bench migrate"), "{m:?}");
     }

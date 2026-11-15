@@ -5,7 +5,7 @@
 
 //! Markdown report generation from analysis results.
 //!
-//! Builds a `findings.md` from a [`crate::analysis::DataSet`]:
+//! Builds a run's `report.md` from a [`crate::analysis::DataSet`]:
 //! header + key findings, methodology, end-to-end + algo-only +
 //! per-cooldown tables, optional throughput / performance-model
 //! tables when `ops_per_call > 0`, statistical comparison with

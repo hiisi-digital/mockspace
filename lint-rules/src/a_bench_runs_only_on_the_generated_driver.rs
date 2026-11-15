@@ -22,11 +22,12 @@
 //!   own: a `[[bin]]`, `[[bench]]` or `[[example]]` table, a `src/main.rs`, a
 //!   `src/bin/` directory, or a `benches/` or `examples/` directory beside its
 //!   manifest where cargo would discover it;
-//! - a script anywhere in the tree: `.sh`, `.bash`, `.zsh`, `.py`, `.nu`, and
-//!   any file with no extension that opens with a shebang (a nutshell script
-//!   among them);
+//! - a script anywhere in the tree: any file that opens with a shebang (`#!`,
+//!   not an inner attribute's `#![`), whatever its extension, a nutshell script
+//!   among them, and any `.sh`, `.bash`, `.zsh`, `.py` or `.nu` file;
 //! - a `Makefile` or a `justfile`;
-//! - a `.cargo/config.toml` (or `.cargo/config`) declaring `[alias]`es.
+//! - a `.cargo/config.toml` (or `.cargo/config`) declaring `[alias]`es or a
+//!   `runner` under a `[target.*]` table.
 //!
 //! What a runner did belongs in the hooks library (`src/lib.rs` at the bench
 //! root, `pub fn hooks()`) and in the `bench.toml` files.
@@ -91,14 +92,14 @@ pub fn bench_runners(view: &View<'_>, bench_dir: &Path) -> Vec<Runner> {
         } else if rel == Path::new("src/main.rs") {
             say("is a `main` of the bench tree's own");
         } else if is_cargo_config(rel) {
-            if has_aliases(view, &file) {
-                say("declares cargo aliases, a way to run the benches by another name");
+            if let Some(why) = cargo_config_runs(view, &file) {
+                say(why);
             }
         } else if RUNNER_FILES.contains(&name) {
             say("is a make or just file, a way to run the benches outside the harness");
         } else if SCRIPT_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
             say("is a script beside the benches, a way to run them outside the harness");
-        } else if !name.contains('.') && view.bytes(&file).is_some_and(|b| b.starts_with(b"#!")) {
+        } else if view.bytes(&file).is_some_and(|b| b.starts_with(b"#!") && !b.starts_with(b"#![")) {
             say("is a script with a shebang beside the benches, a way to run them outside the harness");
         }
     }
@@ -120,13 +121,19 @@ fn is_cargo_config(rel: &Path) -> bool {
         && (name == "config.toml" || name == "config")
 }
 
-/// Whether a cargo configuration file declares any `[alias]`.
-fn has_aliases(view: &View<'_>, file: &Path) -> bool {
-    view.toml(file)
-        .and_then(Result::ok)
-        .and_then(|d| d.get("alias"))
+/// How a cargo configuration file runs something by its own means: an
+/// `[alias]`, or a `runner` under any `[target.<triple>]` or `[target.<cfg>]`
+/// table, which wraps every binary cargo runs.
+fn cargo_config_runs(view: &View<'_>, file: &Path) -> Option<&'static str> {
+    let doc = view.toml(file).and_then(Result::ok)?;
+    if doc.get("alias").and_then(toml::Value::as_table).is_some_and(|t| !t.is_empty()) {
+        return Some("declares cargo aliases, a way to run the benches by another name");
+    }
+    let runner = doc
+        .get("target")
         .and_then(toml::Value::as_table)
-        .is_some_and(|t| !t.is_empty())
+        .is_some_and(|t| t.values().filter_map(toml::Value::as_table).any(|t| t.contains_key("runner")));
+    runner.then_some("declares a target `runner`, which runs every binary cargo starts through it")
 }
 
 /// Why the crate whose manifest is `manifest` in `dir` has a runner of its
@@ -253,7 +260,7 @@ mod tests {
             ("hash/bench.toml", "arms = [\"fnv\"]\n"),
             ("hash/arms/fnv/src/lib.rs", ""),
             ("hash/arms/own/Cargo.toml", "[package]\nname = \"own\"\nversion = \"0.0.0\"\n[lib]\ncrate-type = [\"cdylib\"]\n"),
-            ("hash/arms/own/src/lib.rs", ""),
+            ("hash/arms/own/src/lib.rs", "#![no_std]\n"),
             ("support/mix/Cargo.toml", LIB),
             ("support/mix/src/lib.rs", ""),
             ("support/mix/tests/t.rs", ""),
@@ -294,6 +301,9 @@ mod tests {
             ("ex/examples/e.rs", "fn main() {}\n"),
             ("tabled/Cargo.toml", "[package]\nname = \"t\"\nversion = \"0.0.0\"\n[[example]]\nname = \"e\"\npath = \"e.rs\"\n"),
             (".cargo/config.toml", "[alias]\nbench-all = \"run --bin x\"\n"),
+            ("member/.cargo/config.toml", "[target.x86_64-unknown-linux-gnu]\nrunner = \"taskset -c 2\"\n"),
+            ("tools/run.fish", "#!/usr/bin/env fish\n"),
+            ("tools/bench.pl", "#!/usr/bin/perl\n"),
         ]);
         assert_eq!(runners(&tmp), [
             ".cargo/config.toml",
@@ -305,12 +315,15 @@ mod tests {
             "engine_vs_std/Cargo.toml",
             "ex/Cargo.toml",
             "frame_wide/occupancy.sh",
+            "member/.cargo/config.toml",
             "member/justfile",
             "src/main.rs",
             "stage.sh",
             "tabled/Cargo.toml",
+            "tools/bench.pl",
             "tools/plot.py",
             "tools/run-all",
+            "tools/run.fish",
             "tools/run.nu",
         ]);
     }
