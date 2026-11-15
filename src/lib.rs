@@ -55,6 +55,7 @@ pub mod render;
 pub mod render_agent;
 pub mod render_design;
 pub mod render_md;
+pub mod sketches;
 pub mod suite;
 pub mod tool_catalogue;
 pub mod tool_config;

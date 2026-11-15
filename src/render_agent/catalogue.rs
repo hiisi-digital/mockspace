@@ -79,9 +79,8 @@ pub(crate) fn body(cfg: &Config, pack: &LintPack) -> String {
         format!("\nTOOLS SET HERE, under [tools.<name>] in mockspace.toml\n{tools_set}")
     };
     format!(
-        "## What is available here, and what is checking you\n\n\
-         `mock tools` says what each tool does and `mock lints` lists every lint with its severity and where it comes from. Below are only the names this repository declares, as of the last `cargo mock`; the lints that run at the pack's default are not listed.\n\n\
-         A tool reads its configuration from `[tools.<name>]` in `mockspace.toml`; `mock help <tool>` names the keys it reads, and a key it does not read stops it running.\n\n\
+        "## Tools and lints declared here\n\n\
+         As of the last `cargo mock`; pack defaults are not listed. `mock tools` and `mock lints` give the live lists. A tool reads `[tools.<name>]` in `mockspace.toml`; `mock help <tool>` names its keys, and an unknown key stops it.\n\n\
          ```\nPROJECT TOOLS: {tools_line}\n{tools_set}\nLINTS SET HERE\n{set_here}```\n"
     )
 }

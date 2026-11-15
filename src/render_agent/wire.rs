@@ -44,12 +44,13 @@ pub(crate) fn write_builtin_hook(
 
 /// Generate all builtin agent hooks.
 ///
-/// Writes 5 hooks to both `.claude/hooks/` and `.github/hooks/`:
+/// Writes 6 hooks to both `.claude/hooks/` and `.github/hooks/`:
 /// - check-message.sh
 /// - mockspace-write-guard.sh
 /// - mockspace-reminder.sh
 /// - no-yagni-guard.sh
 /// - mockspace-gate.sh
+/// - mockspace-guide.sh
 pub(crate) fn generate_builtin_hooks(
     cfg: &Config,
     claude_hooks_dir: &Path,
@@ -99,6 +100,15 @@ pub(crate) fn generate_builtin_hooks(
     hooks.push(write_builtin_hook(
         "no-yagni-guard.sh",
         &builtin_no_yagni(),
+        &repo_root,
+        claude_hooks_dir,
+        copilot_hooks_dir,
+        count,
+    ));
+
+    hooks.push(write_builtin_hook(
+        "mockspace-guide.sh",
+        &builtin_guide(cfg),
         &repo_root,
         claude_hooks_dir,
         copilot_hooks_dir,

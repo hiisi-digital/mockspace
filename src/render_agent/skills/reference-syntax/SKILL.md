@@ -1,187 +1,56 @@
 # Reference syntax
 
-A reference is `{{ root::selector }}`, written in any `*.md.tmpl` and in any
-registry field declared to hold one. The rule carries the syntax and this
-project's own roots and namespaces. This is the rest: fields that hold a row,
-the three functions that ask about a thing rather than render it, and how a
-citation is addressed.
+The `reference-syntax` rule has the syntax and this project's roots and namespaces. This is the rest.
 
 ## Fields that hold a row
 
-A field's declared `type` is either a builtin (`string`, `string[]`, `integer`,
-`boolean`, `ref`, `ref[]`, `date`, `time`, `datetime`, `span`) or **the name of a
-namespace**, and the second form makes the field hold references to rows in that
-namespace. `type = "slot"` holds one, `type = "slot[]"` holds several.
-
-The four time types are strings held to one form each, which the gate enforces on
-every row: `date` as `2026-10-28`, `time` as `18:49` (seconds and a fraction of one optional),
-`datetime` as a date and a time joined by `T` or a space with an optional offset
-(`2026-10-27T18:49:00Z`, `2026-10-27 18:49`), and `span` as an ISO 8601 duration
-with at least one part (`P3D`, `PT1H30M`). The form is checked, not the calendar.
-Write the value quoted: a bare TOML date (`when = 2026-10-28`) is refused as `unquoted-time`.
-A namespace may not be named after any of them.
-
-The value is a bare slug, `"display"`, never `"slot::display"`: the type already
-says which namespace, and one thing written two ways is one thing that can
-disagree with itself.
-
-Three things are reported rather than passed:
-
-- **A slug naming no row**, so a relation cannot rot the way a hand-maintained
-  list does.
-- **A type naming neither a builtin nor a namespace**, rather than quietly
-  becoming a string field that constrains nothing.
-- **A target declaring `value_field`**, which renders a value rather than the
-  slug and so cannot carry a relation.
+- A field's `type` is a builtin (`string`, `string[]`, `integer`, `boolean`, `ref`, `ref[]`, `date`, `time`, `datetime`, `span`) or a namespace name: `type = "slot"` holds one slug of `slot`, `"slot[]"` several. The value is a bare slug (`"display"`), never `"slot::display"`.
+- Time types are quoted strings in one form each: `date` `2026-10-28`; `time` `18:49`, seconds and a fraction of one optional; `datetime` date and time joined by `T` or a space, optional offset; `span` an ISO 8601 duration (`P3D`, `PT1H30M`). A bare TOML date is `unquoted-time`. No namespace may take these names.
+- Reported: a slug naming no row, a type naming neither builtin nor namespace, a target declaring `value_field`.
 
 ## One relation field, typed `ref[]`
-
-A namespace relates its rows to other rows through **one field typed `ref[]`**,
-conventionally `related`, and every row it relates to goes in it, whichever
-namespace that row sits in:
 
 ```toml
 related = ["tenet::engine_time", "bevy::time_step", "research::202611010100_bevy-reference::NOTES::#time"]
 ```
 
-An item of two segments, a declared namespace and a slug, is a link to that row.
-An item of three or more is a file citation into a root, checked as in
-[Addressing a citation](#addressing-a-citation). The two cannot be mistaken for
-each other, and each is held to its own rule: a link naming no row is
-`unknown-row-reference`, and one whose slug is not a slug is
-`malformed-row-reference`. Only the first is scoped: a link naming no row gates the
-commit or push that changes the file holding the link, and is a warning on a plain
-run or one that leaves that file alone, so a row can be retired before every
-citation of it is gone. A template citing a row is scoped the same way, to the
-template. A slug that is not a slug, and every other finding, gates every run.
+- Two segments (`<ns>::<slug>`) is a link; three or more a citation. A link naming no row is `unknown-row-reference` (gates the commit or push of the file or template holding it, a warning otherwise, so a row can retire first); a bad slug is `malformed-row-reference` (always gates).
+- Never a field per target namespace. A namespace-typed field is for a value that is by nature one namespace's.
+- Write a link once; `{{ refsto(tenet::engine_time) }}` and `cargo mock links tenet::engine_time` derive the other end. Never add the inverse.
 
-**A field per target namespace (`bevy`, `ikiuni`, `canon`) is wrong.** It turns
-the schema into a list of places a relation may be written, lets one relation be
-written twice, and asks for a new field every time a namespace is added. A field
-typed as a namespace is for a field that is by its nature one namespace's, such
-as a slot an answer fills. A general "related to" is the `ref[]` field.
+## Field values
 
-**A link is written once, on one row, and the other end is derived, never
-written.** `{{ refsto(tenet::engine_time) }}` and
-`cargo mock links tenet::engine_time` list what links to the row and what it
-links to, each with the field that states it. Do not add the inverse to the
-other row.
-
-## The values a field takes
-
-`values` lists a closed set, as strings, held in the field's own type: the schema
-makes an `enum` of strings, of numbers on an `integer` and of `true` and `false`
-on a `boolean`. On an `integer`, `min` and `max` give its range, each optional;
-with `values` beside them, both hold. These are reported at the declaration
-rather than left to fail at every row:
-
-- **A bound on a field that is not an `integer`**, or a `min` above its `max`,
-  as `misplaced-field-bound`.
-- **A listed value no row can hold**, one that does not read as its field's type,
-  an integer not written plainly (`+5`, `05`), one outside the field's own range,
-  or one of a `date`, `time`, `datetime` or `span` field not in the form its time
-  pattern gives it, as `unfit-field-value`.
+- `values` is a closed set in the field's type; `min` / `max` bound an `integer`.
+- Refused at the declaration: a bound on a non-integer or `min` above `max` (`misplaced-field-bound`); a listed value the field cannot hold, e.g. `+5`, `05`, out of range, wrong time form (`unfit-field-value`).
 
 ## The three functions
 
-Each answers a question about a thing rather than rendering it.
+- `{{ pathof(x) }}`: where x is declared, the file to open to change it.
+- `{{ sourcesof(x) }}`: what x rests on, in precedence order.
+- `{{ refsto(x) }}`: what points at x, derived. Empty is the finding.
 
-`{{ pathof(x) }}` is where x is **declared**, the file to open to change it: a
-crate's directory, a cited file, or the TOML a registry row sits in.
+A postfix chain narrows a result, left to right: `{{ pathof(crates::store).dir() }}`. Path methods `dir`, `filename`, `stem`, `ext`; list methods `first`, `last`, `count`. An unknown method is reported.
 
-`{{ sourcesof(x) }}` is what x **rests on**, its provenance, plural because
-provenance is an array. The root name carries what each reference means: the
-corpus a row was derived from, the live document that supersedes it, the code
-that implements it. Array order is precedence, so the first is the one a reader
-should follow and the rest are context.
+## Citations
 
-`{{ refsto(x) }}` is what **points at** x, derived from the typed fields and the
-links in `ref` fields above rather than stored, so nothing has to be kept in step. It is the direction most
-questions are asked in, and an empty answer is the finding: nothing answers that
-row.
+- `root::path::anchor`; prefer a heading (`#the-four-lanes`) to a line number, which shifts silently. Line numbers only in a frozen root.
+- Any depth, extension optional (`mock::DESIGN::12` finds `DESIGN.md.tmpl`); two matches is an error.
+- A namespace is addressed by its name (`law::keys`); `reg::law::keys` still resolves.
 
-## Narrowing a result
+## Rows
 
-A postfix chain narrows what a function returned:
-
-```
-{{ pathof(crates::store).dir() }}
-```
-
-Four methods read a path (`dir`, `filename`, `stem`, `ext`) and three read a list
-(`first`, `last`, `count`), applied left to right. An unknown method is reported
-rather than ignored, because a method that silently does nothing reads as one
-that worked.
-
-## Addressing a citation
-
-A citation is `root::path::anchor`. The anchor is a heading (`#the-four-lanes`)
-or a line number, and **the heading is the one to prefer**. A line number fails
-silently: an edit above it shifts the target, the citation still resolves, and it
-now points at different content. A heading fails loudly when renamed, which is a
-report rather than a lie. Line numbers are honest only in a root declared frozen.
-
-A path may have any depth and the extension may be omitted, so `mock::DESIGN::12`
-finds `DESIGN.md.tmpl` without anybody tracking which form exists where. Two
-matches is an error rather than a guess.
-
-A namespace is addressed by its own name: `law::keys`, `vocab::xpbd`. There is no
-prefix, because slot zero is either a declared root or a declared namespace and
-the two cannot collide. The older `reg::law::keys` still resolves.
-
-## Slugs, never numbers
-
-Registry rows are identified by a snake_case slug. A number carries no meaning
-and so has to be managed: never reused, never renumbered, never reordered, since
-any of those silently repoints every reference to it.
-
-## A row is its key path, never its file
-
-A row is `namespace::slug`, and that is all of its identity. Any number of
-`*.toml` files, under any names and in any directories under `registry/`, make
-one registry, so splitting, merging, renaming or moving a file changes nothing a
-reference, a check or a rendered document sees, except `pathof`, whose answer is that
-file. A namespace lists its rows by key path, not by the order of the files
-holding them. A grouped table orders its groups by the group value, and rows
-with no group value come last under a heading of their own. The same key path
-in two files is an error naming both, and a file and line in a report is where to look, never
-who the row is. Name a row by its key path, and never write a rule or a check
-that depends on which file it sits in.
+- Identified by snake_case slug, never a number.
+- Identity is `namespace::slug`, never the file: any `*.toml` under `registry/` make one registry. Never write a rule or check that depends on the file. The same key path in two files is an error naming both.
 
 ## Merging registry files
 
-Two branches that each add a row to the same place in a registry file do not
-conflict in a `git merge`. `.gitattributes` sends every `*.toml` under
-`{mock_dir}/registry/` to the `mockspace-registry` merge driver, which `cargo mock`
-registers in the clone's git config (and, with `cargo mock register-drivers --global`, in the user's) and which runs `cargo mock merge-registry`. It keys a row
-by its `[[namespace]]` and `id`, as the loader does, and never by the file it
-sits in or its position:
+The `mockspace-registry` driver (registered by `cargo mock`; `cargo mock register-drivers --global` for the user) runs `cargo mock merge-registry` on `{mock_dir}/registry/*.toml`, keyed by `[[namespace]]` and `id`:
 
-- a row added on one side or both under different ids is kept, each side's own
-  order preserved, and the result is the same whichever side is ours;
-- a row identical on both sides is kept once;
-- a row changed on one side takes that change, and one deleted on one side and
-  untouched on the other is deleted;
-- a row changed differently on both sides, deleted against a change, or added
-  twice with different content is a conflict, written with markers around that
-  row alone. A head, or a plain `[table]`, both sides changed is one too. Resolve
-  it keeping both intents, never one side.
+- additions on either side kept, in each side's order; identical rows once;
+- a one-sided change or deletion taken;
+- a row changed both ways, deleted against a change, or added twice differently conflicts, with markers around that row only; a head or plain `[table]` both sides changed conflicts too. Resolve keeping both intents.
+- A file not readable as rows merges as text. The same `id` added in two files is caught by the duplicate check after.
 
-A file the driver cannot read as rows (invalid TOML, a row with no `id`, an `id`
-twice in one file) merges as text, as git does without a driver. The driver works
-inside one file: the same `id` added under two different files is two additions
-to it, and the registry's duplicate check reports it afterwards.
+## Adding to a list field
 
-## Adding to a list field of a row
-
-`cargo mock registry-append <namespace>::<id> <field> <value>` adds one string to a
-`string[]` field of an existing row and prints nothing. The namespace and the field
-must be declared, the row must exist, a value the field already holds is not added
-twice, and only the row's own lines change. Use it, and never a text edit of your
-own, wherever an answer, a note or a link is added to a row.
-
-A workspace may place a delegate at `.mockspace/hooks/registry-append`, in the
-repository root or any directory above it, to take the step over. It is run in the
-repository root with the same three arguments. Exit status 0 means it did the whole
-step, 3 that it leaves the step to mockspace, anything else a failure. `--local`
-skips it, which is how the delegate writes the row.
+`cargo mock registry-append <namespace>::<id> <field> <value>` adds one string to a `string[]` field, silently, never twice; use it rather than a text edit. A delegate at `.mockspace/hooks/registry-append` (repo root or above) may take it over: exit 0 done, 3 leave it to mockspace, else failure; `--local` skips the delegate.

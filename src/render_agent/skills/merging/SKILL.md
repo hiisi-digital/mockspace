@@ -4,14 +4,14 @@ Three parts: files that merge by a driver, files that only grow, and a merge com
 
 ## Files that merge by a driver
 
-`cargo mock` writes the `.gitattributes` lines and registers each driver in the clone's git config. `cargo mock register-drivers --global` writes them into the user's git config too, with commands naming no clone: a later clone, a worktree or a fresh container then calls them.
+`cargo mock` writes `.gitattributes` and registers each driver in the clone; `cargo mock register-drivers --global` also in the user's git config, for later clones, worktrees and containers.
 
 - Generated documents: the top level of `docs/` goes to `mockspace-generated`.
   - It keeps this side's copy of a generated file (read from its header, or from the diagram beside a rendered image) and merges any other file in `docs/` as git does.
   - Only where the regenerating hook is installed: `post-merge` for a merge, `post-rewrite` for a rebase (`git rev-parse --git-path hooks/<name>`), generated under `<mock>/target/hooks` or buildable there; a fresh worktree has none and the hook runs `cargo mock --generate-only` itself.
   - The regeneration is a follow-up commit (`chore: regenerate generated files after merge`, or `after rebase`) or, for a merge that stopped, part of the concluding commit. A rebase's replayed commits may carry the upstream's copy; the tip does not.
 - Cargo lockfiles: the mock directory's `Cargo.lock` and each path under `lockfiles` in `mockspace.toml` go to `mockspace-lockfile`, same condition: where a regeneration follows it text-merges, keeps ours on conflict, writes the path down, and the follow-up resolves with `cargo metadata` and commits the lock with every member. Elsewhere the lock conflicts as text.
-- Registry rows: `merge-registry`, by `[[namespace]]` and `id`. Additions on both sides stay; only a row changed two ways conflicts, with markers around that row alone. A row deleted on one side and untouched on the other is deleted.
+- Registry rows: `merge-registry`; the `reference-syntax` skill.
 - Closed rounds: `<mock>/design_rounds/*/.meta` goes to `merge-round-meta`; two closed rounds with one id exit 1 and name `cargo mock rename-round <id>`.
 - Test history: the `test-history` skill.
 - Cherry-pick, revert, `git am`, `git checkout -m` and stash application regenerate nothing: a generated file conflicts there. Run `cargo mock` once the sources are resolved, never pick a side.
@@ -48,5 +48,5 @@ A merge commit is judged by what it adds beyond its parents, per staged file.
 
 - A directory declared in `[[registry.store]]` of `mockspace.toml` is kept on `refs/mock/<namespace>` (`refs/heads/mock/<namespace>` on the remote) and is not in the tree. A tree merge never meets it, and the tree copy of a mounted directory is not read.
 - Writes go through `mock registry-append <namespace>::<id> <field> <value> [--local]`: fetch, run the registry checks on the files as they would stand, push with a lease. When another writer pushed first, the row merge runs and the checks run again: rows added on both sides stay; a row changed two ways is refused and nothing is pushed. A failed fetch is an error, never an empty registry.
-- A delegate at `.mockspace/hooks/registry-append` (repository root or any directory above, nearest wins) runs first: exit 0 means it did the whole step, 3 leaves it to mockspace, anything else is a failure. `--local` skips it.
+- The `.mockspace/hooks/registry-append` delegate (nearest wins): the `reference-syntax` skill.
 - The writer reads rows, not documents: removing a row a generated document names is not caught at the write, nor by a plain lint-only commit or push. The next `cargo mock`, a commit concluding a merge, or the post-merge and post-rewrite hooks report the dangling reference.

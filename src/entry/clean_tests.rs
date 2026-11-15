@@ -182,6 +182,8 @@ fn every_dispatched_subcommand_is_in_the_known_list() {
         "rename-round",
         "merge-round-meta",
         "bench",
+        "sketches",
+        "test-units",
     ] {
         assert!(
             super::known_subcommands().contains(&name),

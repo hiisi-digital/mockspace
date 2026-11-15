@@ -42,6 +42,7 @@ What the sketch did not test, and what would still surprise you.
 - Failures are results and are kept, with the wall recorded.
 - Sketches are committed and never deleted. A sketch later shown wrong is renamed `*.deprecated.md` or superseded by a new sketch that cites it.
 - Reference a sketch by its directory name, never a commit hash.
+- `cargo mock sketches` lists every sketch with the outcome its `FINDINGS.md` records. `--open` lists only those with no `FINDINGS.md`, no outcome line, or a source that times something. It reports and changes nothing.
 
 ## Boundary against benching
 

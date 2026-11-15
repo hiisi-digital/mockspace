@@ -634,3 +634,29 @@ fn a_placeholder_rest_is_the_members_not_the_files() {
     let m = moved(&before, &r.fp());
     assert!(m.contains(&"bin:uses::one".to_string()), "{m:?}");
 }
+
+#[test]
+fn the_layout_report_names_each_binary_the_wide_one_and_a_file_nobody_claims() {
+    let r = Repo::new("report");
+    // A Rust file under a subdirectory of `tests/` that no binary declares: it is
+    // no binary of its own, and nothing claims it.
+    r.write("mock/crates/uses/tests/helpers/util.rs", "pub fn u() {}\n");
+    r.git(&["add", "-A"]);
+    let fp = r.fp();
+    let uses = "uses".to_string();
+    let text = crate::suite::layout_report::render(&fp, &[&uses]);
+    for want in ["  one: ", "  two: ", "  dir: ", "  envy: "] {
+        assert!(text.contains(want), "{want} missing:\n{text}");
+    }
+    let envy = text.lines().find(|l| l.starts_with("  envy: ")).unwrap();
+    assert!(envy.contains("wide"), "envy reads env!, so it is wide:\n{text}");
+    // The control: a binary that reads nothing ambient is not called wide.
+    let one = text.lines().find(|l| l.starts_with("  one: ")).unwrap();
+    assert!(!one.contains("wide"), "one is narrow:\n{text}");
+    assert!(
+        text.contains("unclaimed: mock/crates/uses/tests/helpers/util.rs"),
+        "the loose helper is reported:\n{text}"
+    );
+    // The control: a module a binary declares is claimed, never reported.
+    assert!(!text.contains("common/mod.rs"), "common is declared by two:\n{text}");
+}
