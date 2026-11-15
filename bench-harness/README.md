@@ -10,9 +10,9 @@
 
 </div>
 
-Each variant of a bench is its own cdylib built against `mockspace-bench-core`, and this crate is what loads them. Every variant runs in a worker subprocess of its own, is checked against the others on the same seeded input before anything is timed, and is then timed over several passes with cooldowns between them. What comes out is a CSV of every sample, a metadata file, an entry in an append-only history and a `findings.md` with the medians, bootstrap intervals on them and on the paired differences, a sign test and the corrections for testing many pairs at once. A mismatch in validation stops the bench, because two variants that compute different things cannot be compared on speed.
+Each variant of a bench is its own cdylib built against `mockspace-bench-core`, and this crate is what loads them. Every variant runs in a worker subprocess of its own, is checked against the others on the same seeded input before anything is timed, and is then timed over several passes with cooldowns between them. What comes out is one directory per run, `results/<bench>/<sweep>_n<point>/<machine class>/<run>/`, holding a CSV of every sample, a metadata file, a summary of the medians that is that run's piece of the history, and a report with the medians, bootstrap intervals on them and on the paired differences, a sign test and the corrections for testing many pairs at once. A mismatch in validation stops the bench, because two variants that compute different things cannot be compared on speed.
 
-Most consumers never call it directly. `cargo mock bench run` generates a driver from `bench.toml` and the driver calls into here. A member with a driver of its own uses `driver::drive` with its routines registered, and `staging::StagedBuild` to refuse running anything but a build staged into a directory no other build writes into.
+Consumers never call it directly. `cargo mock bench run` generates the driver from `bench.toml`, and that driver, which calls `driver::drive_spec`, is the only runner there is: a bench tree with a driver of its own is refused. A run is never replaced by a later one, and runs taken on different machines sit beside each other, so a cell's history is read across its runs on the same class of machine.
 
 ## Usage
 
@@ -23,17 +23,16 @@ The crate is not on crates.io, so a consumer takes it from git, at the same revi
 mockspace-bench-harness = { git = "https://github.com/hiisi-digital/mockspace", branch = "dev" }
 ```
 
-A driver of its own registers how a bench section maps to a routine and hands over:
+What a bench needs beyond its `bench.toml` files goes in the tree's hooks library, `src/lib.rs` beside the root `bench.toml`, which the generated driver compiles in:
 
 ```rust
-use mockspace_bench_harness::driver::{DriverRegistry, drive};
+use mockspace_bench_harness::driver::Hooks;
 
-fn main() -> std::process::ExitCode {
-    drive(&DriverRegistry {
-        build_workload,
-        routine_for,
-        byte_dispatch,
-    })
+pub fn hooks() -> Hooks {
+    Hooks {
+        routine_for: Some(routine_for),
+        ..Hooks::default()
+    }
 }
 ```
 

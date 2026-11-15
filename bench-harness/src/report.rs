@@ -1060,7 +1060,7 @@ mod methodology_tests {
         );
     }
 
-    /// Catalogued gap, not a regression. `write_csv` persists the samples and an
+    /// Catalogued gap, not a regression. `write_run` persists the samples and an
     /// `EnvMeta` sidecar; neither carries `passes`, `runs_per_pass`,
     /// `batch_size`, `harness_runs`, `cooldowns_ms` or `master_seed`. So a
     /// findings file regenerated with `--report-only` is missing the whole
@@ -1076,8 +1076,8 @@ mod methodology_tests {
         let dir =
             std::env::temp_dir().join(format!("mockspace-bh-methodology-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
-        let csv = dir.join("hash_n64.csv");
-        let out = dir.join("hash_n64_findings.md");
+        let csv = dir.join(mockspace_bench_layout::SAMPLES_FILE);
+        let out = dir.join(mockspace_bench_layout::REPORT_FILE);
         let cfg = BenchConfig {
             passes: 7,
             runs_per_pass: 1234,
@@ -1096,7 +1096,7 @@ mod methodology_tests {
             cache_path:  csv.display().to_string(),
             report_path: out.display().to_string(),
         };
-        crate::harness::write_csv(&result, &csv.display().to_string()).expect("csv");
+        crate::harness::write_run(&result, &dir, "20261115T000000Z-a").expect("run");
         crate::report_from_csv(&csv, &out.display().to_string(), "warm", "t").expect("report");
         let md = std::fs::read_to_string(&out).expect("read");
         let _ = std::fs::remove_dir_all(&dir);

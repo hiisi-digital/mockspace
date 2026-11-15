@@ -62,25 +62,36 @@ pub const BUILD_PROFILE_ENV: &str = "MOCKSPACE_BENCH_PROFILE";
 /// that change read as a performance shift with no visible cause.
 /// When the variable is absent (the binary run by hand, outside the
 /// tool), the field is omitted: no claim beats a wrong one.
-fn env_meta_to_json(meta: &EnvMeta) -> String {
-    env_meta_to_json_with(meta, std::env::var(BUILD_PROFILE_ENV).ok().as_deref())
+fn env_meta_to_json(meta: &EnvMeta, run: &str) -> String {
+    env_meta_to_json_with(meta, run, std::env::var(BUILD_PROFILE_ENV).ok().as_deref())
 }
 
-fn env_meta_to_json_with(meta: &EnvMeta, build_profile: Option<&str>) -> String {
+/// The meta of one run. `machine_class` and `run` name the run directory the
+/// file sits in, so the two cannot be told apart from the path and the file.
+fn env_meta_to_json_with(meta: &EnvMeta, run: &str, build_profile: Option<&str>) -> String {
     let profile_field = match build_profile {
         Some(p) => format!(",\"build_profile\":\"{}\"", json_escape(p)),
         None => String::new(),
     };
+    let load = match meta.load_1m {
+        Some(l) => format!("{l}"),
+        None => "null".to_string(),
+    };
     format!(
         "{{\"cpu\":\"{cpu}\",\"os\":\"{os}\",\"rustc\":\"{rustc}\",\
         \"git_commit\":\"{git}\",\"timestamp\":{ts},\
-        \"counter_freq\":{freq},\"framework\":\"mockspace-bench-harness\"{profile_field}}}",
+        \"counter_freq\":{freq},\"framework\":\"mockspace-bench-harness\",\
+        \"machine_class\":\"{class}\",\"run\":\"{run}\",\"cpus_online\":{cpus},\
+        \"load_1m\":{load}{profile_field}}}",
         cpu = json_escape(&meta.cpu),
         os = json_escape(&meta.os),
         rustc = json_escape(&meta.rustc),
         git = json_escape(&meta.git_commit),
         ts = meta.timestamp,
         freq = meta.counter_freq,
+        class = json_escape(&meta.machine_class),
+        run = json_escape(run),
+        cpus = meta.cpus_online,
     )
 }
 
@@ -98,15 +109,6 @@ fn json_escape(s: &str) -> String {
         }
     }
     out
-}
-
-/// Derive the `.meta.json` path from a CSV path: same stem, new extension.
-fn meta_json_path(csv_path: &str) -> String {
-    if let Some(stem) = csv_path.strip_suffix(".csv") {
-        format!("{}.meta.json", stem)
-    } else {
-        format!("{}.meta.json", csv_path)
-    }
 }
 
 // ── Worker mode ──
@@ -916,23 +918,38 @@ pub fn run_orchestrator(
     })
 }
 
-// ── CSV + meta.json writer ──
+// ── run writer ──
 
-/// Write the result samples to a CSV at `path` plus a sidecar
-/// `<path>.meta.json` carrying [`EnvMeta`].
+/// Write one run's samples and environment into its run directory, as
+/// [`SAMPLES_FILE`](mockspace_bench_layout::SAMPLES_FILE) and
+/// [`META_FILE`](mockspace_bench_layout::META_FILE). `run` is the run id the
+/// meta records beside the machine class, so a meta read on its own still says
+/// which run it belongs to.
 ///
 /// The rows come from [`crate::sample::to_csv`], the one writer, so this and
-/// the cache cannot disagree about the column order.
-pub fn write_csv(result: &BenchResult, path: &str) -> Result<(), BenchError> {
+/// the cache cannot disagree about the column order. A file already present is
+/// refused rather than replaced: a run directory is written once.
+pub fn write_run(result: &BenchResult, dir: &std::path::Path, run: &str) -> Result<(), BenchError> {
+    std::fs::create_dir_all(dir).map_err(|e| BenchError::io("creating the run directory", e))?;
     let csv = crate::sample::to_csv(&result.samples);
-    std::fs::write(path, &csv).map_err(|e| BenchError::io("writing csv", e))?;
-    eprintln!("  CSV: {} ({} rows)", path, result.samples.len());
+    let samples = dir.join(mockspace_bench_layout::SAMPLES_FILE);
+    write_new(&samples, csv.as_bytes()).map_err(|e| BenchError::io("writing samples.csv", e))?;
+    eprintln!("  samples: {} ({} rows)", samples.display(), result.samples.len());
 
-    let json = env_meta_to_json(&result.env);
-    let meta_path = meta_json_path(path);
-    std::fs::write(&meta_path, &json).map_err(|e| BenchError::io("writing meta.json", e))?;
-    eprintln!("  Meta: {}", meta_path);
+    let json = env_meta_to_json(&result.env, run);
+    let meta = dir.join(mockspace_bench_layout::META_FILE);
+    write_new(&meta, json.as_bytes()).map_err(|e| BenchError::io("writing meta.json", e))?;
     Ok(())
+}
+
+/// Write `bytes` to a file that must not exist yet.
+pub(crate) fn write_new(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?
+        .write_all(bytes)
 }
 
 /// Validation worker: run the variant once per seed (twice, for the
@@ -1016,12 +1033,12 @@ mod env_meta_json_tests {
     #[test]
     fn the_profile_field_carries_the_passed_value_and_is_absent_when_unknown() {
         let meta = crate::env::EnvMeta::default();
-        let with = env_meta_to_json_with(&meta, Some("opt-level=0,lto=\"off\",codegen-units=16"));
+        let with = env_meta_to_json_with(&meta, "r", Some("opt-level=0,lto=\"off\",codegen-units=16"));
         assert!(
             with.contains("\"build_profile\":\"opt-level=0,lto=\\\"off\\\",codegen-units=16\""),
             "{with}"
         );
-        let without = env_meta_to_json_with(&meta, None);
+        let without = env_meta_to_json_with(&meta, "r", None);
         assert!(
             !without.contains("build_profile"),
             "no claim beats a wrong one: {without}"
@@ -1030,5 +1047,40 @@ mod env_meta_json_tests {
             !without.contains("opt-level=3"),
             "the old hardcoded literal must be gone: {without}"
         );
+    }
+
+    /// The meta names the run directory it sits in, and parses as JSON with the
+    /// load either a number or null.
+    #[test]
+    fn the_meta_names_its_machine_class_and_run() {
+        let meta = crate::env::EnvMeta {
+            machine_class: "linux-x86_64-c4-container-intel".into(),
+            cpus_online: 4,
+            load_1m: Some(0.5),
+            ..crate::env::EnvMeta::default()
+        };
+        let json = env_meta_to_json_with(&meta, "20261115T093000Z-abc", None);
+        let v: serde_json::Value = serde_json::from_str(&json).expect(&json);
+        assert_eq!(v["machine_class"], "linux-x86_64-c4-container-intel");
+        assert_eq!(v["run"], "20261115T093000Z-abc");
+        assert_eq!(v["cpus_online"], 4);
+        assert_eq!(v["load_1m"], 0.5);
+        let none = env_meta_to_json_with(&crate::env::EnvMeta::default(), "r", None);
+        let v: serde_json::Value = serde_json::from_str(&none).expect(&none);
+        assert!(v["load_1m"].is_null());
+    }
+
+    /// A run directory is written once: the second write of a file is refused
+    /// and the first one's bytes stand.
+    #[test]
+    fn a_run_file_is_never_replaced() {
+        let dir = std::env::temp_dir().join(format!("mockspace-write-new-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("samples.csv");
+        write_new(&p, b"first").unwrap();
+        assert!(write_new(&p, b"second").is_err());
+        assert_eq!(std::fs::read(&p).unwrap(), b"first");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

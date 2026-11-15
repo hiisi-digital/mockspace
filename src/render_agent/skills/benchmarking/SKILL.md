@@ -15,7 +15,8 @@ A bench answers a measurement question: which is faster, what does it cost, wher
 
 ## Commands
 
-- `cargo mock bench init` scaffolds; `add <name>` adds a variant; `run [names...]` measures; `report` regenerates findings from cache; `list` prints what is registered; `test` runs `cargo test` in every crate under the bench tree.
+- `cargo mock bench init` scaffolds; `add <name>` adds a variant; `run [names...]` measures; `report` re-renders every run's report from its samples; `list` prints what is registered; `test` runs `cargo test` in every crate under the bench tree; `migrate [--machine-class <class>] [--dry-run]` moves results and history in an older layout into run directories.
+- The driver `run` generates from `bench.toml` is the only runner. A `Cargo.toml` or `src/main.rs` at the bench root, a crate in the tree with a binary or a cargo bench of its own, and a shell script in the tree are refused by `run` and by the lint `a-bench-runs-only-on-the-generated-driver`. What a runner did goes in the hooks library (`src/lib.rs`, `pub fn hooks()`) and the `bench.toml` files.
 - `test` walks the tree directly (a bare `cargo test` at the root sees only the driver crate and reports a misleading `0 passed`). A crate name narrows to the crates whose path contains it and a name matching nothing is refused with the list of what exists. Flags after the subcommand go to cargo (`--release`/`-r`, `-- --test-threads=1`); a value-taking flag's value (`--profile <name>`) travels with the flag.
 - Every test count printed carries the profile it ran under. Report a timing or count with its profile.
 
@@ -26,7 +27,7 @@ A bench answers a measurement question: which is faster, what does it cost, wher
 - Validation before timing: every variant runs across deterministic seeds, each in its own worker subprocess. A mismatch is the finding: the implementations drifted and the timing comparison is meaningless.
 - Automatic disassembly dedup: identical `bench_entry` machine code across variants is reported.
 - Statistics: quintiles, per-cooldown breakdown, lag-1 autocorrelation as a drift signal, bootstrap CIs on the median and on paired differences, a sign test, Benjamini-Hochberg FDR adjustment.
-- History: every run appends timestamp, git commit, variant, N, mode, median and CI bounds to an append-only log; a later run flags entries whose CI no longer overlaps the baseline.
+- History: every run writes its own `summary.tsv` (timestamp, git commit, variant, N, mode, median and CI bounds) into its run directory; a later run on the same machine class flags entries whose CI no longer overlaps the earlier runs'. Runs on other machine classes are never compared.
 - Do not re-roll timing helpers, bump providers, stat collection or validation.
 
 ## Hardware counters
@@ -68,11 +69,13 @@ exclude = []
 - Per-bench keys: `title`, `workload`, `arms`, `points`, `master_seed`, `may_differ`, `required`, `threaded`, roles (`baseline`, `floor`, `delta`), and a `timing` override of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`, `validation_seeds`, `determinism_check_seeds`. Points may carry their own arm subset. The legacy spellings (`variants`, `sizes`, a `normalise` table) are still accepted.
 - Validation runs every arm over `validation_seeds` seeds and reruns the first `determinism_check_seeds` of them. An expensive arm lowers them instead of skipping validation. Zero is refused, as is a determinism count above the validation count; an undeclared determinism count follows a lowered validation count down.
 - Set `may_differ = false` and `required = true` unless there is a stated reason otherwise.
-- Each point is its own monomorphisation. With the generated driver the point list defaults to the union of every bench's points and `[dispatch] points` narrows it; only a consumer-owned driver binary maintains `byte_routine_dispatch!` by hand.
+- Each point is its own monomorphisation. The point list defaults to the union of every bench's points and `[dispatch] points` narrows it.
 
 ## Deliverable
 
-- `results/` (CSV, meta, per-size findings) is tracked, never gitignored, including uninteresting runs.
+- Every run lands in `results/<bench>/<sweep>_n<point>/<machine class>/<run>/` (`samples.csv`, `meta.json`, `report.md`, `summary.tsv`, and whatever an `after_cell` hook wrote), the run being `<UTC start>-<commit>`. A run is written once and never replaced; a re-run, here or on another machine, sits beside it. `results/` is tracked, never gitignored, including uninteresting runs.
+- A bench output anywhere else (`.bench_history/`, `history/`, `<cell>.csv` files at the bench root or flat under `results/<bench>/`, a directory of runs of its own) is refused by the lint `bench-results-live-in-the-harness-layout`. `mock bench migrate` moves what translates one to one and names the rest to move by hand.
+- The commit a run records carries `-dirty` only when a tracked file the arms are built from differs from it: the bench tree less its outputs, every crate a bench manifest reaches by `path`, and the workspace manifests, lockfiles, toolchain pin and cargo configuration. Untracked files and the run's own outputs never mark it.
 - A decision-facing findings note in `{mock_dir}/research/`, written for the round that asked: what was measured, the numbers, what it decides, and what it does not decide (shapes not covered, what would change the answer, unchecked extrapolation). Name what dominates the measured loop and quote the absolute delta, not only the ratio, when one expensive call compresses it.
 
 ## Boundary against sketching

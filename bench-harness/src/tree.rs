@@ -70,7 +70,7 @@ pub struct ArmSource {
     pub arm:          String,
     /// The arm's source directory.
     pub dir:          PathBuf,
-    /// Whether the consumer wrote a `Cargo.toml` (the escape hatch).
+    /// Whether the arm carries a `Cargo.toml` of its own.
     /// Without one the tool generates the manifest.
     pub has_manifest: bool,
 }

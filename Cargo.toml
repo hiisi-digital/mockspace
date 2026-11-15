@@ -6,6 +6,7 @@ members = [
     "lint-rules",
     "verdicts",
     "bench-core",
+    "bench-layout",
     "bench-harness",
     "bench-macro",
     "bench-matrix",

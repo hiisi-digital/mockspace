@@ -12,12 +12,13 @@
 //!
 //! ## Two entry points, and only one of them validates
 //!
-//! [`driver::drive_spec`] (and its compat wrapper [`driver::drive`]) is the
-//! whole manifest-driven loop: it loads `mock/benches/bench.toml`, resolves
-//! every `(bench, size)` cell, runs the duplicate-disassembly check and
-//! [`validation::validate`] before any timing, drives the orchestrator, and
-//! writes the CSV, the findings file, the history ledger and the index. A
-//! consumer `main` shrinks to its registrations.
+//! [`driver::drive_spec`] is the whole manifest-driven loop, and the one
+//! runner: `mock bench run` generates the binary that calls it from
+//! `bench.toml`, and a consumer-owned driver is refused. It loads
+//! `mock/benches/bench.toml`, resolves every `(bench, size)` cell, runs the
+//! duplicate-disassembly check and [`validation::validate`] before any timing,
+//! drives the orchestrator, and writes each cell's run into its own directory
+//! under `results/` (see [`layout`]) and the index over them.
 //!
 //! [`run`] is the lower entry point: it takes one [`BenchConfig`] and calls
 //! [`harness::run_orchestrator`] directly. **It does not validate.** No
@@ -39,6 +40,7 @@
 mod test_ambient;
 
 pub use mockspace_bench_core as core;
+pub use mockspace_bench_layout as layout;
 
 pub mod analysis;
 pub mod cache;
@@ -104,30 +106,26 @@ pub use disasm::check_duplicates as check_disasm_duplicates;
 pub use driver::{
     AfterCell,
     CellVerdict,
-    DriverRegistry,
     DriverSpec,
     Hooks,
     InitContext,
     InitVerdict,
     RunPlan,
-    drive,
     drive_spec,
 };
 pub use env::{EnvMeta, collect_env_meta};
 pub use error::BenchError;
-pub use harness::{run_orchestrator, run_worker, run_worker_validate, write_csv};
+pub use harness::{run_orchestrator, run_worker, run_worker_validate, write_run};
 pub use history::{
-    DEFAULT_HISTORY_DIR,
     HistoryEntry,
     Regression,
-    append as append_history,
-    append_in as append_history_in,
     detect_regressions,
     detect_regressions_window,
     flagged_for as regression_flagged_for,
-    git_commit,
-    load as load_history,
-    load_in as load_history_in,
+    ledger_commit,
+    load_cell as load_cell_history,
+    parse_summary,
+    render_summary,
     timestamp,
 };
 pub use inline_bench::{InlineResult, InlineVariant, run_inline};
@@ -235,7 +233,7 @@ pub fn write_report_for_routine(
 ///
 /// The synthetic result carries the CSV path as its `cache_path`
 /// and an empty [`EnvMeta`]. Nothing in this crate reads the
-/// `.meta.json` sidecar back, so a report regenerated this way is
+/// run's `meta.json` back, so a report regenerated this way is
 /// missing the environment the run happened in, and it is missing
 /// the methodology too: `passes`, `runs_per_pass`, `batch_size`,
 /// `harness_runs`, `cooldowns_ms` and `master_seed` are not

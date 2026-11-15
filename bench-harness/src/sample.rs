@@ -147,7 +147,7 @@ pub fn to_csv(samples: &[Sample]) -> String {
     csv
 }
 
-/// Load `Sample` rows from a CSV produced by [`crate::write_csv`].
+/// Load `Sample` rows from a CSV produced by [`crate::write_run`].
 ///
 /// Used by `mock bench report --report-only` and by tooling that
 /// wants to reuse a previous run's data without re-invoking the
@@ -329,8 +329,9 @@ mod round_trip_tests {
             let dir =
                 std::env::temp_dir().join(format!("mockspace-bh-roundtrip-{}", std::process::id()));
             std::fs::create_dir_all(&dir).unwrap();
-            let path = dir.join("rt.csv");
-            crate::harness::write_csv(&result, &path.display().to_string()).unwrap();
+            let _ = std::fs::remove_dir_all(&dir);
+            crate::harness::write_run(&result, &dir, "r").unwrap();
+            let path = dir.join(crate::layout::SAMPLES_FILE);
             let back = load_samples_csv(&path).unwrap();
             std::fs::remove_dir_all(&dir).ok();
 
@@ -376,8 +377,9 @@ mod round_trip_tests {
         let dir =
             std::env::temp_dir().join(format!("mockspace-bh-roundtrip-bad-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("rt.csv");
-        crate::harness::write_csv(&result, &path.display().to_string()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::harness::write_run(&result, &dir, "r").unwrap();
+        let path = dir.join(crate::layout::SAMPLES_FILE);
         let back = load_samples_csv(&path).unwrap();
         std::fs::remove_dir_all(&dir).ok();
 

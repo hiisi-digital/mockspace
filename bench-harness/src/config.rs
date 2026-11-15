@@ -971,12 +971,10 @@ pub struct BenchConfig {
 /// iteration speed (lower seed counts) or to plug in different
 /// statistical budgets.
 ///
-/// Cache and history roots are NOT configured here. Use
-/// [`crate::cache::Cache::load_in`], [`crate::history::append_in`],
-/// and [`crate::history::load_in`] directly when the harness needs
-/// to live outside the consumer's cwd; the cwd-relative defaults
-/// ([`crate::DEFAULT_CACHE_ROOT`] / [`crate::DEFAULT_HISTORY_DIR`])
-/// remain the implicit fallback.
+/// Where results and history live is not configured here: every run lands in
+/// the one layout of [`mockspace_bench_layout`]. The cache root is
+/// [`crate::cache::Cache::load_in`]'s, with [`crate::DEFAULT_CACHE_ROOT`] as
+/// the cwd-relative default.
 #[derive(Clone, Debug)]
 pub struct HarnessTuning {
     /// Number of seeds used in [`crate::validate`]. Default 100.

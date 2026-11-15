@@ -47,10 +47,6 @@ pub(crate) enum Verdict {
 /// is git's own, and git never lists `.git`.
 const OUTPUT_DIRS: [&str; 1] = ["target"];
 
-/// Directories at the bench root that `mock bench run` writes: output, never
-/// input.
-const GENERATED: [&str; 2] = ["results", "history"];
-
 /// The lockfile the bench build writes beside the tree it builds. One that git
 /// does not track is that output and is taken out of the digest, so a run does
 /// not move the digest it recorded. One a consumer committed is an input: it
@@ -136,8 +132,10 @@ fn label(repo_root: &Path, f: &Path) -> String {
 /// texts:
 ///
 /// - the files git tracks or would track under `bench_dir`, the same list the
-///   members use, less `results/` and `history/` and any lockfile git does not
-///   track, which is the one the build writes;
+///   members use, less every bench output (what
+///   `mockspace_bench_harness::layout::place` calls one, in the current layout
+///   or an older one) and any lockfile git does not track, which is the one
+///   the build writes;
 /// - the files of every local package a bench manifest reaches by `path`,
 ///   transitively, the generated arm manifests and the support crates among
 ///   them (a workspace-inherited path included), wherever in the repository
@@ -162,11 +160,8 @@ pub(crate) fn inputs(
         match rel.strip_prefix(bench_rel) {
             Err(_) => true,
             Ok(under) => {
-                let first = under
-                    .components()
-                    .next()
-                    .and_then(|c| c.as_os_str().to_str());
-                !first.is_some_and(|n| GENERATED.contains(&n))
+                mockspace_bench_harness::layout::place(under)
+                    == mockspace_bench_harness::layout::Placement::NotOutput
                     && !under
                         .components()
                         .any(|c| OUTPUT_DIRS.iter().any(|o| c.as_os_str() == *o))

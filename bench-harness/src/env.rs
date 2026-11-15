@@ -31,9 +31,9 @@ pub struct EnvMeta {
     /// `rust-toolchain.toml`.
     pub rustc:        String,
     /// Short git commit (`git rev-parse --short HEAD`) of the consumer, with a
-    /// `-dirty` suffix when `git status --porcelain` reports anything.
-    /// Empty when not in a git tree. Written to the `.meta.json` sidecar and
-    /// read by nothing in this crate.
+    /// `-dirty` suffix when a tracked build input of the bench tree differs
+    /// from it, as [`run_commit`] says. Empty when not in a git tree.
+    /// Written to the run's `meta.json`, and the commit its summary rows carry.
     pub git_commit:   String,
     /// Unix timestamp at run start (seconds since epoch).
     pub timestamp:    u64,
@@ -119,6 +119,30 @@ fn cpu_family(brand: &str) -> &'static str {
     }
 }
 
+/// Whether a machine class agrees with what an older meta recorded of the
+/// machine that ran it: the `uname -sr` it kept as `os` and the CPU brand it
+/// kept as `cpu`. The class's os token must be the one that `uname` name
+/// means, where it means one this knows, and its cpu family the one the brand
+/// reduces to. Used to check a class a person supplies for results whose meta
+/// predates the class, so a wrong one is refused rather than written into the
+/// path.
+#[must_use]
+pub fn class_agrees_with(class: &str, uname_os: &str, cpu_brand: &str) -> bool {
+    let parts: Vec<&str> = class.split('-').collect();
+    if parts.len() != 5 {
+        return false;
+    }
+    let os = match uname_os.split_whitespace().next().unwrap_or("") {
+        "Darwin" => Some("macos"),
+        "Linux" => Some("linux"),
+        "FreeBSD" => Some("freebsd"),
+        "NetBSD" => Some("netbsd"),
+        "OpenBSD" => Some("openbsd"),
+        _ => None,
+    };
+    os.is_none_or(|os| parts[0] == os) && (cpu_brand.is_empty() || parts[4] == cpu_family(cpu_brand))
+}
+
 /// The first field of `/proc/loadavg` (`0.52 0.58 0.59 1/467 12345`).
 #[must_use]
 pub fn parse_proc_loadavg(s: &str) -> Option<f64> {
@@ -198,21 +222,25 @@ pub fn collect_env_meta() -> EnvMeta {
         cpu,
         os:           collect_os(),
         rustc:        collect_rustc(),
-        git_commit:   collect_git_commit_marked(),
+        git_commit:   run_commit(),
         timestamp:    collect_timestamp(),
         counter_freq: mockspace_bench_core::counter::counter_frequency(),
     }
 }
 
-/// The short commit, with `-dirty` when the tree has uncommitted changes, so a
-/// number stays traceable to an exact source state and not a nearby commit.
-/// Empty outside a git tree.
+/// The short commit, with `-dirty` when a tracked file in the tree differs
+/// from it. Empty outside a git tree.
+///
+/// Untracked files never count: a file git does not track is not part of the
+/// commit, whether it is a run's own output or a generated file a repository
+/// forgot to ignore. A bench run spawned by `mock bench run` takes the narrower mark the tool
+/// hands it, [`run_commit`].
 #[must_use]
 pub fn collect_git_commit_marked() -> String {
     let mut c = collect_git_commit();
     if !c.is_empty() {
         let dirty = std::process::Command::new("git")
-            .args(["status", "--porcelain"])
+            .args(["status", "--porcelain", "--untracked-files=no"])
             .output()
             .map(|o| !o.stdout.is_empty())
             .unwrap_or(false);
@@ -221,6 +249,26 @@ pub fn collect_git_commit_marked() -> String {
         }
     }
     c
+}
+
+/// The environment variable `mock bench run` sets on the driver it spawns:
+/// the commit the run measured, with `-dirty` only when a tracked file the
+/// bench tree is built from differed from it. The tool judges that, since it
+/// is what knows the tree's build inputs (the files under the bench tree less
+/// its outputs, every crate a bench manifest reaches by path, and the
+/// workspace's own manifests, lockfiles, toolchain pin and cargo
+/// configuration).
+pub const COMMIT_ENV: &str = "MOCKSPACE_BENCH_COMMIT";
+
+/// The commit a bench run records: the one `mock bench run` handed the driver
+/// in [`COMMIT_ENV`], or, for a driver run by hand, the tree's commit marked
+/// dirty by any tracked change ([`collect_git_commit_marked`]).
+#[must_use]
+pub fn run_commit() -> String {
+    std::env::var(COMMIT_ENV)
+        .ok()
+        .filter(|c| !c.trim().is_empty())
+        .unwrap_or_else(collect_git_commit_marked)
 }
 
 /// Only what a test run's rows carry: machine class, cpus, load and the time.
@@ -368,5 +416,17 @@ mod tests {
     fn an_arch_outside_the_x86_and_arm_families_is_not_pooled_with_them() {
         let f = MachineFacts { arch: "powerpc64", ..facts("x") };
         assert!(machine_class(&f).contains("-powerpc64-"));
+    }
+
+    /// A class handed in for an older meta is checked against what that meta
+    /// kept: the M1 results carry `Darwin` and `Apple M1`, so a macOS Apple
+    /// class agrees and a Linux one, or an Intel one, does not.
+    #[test]
+    fn a_supplied_class_must_agree_with_the_os_and_cpu_the_meta_kept() {
+        assert!(class_agrees_with("macos-aarch64-c8-bare-apple", "Darwin 25.6.0", "Apple M1"));
+        assert!(!class_agrees_with("linux-aarch64-c8-bare-apple", "Darwin 25.6.0", "Apple M1"));
+        assert!(!class_agrees_with("macos-aarch64-c8-bare-intel", "Darwin 25.6.0", "Apple M1"));
+        assert!(!class_agrees_with("macos-aarch64-c8-bare", "Darwin 25.6.0", "Apple M1"));
+        assert!(class_agrees_with("linux-x86_64-c4-container-intel", "Linux 6.18", "Intel(R) Xeon(R)"));
     }
 }

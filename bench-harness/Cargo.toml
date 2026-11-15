@@ -16,6 +16,7 @@ path = "src/lib.rs"
 
 [dependencies]
 mockspace-bench-core = { path = "../bench-core", features = ["std"] }
+mockspace-bench-layout = { path = "../bench-layout" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 libloading = "0.8"
@@ -34,3 +35,6 @@ stage-link = []
 [dev-dependencies]
 # The scrub of the environment a test runs in, the one copy of it.
 mockspace-manifest = { path = "../mockspace-manifest" }
+# Parses the meta a run writes, in its test, so the file is read as JSON and not
+# matched as text. Already in the lockfile through the tool.
+serde_json = "1"
