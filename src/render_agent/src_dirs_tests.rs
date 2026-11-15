@@ -72,8 +72,6 @@ fn a_crate_under_a_second_source_directory_gets_a_rule_that_reaches_its_files() 
         &copilot,
         &[],
         "",
-        "",
-        "",
         &crate::registry::Registry::default(),
     );
     assert_eq!(
@@ -123,8 +121,6 @@ fn generate_forbidden(repo: &Path, cfg: &Config) -> (PathBuf, PathBuf) {
         &repo.join("ci"),
         &hooks,
         &repo.join("chooks"),
-        "",
-        "",
         "",
     );
     (rules, hooks)

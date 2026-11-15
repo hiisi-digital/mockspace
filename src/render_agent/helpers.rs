@@ -185,6 +185,10 @@ pub(crate) struct HookMeta {
 pub(crate) fn matchers_from_name(name: &str) -> Vec<String> {
     if name.ends_with("-guard.sh") {
         vec!["Bash".into(), "Write".into(), "Edit".into()]
+    } else if name.ends_with("-guide.sh") {
+        // It speaks on a write or an edit under the bench, sketch or test
+        // trees as much as on a command, so it takes all three.
+        vec!["Bash".into(), "Write".into(), "Edit".into()]
     } else if name.ends_with("-reminder.sh") {
         vec!["Bash".into()]
     } else if name.starts_with("check-") {

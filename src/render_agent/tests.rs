@@ -1645,3 +1645,123 @@ fn the_lint_authoring_rule_names_the_view_and_its_guard() {
     let guard = mockspace_lint_rules::lints_read_through_the_view::LintsReadThroughTheView;
     assert_eq!(mockspace_lint_rules::Lint::name(&guard), "lints-read-through-the-view");
 }
+
+/// A consumer's generated surface carries the bench, sketch and test guidance:
+/// the three rules (loaded everywhere, so no `paths:` scope), the three skills,
+/// and the guide hook wired for commands, writes and edits. The rule these
+/// replace is taken back.
+#[test]
+fn a_consumer_gets_the_bench_sketch_and_test_rules_skills_and_hook() {
+    let mock = skill_fixture(None);
+    let root = mock.parent().expect("the fixture's mock dir has a parent");
+    let rules = root.join(".claude").join("rules");
+    std::fs::create_dir_all(&rules).unwrap();
+    let stale = rules.join("bench-and-sketch-discipline.md");
+    std::fs::write(&stale, "the old card").unwrap();
+
+    let cfg = crate::config::Config::from_dir(&mock);
+    generate_agent_rules(
+        &CrateMap::default(),
+        &cfg,
+        &crate::registry::Registry::default(),
+        &pack_with_stub_tool(),
+    );
+
+    for (rule, says) in [
+        ("benches", "cargo mock bench add <bench> <arm>"),
+        ("sketches", "cargo mock sketches"),
+        ("tests", "cargo mock test-units"),
+    ] {
+        let text = std::fs::read_to_string(rules.join(format!("{rule}.md")))
+            .unwrap_or_else(|e| panic!("{rule}.md was not generated: {e}"));
+        assert!(text.contains(says), "{rule}.md does not say {says}");
+        assert!(!text.contains("\npaths:"), "{rule}.md is scoped to paths, so it loads too late");
+        assert!(
+            root.join(".github/instructions").join(format!("{rule}.instructions.md")).is_file(),
+            "{rule} is missing on the copilot surface"
+        );
+    }
+    assert!(!stale.is_file(), "the card the three replace is taken back");
+
+    for (skill, says) in [
+        ("benchmarking", "pub fn hooks() -> Hooks"),
+        ("sketching", "cargo mock sketches"),
+        ("testing", "cargo mock test-units"),
+    ] {
+        let text = std::fs::read_to_string(root.join(".claude/skills").join(skill).join("SKILL.md"))
+            .unwrap_or_else(|e| panic!("skill {skill} was not generated: {e}"));
+        assert!(text.contains(says), "skill {skill} does not say {says}");
+    }
+
+    let hook = root.join(".claude/hooks/mockspace-guide.sh");
+    assert!(hook.is_file(), "the guide hook was not generated");
+    assert!(root.join(".github/hooks/mockspace-guide.sh").is_file());
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    for tool in ["Bash", "Write", "Edit"] {
+        let wired = settings["hooks"]["PreToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["matcher"] == tool)
+            .flat_map(|e| e["hooks"].as_array().cloned().unwrap_or_default())
+            .any(|h| h["command"].as_str().is_some_and(|c| c.contains("mockspace-guide.sh")));
+        assert!(wired, "the guide hook is not wired for {tool}");
+    }
+}
+
+/// The bookends are said once, in the one `mockspace` rule, with the consumer's
+/// own preamble beside the built-in one; no other rule or skill repeats them.
+#[test]
+fn the_bookends_live_in_the_mockspace_rule_and_nowhere_else() {
+    let mock = skill_fixture(None);
+    let root = mock.parent().expect("the fixture's mock dir has a parent");
+    std::fs::write(mock.join("agent").join("PREAMBLE.md.tmpl"), "CONSUMER-PREAMBLE-LINE\n").unwrap();
+
+    let cfg = crate::config::Config::from_dir(&mock);
+    generate_agent_rules(
+        &CrateMap::default(),
+        &cfg,
+        &crate::registry::Registry::default(),
+        &pack_with_stub_tool(),
+    );
+
+    let rules = root.join(".claude").join("rules");
+    let banner = std::fs::read_to_string(rules.join("mockspace.md"))
+        .expect("the mockspace rule was not generated");
+    for must in [BUILTIN_PREAMBLE, BUILTIN_POSTAMBLE, "CONSUMER-PREAMBLE-LINE"] {
+        assert!(banner.contains(must), "the mockspace rule lacks {must}:\n{banner}");
+    }
+    assert!(!banner.contains("\npaths:"), "the mockspace rule must load every session");
+    let copilot = std::fs::read_to_string(root.join(".github/instructions/mockspace.instructions.md"))
+        .expect("the copilot mockspace rule was not generated");
+    assert!(copilot.contains("applyTo: \"**\""), "{copilot}");
+
+    // The control: every other generated rule and skill is checked, and there
+    // are some, so an empty walk cannot pass.
+    let mut others = Vec::new();
+    for entry in std::fs::read_dir(&rules).unwrap().flatten() {
+        if entry.file_name() != "mockspace.md" {
+            others.push(entry.path());
+        }
+    }
+    for entry in std::fs::read_dir(root.join(".claude/skills")).unwrap().flatten() {
+        others.push(entry.path().join("SKILL.md"));
+    }
+    assert!(others.len() > 5, "too few generated files to mean anything: {others:?}");
+    for path in others {
+        let text = std::fs::read_to_string(&path).unwrap();
+        for bookend in [BUILTIN_PREAMBLE, BUILTIN_POSTAMBLE, "CONSUMER-PREAMBLE-LINE"] {
+            assert!(!text.contains(bookend), "{} repeats a bookend", path.display());
+        }
+    }
+}
+
+#[test]
+fn a_claude_rule_scoped_to_everything_has_no_paths_block_and_a_narrower_scope_keeps_it() {
+    assert_eq!(format_claude_paths(&["**".to_string()]), "");
+    let both = format_claude_paths(&["**".to_string(), "src/**".to_string()]);
+    assert!(both.starts_with("---\npaths:\n"), "{both}");
+    assert!(both.contains("  - \"**\"") && both.contains("  - \"src/**\""), "{both}");
+}

@@ -25,8 +25,6 @@ pub(crate) fn generate_lint_derived_content(
     claude_hooks_dir: &Path,
     copilot_hooks_dir: &Path,
     header_md: &str,
-    preamble: &str,
-    postamble: &str,
 ) -> (usize, Vec<HookMeta>) {
     use std::collections::{BTreeMap as Map, BTreeSet as Set};
 
@@ -180,8 +178,10 @@ pub(crate) fn generate_lint_derived_content(
         let copilot_fm = format!("---\napplyTo: [{apply_to_list}]\n---\n\n");
 
         let rule_name = format!("lint-forbidden-{slug}");
-        let claude_content = format!("{claude_fm}{header_md}\n{preamble}\n\n{body}\n{postamble}");
-        let copilot_content = format!("{copilot_fm}{header_md}\n{preamble}\n\n{body}\n{postamble}");
+        let claude_content =
+            format!("{claude_fm}{}", format_with_header(header_md, &body));
+        let copilot_content =
+            format!("{copilot_fm}{}", format_with_header(header_md, &body));
 
         let claude_path = claude_rules_dir.join(format!("{rule_name}.md"));
         render_design::write_generated_ok(&claude_path, &claude_content);
@@ -355,8 +355,6 @@ pub(crate) fn generate_crate_readme_rules(
     copilot_instructions_dir: &Path,
     vars: &[(String, String)],
     header_md: &str,
-    preamble: &str,
-    postamble: &str,
     registry: &crate::registry::Registry,
 ) -> usize {
     use std::collections::BTreeSet as Set;
@@ -401,7 +399,7 @@ pub(crate) fn generate_crate_readme_rules(
         let claude_content = format!(
             "{}\n{}",
             format_claude_paths(&apply_to),
-            format_with_bookends(header_md, preamble, &body, postamble)
+            format_with_header(header_md, &body)
         );
         let claude_path = claude_rules_dir.join(format!("{rule_name}.md"));
         render_design::write_generated(&claude_path, &claude_content);
@@ -411,7 +409,7 @@ pub(crate) fn generate_crate_readme_rules(
         let copilot_content = format!(
             "{}\n{}",
             format_copilot_apply_to(&apply_to),
-            format_with_bookends(header_md, preamble, &body, postamble)
+            format_with_header(header_md, &body)
         );
         let copilot_path = copilot_instructions_dir.join(format!("{rule_name}.instructions.md"));
         render_design::write_generated(&copilot_path, &copilot_content);
