@@ -672,7 +672,7 @@ mod is_shame_template_tests {
     #[test]
     fn the_reader_honours_only_the_exact_spelling() {
         use super::read_shame_template;
-        let dir = mockspace_manifest::scratch::root().join(format!("shame-case-{}", std::process::id()));
+        let dir = mockspace_manifest::scratch::held();
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -2261,7 +2261,7 @@ mod repo_lint_tests {
     /// cannot regress this way.
     #[test]
     fn repo_lints_run_when_the_workspace_has_no_crates() {
-        let tmp = mockspace_manifest::scratch::root().join(format!("ms_repo_lint_{}", std::process::id()));
+        let tmp = mockspace_manifest::scratch::held();
         std::fs::create_dir_all(&tmp).unwrap();
         let no_crates = BTreeSet::new();
         let no_src: [PathBuf; 0] = [];
@@ -2375,11 +2375,7 @@ mod repo_lint_tests {
 
     /// Run one repo lint against a throwaway directory.
     fn run_one(lint: Box<dyn RepoLint>, cfg: Option<&LintConfig>) -> Vec<LintError> {
-        let tmp = mockspace_manifest::scratch::root().join(format!(
-            "ms_sev_{}_{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let tmp = mockspace_manifest::scratch::held();
         std::fs::create_dir_all(&tmp).unwrap();
         let no_crates = BTreeSet::new();
         let no_src: [PathBuf; 0] = [];

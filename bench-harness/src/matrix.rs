@@ -577,7 +577,7 @@ mod tests {
     fn generate_errors_on_invalid_spec() {
         let mut spec = dispatch_spec();
         spec.axes[1].values.clear();
-        let dir = mockspace_manifest::scratch::root().join(format!("mx_bad_{}", std::process::id()));
+        let dir = mockspace_manifest::scratch::held();
         let err = generate(&spec, &dir).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
         assert!(
@@ -589,7 +589,7 @@ mod tests {
     #[test]
     fn generate_writes_crates() {
         let spec = dispatch_spec();
-        let dir = mockspace_manifest::scratch::root().join(format!("mx_test_{}", std::process::id()));
+        let dir = mockspace_manifest::scratch::held();
         let _ = std::fs::remove_dir_all(&dir);
         let section = generate(&spec, &dir).expect("generate");
         assert!(section.contains("[bench.carrier_dispatch]"));

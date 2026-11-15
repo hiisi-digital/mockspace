@@ -73,43 +73,70 @@ fn an_unknown_flag_fails_and_a_known_one_does_not() {
     assert_eq!(cmd(&cfg, &[]), ExitCode::SUCCESS);
 }
 
-/// Every file or directory under `dir`, below its first level of process roots.
+
+/// Every path under `dir`, process roots included.
 fn leftovers(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut found = Vec::new();
-    for root in fs::read_dir(dir).into_iter().flatten().flatten() {
-        for e in fs::read_dir(root.path()).into_iter().flatten().flatten() {
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        for e in fs::read_dir(&d).into_iter().flatten().flatten() {
             found.push(e.path());
+            if e.path().is_dir() {
+                todo.push(e.path());
+            }
         }
     }
     found
 }
 
+/// The newest executable `<name>-<hash>` beside this test binary, if it was built.
+fn sibling_binary(name: &str) -> Option<std::path::PathBuf> {
+    let deps = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    let prefix = format!("{name}-");
+    fs::read_dir(deps)
+        .ok()?
+        .flatten()
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            n.starts_with(&prefix) && !n.contains('.') && e.path().is_file()
+        })
+        .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
+        .map(|e| e.path())
+}
+
 #[test]
 fn a_test_run_leaves_nothing_in_its_scratch_root() {
     let tmp = mockspace_manifest::scratch::tempdir().unwrap();
-    let exe = std::env::current_exe().unwrap();
-    // The children make scratch, one after the other, under a temp dir of their own.
-    for filter in [
-        "sketches::tests::the_survey",
-        "sketches::tests::an_unknown",
-        "render_design::tests",
-        "gate_report::tests",
-        "suite::timings::tests",
-        "suite::fingerprint::tests",
-        "suite::layout_report::tests",
-        "bench_gen::tests",
-    ] {
-        let out = std::process::Command::new(&exe)
+    let mut bins = vec![std::env::current_exe().unwrap()];
+    for e in fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/tests")).unwrap().flatten() {
+        let p = e.path();
+        // Two integration tests that make scratch, a fast one and the slowest direct user: the rest
+        // spawn cargo and run for minutes, too long for a unit test.
+        let stem = p.file_stem().unwrap().to_string_lossy().to_string();
+        if ["bench_generated_e2e", "help_for_a_name"].contains(&stem.as_str()) {
+            bins.extend(sibling_binary(&p.file_stem().unwrap().to_string_lossy()));
+        }
+    }
+    // Every test binary, the whole of it, one after the other under a temp dir of its own. This
+    // test is skipped in the lib binary, which would otherwise run itself again.
+    for exe in &bins {
+        let out = std::process::Command::new(exe)
             .env("TMPDIR", tmp.path())
-            .args([filter, "--test-threads=1"])
+            .args(["--skip", "a_test_run_leaves_nothing_in_its_scratch_root"])
             .output()
             .unwrap();
-        assert!(out.status.success(), "{filter}: {}", String::from_utf8_lossy(&out.stdout));
+        let tail = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "{}: {}",
+            exe.display(),
+            tail.lines().rev().take(15).collect::<Vec<_>>().join("\n")
+        );
     }
-    let left = leftovers(&tmp.path().join(mockspace_manifest::scratch::SCRATCH_DIR));
+    let base = tmp.path().join(mockspace_manifest::scratch::SCRATCH_DIR);
+    let left = leftovers(&base);
     assert!(left.is_empty(), "scratch left behind: {left:?}");
     // The control: a path a test makes by hand and does not drop is seen.
-    let base = tmp.path().join(mockspace_manifest::scratch::SCRATCH_DIR).join("1");
-    fs::create_dir_all(base.join("kept")).unwrap();
-    assert_eq!(leftovers(&tmp.path().join(mockspace_manifest::scratch::SCRATCH_DIR)).len(), 1);
+    fs::create_dir_all(base.join("1/kept")).unwrap();
+    assert_eq!(leftovers(&base).len(), 2);
 }

@@ -12,7 +12,7 @@ const ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f2001
 /// A fresh directory with `release/` in it, its links resolved so a path
 /// built under it compares equal to what `of_executable` finds.
 fn scratch(name: &str) -> PathBuf {
-    let dir = mockspace_manifest::scratch::root().join(format!("bench-staging-{name}-{}", std::process::id()));
+    let dir = mockspace_manifest::scratch::held();
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join(RELEASE)).unwrap();
     std::fs::canonicalize(dir).unwrap()

@@ -358,7 +358,7 @@ mod tests {
     /// class, or of another cell, never becomes this cell's baseline.
     #[test]
     fn a_cell_s_history_is_its_runs_on_one_machine_class() {
-        let root = mockspace_manifest::scratch::root().join(format!("mockspace-history-{}", std::process::id()));
+        let root = mockspace_manifest::scratch::held();
         let _ = std::fs::remove_dir_all(&root);
         let cell = Cell { sweep: "hash".into(), n: 64 };
         let other_cell = Cell { sweep: "hash".into(), n: 128 };

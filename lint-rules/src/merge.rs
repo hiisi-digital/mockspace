@@ -321,7 +321,7 @@ mod tests {
     /// the control, keeps the unit saveable.
     #[test]
     fn a_failed_hash_is_the_machines_and_keeps_the_unit_unsaved() {
-        let dir = mockspace_manifest::scratch::root().join(format!("merge-badgit-{}", std::process::id()));
+        let dir = mockspace_manifest::scratch::held();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(".git"), "not a gitfile\n").unwrap();
         let view = view_of(&dir);
@@ -329,7 +329,7 @@ mod tests {
         assert!(view.trace().untraced.is_some(), "a broken repository was saved as an answer");
         std::fs::remove_dir_all(&dir).unwrap();
 
-        let fine = mockspace_manifest::scratch::root().join(format!("merge-nogit-{}", std::process::id()));
+        let fine = mockspace_manifest::scratch::held();
         std::fs::create_dir_all(&fine).unwrap();
         let view = view_of(&fine);
         assert!(super::hash_object(&view, &fine, b"x").is_some());
@@ -354,7 +354,7 @@ mod tests {
         /// there and the relative-path handling is half of what is under test.
         fn new(name: &str) -> Self {
             let root =
-                mockspace_manifest::scratch::root().join(format!("mockspace-merge-{name}-{}", std::process::id()));
+                mockspace_manifest::scratch::held();
             let _ = std::fs::remove_dir_all(&root);
             std::fs::create_dir_all(root.join("mock/crates/foo/src")).unwrap();
             let r = Repo {
@@ -435,7 +435,7 @@ mod tests {
     #[test]
     fn the_scratch_directory_refuses_a_path_something_already_holds() {
         let root =
-            mockspace_manifest::scratch::root().join(format!("mockspace-scratchguard-{}", std::process::id()));
+            mockspace_manifest::scratch::held();
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("elsewhere")).unwrap();
         let planted = root.join("planted");

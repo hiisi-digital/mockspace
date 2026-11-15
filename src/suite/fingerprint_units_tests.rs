@@ -27,14 +27,7 @@ struct Repo {
 
 impl Repo {
     fn new(tag: &str) -> Repo {
-        let root = mockspace_manifest::scratch::root().join(format!(
-            "mockspace-suite-units-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or_default()
-        ));
+        let root = mockspace_manifest::scratch::held();
         let r = Repo {
             root,
         };

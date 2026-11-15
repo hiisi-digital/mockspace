@@ -35,9 +35,34 @@ pub fn root() -> PathBuf {
     FIRST.call_once(|| {
         reap(&base, STALE);
         claim(&mine);
+        remove_at_exit(&mine);
     });
     mine
 }
+
+/// Removes this process's root when the process ends normally, whatever a thread left in it, so
+/// a clean run leaves nothing under the scratch directory but other processes' roots. A killed
+/// process runs nothing, and its root is left to [`reap`].
+#[cfg(unix)]
+fn remove_at_exit(mine: &Path) {
+    static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    unsafe extern "C" {
+        fn atexit(f: extern "C" fn()) -> i32;
+    }
+    extern "C" fn clear() {
+        if let Some(p) = ROOT.get() {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
+    if ROOT.set(mine.to_path_buf()).is_ok() {
+        // SAFETY: `clear` is a plain `extern "C"` function with no captured state.
+        unsafe { atexit(clear) };
+    }
+}
+
+/// Off unix there is no exit hook here, so the root stays for [`reap`].
+#[cfg(not(unix))]
+fn remove_at_exit(_mine: &Path) {}
 
 /// A fresh scratch directory under this process's root, removed when the handle drops. The name has a
 /// prefix because tempfile's default starts with a dot, a hidden path that git-shook and others skip.
@@ -47,7 +72,10 @@ pub fn tempdir() -> std::io::Result<tempfile::TempDir> {
 
 /// A fresh scratch directory that stays until the calling thread ends, a panic included, for a
 /// helper that hands the path back and so cannot hold the guard itself. A test runs on a thread of
-/// its own, so that is the test.
+/// its own, so that is the test. Two caveats: a test run on the main thread (libtest falls back to it
+/// where it cannot spawn one, and under `--test-threads=1`) never drops thread-locals, so nothing is
+/// removed until the process-exit removal of the whole root; and a call made on a helper thread the
+/// test spawns is removed when that helper ends, which can be before the test is done with it.
 pub fn held() -> PathBuf {
     thread_local! {
         static HELD: std::cell::RefCell<Vec<tempfile::TempDir>> = const { std::cell::RefCell::new(Vec::new()) };
