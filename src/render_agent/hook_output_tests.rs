@@ -15,7 +15,7 @@ use super::*;
 
 fn scratch() -> std::path::PathBuf {
     static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let d = std::env::temp_dir().join(format!(
+    let d = crate::test_scratch::root().join(format!(
         "ms_hookout_{}_{}",
         std::process::id(),
         SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)

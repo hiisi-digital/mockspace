@@ -60,7 +60,7 @@ fn only_the_test_that_printed_work_carries_it() {
 
 #[test]
 fn a_shard_round_trips_and_a_second_write_of_it_is_refused() {
-    let dir = std::env::temp_dir().join(format!("mock-timings-{}", std::process::id()));
+    let dir = crate::test_scratch::root().join(format!("mock-timings-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let e = env();
     let r = rows(&facts(&e), &[case("sim", "a", 0.25, Outcome::Pass)], &[], &no_fp);
@@ -103,7 +103,7 @@ fn threads_come_from_every_spelling_nextest_takes_else_the_env_else_the_cpus() {
 
 #[test]
 fn a_spooled_run_leaves_no_temp_file_and_run_ids_differ() {
-    let dir = std::env::temp_dir().join(format!("mock-timings-tmp-{}", std::process::id()));
+    let dir = crate::test_scratch::root().join(format!("mock-timings-tmp-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let e = env();
     let r = rows(&facts(&e), &[case("sim", "a", 0.25, Outcome::Pass)], &[], &no_fp);
@@ -126,7 +126,7 @@ fn a_spooled_run_leaves_no_temp_file_and_run_ids_differ() {
 /// the nextest end-to-end tests' to show; this pins what the call does.
 #[test]
 fn a_report_in_becomes_a_shard_with_the_work_on_the_right_row() {
-    let state = std::env::temp_dir().join(format!("mock-timings-run-{}", std::process::id()));
+    let state = crate::test_scratch::root().join(format!("mock-timings-run-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&state);
     let report = r#"<testsuites><testsuite name="sim">
         <testcase name="walks" classname="sim" time="1.500"><system-err>MOCK-WORK ticks 7

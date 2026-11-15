@@ -277,7 +277,7 @@ fn gate_intact_in(clone: &std::path::Path) -> bool {
 
 #[test]
 fn the_agent_gate_holds_where_git_shook_has_the_key_registered_whatever_the_path_spells() {
-    let base = std::env::temp_dir().join(format!("gate-intact-{}", std::process::id()));
+    let base = crate::test_scratch::root().join(format!("gate-intact-{}", std::process::id()));
     // the clone's own path spells "mockspace", as this repository's does: the
     // unregistered control must still fail
     let clone = base.join("work").join("mockspace-clone");
@@ -561,7 +561,7 @@ pub(super) fn skill_fixture(design_talks: Option<bool>) -> std::path::PathBuf {
     // same flag otherwise share one directory and remove_dir_all it under
     // each other when the suite runs in parallel.
     static FIXTURE_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let root = std::env::temp_dir().join(format!(
+    let root = crate::test_scratch::root().join(format!(
         "mockspace-skilltest-{}-{}-{:?}",
         std::process::id(),
         FIXTURE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -781,7 +781,7 @@ fn write_guard_allows(target_rel: &str) -> bool {
 pub(super) fn write_guard_allows_in(target_rel: &str, src_dirs: &[&str]) -> bool {
     use std::process::{Command, Stdio};
 
-    let repo = std::env::temp_dir().join(format!(
+    let repo = crate::test_scratch::root().join(format!(
         "wg-{}-{}-{}",
         std::process::id(),
         src_dirs.len(),

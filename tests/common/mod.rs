@@ -11,6 +11,9 @@
 
 #![allow(dead_code)]
 
+#[path = "../../src/test_scratch.rs"]
+mod test_scratch;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -306,7 +309,7 @@ pub fn mockspace() -> Command {
     use std::sync::OnceLock;
     static HOME: OnceLock<PathBuf> = OnceLock::new();
     let home = HOME.get_or_init(|| {
-        let dir = std::env::temp_dir().join(format!("ms-test-home-{}", std::process::id()));
+        let dir = test_scratch::root().join(format!("ms-test-home-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
     });

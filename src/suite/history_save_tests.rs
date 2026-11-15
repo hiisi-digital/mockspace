@@ -39,7 +39,7 @@ fn save(h: &History, mock: &Path, members: &[&str]) -> Result<(), String> {
 }
 
 fn scratch(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!(
+    let d = crate::test_scratch::root().join(format!(
         "mockspace-suite-hist-{tag}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()

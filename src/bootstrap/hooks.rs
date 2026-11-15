@@ -687,7 +687,7 @@ mod byline_hook_tests {
     fn scratch(tag: &str) -> PathBuf {
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let dir =
-            std::env::temp_dir().join(format!("mock_byline_{tag}_{}_{n}", std::process::id()));
+            crate::test_scratch::root().join(format!("mock_byline_{tag}_{}_{n}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

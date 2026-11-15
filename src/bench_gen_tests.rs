@@ -11,7 +11,7 @@ fn manifest(text: &str) -> BenchManifest {
     // unique per call: parallel tests sharing a constant would
     // otherwise race on create/remove.
     static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!(
+    let dir = crate::test_scratch::root().join(format!(
         "mockspace-bench-gen-manifest-{}-{}",
         std::process::id(),
         SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
@@ -160,7 +160,7 @@ fn generated_manifests_carry_the_workspace_header_and_the_feature() {
 
 #[test]
 fn a_cdylib_under_support_is_refused_naming_the_rule() {
-    let dir = std::env::temp_dir().join(format!(
+    let dir = crate::test_scratch::root().join(format!(
         "mockspace-support-cdylib-test-{}",
         std::process::id()
     ));
@@ -199,7 +199,7 @@ fn a_path_dep_spec_expands_per_crate_and_a_git_spec_applies_verbatim() {
 
 #[test]
 fn write_if_changed_is_idempotent() {
-    let dir = std::env::temp_dir().join(format!("mockspace-gen-test-{}", std::process::id()));
+    let dir = crate::test_scratch::root().join(format!("mockspace-gen-test-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     let p = dir.join("x/y.rs");
     write_if_changed(&p, "one").unwrap();

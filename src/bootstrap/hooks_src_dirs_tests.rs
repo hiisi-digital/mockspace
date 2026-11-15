@@ -76,7 +76,7 @@ pub(super) fn stage(root: &Path, files: &[(&str, &str)]) {
 fn stub_bin() -> &'static Path {
     static BIN: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     BIN.get_or_init(|| {
-        let bin = std::env::temp_dir().join(format!("ms_hook_stubs_{}", std::process::id()));
+        let bin = crate::test_scratch::root().join(format!("ms_hook_stubs_{}", std::process::id()));
         fs::create_dir_all(&bin).unwrap();
         // `cargo` records its arguments, one call to a line, in the file the run
         // names, and passes. The others serve the byline scan.

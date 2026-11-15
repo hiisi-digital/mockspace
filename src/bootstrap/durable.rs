@@ -30,7 +30,7 @@ pub(crate) fn durable_hooks_dir() -> Option<PathBuf> {
 /// two tests installing the hooks at once do not write the same files.
 #[cfg(test)]
 fn test_config_home() -> PathBuf {
-    env::temp_dir().join(format!(
+    crate::test_scratch::root().join(format!(
         "ms-lib-test-config-{}-{:?}",
         std::process::id(),
         std::thread::current().id()

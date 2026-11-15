@@ -9,7 +9,7 @@ pub(super) fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 pub(super) fn repo(tag: &str) -> PathBuf {
-    let dir = env::temp_dir().join(format!("ms-shook-{}-{tag}", std::process::id()));
+    let dir = crate::test_scratch::root().join(format!("ms-shook-{}-{tag}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     git(&dir, &["init", "-q"]);
