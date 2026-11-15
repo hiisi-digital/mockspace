@@ -54,8 +54,12 @@ fn remove_at_exit(mine: &Path) {
             let _ = std::fs::remove_dir_all(p);
         }
     }
-    if ROOT.set(mine.to_path_buf()).is_ok() {
-        // SAFETY: `clear` is a plain `extern "C"` function with no captured state.
+    // Absolute, so a later `set_current_dir` cannot move what the exit handler removes.
+    let mine = std::path::absolute(mine).unwrap_or_else(|_| mine.to_path_buf());
+    if ROOT.set(mine).is_ok() {
+        // SAFETY: `clear` is a plain `extern "C"` function with no captured state. It may run while
+        // test threads are still alive and race them over the files, which is harmless here, and it
+        // must never panic: every result in it is discarded.
         unsafe { atexit(clear) };
     }
 }
@@ -72,8 +76,8 @@ pub fn tempdir() -> std::io::Result<tempfile::TempDir> {
 
 /// A fresh scratch directory that stays until the calling thread ends, a panic included, for a
 /// helper that hands the path back and so cannot hold the guard itself. A test runs on a thread of
-/// its own, so that is the test. Two caveats: a test run on the main thread (libtest falls back to it
-/// where it cannot spawn one, and under `--test-threads=1`) never drops thread-locals, so nothing is
+/// its own, so that is the test. Two caveats: a test run on the main thread (libtest spawns a thread per test even
+/// under `--test-threads=1`, and falls back to the main thread only where it cannot spawn one) never drops thread-locals, so nothing is
 /// removed until the process-exit removal of the whole root; and a call made on a helper thread the
 /// test spawns is removed when that helper ends, which can be before the test is done with it.
 pub fn held() -> PathBuf {
