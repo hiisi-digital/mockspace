@@ -16,9 +16,6 @@
 //! with the hook's own artifact in it. Run twice, the second run lands
 //! beside the first and replaces nothing.
 
-#[path = "../src/test_scratch.rs"]
-mod test_scratch;
-
 use std::path::{Path, PathBuf};
 
 fn write(path: &Path, contents: &str) {

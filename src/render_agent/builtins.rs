@@ -830,7 +830,7 @@ mod check_message_tests {
         // existing directory, so two tests starting in the same tick shared a
         // scratch directory and overwrote each other's fixtures.
         static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let d = crate::test_scratch::root().join(format!(
+        let d = test_scratch::root().join(format!(
             "ms_checkmsg_{}_{}",
             std::process::id(),
             SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)

@@ -10,7 +10,7 @@ fn f(sev: &str, kind: &str, n: usize) -> Finding {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let d = crate::test_scratch::root().join(format!("gate-report-{name}-{}", std::process::id()));
+    let d = test_scratch::root().join(format!("gate-report-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d

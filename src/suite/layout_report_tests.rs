@@ -21,7 +21,7 @@ fn git(root: &Path, args: &[&str]) {
 
 /// A git repository with one workspace member, `solo`, under `mock/`.
 fn repo(tag: &str) -> Config {
-    let root = crate::test_scratch::root().join(format!("ms_test_units_{tag}_{}", std::process::id()));
+    let root = test_scratch::root().join(format!("ms_test_units_{tag}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let krate = root.join("mock/solo");
     std::fs::create_dir_all(krate.join("src")).unwrap();

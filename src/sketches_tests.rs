@@ -32,7 +32,7 @@ fn a_timer_in_a_sketch_is_seen_and_plain_code_is_not() {
 
 #[test]
 fn the_survey_reads_each_sketch_and_open_keeps_only_those_wanting_attention() {
-    let root = crate::test_scratch::root().join(format!("ms_sketches_{}", std::process::id()));
+    let root = test_scratch::root().join(format!("ms_sketches_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let write = |rel: &str, text: &str| {
         let p = root.join(rel);
@@ -64,7 +64,7 @@ fn the_survey_reads_each_sketch_and_open_keeps_only_those_wanting_attention() {
 
 #[test]
 fn an_unknown_flag_fails_and_a_known_one_does_not() {
-    let root = crate::test_scratch::root().join(format!("ms_sketches_cmd_{}", std::process::id()));
+    let root = test_scratch::root().join(format!("ms_sketches_cmd_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let mut cfg = Config::from_dir(Path::new("/nonexistent-mock-dir"));
     cfg.mock_dir = root.join("mock");

@@ -56,10 +56,6 @@ pub mod render_agent;
 pub mod render_design;
 pub mod render_md;
 pub mod sketches;
-#[cfg(test)]
-pub(crate) mod test_scratch;
-#[cfg(test)]
-mod test_scratch_tests;
 pub mod suite;
 pub mod tool_catalogue;
 pub mod tool_config;

@@ -11,9 +11,6 @@
 
 #![allow(dead_code)]
 
-#[path = "../../src/test_scratch.rs"]
-mod test_scratch;
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

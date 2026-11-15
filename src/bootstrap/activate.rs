@@ -239,7 +239,7 @@ mod tests {
     fn repo() -> PathBuf {
         use std::sync::atomic::{AtomicUsize, Ordering};
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = crate::test_scratch::root().join(format!(
+        let dir = test_scratch::root().join(format!(
             "ms-activate-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -315,7 +315,7 @@ mod tests {
         // and a parallel test taking the number in between would make this pass
         // for the wrong reason.
         let planned =
-            crate::test_scratch::root().join(format!("ms-activate-plant-{}", std::process::id()));
+            test_scratch::root().join(format!("ms-activate-plant-{}", std::process::id()));
         std::fs::create_dir_all(&planned).expect("plant dir");
         let plant = |args: &[&str]| {
             std::process::Command::new("git")

@@ -252,6 +252,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "test-scratch",
  "toml_edit",
  "tree-sitter",
  "tree-sitter-rust",
@@ -563,6 +564,13 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
+]
+
+[[package]]
+name = "test-scratch"
+version = "0.0.0"
+dependencies = [
+ "tempfile",
 ]
 
 [[package]]

@@ -730,7 +730,7 @@ mod tests {
 
     #[test]
     fn write_generated_skips_timestamp_only_and_restores_previous() {
-        let dir = crate::test_scratch::root().join(format!("mockspace_wg_{}", std::process::id()));
+        let dir = test_scratch::root().join(format!("mockspace_wg_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("gen.md");
 

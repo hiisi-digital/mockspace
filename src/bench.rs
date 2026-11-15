@@ -1921,7 +1921,7 @@ mod tests {
     }
 
     fn temp_mock(name: &str) -> PathBuf {
-        let d = crate::test_scratch::root().join(format!(
+        let d = test_scratch::root().join(format!(
             "mockspace-bench-cmd-test-{}-{name}",
             std::process::id()
         ));
