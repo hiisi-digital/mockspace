@@ -22,7 +22,7 @@ pub(crate) fn durable_hooks_dir() -> Option<PathBuf> {
     }
     #[cfg(not(test))]
     {
-        durable_hooks_dir_from(env::var_os("XDG_CONFIG_HOME"), env::var_os("HOME"))
+        durable_hooks_dir_from(std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME"))
     }
 }
 

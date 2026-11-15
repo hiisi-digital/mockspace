@@ -30,7 +30,7 @@
 //! by the engine into one cdylib (see `custom_lints`).
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::{env, fs};
+use std::fs;
 
 use mockspace_manifest::write_executable;
 
