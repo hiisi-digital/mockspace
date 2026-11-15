@@ -347,8 +347,10 @@ master_seed = 7
         );
     }
 
+    // `--keep-builds`: the preflight below reads the arms the run built, which a
+    // run removes otherwise.
     let cfg = mockspace::config::Config::from_dir(&mock_dir);
-    let code = mockspace::bench::cmd(&cfg, &["run"]);
+    let code = mockspace::bench::cmd(&cfg, &["run", "--keep-builds"]);
     assert_eq!(
         format!("{code:?}"),
         format!("{:?}", std::process::ExitCode::FAILURE),
@@ -424,6 +426,11 @@ master_seed = 7
         "the bench whose arm declares 32 bytes against an 8-byte routine is refused, and \
          nothing of it is promoted"
     );
+
+    // a run without the flag removes the builds the kept one left, the arms and
+    // the driver, from where cargo put them and from where the driver finds them
+    let _ = mockspace::bench::cmd(&cfg, &["run"]);
+    assert!(!bench_dir.join("target").exists(), "the per-arm links stay after a plain run");
 
     std::fs::remove_dir_all(&root).ok();
 }

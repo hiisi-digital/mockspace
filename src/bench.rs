@@ -10,9 +10,10 @@
 //! sample arm whose manifest the tool generates. No driver crate is
 //! scaffolded; the driver binary is generated from `bench.toml`.
 //!
-//! `mock bench run` builds the arms into tool-owned target
-//! directories with the pinned release profile, generates and builds
-//! the driver, and spawns it. The generated driver is the only runner:
+//! `mock bench run` builds the arms and the generated driver in the
+//! workspace's shared target with the pinned release profile, spawns the
+//! driver, and removes what it built once the results are written (see
+//! `bench_builds`; `--keep-builds` keeps it). The generated driver is the only runner:
 //! a tree carrying one of its own (a `Cargo.toml` at the bench root, or
 //! any crate in the tree with a binary of its own) is refused, here and
 //! by the `a-bench-runs-only-on-the-generated-driver` lint.
@@ -30,7 +31,7 @@ use mockspace_bench_harness::config::BuildSection;
 use mockspace_bench_harness::tree as bench_tree;
 
 use crate::config::Config;
-use crate::{bench_gen, bench_migrate, bench_rev, bench_variants};
+use crate::{bench_builds, bench_gen, bench_migrate, bench_rev, bench_variants};
 
 /// Splits one subcommand's argv into positional names and flags to
 /// forward, with one shared grammar rather than the two independent
@@ -134,6 +135,8 @@ fn print_help() {
     eprintln!("`run` and `report` accept bench names to restrict the pass:");
     eprintln!("  mock bench run <name> [<name> ...]   run only the named benches");
     eprintln!("with no names, every bench in bench.toml runs");
+    eprintln!("`run` removes the arm and driver builds it made once the results are written;");
+    eprintln!("  mock bench run --keep-builds         keeps them for a second run");
     eprintln!();
     eprintln!("`mock/benches/` layout (created by `init`):");
     eprintln!("  bench.toml            globals: [timing] [dispatch] [build] [workload.*]");
@@ -192,7 +195,8 @@ fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
     // (forwarded as --only) and the variant builds. `--seed` takes its
     // following token as its value, per split_positional_and_flags.
     let (names, extra) = split_positional_and_flags(args, &["--seed"]);
-    run_generated(cfg, &bench_dir, &names, &extra, false)
+    let (extra, keep) = bench_builds::take_keep_flag(&extra);
+    run_generated(cfg, &bench_dir, &names, &extra, false, keep)
 }
 
 // ── report ──
@@ -214,7 +218,7 @@ fn cmd_report(cfg: &Config, args: &[&str]) -> ExitCode {
         .copied()
         .filter(|a| !a.starts_with("--"))
         .collect();
-    run_generated(cfg, &bench_dir, &names, &["--report-only"], true)
+    run_generated(cfg, &bench_dir, &names, &["--report-only"], true, false)
 }
 
 /// How to describe the profile a `cargo test` run used, for the summary line.
@@ -497,8 +501,9 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// The `--target-dir` `mock bench test` passes every crate it builds: one of its
-/// own under `target/`, unless the environment, a cargo config file or the
+/// The `--target-dir` `mock bench test` passes every crate it builds: the mock
+/// directory's own `target/`, the one `mock bench run` builds its arms and
+/// driver in, unless the environment, a cargo config file or the
 /// caller already fixed where cargo builds, and then none. `inherited` is what
 /// the environment or a config file set, passed in so the decision is testable
 /// without touching the process's.
@@ -508,7 +513,7 @@ fn bench_test_target_dir(
     inherited: Option<&std::ffi::OsStr>,
 ) -> Option<PathBuf> {
     crate::build_dir::may_pass_target_dir(extra, inherited)
-        .then(|| crate::build_dir::ensure_under_target(mock_dir, &["mockspace-bench-test"]))
+        .then(|| crate::build_dir::ensure_target_dir(mock_dir))
 }
 
 /// A readable label for a manifest path in `mock bench test`'s output:
@@ -817,17 +822,20 @@ fn single_executable(manifest: &Path, stdout: &[u8], what: &str) -> Result<PathB
 
 /// The generated-driver run path: `bench.toml` is the whole input.
 ///
-/// Arms build into per-arm tool-owned target directories (so where a
-/// dylib lands is a tool guarantee rather than a workspace accident),
-/// the driver crate is generated under `mock/target/mockspace-bench/`
-/// the way the custom-lint collect crate is, and the optional hooks
-/// library at `src/lib.rs` is compiled in by path when present.
+/// Arms and the driver build in the shared target (`bench_builds`), so every
+/// dependency compiles once. An arm is linked to where the harness resolves it,
+/// under `target/mock-arms/`. The driver crate's sources are generated under
+/// `mock/target/mockspace-bench/` the way the custom-lint collect crate is, and
+/// the optional hooks library at `src/lib.rs` is compiled in by path when
+/// present. Once the driver has exited the arm and driver builds are removed
+/// again, unless `--keep-builds` asked to keep them.
 fn run_generated(
     cfg: &Config,
     bench_dir: &Path,
     names: &[&str],
     extra: &[&str],
     report_only: bool,
+    keep_builds: bool,
 ) -> ExitCode {
     // One run of a tree at a time, held until the driver exits.
     let _tree_lock = match bench_gen::lock_tree(&bench_gen::driver_gen_dir(&cfg.mock_dir)) {
@@ -846,6 +854,12 @@ fn run_generated(
     };
     let dep = bench_gen::mockspace_dep(&plan.manifest);
     let profile = profile_args_for(plan.manifest.build.as_ref());
+    // Arms and the driver build in the one target the machine resolves, so the
+    // dependencies they share compile once; what they build is removed when this
+    // function returns, unless `--keep-builds` was given.
+    let inherited = crate::build_dir::build_target_dir(&cfg.mock_dir);
+    let target = bench_builds::shared_target(&cfg.mock_dir, inherited.as_deref());
+    let mut builds = bench_builds::Builds::new(bench_dir, keep_builds);
     // Which benches the filter selects; a request may name a sweep
     // (`bench/sweep`), which builds its bench's arms.
     let wanted = bench_rev::wanted(names);
@@ -873,7 +887,6 @@ fn run_generated(
             if !bench_rev::selects(wanted.as_deref(), arm) {
                 continue;
             }
-            let target = bench_dir.join(bench_tree::arm_target_dir(&arm.bench, &arm.arm));
             let what = format!("arm {}/arms/{}", arm.bench, arm.arm);
             let manifest_path = if arm.has_manifest {
                 if let Err(e) = check_arm_lib_name(arm) {
@@ -901,7 +914,14 @@ fn run_generated(
                 return ExitCode::FAILURE;
             }
             eprintln!("  building {what}...");
-            if let Err(e) = cargo_build_at(&manifest_path, &what, &profile, Some(&target)) {
+            let built = match cargo_build_at(&manifest_path, &what, &profile, target.as_deref()) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::FAILURE;
+                },
+            };
+            if let Err(e) = builds.link_arm(bench_dir, arm, &manifest_path, &built) {
                 eprintln!("error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -971,7 +991,7 @@ fn run_generated(
         &gen_dir.join("Cargo.toml"),
         "generated bench driver",
         &profile,
-        None,
+        target.as_deref(),
     ) {
         Ok(o) => o,
         Err(e) => {
@@ -979,6 +999,7 @@ fn run_generated(
             return ExitCode::FAILURE;
         },
     };
+    builds.record(&gen_dir.join("Cargo.toml"), &stdout);
     let bin_path = match single_executable(
         &gen_dir.join("Cargo.toml"),
         &stdout,
@@ -1489,8 +1510,9 @@ mod tests {
     use super::*;
 
     /// The bench crates build into the target directory the machine chose, and
-    /// into one of their own only where nothing chose. A second build tree is
-    /// several gigabytes on a large bench tree.
+    /// into the mock directory's own `target/` only where nothing chose, the one
+    /// `mock bench run` builds in. A second build tree is several gigabytes on a
+    /// large bench tree.
     #[test]
     fn bench_test_builds_where_the_environment_or_the_caller_said() {
         let tmp = mockspace_manifest::scratch::tempdir().unwrap();
@@ -1512,9 +1534,9 @@ mod tests {
             !mock.join("target").exists(),
             "declining must not create the directory it declined"
         );
-        // Nothing chose, so the crates share one of ours under `target/`.
+        // Nothing chose, so the crates share the mock directory's `target/`.
         let own = bench_test_target_dir(mock, &["--release"], None).unwrap();
-        assert_eq!(own, mock.join("target").join("mockspace-bench-test"));
+        assert_eq!(own, mock.join("target"));
         assert!(own.is_dir());
     }
 
