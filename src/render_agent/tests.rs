@@ -1757,3 +1757,11 @@ fn the_bookends_live_in_the_mockspace_rule_and_nowhere_else() {
         }
     }
 }
+
+#[test]
+fn a_claude_rule_scoped_to_everything_has_no_paths_block_and_a_narrower_scope_keeps_it() {
+    assert_eq!(format_claude_paths(&["**".to_string()]), "");
+    let both = format_claude_paths(&["**".to_string(), "src/**".to_string()]);
+    assert!(both.starts_with("---\npaths:\n"), "{both}");
+    assert!(both.contains("  - \"**\"") && both.contains("  - \"src/**\""), "{both}");
+}

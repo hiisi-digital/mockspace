@@ -16,6 +16,8 @@ fn the_outcome_line_is_read_in_the_shapes_the_skill_and_the_tree_use() {
     // The controls: a heading that is not an outcome line, a heading with no
     // verdict, a line naming no outcome, and no line at all.
     assert_eq!(outcome_of("## Result: WORKS\n"), Outcome::NoLine);
+    assert_eq!(outcome_of("## OUTCOME\n\nWORKS\n"), Outcome::Works);
+    assert!(matches!(outcome_of("## Outcome\n\nsee below\n"), Outcome::Unclear(_)));
     assert!(matches!(outcome_of("## Outcome\n"), Outcome::Unclear(_)));
     assert!(matches!(outcome_of("**Outcome:** maybe\n"), Outcome::Unclear(_)));
     assert_eq!(outcome_of("# x\n\n## WORKS\n"), Outcome::NoLine);

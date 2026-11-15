@@ -59,9 +59,11 @@ pub struct Sketch {
 }
 
 /// The outcome line of a findings text: a line reading `Outcome:`, bold or
-/// not, whose first word after it is the outcome.
+/// not, whose first word after it is the outcome. Where the line carries no
+/// verdict, the next non-empty line is read for it.
 pub fn outcome_of(findings: &str) -> Outcome {
-    for line in findings.lines() {
+    let mut lines = findings.lines();
+    while let Some(line) = lines.next() {
         let bare = line.trim().trim_start_matches(['#', '*', '-', ' ']);
         let Some(head) = bare.get(.."outcome".len()) else {
             continue;
@@ -70,7 +72,11 @@ pub fn outcome_of(findings: &str) -> Outcome {
             continue;
         }
         let rest = &bare["outcome".len()..];
-        let rest = rest.trim_start_matches(['*', ':', ' ']);
+        let mut rest = rest.trim_start_matches(['*', ':', ' ']);
+        // A heading with no verdict on it: the verdict is the next non-empty line.
+        if rest.trim().is_empty() {
+            rest = lines.find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+        }
         let word: String = rest
             .trim_start_matches(['*', '`', ' '])
             .chars()

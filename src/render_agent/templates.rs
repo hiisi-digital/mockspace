@@ -454,7 +454,7 @@ The `canon-tiers` skill has the rest.
     // this repository itself declares: its project tools and the lints it set,
     // with `mock tools` and `mock lints` named as the live answer once the
     // snapshot is older than the last change. What is the same in every repository
-    // is left to those commands, because this rule loads on the first file read
+    // is left to those commands, because this rule loads at session start
     // and every session there pays for its size. See `crate::tool_catalogue` for
     // why a snapshot rather than only the instruction to run the commands.
     if cfg.agent.catalogues {
