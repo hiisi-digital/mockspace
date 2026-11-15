@@ -19,6 +19,7 @@
 pub mod agent_mode;
 pub mod autofix;
 pub mod bench;
+mod bench_builds;
 mod bench_commit;
 pub mod bench_docs;
 mod bench_migrate;

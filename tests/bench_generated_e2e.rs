@@ -347,8 +347,10 @@ master_seed = 7
         );
     }
 
+    // `--keep-builds`: the preflight below reads the arms the run built, which a
+    // run removes otherwise.
     let cfg = mockspace::config::Config::from_dir(&mock_dir);
-    let code = mockspace::bench::cmd(&cfg, &["run"]);
+    let code = mockspace::bench::cmd(&cfg, &["run", "--keep-builds"]);
     assert_eq!(
         format!("{code:?}"),
         format!("{:?}", std::process::ExitCode::FAILURE),
@@ -424,6 +426,46 @@ master_seed = 7
         "the bench whose arm declares 32 bytes against an 8-byte routine is refused, and \
          nothing of it is promoted"
     );
+
+    // A run without the flag removes what it built. One bench that runs clean
+    // succeeds, and then its arm's link under the bench tree and the driver in
+    // the target cargo built it in are gone.
+    let shared = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| mock_dir.join("target"));
+    let driver = mockspace::bench_gen::driver_name(&bench_dir);
+    let driver_files = |dir: &Path| -> Vec<String> {
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(&driver) || n.starts_with(&driver.replace('-', "_")))
+            .collect()
+    };
+    assert!(!driver_files(&shared.join("release")).is_empty(), "the kept run left its driver");
+    let code = mockspace::bench::cmd(&cfg, &["run", "fits"]);
+    assert_eq!(
+        format!("{code:?}"),
+        format!("{:?}", std::process::ExitCode::SUCCESS),
+        "a plain run of the bench that fits must succeed"
+    );
+    assert!(
+        !bench_dir.join("target").join("mock-arms").join("fits").exists(),
+        "the arm's link stays after a plain run"
+    );
+    let left: Vec<String> = ["release", "release/deps"].iter().flat_map(|d| driver_files(&shared.join(d))).collect();
+    assert!(left.is_empty(), "the driver stays after a plain run: {left:?}");
+
+    // the refused arms still fail a run of everything, which then removes the
+    // rest of what the kept run built
+    let code = mockspace::bench::cmd(&cfg, &["run"]);
+    assert_eq!(
+        format!("{code:?}"),
+        format!("{:?}", std::process::ExitCode::FAILURE),
+        "the refused arms fail a plain run of everything"
+    );
+    assert!(!bench_dir.join("target").exists(), "the per-arm links stay after a plain run");
 
     std::fs::remove_dir_all(&root).ok();
 }
