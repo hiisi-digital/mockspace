@@ -11,7 +11,12 @@ fn the_outcome_line_is_read_in_the_shapes_the_skill_and_the_tree_use() {
     assert_eq!(outcome_of("**Outcome:** FAILS WITH E0277\n"), Outcome::Fails);
     assert_eq!(outcome_of("Outcome: inconclusive, the gate\n"), Outcome::Inconclusive);
     assert_eq!(outcome_of("- **Outcome**: `WORKS`\n"), Outcome::Works);
-    // The controls: a line naming no outcome, and no line at all.
+    assert_eq!(outcome_of("## Outcome: WORKS\n"), Outcome::Works);
+    assert_eq!(outcome_of("## OUTCOME: fails with E0277\n"), Outcome::Fails);
+    // The controls: a heading that is not an outcome line, a heading with no
+    // verdict, a line naming no outcome, and no line at all.
+    assert_eq!(outcome_of("## Result: WORKS\n"), Outcome::NoLine);
+    assert!(matches!(outcome_of("## Outcome\n"), Outcome::Unclear(_)));
     assert!(matches!(outcome_of("**Outcome:** maybe\n"), Outcome::Unclear(_)));
     assert_eq!(outcome_of("# x\n\n## WORKS\n"), Outcome::NoLine);
 }
@@ -53,4 +58,16 @@ fn the_survey_reads_each_sketch_and_open_keeps_only_those_wanting_attention() {
     assert!(open.contains("_bare  no FINDINGS.md"), "{open}");
     assert!(open.contains("_timed  WORKS  times something"), "{open}");
     assert!(render(&all, false).contains("_done  WORKS"), "the full list keeps it");
+}
+
+#[test]
+fn an_unknown_flag_fails_and_a_known_one_does_not() {
+    let root = std::env::temp_dir().join(format!("ms_sketches_cmd_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let mut cfg = Config::from_dir(Path::new("/nonexistent-mock-dir"));
+    cfg.mock_dir = root.join("mock");
+    assert_eq!(cmd(&cfg, &["--bogus".to_string()]), ExitCode::FAILURE);
+    // The control: the flag it takes, and no flag, both succeed with no sketches dir.
+    assert_eq!(cmd(&cfg, &["--open".to_string()]), ExitCode::SUCCESS);
+    assert_eq!(cmd(&cfg, &[]), ExitCode::SUCCESS);
 }

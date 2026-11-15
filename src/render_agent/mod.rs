@@ -138,10 +138,9 @@ pub fn generate_agent_rules(
     // stamped on nothing else: every rule loaded beside it would repeat them.
     let banner = BuiltinRule {
         name:     "mockspace".to_string(),
-        apply_to: vec![],
+        apply_to: vec!["**".to_string()],
         body:     format!("{preamble}\n\n{postamble}"),
     };
-    let (preamble, postamble) = (String::new(), String::new());
     let mut count = 0;
 
     // --- MAIN.md.tmpl -> .claude/CLAUDE.md + .github/copilot-instructions.md ---
@@ -152,7 +151,7 @@ pub fn generate_agent_rules(
         // Claude: .claude/CLAUDE.md (discovered from .claude/ directory)
         let claude_dir = repo_root.join(".claude");
         let _ = fs::create_dir_all(&claude_dir);
-        let claude_content = format_with_bookends(&header_md, &preamble, &body, &postamble);
+        let claude_content = format_with_header(&header_md, &body);
         let claude_path = claude_dir.join("CLAUDE.md");
         render_design::write_generated(&claude_path, &claude_content);
         eprintln!("  {}", claude_path.display());
@@ -179,7 +178,7 @@ pub fn generate_agent_rules(
         // Copilot: .github/copilot-instructions.md
         let copilot_dir = repo_root.join(".github");
         let _ = fs::create_dir_all(&copilot_dir);
-        let copilot_content = format_with_bookends(&header_md, &preamble, &body, &postamble);
+        let copilot_content = format_with_header(&header_md, &body);
         let copilot_path = copilot_dir.join("copilot-instructions.md");
         render_design::write_generated(&copilot_path, &copilot_content);
         eprintln!("  {}", copilot_path.display());
@@ -227,7 +226,7 @@ pub fn generate_agent_rules(
         let claude_fm = format_claude_paths(&builtin_rule.apply_to);
         let claude_content = format!(
             "{claude_fm}\n{}",
-            format_with_bookends(&header_md, &preamble, &builtin_rule.body, &postamble)
+            format_with_header(&header_md, &builtin_rule.body)
         );
         let claude_path = claude_rules_dir.join(format!("{}.md", builtin_rule.name));
         render_design::write_generated(&claude_path, &claude_content);
@@ -238,7 +237,7 @@ pub fn generate_agent_rules(
         let copilot_fm = format_copilot_apply_to(&builtin_rule.apply_to);
         let copilot_content = format!(
             "{copilot_fm}\n{}",
-            format_with_bookends(&header_md, &preamble, &builtin_rule.body, &postamble)
+            format_with_header(&header_md, &builtin_rule.body)
         );
         let copilot_path =
             copilot_instructions_dir.join(format!("{}.instructions.md", builtin_rule.name));
@@ -257,8 +256,6 @@ pub fn generate_agent_rules(
         &claude_hooks_dir,
         &copilot_hooks_dir,
         &header_md,
-        &preamble,
-        &postamble,
     );
     count += derived_count;
 
@@ -269,8 +266,6 @@ pub fn generate_agent_rules(
         &copilot_instructions_dir,
         &vars,
         &header_md,
-        &preamble,
-        &postamble,
         registry,
     );
 
@@ -302,7 +297,7 @@ pub fn generate_agent_rules(
             let claude_fm = format_claude_paths(&apply_to);
             let claude_content = format!(
                 "{claude_fm}\n{}",
-                format_with_bookends(&header_md, &preamble, &body, &postamble)
+                format_with_header(&header_md, &body)
             );
             let claude_path = claude_rules_dir.join(format!("{stem}.md"));
             render_design::write_generated(&claude_path, &claude_content);
@@ -313,7 +308,7 @@ pub fn generate_agent_rules(
             let copilot_fm = format_copilot_apply_to(&apply_to);
             let copilot_content = format!(
                 "{copilot_fm}\n{}",
-                format_with_bookends(&header_md, &preamble, &body, &postamble)
+                format_with_header(&header_md, &body)
             );
             let copilot_path = copilot_instructions_dir.join(format!("{stem}.instructions.md"));
             render_design::write_generated(&copilot_path, &copilot_content);
@@ -346,7 +341,7 @@ pub fn generate_agent_rules(
         let _ = fs::create_dir_all(&claude_skill_dir);
         let claude_content = format!(
             "{skill_fm}\n{}",
-            format_with_bookends(&header_md, &preamble, &builtin_skill.body, &postamble)
+            format_with_header(&header_md, &builtin_skill.body)
         );
         let claude_path = claude_skill_dir.join("SKILL.md");
         render_design::write_generated(&claude_path, &claude_content);
@@ -358,7 +353,7 @@ pub fn generate_agent_rules(
         let _ = fs::create_dir_all(&copilot_skill_dir);
         let copilot_content = format!(
             "{skill_fm}\n{}",
-            format_with_bookends(&header_md, &preamble, &builtin_skill.body, &postamble)
+            format_with_header(&header_md, &builtin_skill.body)
         );
         let copilot_path = copilot_skill_dir.join("SKILL.md");
         render_design::write_generated(&copilot_path, &copilot_content);
@@ -454,7 +449,7 @@ pub fn generate_agent_rules(
             let _ = fs::create_dir_all(&claude_skill_dir);
             let claude_content = format!(
                 "{skill_fm}\n{}",
-                format_with_bookends(&header_md, &preamble, &body, &postamble)
+                format_with_header(&header_md, &body)
             );
             let claude_path = claude_skill_dir.join("SKILL.md");
             render_design::write_generated(&claude_path, &claude_content);
@@ -466,7 +461,7 @@ pub fn generate_agent_rules(
             let _ = fs::create_dir_all(&copilot_skill_dir);
             let copilot_content = format!(
                 "{skill_fm}\n{}",
-                format_with_bookends(&header_md, &preamble, &body, &postamble)
+                format_with_header(&header_md, &body)
             );
             let copilot_path = copilot_skill_dir.join("SKILL.md");
             render_design::write_generated(&copilot_path, &copilot_content);

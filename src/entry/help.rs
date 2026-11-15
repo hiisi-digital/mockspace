@@ -269,19 +269,24 @@ const COMMANDS: &[Cmd] = &[
                   no FINDINGS.md or no outcome line, and names a Rust source that \
                   times something, which makes the sketch a bench. `--open` keeps \
                   only the sketches wanting attention. A report: it changes nothing \
-                  and exits 0.",
+                  and exits 0, or 1 on a flag it does not take.",
     },
     Cmd {
         name:    "test-units",
         summary: "show how each member's tests divide into binaries",
-        args:    &[],
+        args:    &[ArgSpec {
+            name:        "member",
+            required:    false,
+            description: "a workspace member to report on, repeatable; every member when none",
+        }],
         help:    "For each member named, or every member, prints each \
                   integration-test binary with how many files it is built from, \
                   marks the wide ones (they read the environment or file!(), or \
                   declare a module that cannot be followed, so they rerun on every \
                   test file of the member), and names the Rust files under tests/ no \
                   binary claims, which move every binary. The same layout `mock test` \
-                  selects by. A report: it changes nothing.",
+                  selects by. A report: it changes nothing, exits 0, or 1 when a \
+                  member named is not in the workspace.",
     },
     Cmd {
         name:    "panel",

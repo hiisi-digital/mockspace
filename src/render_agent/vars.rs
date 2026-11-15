@@ -263,9 +263,11 @@ pub(crate) fn parse_field(frontmatter: &str, key: &str) -> Option<String> {
     None
 }
 
-/// Format glob patterns as Claude's paths: YAML list.
+/// Format glob patterns as Claude's paths: YAML list. No patterns, or only `**`,
+/// is no scope: a `paths:` list loads the rule when a matching file is read, and
+/// `**` already means every session, so it is left to load at the start.
 pub(crate) fn format_claude_paths(patterns: &[String]) -> String {
-    if patterns.is_empty() {
+    if patterns.iter().all(|p| p == "**") {
         return String::new();
     }
     let mut fm = String::from("---\npaths:\n");

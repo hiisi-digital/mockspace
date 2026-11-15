@@ -45,8 +45,6 @@ fn derive(repo: &Path, cfg: &Config) -> (usize, Vec<HookMeta>) {
         &repo.join(".claude/hooks"),
         &repo.join(".github/hooks"),
         "",
-        "",
-        "",
     )
 }
 

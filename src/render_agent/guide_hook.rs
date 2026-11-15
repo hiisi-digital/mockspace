@@ -62,7 +62,9 @@ case "$FILE_PATH" in
     */tests/*|*_tests.rs) SUBJECT=test ;;
 esac
 if [[ -z "$SUBJECT" && -n "$FILE_PATH" ]] && [[ "$CONTENT" == *"Instant::now"* ]]; then
-    SUBJECT=bench
+    case "$FILE_PATH" in
+        */tests/*|*_tests.rs|*/research/*) SUBJECT=bench ;;
+    esac
 fi
 if [[ -z "$SUBJECT" && -n "$COMMAND" ]]; then
     if echo "$COMMAND" | grep -qE '(^|[;&|( ])cargo +(mock +)?bench( |$)'; then

@@ -1710,3 +1710,50 @@ fn a_consumer_gets_the_bench_sketch_and_test_rules_skills_and_hook() {
         assert!(wired, "the guide hook is not wired for {tool}");
     }
 }
+
+/// The bookends are said once, in the one `mockspace` rule, with the consumer's
+/// own preamble beside the built-in one; no other rule or skill repeats them.
+#[test]
+fn the_bookends_live_in_the_mockspace_rule_and_nowhere_else() {
+    let mock = skill_fixture(None);
+    let root = mock.parent().expect("the fixture's mock dir has a parent");
+    std::fs::write(mock.join("agent").join("PREAMBLE.md.tmpl"), "CONSUMER-PREAMBLE-LINE\n").unwrap();
+
+    let cfg = crate::config::Config::from_dir(&mock);
+    generate_agent_rules(
+        &CrateMap::default(),
+        &cfg,
+        &crate::registry::Registry::default(),
+        &pack_with_stub_tool(),
+    );
+
+    let rules = root.join(".claude").join("rules");
+    let banner = std::fs::read_to_string(rules.join("mockspace.md"))
+        .expect("the mockspace rule was not generated");
+    for must in [BUILTIN_PREAMBLE, BUILTIN_POSTAMBLE, "CONSUMER-PREAMBLE-LINE"] {
+        assert!(banner.contains(must), "the mockspace rule lacks {must}:\n{banner}");
+    }
+    assert!(!banner.contains("\npaths:"), "the mockspace rule must load every session");
+    let copilot = std::fs::read_to_string(root.join(".github/instructions/mockspace.instructions.md"))
+        .expect("the copilot mockspace rule was not generated");
+    assert!(copilot.contains("applyTo: \"**\""), "{copilot}");
+
+    // The control: every other generated rule and skill is checked, and there
+    // are some, so an empty walk cannot pass.
+    let mut others = Vec::new();
+    for entry in std::fs::read_dir(&rules).unwrap().flatten() {
+        if entry.file_name() != "mockspace.md" {
+            others.push(entry.path());
+        }
+    }
+    for entry in std::fs::read_dir(root.join(".claude/skills")).unwrap().flatten() {
+        others.push(entry.path().join("SKILL.md"));
+    }
+    assert!(others.len() > 5, "too few generated files to mean anything: {others:?}");
+    for path in others {
+        let text = std::fs::read_to_string(&path).unwrap();
+        for bookend in [BUILTIN_PREAMBLE, BUILTIN_POSTAMBLE, "CONSUMER-PREAMBLE-LINE"] {
+            assert!(!text.contains(bookend), "{} repeats a bookend", path.display());
+        }
+    }
+}

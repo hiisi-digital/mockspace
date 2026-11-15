@@ -62,13 +62,14 @@ pub struct Sketch {
 /// not, whose first word after it is the outcome.
 pub fn outcome_of(findings: &str) -> Outcome {
     for line in findings.lines() {
-        let bare = line.trim().trim_start_matches(['*', '-', ' ']);
-        let Some(rest) = bare
-            .strip_prefix("Outcome")
-            .or_else(|| bare.strip_prefix("outcome"))
-        else {
+        let bare = line.trim().trim_start_matches(['#', '*', '-', ' ']);
+        let Some(head) = bare.get(.."outcome".len()) else {
             continue;
         };
+        if !head.eq_ignore_ascii_case("outcome") {
+            continue;
+        }
+        let rest = &bare["outcome".len()..];
         let rest = rest.trim_start_matches(['*', ':', ' ']);
         let word: String = rest
             .trim_start_matches(['*', '`', ' '])

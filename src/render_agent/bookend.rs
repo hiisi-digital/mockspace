@@ -57,26 +57,12 @@ pub(crate) fn validate_bookend_size(content: &str, filename: &str) {
     }
 }
 
-pub(crate) fn format_with_bookends(
-    header: &str,
-    preamble: &str,
-    body: &str,
-    postamble: &str,
-) -> String {
+/// The generated header, a blank line and the body. The bookends are not added
+/// here: they live in the one `mockspace` rule.
+pub(crate) fn format_with_header(header: &str, body: &str) -> String {
     let mut out = String::new();
     out.push_str(header);
-    out.push('\n');
-    if !preamble.is_empty() {
-        out.push('\n');
-        out.push_str(preamble);
-        out.push('\n');
-    }
-    out.push('\n');
+    out.push_str("\n\n");
     out.push_str(body);
-    if !postamble.is_empty() {
-        out.push('\n');
-        out.push_str(postamble);
-        out.push('\n');
-    }
     out
 }

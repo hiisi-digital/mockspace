@@ -314,7 +314,7 @@ The `mockup-workflow` skill: gate boundaries and the validation pipeline. The `m
         // not tied to a path. The procedure is in the skill each one names.
         BuiltinRule {
             name:     "benches".to_string(),
-            apply_to: vec![],
+            apply_to: vec!["**".to_string()],
             body:     substitute_builtin_vars(
                 r#"## Benches: a number that feeds a decision comes from `{mock_dir}/benches/`
 
@@ -332,13 +332,13 @@ The `mockup-workflow` skill: gate boundaries and the validation pipeline. The `m
         },
         BuiltinRule {
             name:     "sketches".to_string(),
-            apply_to: vec![],
+            apply_to: vec!["**".to_string()],
             body:     substitute_builtin_vars(
                 r#"## Sketches: a feasibility probe is a committed sketch
 
 - Does it compile, solve, need the gate: `{mock_dir}/research/sketches/<YYYYMMDDHHMM>_<slug>/`, built under the repository's toolchain. Never `/tmp` or a bare `rustc`.
 - Its `FINDINGS.md` has `**Outcome:**` `WORKS`, `FAILS WITH <error>` or `INCONCLUSIVE`, with each attempt's compiler output.
-- Never deleted; a wrong one is superseded by a new sketch citing it. A timer makes it a bench.
+- Never deleted; a wrong one is renamed `*.deprecated.md` or superseded by a new sketch citing it. A timer makes it a bench.
 - `cargo mock sketches [--open]` lists outcomes; `--open` only the unfinished or timing ones.
 - Before the first probe: the `sketching` skill.
 "#,
@@ -349,7 +349,7 @@ The `mockup-workflow` skill: gate boundaries and the validation pipeline. The `m
         },
         BuiltinRule {
             name:     "tests".to_string(),
-            apply_to: vec![],
+            apply_to: vec!["**".to_string()],
             body:     substitute_builtin_vars(
                 r#"## Tests: `cargo mock test`, never a bare `cargo test` in `{mock_dir}/`
 

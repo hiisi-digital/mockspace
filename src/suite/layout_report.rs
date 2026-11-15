@@ -7,7 +7,7 @@
 //! the same layout `mock test` selects by.
 //!
 //! A report and nothing else. It names, per member, each integration-test
-//! binary with the files it is built from, which binaries are wide (rebuilt on
+//! binary with a count of the files it is built from, which binaries are wide (rebuilt on
 //! every claimed file of the member), and the Rust files under `tests/` that no
 //! binary claims, which are shared and so move every binary. It changes no file
 //! and always exits zero once it could read the workspace.
@@ -89,3 +89,6 @@ pub fn render(fp: &Fingerprints, members: &[&String]) -> String {
     out
 }
 
+#[cfg(test)]
+#[path = "layout_report_tests.rs"]
+mod tests;

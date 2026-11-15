@@ -14,7 +14,7 @@ The `reference-syntax` rule has the syntax and this project's roots and namespac
 related = ["tenet::engine_time", "bevy::time_step", "research::202611010100_bevy-reference::NOTES::#time"]
 ```
 
-- Two segments (`<ns>::<slug>`) is a link; three or more a citation. A link naming no row is `unknown-row-reference` (gates commit or push of the file holding it, a warning otherwise, so a row can retire first); a bad slug is `malformed-row-reference` (always gates).
+- Two segments (`<ns>::<slug>`) is a link; three or more a citation. A link naming no row is `unknown-row-reference` (gates the commit or push of the file or template holding it, a warning otherwise, so a row can retire first); a bad slug is `malformed-row-reference` (always gates).
 - Never a field per target namespace. A namespace-typed field is for a value that is by nature one namespace's.
 - Write a link once; `{{ refsto(tenet::engine_time) }}` and `cargo mock links tenet::engine_time` derive the other end. Never add the inverse.
 
@@ -48,7 +48,7 @@ The `mockspace-registry` driver (registered by `cargo mock`; `cargo mock registe
 
 - additions on either side kept, in each side's order; identical rows once;
 - a one-sided change or deletion taken;
-- a row changed both ways, deleted against a change, or added twice differently conflicts, with markers around that row only. Resolve keeping both intents.
+- a row changed both ways, deleted against a change, or added twice differently conflicts, with markers around that row only; a head or plain `[table]` both sides changed conflicts too. Resolve keeping both intents.
 - A file not readable as rows merges as text. The same `id` added in two files is caught by the duplicate check after.
 
 ## Adding to a list field

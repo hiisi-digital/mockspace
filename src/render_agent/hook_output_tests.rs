@@ -50,7 +50,7 @@ fn every_hook_for(repo_root: &std::path::Path, helpers: &str) -> Vec<(&'static s
     ]
 }
 
-/// Both platforms, since the same five hooks are written twice and only one of
+/// Both platforms, since the same six hooks are written twice and only one of
 /// them was ever swept.
 fn every_hook_everywhere(repo_root: &std::path::Path) -> Vec<(String, String)> {
     let mut out = Vec::new();
@@ -427,6 +427,23 @@ fn write_payload(path: &std::path::Path, content: &str) -> String {
     .to_string()
 }
 
+/// A Claude-shaped hook payload as Copilot sends it: the tool's arguments under
+/// `toolArgs`, which is where Copilot's `_extract` reads them from.
+fn copilot_shape(payload: &str) -> String {
+    let v: serde_json::Value = serde_json::from_str(payload).unwrap();
+    serde_json::json!({
+        "session_id": v["session_id"],
+        "toolName": v["tool_name"],
+        "toolArgs": v["tool_input"],
+    })
+    .to_string()
+}
+
+/// The payload as `platform` sends it.
+fn shaped(platform: &str, payload: &str) -> String {
+    if platform == "copilot" { copilot_shape(payload) } else { payload.to_string() }
+}
+
 fn with_session(payload: &str, session: &str) -> String {
     payload.replace("\"session_id\":\"t\"", &format!("\"session_id\":\"{session}\""))
 }
@@ -442,7 +459,7 @@ fn the_guide_speaks_once_per_subject_in_one_object() {
             "MOCKSPACE BENCHES",
         ),
         (
-            write_payload(&root.join("mock/crates/x/src/lib.rs"), "let t = std::time::Instant::now();"),
+            write_payload(&root.join("mock/research/probe/timing.rs"), "let t = std::time::Instant::now();"),
             "MOCKSPACE BENCHES",
         ),
         (
@@ -478,30 +495,46 @@ fn the_guide_speaks_once_per_subject_in_one_object() {
         for (i, (payload, want)) in cases.iter().enumerate() {
             // A fresh session per case, so the once-per-session memory does not
             // silence a later case of the same subject.
-            let out = run(&root, &script, &with_session(payload, &format!("{platform}{i}")));
-            // Copilot's `context` emits no object (it has no field for one), so
-            // there the guide is silent; Claude's says its line in one object.
+            let session = format!("{platform}{i}");
+            let out = run(&root, &script, &with_session(&shaped(platform, payload), &session));
+            // Copilot's `context` prints the text bare and Claude's wraps it in
+            // one object; both say the subject.
+            assert!(out.contains(want), "{platform} case {i} did not say {want}:\n{out}");
             if platform == "claude" {
-                assert!(out.contains(want), "{platform} case {i} did not say {want}:\n{out}");
                 assert_eq!(value_count(&out), 1, "{platform} case {i} wrote:\n{out}");
-            } else {
-                assert!(value_count(&out) <= 1, "{platform} case {i} wrote:\n{out}");
             }
         }
         // The control: nothing about benches, sketches or tests, no word.
         let quiet = run(
             &root,
             &script,
-            &with_session(&bash_payload(&format!("cd {} && ls", root.display())), "quiet"),
+            &with_session(&shaped(platform, &bash_payload(&format!("cd {} && ls", root.display()))), "quiet"),
         );
         assert!(!quiet.contains("MOCKSPACE"), "{platform} spoke on ls:\n{quiet}");
         // `cargo mock test` is the right command, said once; a bare word in a path is not.
         let other = run(
             &root,
             &script,
-            &with_session(&write_payload(&root.join("mock/crates/x/src/testing.rs"), "x"), "o"),
+            &with_session(
+                &shaped(platform, &write_payload(&root.join("mock/crates/x/src/testing.rs"), "x")),
+                "o",
+            ),
         );
         assert!(!other.contains("MOCKSPACE"), "{platform} spoke on a plain source:\n{other}");
+        // A timer in plain runtime code is not a bench: only a test, sketch or
+        // research path makes `Instant::now` one.
+        let runtime = run(
+            &root,
+            &script,
+            &with_session(
+                &shaped(
+                    platform,
+                    &write_payload(&root.join("mock/crates/x/src/lib.rs"), "let t = std::time::Instant::now();"),
+                ),
+                "rt",
+            ),
+        );
+        assert!(!runtime.contains("MOCKSPACE"), "{platform} called runtime code a bench:\n{runtime}");
     }
     let _ = std::fs::remove_dir_all(&root);
 }
