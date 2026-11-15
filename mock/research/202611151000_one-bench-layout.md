@@ -61,10 +61,12 @@ checkouts produce the same index once both runs are in, and a report-only pass k
 
 ## Runners
 
-The generated driver is the only runner. `mock bench run` refuses, and the builtin lint
-`a-bench-runs-only-on-the-generated-driver` errors on, a `Cargo.toml` or a `src/main.rs` at the bench
-root, any crate in the tree with a `[[bin]]`, `[[bench]]`, `src/main.rs`, `src/bin/` or `benches/`, and
-any shell script in the tree. `driver::drive` and `DriverRegistry`, the surface a consumer's own
+The generated driver is the only runner. `mock bench run`, `report` and `test` refuse, and the builtin
+lint `a-bench-runs-only-on-the-generated-driver` errors on, a `Cargo.toml` or a `src/main.rs` at the
+bench root; any crate in the tree with a `[[bin]]`, `[[bench]]` or `[[example]]`, a `src/main.rs`, a
+`src/bin/`, or a `benches/` or `examples/` cargo would discover; any script (`.sh`, `.bash`, `.zsh`,
+`.py`, `.nu`, or a file with no extension that opens with a shebang); a `Makefile` or a `justfile`; and
+a `.cargo/config.toml` declaring aliases. `driver::drive` and `DriverRegistry`, the surface a consumer's own
 `main` called, are deleted; what a runner did goes in the hooks library.
 
 ## Older layouts and the migration
@@ -78,7 +80,9 @@ spells out: the harness's flat `results/<bench>/<sweep>_n<point>.*`, a root driv
 `<bench>_n<point>.*` at the bench root, `.bench_history/<bench>_n<point>.tsv`, and
 `history/<bench>/<sweep>_n<point>.tsv`. A result triple moves byte for byte into the run its meta's
 `timestamp` and `git_commit` name. A ledger splits into one `summary.tsv` per run it recorded, a run
-being the rows sharing a timestamp and a commit, each row as written.
+being the rows sharing a timestamp and a commit, each row as written. The rows of a run whose
+triple moves too go into that run's directory, matched by the commit with `-dirty` stripped and the
+nearest meta taken no later than the rows, so one old run stays one directory.
 
 The machine is the one fact the old files do not hold. A ledger never recorded one, and a meta older
 than the class has only `cpu` and `os`. `--machine-class` supplies it, and the migration checks it
@@ -88,20 +92,35 @@ member's own results, `runs/`, a meta whose samples are gone, a target already h
 listed for moving by hand, and the command exits non-zero while anything is left. It was run against
 hilavitkutin's committed files, copied into `tests/fixtures/bench-migrate/hilavitkutin/`.
 
+## Names, outputs and concurrent runs
+
+A bench and a sweep name each become one directory of every run's path, so the manifest refuses at
+load a name the layout cannot parse back (a slash, a space, a leading dot) and the names the layout
+keeps for itself (`void`, `INDEX.md`, `results`, `history`). Outside `results/`, a file counts as an
+output only beside its `<sweep>_n<point>.meta.json`: input data and golden files that happen to be
+named like an output are not refused.
+
+Each tree's generated driver takes a name of its own, a digest of the tree's path, because the driver
+builds into whatever target directory the cargo configuration around the command names and a shared
+name let one run's build replace another's driver while it ran. Two runs of the same tree take turns
+on a lock held for the whole run. `mock bench report` renders a report only for a run that has none:
+the report a run wrote states its methodology, which its samples cannot.
+
 ## The dirty mark
 
 `-dirty` meant `git status --porcelain` said anything about the whole tree, so the run's own results,
-generated files a repository forgot to ignore and kaski's two tracked paths differing only in case
-each marked every later timing dirty; arvo's gate refused 255 of 256 timings for it with no code
+generated files a repository forgot to ignore outside the code, and two tracked paths differing
+only in case, each marked every later timing dirty; arvo's gate refused 255 of 256 timings for it with no code
 edited. The mark is now asked of the bench tree's build inputs, the set `mock test` already keys the
 bench tree on: the tracked files under the bench tree less every bench output, every local crate a
 bench manifest reaches by `path`, and the workspace manifests, lockfiles, toolchain pin and cargo
-configuration. Untracked files never count. The tool computes it and hands it to the driver in
+configuration. A new file counts where it is one of those inputs, since a new source beside an arm
+is built into it, and an ignored one never does. The tool computes it and hands it to the driver in
 `MOCKSPACE_BENCH_COMMIT`; a driver run by hand falls back to any tracked change in the tree.
 
 ## What this leaves for consumers
 
-hilavitkutin, kirjo and arvo each carry a root driver crate and results at the bench root, so all
+hilavitkutin, arvo and a third consumer each carry a root driver crate and results at the bench root, so all
 three are refused until they port their drivers to hooks and migrate. arvo's own lint
 `a-committed-timing-records-what-built-it` reads metas at the bench root and has to read them from run
 directories instead.

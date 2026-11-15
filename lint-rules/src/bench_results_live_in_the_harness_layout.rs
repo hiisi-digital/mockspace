@@ -71,7 +71,7 @@ impl RepoLint for BenchResultsLiveInTheHarnessLayout {
             let Ok(rel) = file.strip_prefix(&bench_dir) else {
                 continue;
             };
-            let message = match place(rel) {
+            let message = match place(rel, |p| view.exists(bench_dir.join(p))) {
                 Placement::NotOutput | Placement::InLayout => continue,
                 Placement::Legacy(l) => {
                     format!(
@@ -154,6 +154,10 @@ mod tests {
             "results/INDEX.md".to_string(),
             "results/void/1-2/hash/hash_n64.csv".to_string(),
             "target/release/x_n64.csv".to_string(),
+            // Input data and golden files that carry the shape of an output but
+            // have no meta beside them are not outputs.
+            "support/data/input_n64.csv".to_string(),
+            "hash/arms/fnv/tests/golden_n64_report.md".to_string(),
         ];
         let refs: Vec<&str> = files.iter().map(String::as_str).collect();
         assert_eq!(findings(&refs), Vec::<String>::new());
@@ -173,6 +177,7 @@ mod tests {
             "history/warm/width-l1_n80003.tsv",
             "results/hash/hash_n64.csv",
             "runs/run1/rsb_n256.csv",
+            "runs/run1/rsb_n256.meta.json",
             "frame_wide/heavy_n65536.meta.json",
             "results/hash/notes.txt",
         ]);
@@ -186,6 +191,7 @@ mod tests {
             "results/hash/hash_n64.csv",
             "results/hash/notes.txt",
             "runs/run1/rsb_n256.csv",
+            "runs/run1/rsb_n256.meta.json",
         ]);
     }
 
@@ -195,7 +201,7 @@ mod tests {
         let m = tmp_msgs("results/hash/hash_n64_findings.md");
         assert!(m[0].contains("mock bench migrate"), "{m:?}");
         assert!(m[0].contains("results/hash/hash_n64/<machine class>/<run>/report.md"), "{m:?}");
-        let m = tmp_msgs("runs/run1/rsb_n256.csv");
+        let m = tmp_msgs("runs/run1/rsb_n256.meta.json");
         assert!(m[0].contains("by hand"), "{m:?}");
         assert!(!m[0].contains("mock bench migrate"), "{m:?}");
     }

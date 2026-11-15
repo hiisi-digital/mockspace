@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use super::*;
 
-/// The kaski shape: the default directory and a nested group beside it.
+/// A consumer's shape: the default directory and a nested group beside it.
 pub(super) const KASKI: &[&str] = &["crates", "applets/console/crates"];
 
 pub(super) const CONSOLE_SRC: &str = "mock/applets/console/crates/console-core/src/x.rs";
@@ -251,10 +251,10 @@ fn the_old_literal_fails_the_arm_above() {
 fn crates_under_both_directories_are_scoped_together() {
     let out = commit_says(KASKI, &[
         (CONSOLE_SRC, "fn x() {}\n"),
-        ("mock/crates/kaski-sim/src/lib.rs", "fn s() {}\n"),
+        ("mock/crates/game-sim/src/lib.rs", "fn s() {}\n"),
     ]);
     assert!(
-        out.contains("crates: console-core,kaski-sim"),
+        out.contains("crates: console-core,game-sim"),
         "hook said:\n{out}"
     );
 }

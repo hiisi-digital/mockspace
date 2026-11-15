@@ -18,8 +18,9 @@
 //! ([`crate::entry::test_benches::inputs`]): the files under the bench tree
 //! less every bench output, every local crate a bench manifest reaches by
 //! `path`, and the workspace's manifests, lockfiles, toolchain pin and cargo
-//! configuration. Only tracked changes count: a file git does not track is not
-//! part of the commit. `mock bench run` hands the answer to the driver in
+//! configuration. A file git does not track counts where it is one of those
+//! inputs, a new source beside an arm being built into it, and an ignored one
+//! never does. `mock bench run` hands the answer to the driver in
 //! [`COMMIT_ENV`], and the run's meta and summary record it.
 
 use std::collections::BTreeSet;
@@ -29,7 +30,7 @@ use std::process::Command;
 pub(crate) use mockspace_bench_harness::env::COMMIT_ENV;
 
 /// The short commit of the repository at `repo_root`, with `-dirty` when a
-/// tracked build input of the bench tree at `bench_dir` differs from it.
+/// build input of the bench tree at `bench_dir`, tracked or new, differs from it.
 /// `None` outside a git repository, where the driver records none.
 pub(crate) fn commit_marked(repo_root: &Path, mock_dir: &Path, bench_dir: &Path) -> Option<String> {
     let git = |args: &[&str]| {
@@ -44,14 +45,14 @@ pub(crate) fn commit_marked(repo_root: &Path, mock_dir: &Path, bench_dir: &Path)
     };
     let head = String::from_utf8(git(&["rev-parse", "--short", "HEAD"])?).ok()?;
     let head = head.trim().to_string();
-    let status = git(&["status", "--porcelain=v1", "-z", "--untracked-files=no"])?;
+    let status = git(&["status", "--porcelain=v1", "-z", "--untracked-files=all"])?;
     let dirty = match crate::entry::test_benches::inputs(repo_root, mock_dir, bench_dir) {
         Ok((files, _)) => {
             let inputs: BTreeSet<PathBuf> = files.into_iter().collect();
             changed(&status, repo_root).iter().any(|p| inputs.contains(p))
         },
         // Inputs that cannot be listed are not a clean tree: any tracked
-        // change marks it, as the driver run by hand would.
+        // change git does not ignore marks it.
         Err(_) => !changed(&status, repo_root).is_empty(),
     };
     Some(if dirty { format!("{head}-dirty") } else { head })

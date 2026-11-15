@@ -18,7 +18,7 @@
 //! by the `a-bench-runs-only-on-the-generated-driver` lint.
 //!
 //! `mock bench report` invokes the driver with `--report-only` to
-//! re-render every run's report from its samples without re-running the
+//! render a report for any run that has none, from its samples, without re-running the
 //! harness. `mock bench migrate` moves results and history written in an
 //! older layout into the one layout, where the translation is one to one.
 
@@ -124,7 +124,7 @@ fn print_help() {
     eprintln!("subcommands:");
     eprintln!("  init     scaffold mock/benches/ in this consumer");
     eprintln!("  run      build the arms and the generated driver, run the harness");
-    eprintln!("  report   re-render every run's report.md from its samples");
+    eprintln!("  report   render report.md for any run that has none");
     eprintln!("  test     run cargo test in every crate under the bench tree");
     eprintln!("  list     list benches, sizes, and variants from bench.toml");
     eprintln!("  add      scaffold a new variant crate: mock bench add <name>");
@@ -284,6 +284,9 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+    if let Err(code) = refuse_custom_runners(cfg, &bench_dir) {
+        return code;
+    }
 
     // `--profile <name>` takes its following token as its value, per
     // split_positional_and_flags: without this, `mock bench test --profile
@@ -302,43 +305,38 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
     // one, and the walk alone reports "nothing to run" on a tree that
     // plainly has an arm in it. Write the same manifest `mock bench run`
     // would (never build it; `cargo test` builds what it needs), and
-    // fold it into the set to walk. Skipped where a root `Cargo.toml`
-    // stands, a runner of the consumer's own that `run` refuses, since
-    // `bench_gen::plan` does not describe that tree and the walk above
-    // already found everything real in it.
-    if !bench_dir.join("Cargo.toml").is_file() {
-        if let Ok(plan) = bench_gen::plan(&bench_dir) {
-            let dep = bench_gen::mockspace_dep(&plan.manifest);
-            for arm in &plan.arms {
-                if arm.has_manifest {
-                    continue; // already on disk; the walk above found it
-                }
-                let toml = match bench_gen::arm_cargo_toml(arm, &dep, &plan.support) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        eprintln!(
-                            "error: generating a manifest for {}/arms/{}: {e}",
-                            arm.bench, arm.arm
-                        );
-                        return ExitCode::FAILURE;
-                    },
-                };
-                let gen_dir = bench_gen::arm_gen_dir(&cfg.mock_dir, arm);
-                if let Err(e) = bench_gen::write_if_changed(&gen_dir.join("Cargo.toml"), &toml) {
+    // fold it into the set to walk.
+    if let Ok(plan) = bench_gen::plan(&bench_dir) {
+        let dep = bench_gen::mockspace_dep(&plan.manifest);
+        for arm in &plan.arms {
+            if arm.has_manifest {
+                continue; // already on disk; the walk above found it
+            }
+            let toml = match bench_gen::arm_cargo_toml(arm, &dep, &plan.support) {
+                Ok(t) => t,
+                Err(e) => {
                     eprintln!(
                         "error: generating a manifest for {}/arms/{}: {e}",
                         arm.bench, arm.arm
                     );
                     return ExitCode::FAILURE;
-                }
-                manifests.push(gen_dir.join("Cargo.toml"));
+                },
+            };
+            let gen_dir = bench_gen::arm_gen_dir(&cfg.mock_dir, arm);
+            if let Err(e) = bench_gen::write_if_changed(&gen_dir.join("Cargo.toml"), &toml) {
+                eprintln!(
+                    "error: generating a manifest for {}/arms/{}: {e}",
+                    arm.bench, arm.arm
+                );
+                return ExitCode::FAILURE;
             }
+            manifests.push(gen_dir.join("Cargo.toml"));
         }
-        // A `plan` error (no bench declared anywhere, an invalid
-        // manifest) is not this command's to report a second time: the
-        // walk above already found whatever is really on disk, and if
-        // that is nothing, the refusal immediately below says so.
     }
+    // A `plan` error (no bench declared anywhere, an invalid
+    // manifest) is not this command's to report a second time: the
+    // walk above already found whatever is really on disk, and if
+    // that is nothing, the refusal immediately below says so.
     manifests.sort();
     manifests.dedup();
 
@@ -831,6 +829,14 @@ fn run_generated(
     extra: &[&str],
     report_only: bool,
 ) -> ExitCode {
+    // One run of a tree at a time, held until the driver exits.
+    let _tree_lock = match bench_gen::lock_tree(&bench_gen::driver_gen_dir(&cfg.mock_dir)) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("error: taking the bench tree's run lock: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
     let plan = match bench_gen::plan(bench_dir) {
         Ok(p) => p,
         Err(e) => {
@@ -936,7 +942,7 @@ fn run_generated(
             .canonicalize()
             .unwrap_or_else(|_| hooks_lib.clone())
     });
-    let cargo_toml = match bench_gen::driver_cargo_toml(&dep, &plan.support) {
+    let cargo_toml = match bench_gen::driver_cargo_toml(&dep, &plan.support, &bench_gen::driver_name(bench_dir)) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("error: {e}");
@@ -1466,7 +1472,7 @@ driver binary is generated from `bench.toml` on every run.
 4. `mock bench run [names...]` generates the driver, builds arms into
    tool-owned target directories with the pinned release profile, and
    measures. A bench name selects all its sweeps.
-5. `mock bench report` re-renders every run's report from its samples.
+5. `mock bench report` renders a report for any run that has none.
 
 The generated driver is the only runner. A driver of your own here is
 refused by `mock bench run` and by the lint
@@ -1699,7 +1705,6 @@ mod tests {
         let bench_dir = root.join("benches");
         std::fs::create_dir_all(&bench_dir).unwrap();
         std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
-        write_minimal_driver_crate(&bench_dir);
         std::fs::create_dir_all(bench_dir.join("support/no-tests-here/src")).unwrap();
         std::fs::write(
             bench_dir.join("support/no-tests-here/Cargo.toml"),
@@ -1731,7 +1736,6 @@ mod tests {
         let bench_dir = root.join("benches");
         std::fs::create_dir_all(&bench_dir).unwrap();
         std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
-        write_minimal_driver_crate(&bench_dir);
         std::fs::create_dir_all(bench_dir.join("support/real-crate")).unwrap();
         std::fs::write(
             bench_dir.join("support/real-crate/Cargo.toml"),
@@ -1746,6 +1750,36 @@ mod tests {
             format!("{:?}", ExitCode::FAILURE),
             "a filter matching no discovered crate must be refused rather than silently \
              running the whole tree"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `test` refuses a runner of the tree's own as `run` and `report` do,
+    /// before it builds anything: a root driver crate is not a crate to test
+    /// beside the arms but the custom runner the generated driver replaces.
+    #[test]
+    fn every_subcommand_refuses_a_root_driver_crate() {
+        let root = temp_mock("cmd-refuses-root-driver");
+        let bench_dir = root.join("benches");
+        std::fs::create_dir_all(bench_dir.join("src")).unwrap();
+        std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
+        std::fs::write(
+            bench_dir.join("Cargo.toml"),
+            "[package]\nname = \"driver\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        std::fs::write(bench_dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+        let cfg = Config::from_dir(&root);
+        for sub in ["test", "run", "report"] {
+            assert_eq!(
+                format!("{:?}", cmd(&cfg, &[sub])),
+                format!("{:?}", ExitCode::FAILURE),
+                "`mock bench {sub}` must refuse a root driver crate"
+            );
+        }
+        assert!(
+            !root.join("target").exists(),
+            "the refusal comes before anything is generated or built"
         );
         std::fs::remove_dir_all(&root).ok();
     }
@@ -1857,15 +1891,6 @@ mod tests {
         let bench_dir = root.join("benches");
         std::fs::create_dir_all(bench_dir.join("support/the-crate")).unwrap();
         std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
-        // The root driver manifest, present in every real tree (the
-        // driver crate a tree with a runner of its own carries). Its
-        // absence here previously hid the fact that the walk stopped
-        // descending the moment it found a root manifest, since a fixture
-        // with none never exercised that branch. Needs a real target
-        // (write_minimal_driver_crate), not a name-only placeholder: a
-        // manifest cargo cannot build breaks every sibling crate's build
-        // too, since cargo walks up looking for a workspace root.
-        write_minimal_driver_crate(&bench_dir);
         for entry in ["Cargo.toml", "src"] {
             copy_recursive(
                 &source.join(entry),
@@ -1907,28 +1932,6 @@ mod tests {
         std::fs::remove_dir_all(&d).ok();
         std::fs::create_dir_all(&d).unwrap();
         d
-    }
-
-    /// A root driver `Cargo.toml` that actually builds, for fixtures whose
-    /// `cmd_test` call really invokes `cargo test`. A `[package]`-only
-    /// manifest with no `[lib]`/`[[bin]]` and no source file parses fine on
-    /// its own but makes `cargo` refuse it outright the moment anything
-    /// tries to build it ("no targets specified in the manifest"), and
-    /// because cargo walks up looking for a workspace root when it builds
-    /// a *sibling* crate too, that refusal is not contained to the root:
-    /// every crate under `bench_dir` fails to build until the root has a
-    /// real target. No `[workspace]` header, matching a real root
-    /// manifest exactly, which has none; adding
-    /// one here would make this directory try to claim its own
-    /// subdirectories as workspace members and refuse them for not being
-    /// declared, which is the "[workspace] header trap" the ergonomics
-    /// survey names and precisely the opposite failure from the one this
-    /// helper exists to avoid.
-    fn write_minimal_driver_crate(bench_dir: &Path) {
-        std::fs::create_dir_all(bench_dir.join("src")).unwrap();
-        let manifest = "[package]\nname = \"driver\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[[bin]]\nname = \"driver\"\npath = \"src/main.rs\"\n";
-        std::fs::write(bench_dir.join("Cargo.toml"), manifest).unwrap();
-        std::fs::write(bench_dir.join("src/main.rs"), "fn main() {}\n").unwrap();
     }
 
     fn success() -> String {

@@ -5,8 +5,14 @@
 
 use super::*;
 
+/// Where `p` stands in a tree where every sibling meta is present.
 fn at(p: &str) -> Placement {
-    place(Path::new(p))
+    place(Path::new(p), |_| true)
+}
+
+/// Where `p` stands in a tree holding exactly `present`.
+fn among(p: &str, present: &[&str]) -> Placement {
+    place(Path::new(p), |q| present.iter().any(|x| Path::new(x) == q))
 }
 
 fn legacy(bench: &str, sweep: &str, n: u64, part: Part) -> Placement {
@@ -107,7 +113,7 @@ fn a_root_driver_s_outputs_and_both_ledgers_translate() {
 fn outputs_anywhere_else_are_strays() {
     assert_eq!(at("runs/run1/rsb_n256.csv"), Placement::Stray(Stray::Outside));
     assert_eq!(at("frame_wide/heavy_n65536_findings.md"), Placement::Stray(Stray::Outside));
-    assert_eq!(at("frame_wide/notes.meta.json"), Placement::Stray(Stray::Outside));
+    assert_eq!(at("frame_wide/notes.meta.json"), Placement::NotOutput, "the harness never wrote that name");
     assert_eq!(at("frame_wide/.bench_history/heavy_n1.tsv"), Placement::Stray(Stray::Ledger));
     assert_eq!(at(".bench_history/notes.txt"), Placement::Stray(Stray::Ledger));
     assert_eq!(at("history/hash_n64.tsv"), Placement::Stray(Stray::Ledger));
@@ -137,4 +143,27 @@ fn runs_are_found_oldest_first_and_odd_directories_are_passed_over() {
     let found: Vec<String> = runs(&root).into_iter().map(|r| r.run).collect();
     assert_eq!(found, ["20261114T093000Z-a", "20261115T093000Z-b"]);
     std::fs::remove_dir_all(&root).ok();
+}
+
+/// Outside `results/`, a file named like an output is one only beside its
+/// meta: input data under `support/` and a golden file under an arm's `tests/`
+/// carry the shape and are not outputs, and the same names beside a meta are.
+#[test]
+fn an_output_shaped_file_counts_only_beside_its_meta() {
+    for p in ["support/data/input_n64.csv", "hash/arms/fnv/tests/golden_n64_report.md", "atomic_inc_n1024.csv"] {
+        assert_eq!(among(p, &[]), Placement::NotOutput, "{p}");
+    }
+    assert_eq!(
+        among("support/data/input_n64.csv", &["support/data/input_n64.meta.json"]),
+        Placement::Stray(Stray::Outside)
+    );
+    assert_eq!(
+        among("atomic_inc_n1024.csv", &["atomic_inc_n1024.meta.json"]),
+        legacy("atomic_inc", "atomic_inc", 1024, Part::Samples)
+    );
+    assert_eq!(among("frame_wide/heavy_n65536.meta.json", &[]), Placement::Stray(Stray::Outside), "a meta is its own anchor");
+    // Under `results/` and in a ledger the meta is not asked: those are outputs
+    // by where they sit.
+    assert_eq!(among("results/hash/hash_n64.csv", &[]), legacy("hash", "hash", 64, Part::Samples));
+    assert_eq!(among(".bench_history/hash_n64.tsv", &[]), legacy("hash", "hash", 64, Part::History));
 }

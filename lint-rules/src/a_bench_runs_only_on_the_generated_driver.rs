@@ -18,10 +18,15 @@
 //! - a `Cargo.toml` at the bench root, which used to take the whole run away
 //!   from the generated driver;
 //! - a `src/main.rs` at the bench root;
-//! - any crate in the tree with a binary or a cargo bench of its own: a
-//!   `[[bin]]` or `[[bench]]` table, a `src/main.rs`, a `src/bin/` directory or
-//!   a `benches/` directory beside its manifest;
-//! - a shell script anywhere in the tree (`.sh`, `.bash`, `.zsh`).
+//! - any crate in the tree with a binary, a cargo bench or an example of its
+//!   own: a `[[bin]]`, `[[bench]]` or `[[example]]` table, a `src/main.rs`, a
+//!   `src/bin/` directory, or a `benches/` or `examples/` directory beside its
+//!   manifest where cargo would discover it;
+//! - a script anywhere in the tree: `.sh`, `.bash`, `.zsh`, `.py`, `.nu`, and
+//!   any file with no extension that opens with a shebang (a nutshell script
+//!   among them);
+//! - a `Makefile` or a `justfile`;
+//! - a `.cargo/config.toml` (or `.cargo/config`) declaring `[alias]`es.
 //!
 //! What a runner did belongs in the hooks library (`src/lib.rs` at the bench
 //! root, `pub fn hooks()`) and in the `bench.toml` files.
@@ -56,7 +61,11 @@ pub fn bench_runners(view: &View<'_>, bench_dir: &Path) -> Vec<Runner> {
     if !view.is_dir(bench_dir) {
         return Vec::new();
     }
-    let files = view.walk(bench_dir, |_, e| Entry::is_dir(e) && (e.name() == "target" || e.name().starts_with('.')));
+    // Dot directories hold nothing a run reads, except `.cargo/`, whose
+    // config can declare aliases that run a bench by another name.
+    let files = view.walk(bench_dir, |_, e| {
+        Entry::is_dir(e) && (e.name() == "target" || (e.name().starts_with('.') && e.name() != ".cargo"))
+    });
     let mut found = Vec::new();
     for file in files {
         let Ok(rel) = file.strip_prefix(bench_dir) else {
@@ -81,12 +90,43 @@ pub fn bench_runners(view: &View<'_>, bench_dir: &Path) -> Vec<Runner> {
             }
         } else if rel == Path::new("src/main.rs") {
             say("is a `main` of the bench tree's own");
-        } else if [".sh", ".bash", ".zsh"].iter().any(|ext| name.ends_with(ext)) {
+        } else if is_cargo_config(rel) {
+            if has_aliases(view, &file) {
+                say("declares cargo aliases, a way to run the benches by another name");
+            }
+        } else if RUNNER_FILES.contains(&name) {
+            say("is a make or just file, a way to run the benches outside the harness");
+        } else if SCRIPT_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
             say("is a script beside the benches, a way to run them outside the harness");
+        } else if !name.contains('.') && view.bytes(&file).is_some_and(|b| b.starts_with(b"#!")) {
+            say("is a script with a shebang beside the benches, a way to run them outside the harness");
         }
     }
     found.sort_by(|a, b| a.path.cmp(&b.path));
     found
+}
+
+/// File names that run things by name: make and just.
+const RUNNER_FILES: [&str; 6] = ["Makefile", "makefile", "GNUmakefile", "justfile", "Justfile", ".justfile"];
+
+/// Script extensions, every one of them a way to run a bench outside the harness.
+const SCRIPT_EXTENSIONS: [&str; 5] = [".sh", ".bash", ".zsh", ".py", ".nu"];
+
+/// Whether `rel` is a cargo configuration file, `.cargo/config.toml` or the
+/// older `.cargo/config`.
+fn is_cargo_config(rel: &Path) -> bool {
+    let name = rel.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    rel.parent().and_then(|p| p.file_name()).is_some_and(|d| d == ".cargo")
+        && (name == "config.toml" || name == "config")
+}
+
+/// Whether a cargo configuration file declares any `[alias]`.
+fn has_aliases(view: &View<'_>, file: &Path) -> bool {
+    view.toml(file)
+        .and_then(Result::ok)
+        .and_then(|d| d.get("alias"))
+        .and_then(toml::Value::as_table)
+        .is_some_and(|t| !t.is_empty())
 }
 
 /// Why the crate whose manifest is `manifest` in `dir` has a runner of its
@@ -110,6 +150,9 @@ fn own_binary(view: &View<'_>, dir: &Path, manifest: &Path) -> Option<&'static s
     if has_table("bench") {
         return Some("declares a `[[bench]]` of its own");
     }
+    if has_table("example") {
+        return Some("declares an `[[example]]` of its own");
+    }
     if auto("autobins") && view.is_file(dir.join("src/main.rs")) {
         return Some("is a crate with a `src/main.rs` of its own");
     }
@@ -118,6 +161,9 @@ fn own_binary(view: &View<'_>, dir: &Path, manifest: &Path) -> Option<&'static s
     }
     if auto("autobenches") && view.is_dir(dir.join("benches")) {
         return Some("is a crate with cargo benches of its own under `benches/`");
+    }
+    if auto("autoexamples") && view.is_dir(dir.join("examples")) {
+        return Some("is a crate with examples of its own under `examples/`");
     }
     None
 }
@@ -212,12 +258,17 @@ mod tests {
             ("support/mix/src/lib.rs", ""),
             ("support/mix/tests/t.rs", ""),
             ("target/debug/build.sh", ""),
+            // Not runners: a data file with no extension and no shebang, a
+            // cargo config with no aliases, a dot directory other than `.cargo`.
+            ("support/mix/fixtures/LICENSE", "MPL-2.0\n"),
+            (".cargo/config.toml", "[build]\nrustflags = []\n"),
+            (".git/hooks/pre-commit", "#!/bin/sh\n"),
         ]);
         assert_eq!(runners(&tmp), Vec::<String>::new());
     }
 
     /// Every runner shape is found, each by its own file: a root driver crate
-    /// (the old escape hatch, which is what hilavitkutin, kirjo and arvo carry),
+    /// (the old escape hatch, which is what three consumer trees carried),
     /// a root `main`, a member crate with a `main`, `[[bin]]`, `src/bin/`, a
     /// cargo bench, and a script.
     #[test]
@@ -234,16 +285,33 @@ mod tests {
             ("crit/benches/b.rs", ""),
             ("stage.sh", "#!/bin/sh\n"),
             ("frame_wide/occupancy.sh", "#!/bin/sh\n"),
+            ("tools/plot.py", "print(1)\n"),
+            ("tools/run.nu", "ls\n"),
+            ("tools/run-all", "#!/usr/bin/env nutshell\n"),
+            ("Makefile", "all:\n"),
+            ("member/justfile", "run:\n"),
+            ("ex/Cargo.toml", LIB),
+            ("ex/examples/e.rs", "fn main() {}\n"),
+            ("tabled/Cargo.toml", "[package]\nname = \"t\"\nversion = \"0.0.0\"\n[[example]]\nname = \"e\"\npath = \"e.rs\"\n"),
+            (".cargo/config.toml", "[alias]\nbench-all = \"run --bin x\"\n"),
         ]);
         assert_eq!(runners(&tmp), [
+            ".cargo/config.toml",
             "Cargo.toml",
+            "Makefile",
             "bins/Cargo.toml",
             "crit/Cargo.toml",
             "declared/Cargo.toml",
             "engine_vs_std/Cargo.toml",
+            "ex/Cargo.toml",
             "frame_wide/occupancy.sh",
+            "member/justfile",
             "src/main.rs",
             "stage.sh",
+            "tabled/Cargo.toml",
+            "tools/plot.py",
+            "tools/run-all",
+            "tools/run.nu",
         ]);
     }
 

@@ -12,7 +12,7 @@ use std::process::Command;
 use super::*;
 use crate::suite::graph::{DepKind, Graph, Package};
 
-/// A repository shaped like kaski's, small: `mesh` is a library, `render`
+/// A repository shaped like a consumer's, small: `mesh` is a library, `render`
 /// depends on it and keeps shaders beside its sources, `web` depends on
 /// `render`, and `tool` depends on nothing. `render`'s tests name a content
 /// file with `include_str!`, `web`'s name a content directory through the
@@ -51,15 +51,15 @@ impl Repo {
         r.write("mock/crates/render/shaders/sprite.wgsl", "fn main() {}\n");
         r.write(
             "mock/crates/render/src/lib.rs",
-            "// reads ../../../../content/kaski/unused.toml in a comment, which is not a read\n\
+            "// reads ../../../../content/game/unused.toml in a comment, which is not a read\n\
              const SHADER: &str = include_str!(\"../shaders/sprite.wgsl\");\n\
-             const ROWS: &str = include_str!(\"../../../../content/kaski/rows.toml\");\n",
+             const ROWS: &str = include_str!(\"../../../../content/game/rows.toml\");\n",
         );
         r.write("mock/crates/web/Cargo.toml", "[package]\nname = \"web\"\n");
         r.write(
             "mock/crates/web/src/lib.rs",
             "fn dir() -> std::path::PathBuf {\n\
-             \x20   std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"../../../content/kaski/interface\")\n\
+             \x20   std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"../../../content/game/interface\")\n\
              }\n",
         );
         r.write(
@@ -67,9 +67,9 @@ impl Repo {
             "[package]\nname = \"tool\"\n",
         );
         r.write("mock/crates/tool/src/lib.rs", "pub fn t() {}\n");
-        r.write("content/kaski/rows.toml", "a = 1\n");
-        r.write("content/kaski/interface/theme.toml", "dark = true\n");
-        r.write("content/kaski/unused.toml", "nobody = \"reads this\"\n");
+        r.write("content/game/rows.toml", "a = 1\n");
+        r.write("content/game/interface/theme.toml", "dark = true\n");
+        r.write("content/game/unused.toml", "nobody = \"reads this\"\n");
         r.write("mock/vendor/lim/Cargo.toml", "[package]\nname = \"lim\"\n");
         r.write("mock/vendor/lim/src/lib.rs", "pub fn bind() {}\n");
         let ext = r.outside().join("ext");
@@ -201,7 +201,7 @@ fn a_shader_moves_the_member_that_keeps_it() {
 fn content_a_source_includes_moves_that_member() {
     let r = Repo::new("include");
     let before = r.fp();
-    r.append("content/kaski/rows.toml", "b = 2\n");
+    r.append("content/game/rows.toml", "b = 2\n");
     assert_eq!(moved(&before, &r.fp()), vec!["render", "web"]);
 }
 
@@ -211,11 +211,11 @@ fn content_a_source_includes_moves_that_member() {
 fn content_a_test_reads_at_run_time_moves_that_member() {
     let r = Repo::new("runtime");
     let before = r.fp();
-    r.append("content/kaski/interface/theme.toml", "light = false\n");
+    r.append("content/game/interface/theme.toml", "light = false\n");
     assert_eq!(moved(&before, &r.fp()), vec!["web"]);
 
     let before = r.fp();
-    r.write("content/kaski/interface/forms.toml", "new = 1\n");
+    r.write("content/game/interface/forms.toml", "new = 1\n");
     assert_eq!(
         moved(&before, &r.fp()),
         vec!["web"],
@@ -229,7 +229,7 @@ fn content_a_test_reads_at_run_time_moves_that_member() {
 fn what_no_member_reads_moves_nothing() {
     let r = Repo::new("unread");
     let before = r.fp();
-    r.append("content/kaski/unused.toml", "still = \"unread\"\n");
+    r.append("content/game/unused.toml", "still = \"unread\"\n");
     r.write("mock/crates/render/run.log", "ignored by git\n");
     r.write("mock/target/debug/out", "ignored by git\n");
     assert_eq!(moved(&before, &r.fp()), Vec::<String>::new());
@@ -271,10 +271,10 @@ fn the_report_names_what_each_member_reaches() {
     let r = Repo::new("reaches");
     let fp = r.fp();
     assert_eq!(fp.reaches["render"], vec![PathBuf::from(
-        "content/kaski/rows.toml"
+        "content/game/rows.toml"
     )]);
     assert_eq!(fp.reaches["web"], vec![PathBuf::from(
-        "content/kaski/interface"
+        "content/game/interface"
     )]);
     assert!(fp.reaches["mesh"].is_empty());
 }
@@ -308,17 +308,17 @@ fn a_literal_resolves_against_the_file_then_the_member() {
     // From the source file, as `include_str!` reads it.
     assert_eq!(
         reach(
-            "../../../../content/kaski/rows.toml",
+            "../../../../content/game/rows.toml",
             file_dir,
             member,
             &r.root
         ),
-        Some(PathBuf::from("content/kaski/rows.toml"))
+        Some(PathBuf::from("content/game/rows.toml"))
     );
     // From the member directory, as `CARGO_MANIFEST_DIR` reads it.
     assert_eq!(
-        reach("/../../../content/kaski", file_dir, member, &r.root),
-        Some(PathBuf::from("content/kaski"))
+        reach("/../../../content/game", file_dir, member, &r.root),
+        Some(PathBuf::from("content/game"))
     );
     // Into itself, around itself, out of the repository, or to nothing.
     assert_eq!(reach("../shaders", file_dir, member, &r.root), None);

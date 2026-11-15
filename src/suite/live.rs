@@ -191,16 +191,16 @@ mod tests {
     #[test]
     fn the_listing_gives_each_binary_its_tests() {
         let json = r#"{"test-count":3,"rust-suites":{
-            "kaski-village":{"binary-id":"kaski-village","testcases":{"a":{},"b":{}}},
-            "kaski-village::it":{"binary-id":"kaski-village::it","testcases":{"c":{}}},
-            "kaski-village::example/empty":{"binary-id":"kaski-village::example/empty","testcases":{}}}}"#;
+            "game-village":{"binary-id":"game-village","testcases":{"a":{},"b":{}}},
+            "game-village::it":{"binary-id":"game-village::it","testcases":{"c":{}}},
+            "game-village::example/empty":{"binary-id":"game-village::example/empty","testcases":{}}}}"#;
         let live = parse(json).unwrap();
         assert_eq!(live.len(), 3);
         assert_eq!(
-            live["kaski-village"],
+            live["game-village"],
             BTreeSet::from(["a".to_string(), "b".to_string()])
         );
-        assert!(live["kaski-village::example/empty"].is_empty());
+        assert!(live["game-village::example/empty"].is_empty());
     }
 
     /// An ignored test is no part of a default run, so it is not one the binary has to

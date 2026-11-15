@@ -173,6 +173,13 @@ fn run_paths(config: &BenchConfig, root: &Path, machine: &str, run: &str) -> (Pa
     (dir, samples, report)
 }
 
+/// The runs a report-only pass renders a report for: those with none. A run's
+/// own report states the methodology it ran under, which its samples cannot,
+/// so one that exists is never rendered again.
+fn reportless(runs: &[layout::RunDir]) -> Vec<&layout::RunDir> {
+    runs.iter().filter(|r| !r.dir.join(layout::REPORT_FILE).exists()).collect()
+}
+
 /// The run id this run takes: `base`, or `base` with the first `-<k>` suffix
 /// no run directory under `results_root` already carries on this machine
 /// class, so two runs starting in the same second over the same commit sit side
@@ -244,7 +251,7 @@ fn warm_medians(result: &BenchResult) -> BTreeMap<String, Vec<f64>> {
 }
 
 /// The crate's one median, over a vector the caller owns. Delegates to
-/// [`crate::analysis::median`] so the summary table, the history ledger and the
+/// [`crate::analysis::median`] so the summary table, the run's summary rows and the
 /// findings report cannot disagree about what "median" means on an even count.
 fn median(vals: &mut [f64]) -> f64 {
     crate::analysis::median(vals)
@@ -438,9 +445,11 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
         let workload = (spec.build_workload)(&config.workload, config.n);
 
         if cli.report_only {
-            // Every run of the cell, on every machine class, has its report
-            // rendered again from its own samples. The samples are the data;
-            // a report is derived from them, so rewriting it replaces nothing.
+            // A run of the cell, on any machine class, that has samples and no
+            // report gets one rendered from its samples. A run that has its
+            // report keeps it: the report a run wrote carries the methodology
+            // section, which samples alone cannot restate, so rendering it
+            // again would lose what it said.
             let cell = cell_of(config);
             let cell_runs: Vec<layout::RunDir> = layout::runs(&results_root)
                 .into_iter()
@@ -457,7 +466,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
                 );
                 return ExitCode::FAILURE;
             }
-            for r in &cell_runs {
+            for r in reportless(&cell_runs) {
                 let report = r.dir.join(layout::REPORT_FILE);
                 match crate::report_from_csv_for_routine(
                     &r.dir.join(layout::SAMPLES_FILE),
@@ -466,7 +475,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
                     &config.title,
                     &routine,
                 ) {
-                    Ok(()) => eprintln!("  regenerated {}", report.display()),
+                    Ok(()) => eprintln!("  rendered {}", report.display()),
                     Err(e) => {
                         eprintln!("error: report-only for {}: {e}", r.dir.display());
                         return ExitCode::FAILURE;
@@ -855,7 +864,6 @@ mod tests {
             },
             bench: bench.to_string(),
             sweep: sweep.to_string(),
-            nested,
             n,
             ..BenchConfig::default()
         }
@@ -945,7 +953,7 @@ mod tests {
         let (dir, ..) = run_paths(&cfg("warm-container", "width-l1", 80003, true), Path::new("results"), M, R);
         assert_eq!(dir, Path::new("results/warm-container/width-l1_n80003").join(M).join(R));
         assert_eq!(
-            mockspace_bench_layout::place(&dir.join("samples.csv")),
+            mockspace_bench_layout::place(&dir.join("samples.csv"), |_| true),
             mockspace_bench_layout::Placement::InLayout,
             "what the driver writes is what the layout calls in place"
         );
@@ -965,6 +973,27 @@ mod tests {
         std::fs::create_dir_all(root.join(layout::run_rel("hash", &cell, M, &format!("{R}-2")))).unwrap();
         assert_eq!(unique_run_id(&root, M, R), format!("{R}-3"));
         assert_eq!(unique_run_id(&root, "macos-aarch64-c8-bare-apple", R), R);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Report-only renders a report only where a run has none: the report a
+    /// run wrote carries its methodology, which the samples cannot restate.
+    #[test]
+    fn report_only_leaves_an_existing_report_alone() {
+        let root = std::env::temp_dir().join(format!("mockspace-reportless-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let cell = Cell { sweep: "hash".into(), n: 64 };
+        for (run, report) in [("20261114T000000Z-a", true), ("20261115T000000Z-b", false)] {
+            let d = root.join(layout::run_rel("hash", &cell, M, run));
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("samples.csv"), "x").unwrap();
+            if report {
+                std::fs::write(d.join("report.md"), "# with methodology").unwrap();
+            }
+        }
+        let runs = layout::runs(&root);
+        let picked: Vec<&str> = reportless(&runs).iter().map(|r| r.run.as_str()).collect();
+        assert_eq!(picked, ["20261115T000000Z-b"]);
         std::fs::remove_dir_all(&root).ok();
     }
 

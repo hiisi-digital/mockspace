@@ -70,7 +70,6 @@ pub(super) fn drive_worker(spec: &DriverSpec, cli: &Cli) -> ExitCode {
         .unwrap_or_else(|| (bench_name.clone(), bench_name.clone()));
     probe.bench = bench;
     probe.sweep = sweep;
-    probe.nested = manifest.nested.contains_key(&bench_name);
     probe.workload = workload_name.clone();
     probe.n = n;
     probe.may_differ = may_differ;

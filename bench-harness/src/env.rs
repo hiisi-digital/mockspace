@@ -31,7 +31,7 @@ pub struct EnvMeta {
     /// `rust-toolchain.toml`.
     pub rustc:        String,
     /// Short git commit (`git rev-parse --short HEAD`) of the consumer, with a
-    /// `-dirty` suffix when a tracked build input of the bench tree differs
+    /// `-dirty` suffix when a build input of the bench tree, tracked or new, differs
     /// from it, as [`run_commit`] says. Empty when not in a git tree.
     /// Written to the run's `meta.json`, and the commit its summary rows carry.
     pub git_commit:   String,
@@ -86,20 +86,21 @@ pub fn machine_class(f: &MachineFacts<'_>) -> String {
     )
 }
 
+/// The values `std::env::consts::OS` and `ARCH` take.
+const KNOWN_TOKENS: [&str; 54] = [
+    "linux", "macos", "windows", "freebsd", "netbsd", "openbsd", "dragonfly", "android",
+    "ios", "tvos", "watchos", "solaris", "illumos", "haiku", "redox", "fuchsia", "wasi",
+    "emscripten", "vxworks", "cygwin", "aix", "nto", "espidf", "horizon", "l4re", "hurd",
+    "x86", "x86_64", "arm", "aarch64", "arm64ec", "loongarch64", "m68k", "csky", "mips",
+    "mips64", "mips32r6", "mips64r6", "powerpc", "powerpc64", "riscv32", "riscv64", "s390x",
+    "sparc", "sparc64", "hexagon", "wasm32", "wasm64", "xtensa", "avr", "msp430", "nvptx64",
+    "bpf", "amdgpu",
+];
+
 /// The os or arch from a closed list, `other` for anything outside it, so free text
 /// (a hostname inside an os string) cannot reach the label.
 fn token(s: &str) -> &'static str {
-    // The values `std::env::consts::OS` and `ARCH` take.
-    const KNOWN: [&str; 54] = [
-        "linux", "macos", "windows", "freebsd", "netbsd", "openbsd", "dragonfly", "android",
-        "ios", "tvos", "watchos", "solaris", "illumos", "haiku", "redox", "fuchsia", "wasi",
-        "emscripten", "vxworks", "cygwin", "aix", "nto", "espidf", "horizon", "l4re", "hurd",
-        "x86", "x86_64", "arm", "aarch64", "arm64ec", "loongarch64", "m68k", "csky", "mips",
-        "mips64", "mips32r6", "mips64r6", "powerpc", "powerpc64", "riscv32", "riscv64", "s390x",
-        "sparc", "sparc64", "hexagon", "wasm32", "wasm64", "xtensa", "avr", "msp430", "nvptx64",
-        "bpf", "amdgpu",
-    ];
-    KNOWN.iter().copied().find(|k| *k == s).unwrap_or("other")
+    KNOWN_TOKENS.iter().copied().find(|k| *k == s).unwrap_or("other")
 }
 
 /// The CPU family from a brand string, from a closed list; `other` otherwise.
@@ -252,7 +253,7 @@ pub fn collect_git_commit_marked() -> String {
 }
 
 /// The environment variable `mock bench run` sets on the driver it spawns:
-/// the commit the run measured, with `-dirty` only when a tracked file the
+/// the commit the run measured, with `-dirty` only when a file, tracked or new, the
 /// bench tree is built from differed from it. The tool judges that, since it
 /// is what knows the tree's build inputs (the files under the bench tree less
 /// its outputs, every crate a bench manifest reaches by path, and the
@@ -428,5 +429,32 @@ mod tests {
         assert!(!class_agrees_with("macos-aarch64-c8-bare-intel", "Darwin 25.6.0", "Apple M1"));
         assert!(!class_agrees_with("macos-aarch64-c8-bare", "Darwin 25.6.0", "Apple M1"));
         assert!(class_agrees_with("linux-x86_64-c4-container-intel", "Linux 6.18", "Intel(R) Xeon(R)"));
+    }
+
+    /// Every label the harness can compute is a class the layout accepts as a
+    /// directory name, over every os and arch token (and one outside the
+    /// list), every cpu family, both container flags and every core bucket:
+    /// zero and each power of two and the count just past it, up to 4097.
+    #[test]
+    fn every_label_the_harness_computes_is_a_class_the_layout_accepts() {
+        let brands = ["Apple M1", "Intel(R) Xeon(R)", "AMD EPYC 7B13", "Neoverse-N1", "Mystery CPU"];
+        let tokens: Vec<&str> = KNOWN_TOKENS.iter().copied().chain(["not-a-token"]).collect();
+        let cpus: Vec<u64> = std::iter::once(0).chain((0 .. 13).flat_map(|k| [1u64 << k, (1u64 << k) + 1])).collect();
+        let mut checked = 0usize;
+        for os in &tokens {
+            for arch in &tokens {
+                for brand in brands {
+                    for container in [false, true] {
+                        for &n in &cpus {
+                            let f = MachineFacts { os, arch, cpus: n, container, cpu_brand: brand };
+                            let label = machine_class(&f);
+                            assert!(mockspace_bench_layout::is_machine_class(&label), "{label}");
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(checked, 55 * 55 * 5 * 2 * 27);
     }
 }

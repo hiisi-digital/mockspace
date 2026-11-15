@@ -47,6 +47,7 @@ fn repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
     write(&bench.join(RUN).join("samples.csv"), "run\n");
     write(&bench.join("results/INDEX.md"), "# index\n");
     write(&bench.join(".bench_history/hash_n64.tsv"), "# schema_v1\n");
+    write(&root.join(".gitignore"), "*.gen.rs\n");
     write(&root.join("README.md"), "readme\n");
     git(&root, &["init", "-q"]);
     git(&root, &["config", "user.email", "t@example.com"]);
@@ -64,8 +65,8 @@ fn dirty(mock: &Path, bench: &Path) -> bool {
 }
 
 /// The case that must not mark: the outputs of this and of an older layout,
-/// untracked files beside the code, and a change to a file nothing measured is
-/// built from.
+/// tracked and new, a file the repository ignores beside the code, and a change
+/// to a file nothing measured is built from, tracked or new.
 #[test]
 fn outputs_untracked_files_and_unrelated_code_leave_the_mark_off() {
     let (_tmp, mock, bench) = repo();
@@ -74,16 +75,17 @@ fn outputs_untracked_files_and_unrelated_code_leave_the_mark_off() {
     write(&bench.join(RUN).join("samples.csv"), "changed\n");
     write(&bench.join("results/INDEX.md"), "# regenerated\n");
     write(&bench.join(".bench_history/hash_n64.tsv"), "# changed\n");
-    write(&bench.join("hash/arms/fnv/src/generated.rs"), "// untracked\n");
-    write(&root.join("crates/core/notes.txt"), "untracked\n");
+    write(&bench.join("results/hash/hash_n64/linux-x86_64-c4-bare-amd/20261116T000000Z-b/samples.csv"), "new\n");
+    write(&bench.join("hash/arms/fnv/src/build.gen.rs"), "// ignored\n");
+    write(&root.join("crates/other/notes.txt"), "untracked\n");
     write(&root.join("crates/other/src/lib.rs"), "pub fn o2() {}\n");
     write(&root.join("README.md"), "changed\n");
     assert!(!dirty(&mock, &bench), "nothing a variant is built from changed");
 }
 
 /// The case that must mark: the code of an arm, the code of a crate the tree
-/// reaches only through a support crate's path dependency, and a rename of a
-/// bench file.
+/// reaches only through a support crate's path dependency, a rename of a bench
+/// file, and a new file in either that git does not ignore.
 #[test]
 fn a_change_to_an_arm_or_a_crate_it_reaches_marks_dirty() {
     let (_tmp, mock, bench) = repo();
@@ -97,6 +99,14 @@ fn a_change_to_an_arm_or_a_crate_it_reaches_marks_dirty() {
     git(&root, &["checkout", "-q", "--", "."]);
     git(&root, &["mv", "mock/benches/hash/bench.toml", "mock/benches/hash/moved.toml"]);
     assert!(dirty(&mock, &bench), "a rename of a bench file");
+    git(&root, &["reset", "-q", "--hard"]);
+    assert!(!dirty(&mock, &bench));
+    write(&bench.join("hash/arms/fnv/src/generated.rs"), "// untracked\n");
+    assert!(dirty(&mock, &bench), "a new source beside an arm");
+    std::fs::remove_file(bench.join("hash/arms/fnv/src/generated.rs")).unwrap();
+    assert!(!dirty(&mock, &bench));
+    write(&root.join("crates/core/notes.txt"), "untracked\n");
+    assert!(dirty(&mock, &bench), "a new file in a crate reached by path");
 }
 
 #[test]

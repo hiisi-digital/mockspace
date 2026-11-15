@@ -17,7 +17,9 @@
 //! - a ledger, `.bench_history/<bench>_n<point>.tsv` or
 //!   `history/<bench>/<sweep>_n<point>.tsv`, becomes one `summary.tsv` per run
 //!   it recorded, a run being the rows sharing a timestamp and a commit, each
-//!   row carried over as it was written.
+//!   row carried over as it was written. The rows of a run whose result triple
+//!   moves too go into that run's directory: the run the ledger recorded at
+//!   the meta's commit, `-dirty` aside, no earlier than the meta.
 //!
 //! The machine an older file was measured on is a fact nothing in a ledger
 //! records, and a meta older than the class does not either. `--machine-class`
@@ -134,7 +136,7 @@ pub(crate) fn plan(bench_dir: &Path, machine: Option<&str>) -> Plan {
     let mut results: BTreeMap<(PathBuf, String, Cell), BTreeMap<Part, Vec<PathBuf>>> = BTreeMap::new();
     let mut ledgers: Vec<(PathBuf, Legacy)> = Vec::new();
     for rel in files(bench_dir) {
-        match layout::place(&rel) {
+        match layout::place(&rel, |p| bench_dir.join(p).exists()) {
             Placement::NotOutput | Placement::InLayout => {},
             Placement::Stray(s) => {
                 plan.by_hand.push((rel, format!("{}, and nothing translates it one to one", s.says())))
@@ -266,20 +268,6 @@ fn plan_ledger(
         Ok(t) => t,
         Err(e) => return plan.by_hand.push((rel.to_path_buf(), format!("cannot be read: {e}"))),
     };
-    let class = match class_for(None, machine) {
-        Ok(c) => c,
-        Err(e) => return plan.by_hand.push((rel.to_path_buf(), format!("is a ledger that {e}"))),
-    };
-    if let Some(m) = metas.iter().find(|m| !class_agrees_with(&class, &m.os, &m.cpu)) {
-        return plan.by_hand.push((
-            rel.to_path_buf(),
-            format!(
-                "is a ledger of a cell whose results were measured on `{}` (`{}`), which \
-                 `--machine-class {class}` does not describe",
-                m.cpu, m.os
-            ),
-        ));
-    }
     // A run is the rows sharing a timestamp and a commit, in the order written.
     let mut runs: BTreeMap<(u64, String), Vec<&str>> = BTreeMap::new();
     for line in text.lines() {
@@ -295,8 +283,36 @@ fn plan_ledger(
         };
         runs.entry((row.timestamp, row.git_commit.clone())).or_default().push(line);
     }
-    for ((ts, commit), lines) in runs {
-        let run = layout::run_id(ts, &commit);
+    let groups: Vec<(u64, String)> = runs.keys().cloned().collect();
+    let matched = match_metas(&groups, metas);
+    let mut writes = Vec::new();
+    for (((ts, commit), lines), meta) in runs.into_iter().zip(matched) {
+        // The rows of a run whose results moved too go into that run's
+        // directory, under the run id and the class its meta gave it; rows no
+        // meta matches name their own run.
+        let class = match meta.and_then(|m| m.class.clone()) {
+            Some(c) => c,
+            None => {
+                match class_for(None, machine) {
+                    Ok(c) => c,
+                    Err(e) => return plan.by_hand.push((rel.to_path_buf(), format!("is a ledger that {e}"))),
+                }
+            },
+        };
+        if let Some(m) = metas.iter().find(|m| !class_agrees_with(&class, &m.os, &m.cpu)) {
+            return plan.by_hand.push((
+                rel.to_path_buf(),
+                format!(
+                    "is a ledger of a cell whose results were measured on `{}` (`{}`), which \
+                     `{class}` does not describe",
+                    m.cpu, m.os
+                ),
+            ));
+        }
+        let run = match meta {
+            Some(m) => layout::run_id(m.timestamp, &m.commit),
+            None => layout::run_id(ts, &commit),
+        };
         let target = bench_dir
             .join(layout::RESULTS_DIR)
             .join(layout::run_rel(&l.bench, &l.cell, &class, &run))
@@ -306,12 +322,44 @@ fn plan_ledger(
             body.push_str(line);
             body.push('\n');
         }
-        plan.writes.push(Write {
+        writes.push(Write {
             target,
             bytes: body.into_bytes(),
             source: source.clone(),
         });
     }
+    plan.writes.extend(writes);
+}
+
+/// The meta each ledger run belongs to, in the order of `groups`: the old
+/// driver wrote a cell's meta as the cell ran and its ledger rows a little
+/// after, at the commit without its `-dirty` mark. So a run `(timestamp,
+/// commit)` takes the latest meta of the same commit, the mark stripped on
+/// both sides, taken no later than the rows, and each meta goes to the nearest
+/// run after it only. A run no meta matches gets `None` and keeps its own id.
+fn match_metas<'m>(groups: &[(u64, String)], metas: &'m [OldMeta]) -> Vec<Option<&'m OldMeta>> {
+    let clean = |c: &str| c.trim().trim_end_matches("-dirty").to_string();
+    let mut best: Vec<Option<(usize, &OldMeta)>> = groups
+        .iter()
+        .map(|(ts, commit)| {
+            metas
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| clean(&m.commit) == clean(commit) && m.timestamp <= *ts)
+                .max_by_key(|(_, m)| m.timestamp)
+        })
+        .collect();
+    // A meta claimed by several runs belongs to the one nearest after it.
+    for i in 0 .. best.len() {
+        let Some((mi, m)) = best[i] else { continue };
+        let nearest = (0 .. best.len())
+            .filter(|j| best[*j].is_some_and(|(mj, _)| mj == mi))
+            .min_by_key(|j| groups[*j].0 - m.timestamp);
+        if nearest != Some(i) {
+            best[i] = None;
+        }
+    }
+    best.into_iter().map(|b| b.map(|(_, m)| m)).collect()
 }
 
 /// Settle every write against what is already on disk and against the other
@@ -463,7 +511,7 @@ pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
 pub fn warn_if_legacy(bench_dir: &Path) {
     let old = files(bench_dir)
         .iter()
-        .filter(|rel| matches!(layout::place(rel), Placement::Legacy(_) | Placement::Stray(_)))
+        .filter(|rel| matches!(layout::place(rel, |p| bench_dir.join(p).exists()), Placement::Legacy(_) | Placement::Stray(_)))
         .count();
     if old > 0 {
         eprintln!(

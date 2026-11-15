@@ -93,15 +93,29 @@ fn every_translatable_file_lands_in_its_run_byte_for_byte() {
     let rsb = run_dir("rsb_bwide", "rsb_bwide_n256", "20260702T102747Z-677b60f8");
     assert_eq!(std::fs::read(root.join(&rsb).join("samples.csv")).unwrap(), fixture("rsb_bwide_n256.csv"));
 
-    // The ledger: two runs, each its own rows under the header.
+    // The ledger: two runs, each its own rows under the header. The newer run
+    // is the one whose results moved above (the ledger kept its commit without
+    // the `-dirty` mark), so its rows land in that run's directory, which then
+    // holds all four files; the older run has no results left and keeps its
+    // own id.
     let ledger = String::from_utf8(fixture(".bench_history/swap_band_n64.tsv")).unwrap();
     let rows: Vec<&str> = ledger.lines().filter(|l| !l.starts_with('#')).collect();
     let older = root
         .join(run_dir("swap_band", "swap_band_n64", "20260719T185015Z-8c3a949d"))
         .join("summary.tsv");
-    let newer = root.join(run_dir("swap_band", "swap_band_n64", "20261114T232808Z-266650fb")).join("summary.tsv");
     assert_eq!(std::fs::read_to_string(&older).unwrap(), format!("{SUMMARY_HEADER}\n{}\n", rows[.. 3].join("\n")));
-    assert_eq!(std::fs::read_to_string(&newer).unwrap(), format!("{SUMMARY_HEADER}\n{}\n", rows[3 ..].join("\n")));
+    assert_eq!(
+        std::fs::read_to_string(root.join(&run).join("summary.tsv")).unwrap(),
+        format!("{SUMMARY_HEADER}\n{}\n", rows[3 ..].join("\n"))
+    );
+    let mut in_run: Vec<String> = std::fs::read_dir(root.join(&run))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    in_run.sort();
+    assert_eq!(in_run, ["meta.json", "report.md", "samples.csv", "summary.tsv"]);
+    let cell_runs = std::fs::read_dir(root.join("results/swap_band/swap_band_n64").join(M1)).unwrap().count();
+    assert_eq!(cell_runs, 2, "one directory per old run, the two halves of one run not split");
 
     // Sources gone, emptied directories gone, the stray in place.
     assert!(!root.join(".bench_history").exists());
@@ -110,7 +124,7 @@ fn every_translatable_file_lands_in_its_run_byte_for_byte() {
     assert!(root.join("frame_wide/heavy_n65536.meta.json").exists());
     let outside: Vec<PathBuf> = files(root)
         .into_iter()
-        .filter(|r| layout::place(r) != Placement::InLayout && layout::place(r) != Placement::NotOutput)
+        .filter(|r| !matches!(layout::place(r, |p| root.join(p).exists()), Placement::InLayout | Placement::NotOutput))
         .collect();
     assert_eq!(outside, [PathBuf::from("frame_wide/heavy_n65536.meta.json")]);
 
@@ -143,4 +157,29 @@ fn a_target_with_other_bytes_is_never_replaced_and_one_with_the_same_is_settled(
     assert!(root.join(".bench_history/swap_band_n64.tsv").exists(), "the ledger stays whole");
     assert!(!root.join("rsb_bwide_n256.csv").exists(), "the copy already in place lets its source go");
     assert!(rsb.join("meta.json").exists(), "and the rest of its triple moves");
+}
+
+fn meta(ts: u64, commit: &str) -> OldMeta {
+    OldMeta {
+        timestamp: ts,
+        commit: commit.into(),
+        ..OldMeta::default()
+    }
+}
+
+/// A ledger run takes the latest meta of its commit taken no later than it,
+/// `-dirty` stripped on both sides; a meta goes to the nearest run after it
+/// only, and a run with no meta of its commit keeps its own id.
+#[test]
+fn a_ledger_run_takes_the_meta_of_the_run_it_recorded() {
+    let metas = [meta(100, "abc-dirty"), meta(300, "abc"), meta(150, "def")];
+    let groups = [
+        (90, "abc".to_string()),
+        (101, "abc".to_string()),
+        (120, "abc".to_string()),
+        (301, "abc-dirty".to_string()),
+        (160, "xyz".to_string()),
+    ];
+    let got: Vec<Option<u64>> = match_metas(&groups, &metas).into_iter().map(|m| m.map(|m| m.timestamp)).collect();
+    assert_eq!(got, [None, Some(100), None, Some(300), None]);
 }

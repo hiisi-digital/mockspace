@@ -238,7 +238,7 @@ pub(crate) fn first_unsafe_name(names: &[String]) -> Option<(usize, &str, &'stat
         } else if name.contains(',') {
             Some("contains a comma, which is the CSV field separator")
         } else if name.contains('\t') {
-            Some("contains a tab, which is the history ledger's field separator")
+            Some("contains a tab, which is the run summary's field separator")
         } else if name.contains('\n') || name.contains('\r') {
             Some("contains a line break, which ends a row in both formats")
         } else {
@@ -376,7 +376,7 @@ pub fn validate(
             reason: format!(
                 "bench `{bench_name}` n={n}: variant {} exports the name `{name}`, which \
                  {reason}. Every sample is written into a CSV and a tab-separated \
-                 history ledger with this name in a field, unquoted, and both readers \
+                 run summary with this name in a field, unquoted, and both readers \
                  fall back silently on a short row, so the numbers would come back in \
                  the wrong columns rather than failing. Give the variant a plain name.",
                 variant_paths[i],

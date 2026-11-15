@@ -142,8 +142,8 @@ fn label(repo_root: &Path, f: &Path) -> String {
 ///   they sit;
 /// - the files every build in the workspace reads, which the members'
 ///   fingerprints are salted with ([`WORKSPACE_INPUTS`]);
-/// - the text of what `mock bench` generates for a tree whose arms have no
-///   manifest: the arm manifests and the driver, which no file holds.
+/// - the text of what `mock bench` generates: the manifests of arms that have
+///   none and the driver, which no file holds.
 pub(crate) fn inputs(
     repo_root: &Path,
     mock_dir: &Path,
@@ -160,7 +160,7 @@ pub(crate) fn inputs(
         match rel.strip_prefix(bench_rel) {
             Err(_) => true,
             Ok(under) => {
-                mockspace_bench_harness::layout::place(under)
+                mockspace_bench_harness::layout::place(under, |p| bench_dir.join(p).exists())
                     == mockspace_bench_harness::layout::Placement::NotOutput
                     && !under
                         .components()
@@ -232,15 +232,11 @@ pub(crate) fn inputs(
     Ok((out.into_iter().collect(), generated))
 }
 
-/// What `mock bench` writes under `target/` for a tree with no manifest at its
-/// root: a manifest for each arm that has none, and the driver's manifest and
-/// source. Digested as text because what they say depends on this build of
+/// What `mock bench` writes under `target/`: a manifest for each arm that has
+/// none, and the driver's manifest and source. Digested as text because what they say depends on this build of
 /// mockspace as much as on any file the consumer keeps.
 fn generated(mock_dir: &Path, bench_dir: &Path) -> Vec<Generated> {
     let mut out = Vec::new();
-    if bench_dir.join("Cargo.toml").is_file() {
-        return out;
-    }
     let Ok(plan) = crate::bench_gen::plan(bench_dir) else {
         return out;
     };
@@ -254,7 +250,7 @@ fn generated(mock_dir: &Path, bench_dir: &Path) -> Vec<Generated> {
             });
         }
     }
-    if let Ok(text) = crate::bench_gen::driver_cargo_toml(&dep, &plan.support) {
+    if let Ok(text) = crate::bench_gen::driver_cargo_toml(&dep, &plan.support, &crate::bench_gen::driver_name(bench_dir)) {
         out.push(Generated {
             dir: Some(crate::bench_gen::driver_gen_dir(mock_dir)),
             label: "generated/driver/Cargo.toml".to_string(),

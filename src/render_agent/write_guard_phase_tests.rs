@@ -478,7 +478,7 @@ fn a_topic_in_a_repository_with_no_commit_yet_can_be_written() {
 // A second changelist of a kind written while the first is only in the working tree. The phase is
 // read from what git tracks, so an untracked first changelist leaves the phase where it was, the
 // guard sees no changelist of the kind and allows another, and a commit that takes everything
-// carries both in (kaski, 30 October, a stub `# src changelist` beside the round's own).
+// carries both in (a consumer, 30 October, a stub `# src changelist` beside the round's own).
 
 fn write_to_round(repo: &std::path::Path, name: &str) -> String {
     write_payload(&repo.join("mock/design_rounds").join(name))

@@ -12,8 +12,8 @@ fn none() -> std::collections::BTreeMap<String, Vec<String>> {
 
 fn heavy() -> Vec<(String, String)> {
     vec![
-        ("kaski-render".to_string(), "tests::drawn::a".to_string()),
-        ("kaski-web::it".to_string(), "b".to_string()),
+        ("game-render".to_string(), "tests::drawn::a".to_string()),
+        ("game-web::it".to_string(), "b".to_string()),
     ]
 }
 
@@ -35,8 +35,8 @@ fn the_config_carries_the_group_the_timeout_and_the_report() {
     );
     assert!(t.contains("fail-fast = false"));
     assert!(t.contains("[profile.default.junit]\npath = \"/w/mock/target/state/junit.xml\"\n"), "{t}");
-    assert!(t.contains("filter = 'binary_id(=kaski-render) & (test(=tests::drawn::a))'"), "{t}");
-    assert!(t.contains("filter = 'binary_id(=kaski-web::it) & (test(=b))'"), "{t}");
+    assert!(t.contains("filter = 'binary_id(=game-render) & (test(=tests::drawn::a))'"), "{t}");
+    assert!(t.contains("filter = 'binary_id(=game-web::it) & (test(=b))'"), "{t}");
     // The written config must be TOML nextest can read.
     assert!(t.parse::<toml_edit::DocumentMut>().is_ok(), "{t}");
 }
@@ -116,9 +116,9 @@ fn the_run_builds_with_the_generated_cargo_config_before_the_callers_flags() {
 #[test]
 fn a_long_heavy_list_is_split_into_overrides_that_name_every_test_once() {
     let mut heavy: Vec<(String, String)> = (0..653)
-        .map(|n| ("kaski-sim::big".to_string(), format!("tests::module::heavy_case_{n:04}")))
+        .map(|n| ("game-sim::big".to_string(), format!("tests::module::heavy_case_{n:04}")))
         .collect();
-    heavy.push(("kaski-web::it".to_string(), "b".to_string()));
+    heavy.push(("game-web::it".to_string(), "b".to_string()));
     let t = tool_config(&TestSettings::default(), &heavy, Path::new("junit.xml"));
     let doc = t.parse::<toml_edit::DocumentMut>().unwrap();
     let overrides = doc["profile"]["default"]["overrides"].as_array_of_tables().unwrap();
@@ -139,17 +139,17 @@ fn a_long_heavy_list_is_split_into_overrides_that_name_every_test_once() {
 #[test]
 fn a_binary_narrowed_to_its_failures_leaves_its_other_tests_out() {
     let rerun = std::collections::BTreeMap::from([(
-        "kaski-web::it".to_string(),
+        "game-web::it".to_string(),
         vec!["a".to_string(), "b".to_string()],
     )]);
     assert_eq!(
         filterset(None, &[], &[], &rerun).as_deref(),
-        Some("not ((binary_id(=kaski-web::it) & not (test(=a) | test(=b))))")
+        Some("not ((binary_id(=game-web::it) & not (test(=a) | test(=b))))")
     );
     assert_eq!(
         filterset(Some("test(x)"), &[], &["lib".to_string()], &rerun).as_deref(),
         Some(
-            "(test(x)) & not (binary_id(=lib) | (binary_id(=kaski-web::it) & not (test(=a) | \
+            "(test(x)) & not (binary_id(=lib) | (binary_id(=game-web::it) & not (test(=a) | \
              test(=b))))"
         )
     );
@@ -192,11 +192,11 @@ fn no_heavy_test_means_no_override() {
 #[test]
 fn the_filterset_subtracts_the_skipped_from_the_callers() {
     let skip = vec![Skip {
-        binary: "kaski-render".to_string(),
+        binary: "game-render".to_string(),
         name:   "tests::drawn::a".to_string(),
         why:    SkipWhy::Cached,
     }];
-    let not = "not ((binary_id(=kaski-render) & test(=tests::drawn::a)))";
+    let not = "not ((binary_id(=game-render) & test(=tests::drawn::a)))";
     assert_eq!(filterset(None, &[], &[], &none()), None);
     assert_eq!(
         filterset(Some("test(x)"), &[], &[], &none()).as_deref(),
@@ -211,21 +211,21 @@ fn the_filterset_subtracts_the_skipped_from_the_callers() {
 
 #[test]
 fn the_filterset_leaves_out_whole_binaries_beside_single_tests() {
-    let reuse = vec!["kaski-web::sound_gate".to_string(), "kaski-web".to_string()];
+    let reuse = vec!["game-web::sound_gate".to_string(), "game-web".to_string()];
     assert_eq!(
         filterset(None, &[], &reuse, &none()).as_deref(),
-        Some("not (binary_id(=kaski-web::sound_gate) | binary_id(=kaski-web))")
+        Some("not (binary_id(=game-web::sound_gate) | binary_id(=game-web))")
     );
     let skip = vec![Skip {
-        binary: "kaski-render".to_string(),
+        binary: "game-render".to_string(),
         name:   "tests::drawn::a".to_string(),
         why:    SkipWhy::Cached,
     }];
     assert_eq!(
         filterset(Some("test(x)"), &skip, &reuse, &none()).as_deref(),
         Some(
-            "(test(x)) & not ((binary_id(=kaski-render) & test(=tests::drawn::a)) | \
-             binary_id(=kaski-web::sound_gate) | binary_id(=kaski-web))"
+            "(test(x)) & not ((binary_id(=game-render) & test(=tests::drawn::a)) | \
+             binary_id(=game-web::sound_gate) | binary_id(=game-web))"
         )
     );
 }

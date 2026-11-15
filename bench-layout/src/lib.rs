@@ -258,7 +258,7 @@ pub enum Placement {
 }
 
 /// The part an old output file name holds, and its cell.
-fn old_output(name: &str) -> Option<(Cell, Part)> {
+fn old_output(name: &str) -> Option<(&str, Cell, Part)> {
     let (stem, part) = if let Some(s) = name.strip_suffix(".meta.json") {
         (s, Part::Meta)
     } else if let Some(s) = name.strip_suffix("_findings.md") {
@@ -270,7 +270,7 @@ fn old_output(name: &str) -> Option<(Cell, Part)> {
     } else {
         return None;
     };
-    Some((Cell::parse(stem)?, part))
+    Some((stem, Cell::parse(stem)?, part))
 }
 
 /// Where the file at `rel`, a path relative to the bench tree root, stands.
@@ -284,10 +284,14 @@ fn old_output(name: &str) -> Option<(Cell, Part)> {
 /// - `.bench_history/<bench>_n<point>.tsv`: the flat ledger.
 /// - `history/<bench>/<sweep>_n<point>.tsv`: the nested ledger.
 ///
-/// Every other ledger, every other output-shaped file and every other file
-/// under `results/` is a [`Stray`]. Callers skip `target/` and `.git/`.
+/// Every other ledger, every other output and every other file under
+/// `results/` is a [`Stray`]. Outside `results/` an output is only ever a
+/// triple the harness wrote, so a file named like one counts only beside its
+/// `<sweep>_n<point>.meta.json`; a fixture or an input file in a crate that
+/// happens to carry the shape is not an output. `exists` answers whether a path
+/// relative to the bench tree root is there. Callers skip `target/` and `.git/`.
 #[must_use]
-pub fn place(rel: &Path) -> Placement {
+pub fn place(rel: &Path, exists: impl Fn(&Path) -> bool) -> Placement {
     let parts: Vec<&str> = rel.iter().filter_map(|c| c.to_str()).collect();
     let Some(&name) = parts.last() else {
         return Placement::NotOutput;
@@ -319,7 +323,11 @@ pub fn place(rel: &Path) -> Placement {
         }
         return Placement::Stray(Stray::Ledger);
     }
-    if let Some((cell, part)) = old_output(name) {
+    if let Some((stem, cell, part)) = old_output(name) {
+        let meta = rel.with_file_name(format!("{stem}.meta.json"));
+        if part != Part::Meta && !exists(&meta) {
+            return Placement::NotOutput;
+        }
         if parts.len() == 1 {
             return Placement::Legacy(Legacy {
                 bench: cell.sweep.clone(),
@@ -327,9 +335,6 @@ pub fn place(rel: &Path) -> Placement {
                 part,
             });
         }
-        return Placement::Stray(Stray::Outside);
-    }
-    if name.ends_with(".meta.json") {
         return Placement::Stray(Stray::Outside);
     }
     Placement::NotOutput
@@ -349,7 +354,7 @@ fn place_in_results(parts: &[&str]) -> Placement {
         },
         [_, bench, file] if is_name(bench) => {
             match old_output(file) {
-                Some((cell, part)) => {
+                Some((_, cell, part)) => {
                     Placement::Legacy(Legacy {
                         bench: (*bench).to_string(),
                         cell,

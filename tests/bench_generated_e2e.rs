@@ -93,15 +93,8 @@ pub fn hooks() -> Hooks {
 }
 "#;
 
-/// The generated driver of every tree builds under one name into the target
-/// directory the cargo configuration around the test names, so two runs at
-/// once replace each other's driver while its workers are being spawned and
-/// one of them fails with the binary gone. The runs here take turns.
-static ONE_RUN_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 #[test]
 fn a_config_only_nested_tree_runs_end_to_end_through_the_generated_driver() {
-    let _one_at_a_time = ONE_RUN_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let repo = env!("CARGO_MANIFEST_DIR");
     let root = std::env::temp_dir().join(format!("mockspace-bench-e2e-{}", std::process::id()));
     std::fs::remove_dir_all(&root).ok();
@@ -177,7 +170,8 @@ master_seed = 7
         }
         assert_eq!(
             mockspace_bench_harness::layout::place(
-                &runs[0].join("samples.csv").strip_prefix(&bench_dir).unwrap()
+                &runs[0].join("samples.csv").strip_prefix(&bench_dir).unwrap(),
+                |_| true
             ),
             mockspace_bench_harness::layout::Placement::InLayout
         );
@@ -246,7 +240,6 @@ master_seed = 7
 /// routine table crashed its worker at exit with the heap corrupted.
 #[test]
 fn an_arm_declaring_another_output_size_than_its_routine_is_refused() {
-    let _one_at_a_time = ONE_RUN_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let repo = env!("CARGO_MANIFEST_DIR");
     let root = std::env::temp_dir().join(format!("mockspace-bench-size-{}", std::process::id()));
     std::fs::remove_dir_all(&root).ok();
