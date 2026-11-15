@@ -323,6 +323,7 @@ The `mockup-workflow` skill: gate boundaries and the validation pipeline. The `m
 - The generated driver is the only runner; custom behaviour goes in `{mock_dir}/benches/src/lib.rs` (`pub fn hooks() -> Hooks`).
 - Results: `{mock_dir}/benches/results/<bench>/<sweep>_n<point>/<machine class>/<run>/`, committed, never replaced.
 - Quote a number with its run directory and profile.
+- An arm with no path of its own for a target runs whatever that target has, under its own name; that result is the finding and stays.
 - Before the first bench: the `benchmarking` skill.
 "#,
                 &mock_rel,
