@@ -13,15 +13,8 @@ use std::process::Command;
 
 use super::*;
 
-fn scratch() -> std::path::PathBuf {
-    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let d = mockspace_manifest::scratch::root().join(format!(
-        "ms_hookout_{}_{}",
-        std::process::id(),
-        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn scratch() -> tempfile::TempDir {
+    mockspace_manifest::scratch::tempdir().unwrap()
 }
 
 fn cfg_at(repo_root: &std::path::Path) -> Config {
@@ -157,7 +150,8 @@ fn the_reminder_emits_one_object_when_it_has_something_to_say() {
     // The reminder speaks when the command names the mock directory, and that
     // path is the one that carried the defect: it printed its context and then
     // fell through to a second emit.
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     let script = every_hook_for(&root, crate::render_agent::CLAUDE_HOOK_HELPERS)
         .into_iter()
         .find(|(n, _)| *n == "reminder")
@@ -183,7 +177,8 @@ fn the_yagni_guard_emits_one_object_when_it_has_something_to_say() {
     // The second site of the same shape, and the one the first version of this
     // sweep never reached: it takes a `git commit` whose message carries one of
     // the flagged words, and nothing else wakes it.
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     let script = every_hook_for(&root, crate::render_agent::CLAUDE_HOOK_HELPERS)
         .into_iter()
         .find(|(n, _)| *n == "no-yagni")
@@ -212,7 +207,8 @@ fn no_hook_on_either_platform_ever_writes_two_values() {
     // on purpose: Claude's `allow` prints an object, Copilot's prints nothing
     // and its `context` prints plain text rather than JSON. Zero values is a
     // correct Copilot answer and a wrong Claude one, which the next arm pins.
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     let mut failures = Vec::new();
     for (name, script) in every_hook_everywhere(&root) {
         for (what, payload) in the_payloads(&root) {
@@ -232,7 +228,8 @@ fn every_claude_hook_writes_exactly_one_value_on_every_payload() {
     // Stronger than the sweep above and true only on this platform: every path
     // out of a Claude hook prints an object, so zero is a hook that stopped
     // deciding, which `at most one` would wave through.
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     let mut failures = Vec::new();
     for (name, script) in every_hook_for(&root, crate::render_agent::CLAUDE_HOOK_HELPERS) {
         for (what, payload) in the_payloads(&root) {
@@ -349,7 +346,8 @@ fn a_returning_helper_is_caught() {
 
 #[test]
 fn the_reminder_is_said_once_per_session_and_again_for_another() {
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     let script = every_hook_for(&root, crate::render_agent::CLAUDE_HOOK_HELPERS)
         .into_iter()
         .find(|(n, _)| *n == "reminder")
@@ -369,7 +367,8 @@ fn the_reminder_is_said_once_per_session_and_again_for_another() {
 
 #[test]
 fn the_reminder_returns_after_an_hour_and_without_a_usable_session_id() {
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     let script = every_hook_for(&root, crate::render_agent::CLAUDE_HOOK_HELPERS)
         .into_iter()
         .find(|(n, _)| *n == "reminder")
@@ -395,7 +394,8 @@ fn the_reminder_returns_after_an_hour_and_without_a_usable_session_id() {
 fn a_deny_reason_written_with_backslash_n_carries_real_line_breaks() {
     // The write guard writes its reasons with `\n` between the lines. The JSON must
     // carry a line break there, not a backslash and an n the reader sees as text.
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     for helpers in [
         crate::render_agent::CLAUDE_HOOK_HELPERS,
         crate::render_agent::COPILOT_HOOK_HELPERS,
@@ -452,7 +452,8 @@ fn with_session(payload: &str, session: &str) -> String {
 /// both platforms, and an unrelated call stays silent.
 #[test]
 fn the_guide_speaks_once_per_subject_in_one_object() {
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     let cases = [
         (
             write_payload(&root.join("mock/benches/hash/arms/fnv/src/lib.rs"), "pub fn f() {}"),
@@ -541,7 +542,8 @@ fn the_guide_speaks_once_per_subject_in_one_object() {
 
 #[test]
 fn the_guide_says_each_subject_once_per_session() {
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     let script = every_hook_for(&root, crate::render_agent::CLAUDE_HOOK_HELPERS)
         .into_iter()
         .find(|(n, _)| *n == "guide")

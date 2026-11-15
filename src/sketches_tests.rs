@@ -32,8 +32,8 @@ fn a_timer_in_a_sketch_is_seen_and_plain_code_is_not() {
 
 #[test]
 fn the_survey_reads_each_sketch_and_open_keeps_only_those_wanting_attention() {
-    let root = mockspace_manifest::scratch::root().join(format!("ms_sketches_{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let root = root_guard.path().to_path_buf();
     let write = |rel: &str, text: &str| {
         let p = root.join(rel);
         fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -48,7 +48,6 @@ fn the_survey_reads_each_sketch_and_open_keeps_only_those_wanting_attention() {
     write("202601010000_done/target/x.rs", "Instant::now");
 
     let all = survey(&root);
-    let _ = fs::remove_dir_all(&root);
     assert_eq!(all.len(), 3);
     assert_eq!(all[0].outcome, Outcome::Works);
     assert_eq!(all[0].timer, None, "target/ is skipped");
@@ -64,12 +63,53 @@ fn the_survey_reads_each_sketch_and_open_keeps_only_those_wanting_attention() {
 
 #[test]
 fn an_unknown_flag_fails_and_a_known_one_does_not() {
-    let root = mockspace_manifest::scratch::root().join(format!("ms_sketches_cmd_{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let root = root_guard.path().to_path_buf();
     let mut cfg = Config::from_dir(Path::new("/nonexistent-mock-dir"));
     cfg.mock_dir = root.join("mock");
     assert_eq!(cmd(&cfg, &["--bogus".to_string()]), ExitCode::FAILURE);
     // The control: the flag it takes, and no flag, both succeed with no sketches dir.
     assert_eq!(cmd(&cfg, &["--open".to_string()]), ExitCode::SUCCESS);
     assert_eq!(cmd(&cfg, &[]), ExitCode::SUCCESS);
+}
+
+/// Every file or directory under `dir`, below its first level of process roots.
+fn leftovers(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    for root in fs::read_dir(dir).into_iter().flatten().flatten() {
+        for e in fs::read_dir(root.path()).into_iter().flatten().flatten() {
+            found.push(e.path());
+        }
+    }
+    found
+}
+
+#[test]
+fn a_test_run_leaves_nothing_in_its_scratch_root() {
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
+    let exe = std::env::current_exe().unwrap();
+    // The children make scratch, one after the other, under a temp dir of their own.
+    for filter in [
+        "sketches::tests::the_survey",
+        "sketches::tests::an_unknown",
+        "render_design::tests",
+        "gate_report::tests",
+        "suite::timings::tests",
+        "suite::fingerprint::tests",
+        "suite::layout_report::tests",
+        "bench_gen::tests",
+    ] {
+        let out = std::process::Command::new(&exe)
+            .env("TMPDIR", tmp.path())
+            .args([filter, "--test-threads=1"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{filter}: {}", String::from_utf8_lossy(&out.stdout));
+    }
+    let left = leftovers(&tmp.path().join(mockspace_manifest::scratch::SCRATCH_DIR));
+    assert!(left.is_empty(), "scratch left behind: {left:?}");
+    // The control: a path a test makes by hand and does not drop is seen.
+    let base = tmp.path().join(mockspace_manifest::scratch::SCRATCH_DIR).join("1");
+    fs::create_dir_all(base.join("kept")).unwrap();
+    assert_eq!(leftovers(&tmp.path().join(mockspace_manifest::scratch::SCRATCH_DIR)).len(), 1);
 }

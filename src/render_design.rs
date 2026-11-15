@@ -730,7 +730,8 @@ mod tests {
 
     #[test]
     fn write_generated_skips_timestamp_only_and_restores_previous() {
-        let dir = mockspace_manifest::scratch::root().join(format!("mockspace_wg_{}", std::process::id()));
+        let dir_guard = mockspace_manifest::scratch::tempdir().unwrap();
+        let dir = dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("gen.md");
 
@@ -753,8 +754,6 @@ mod tests {
         let changed = HDR_B.replace("body line two", "body line THREE");
         assert!(write_generated(&path, &changed), "body change must write");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), changed);
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 }
 

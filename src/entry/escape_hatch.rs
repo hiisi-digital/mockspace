@@ -196,14 +196,7 @@ mod tests {
 
     /// A git repo with the given paths staged.
     fn repo_with_staged(paths: &[(&str, &str)]) -> std::path::PathBuf {
-        let dir = mockspace_manifest::scratch::root().join(format!(
-            "ms_hatch_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = mockspace_manifest::scratch::held();
         std::fs::create_dir_all(&dir).unwrap();
         let git = |args: &[&str]| {
             C::new("git")
@@ -361,7 +354,8 @@ mod tests {
     fn a_missing_git_is_not_itself_a_reason_to_fail() {
         // Verification must not become a new way for a commit to break. With no
         // repo there is nothing staged, so nothing is refused.
-        let nowhere = mockspace_manifest::scratch::root().join("ms_hatch_definitely_not_a_repo");
+        let nowhere_guard = mockspace_manifest::scratch::tempdir().unwrap();
+        let nowhere = nowhere_guard.path().join("not_a_repo");
         let _ = std::fs::create_dir_all(&nowhere);
         let mock = nowhere.join("mock");
         let layout = SrcLayout::new(&mock, &[mock.join("crates")]);

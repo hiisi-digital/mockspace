@@ -165,7 +165,8 @@ fn other_shapes_keep_the_phase_rule() {
 #[test]
 fn a_path_outside_any_repository_is_refused() {
     let d = doc_round();
-    let outside = scratch("outside");
+    let outside_guard = scratch("outside");
+    let outside = outside_guard.path().to_path_buf();
     let f = outside.join("mock/crates/x/src/stray.rs");
     std::fs::create_dir_all(f.parent().unwrap()).unwrap();
     std::fs::write(&f, "// s\n").unwrap();
@@ -216,7 +217,8 @@ fn a_corrupt_index_does_not_read_as_untracked() {
 #[test]
 fn a_relative_path_is_read_against_the_cwd_the_payload_names() {
     let d = doc_round();
-    let elsewhere = scratch("cwd");
+    let elsewhere_guard = scratch("cwd");
+    let elsewhere = elsewhere_guard.path().to_path_buf();
     let mut payload: serde_json::Value =
         serde_json::from_str(&bash_payload("rm mock/crates/x/src/stray.rs")).unwrap();
     // The command has to name the repository to be in this guard's scope; its cwd is the payload's.

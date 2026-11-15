@@ -1586,7 +1586,8 @@ mod tests {
 
     #[test]
     fn find_crate_manifests_finds_nested_crates_and_skips_target() {
-        let root = temp_mock("find-manifests");
+        let root_guard = temp_mock("find-manifests");
+        let root = root_guard.path().to_path_buf();
         // The root itself carries a manifest, exactly as every real bench
         // tree with a runner of its own did (a driver bin crate at the root).
         // Omitting this is what let the "stop descending at a found
@@ -1640,7 +1641,8 @@ mod tests {
     /// on the tree it was built for.
     #[test]
     fn find_crate_manifests_descends_past_a_root_manifest_to_find_what_is_beneath_it() {
-        let root = temp_mock("find-manifests-root-and-nested");
+        let root_guard = temp_mock("find-manifests-root-and-nested");
+        let root = root_guard.path().to_path_buf();
         std::fs::write(root.join("Cargo.toml"), "[package]\nname=\"driver\"").unwrap();
         std::fs::create_dir_all(root.join("variants/only-one/src")).unwrap();
         std::fs::write(
@@ -1674,7 +1676,8 @@ mod tests {
     /// expects) from "found nothing at all" (the bug).
     #[test]
     fn cmd_test_generates_a_manifest_for_the_freshly_scaffolded_sample_arm() {
-        let root = temp_mock("cmd-test-after-init");
+        let root_guard = temp_mock("cmd-test-after-init");
+        let root = root_guard.path().to_path_buf();
         let cfg = Config::from_dir(&root);
         assert_eq!(format!("{:?}", cmd_init(&cfg)), success());
 
@@ -1723,7 +1726,8 @@ mod tests {
     /// exists to eliminate, reintroduced one level down.
     #[test]
     fn cmd_test_refuses_when_every_discovered_crate_carries_zero_tests() {
-        let root = temp_mock("cmd-test-zero-tests");
+        let root_guard = temp_mock("cmd-test-zero-tests");
+        let root = root_guard.path().to_path_buf();
         let bench_dir = root.join("benches");
         std::fs::create_dir_all(&bench_dir).unwrap();
         std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
@@ -1754,7 +1758,8 @@ mod tests {
     /// buildable crate, only a discoverable manifest.
     #[test]
     fn cmd_test_refuses_a_filter_that_matches_nothing() {
-        let root = temp_mock("cmd-test-unmatched-filter");
+        let root_guard = temp_mock("cmd-test-unmatched-filter");
+        let root = root_guard.path().to_path_buf();
         let bench_dir = root.join("benches");
         std::fs::create_dir_all(&bench_dir).unwrap();
         std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
@@ -1782,7 +1787,8 @@ mod tests {
     /// its place, is not.
     #[test]
     fn a_root_driver_crate_is_refused_and_a_generated_tree_is_not() {
-        let root = temp_mock("refuses-root-driver");
+        let root_guard = temp_mock("refuses-root-driver");
+        let root = root_guard.path().to_path_buf();
         let bench_dir = root.join("benches");
         std::fs::create_dir_all(bench_dir.join("src")).unwrap();
         std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
@@ -1804,7 +1810,8 @@ mod tests {
 
     #[test]
     fn find_crate_manifests_on_an_empty_tree_finds_nothing() {
-        let root = temp_mock("find-manifests-empty");
+        let root_guard = temp_mock("find-manifests-empty");
+        let root = root_guard.path().to_path_buf();
         assert!(find_crate_manifests(&root).is_empty());
         std::fs::remove_dir_all(&root).ok();
     }
@@ -1905,7 +1912,8 @@ mod tests {
             source.display()
         );
 
-        let root = temp_mock("cmd-test-real-support-crate");
+        let root_guard = temp_mock("cmd-test-real-support-crate");
+        let root = root_guard.path().to_path_buf();
         let bench_dir = root.join("benches");
         std::fs::create_dir_all(bench_dir.join("support/the-crate")).unwrap();
         std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
@@ -1942,14 +1950,8 @@ mod tests {
         }
     }
 
-    fn temp_mock(name: &str) -> PathBuf {
-        let d = mockspace_manifest::scratch::root().join(format!(
-            "mockspace-bench-cmd-test-{}-{name}",
-            std::process::id()
-        ));
-        std::fs::remove_dir_all(&d).ok();
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn temp_mock(_name: &str) -> tempfile::TempDir {
+        mockspace_manifest::scratch::tempdir().unwrap()
     }
 
     fn success() -> String {
@@ -1963,7 +1965,8 @@ mod tests {
     /// must generate from it.
     #[test]
     fn init_scaffolds_a_tree_the_planner_accepts_and_the_generator_serves() {
-        let mock = temp_mock("init");
+        let mock_guard = temp_mock("init");
+        let mock = mock_guard.path().to_path_buf();
         let cfg = Config::from_dir(&mock);
         let code = cmd_init(&cfg);
         assert_eq!(format!("{code:?}"), success());
@@ -1987,7 +1990,8 @@ mod tests {
 
     #[test]
     fn an_arm_manifest_that_is_not_a_cdylib_is_refused_naming_the_rule() {
-        let dir = temp_mock("arm-crate-type");
+        let dir_guard = temp_mock("arm-crate-type");
+        let dir = dir_guard.path().to_path_buf();
         let arm_dir = dir.join("warm/arms/kernel");
         std::fs::create_dir_all(arm_dir.join("src")).unwrap();
         std::fs::write(
@@ -2015,7 +2019,8 @@ mod tests {
 
     #[test]
     fn add_scaffolds_a_bench_and_an_arm_in_a_nested_tree_and_refuses_duplicates() {
-        let mock = temp_mock("add");
+        let mock_guard = temp_mock("add");
+        let mock = mock_guard.path().to_path_buf();
         let cfg = Config::from_dir(&mock);
         assert_eq!(format!("{:?}", cmd_init(&cfg)), success());
         let bench_dir = mock.join("benches");
@@ -2071,7 +2076,8 @@ mod tests {
     /// subsequently ran an arm literally named `--force`.
     #[test]
     fn add_refuses_a_flag_instead_of_scaffolding_it_as_a_name() {
-        let mock = temp_mock("add-flag-refused");
+        let mock_guard = temp_mock("add-flag-refused");
+        let mock = mock_guard.path().to_path_buf();
         let cfg = Config::from_dir(&mock);
         assert_eq!(format!("{:?}", cmd_init(&cfg)), success());
         let bench_dir = mock.join("benches");

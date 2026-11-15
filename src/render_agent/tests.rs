@@ -277,7 +277,8 @@ fn gate_intact_in(clone: &std::path::Path) -> bool {
 
 #[test]
 fn the_agent_gate_holds_where_git_shook_has_the_key_registered_whatever_the_path_spells() {
-    let base = mockspace_manifest::scratch::root().join(format!("gate-intact-{}", std::process::id()));
+    let base_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let base = base_guard.path().to_path_buf();
     // the clone's own path spells "mockspace", as this repository's does: the
     // unregistered control must still fail
     let clone = base.join("work").join("mockspace-clone");
@@ -310,7 +311,6 @@ fn the_agent_gate_holds_where_git_shook_has_the_key_registered_whatever_the_path
     // and a hooks path that is somebody else's is still broken
     git(&["config", "--local", "core.hooksPath", "/elsewhere/hooks"]);
     assert!(!gate_intact_in(&clone), "control: another tool's path");
-    let _ = std::fs::remove_dir_all(&base);
 }
 
 #[test]
@@ -556,18 +556,9 @@ fn agent_gate_is_a_generated_builtin() {
 /// A throwaway repository with a mockspace.toml and an agent config, so the
 /// gate is exercised through the config that actually declares it rather than
 /// through a hand-built struct that could drift from it.
-pub(super) fn skill_fixture(design_talks: Option<bool>) -> std::path::PathBuf {
-    // A sequence number besides the pid and the flag: two tests passing the
-    // same flag otherwise share one directory and remove_dir_all it under
-    // each other when the suite runs in parallel.
-    static FIXTURE_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let root = mockspace_manifest::scratch::root().join(format!(
-        "mockspace-skilltest-{}-{}-{:?}",
-        std::process::id(),
-        FIXTURE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        design_talks
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+pub(super) fn skill_fixture(design_talks: Option<bool>) -> tempfile::TempDir {
+    let guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let root = guard.path().to_path_buf();
     let mock = root.join("mock");
     std::fs::create_dir_all(mock.join("agent")).unwrap();
     std::fs::write(
@@ -582,21 +573,23 @@ pub(super) fn skill_fixture(design_talks: Option<bool>) -> std::path::PathBuf {
         )
         .unwrap();
     }
-    mock
+    guard
 }
 
 // The same fixture with an arbitrary agent config, for knobs beyond the
 // design-talk one.
-fn skill_fixture_config(config: &str) -> std::path::PathBuf {
-    let mock = skill_fixture(None);
+fn skill_fixture_config(config: &str) -> tempfile::TempDir {
+    let guard = skill_fixture(None);
+    let mock = guard.path().join("mock");
     std::fs::write(mock.join("agent").join("config.toml"), config).unwrap();
-    mock
+    guard
 }
 
 #[test]
 fn design_talk_skill_is_absent_unless_opted_in() {
     for declared in [None, Some(false)] {
-        let cfg = crate::config::Config::from_dir(&skill_fixture(declared));
+        let fx = skill_fixture(declared);
+        let cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
         let builtins = generate_builtin_templates(&cfg, &LintPack::default());
         assert!(
             !builtins.skills.iter().any(|s| s.dir_name == "design-talk"),
@@ -607,7 +600,8 @@ fn design_talk_skill_is_absent_unless_opted_in() {
 
 #[test]
 fn design_talk_skill_ships_its_script_executable_and_its_manifest() {
-    let cfg = crate::config::Config::from_dir(&skill_fixture(Some(true)));
+    let fx = skill_fixture(Some(true));
+    let cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
 
     let skill = builtins
@@ -647,7 +641,8 @@ fn the_skill_catalogue_names_every_builtin_and_nothing_else() {
     // BUILTIN_SKILL_DIRS. A generated skill missing from the catalogue would
     // never be swept when its knob turns off; a catalogue name nothing
     // generates would sweep a directory no knob can bring back.
-    let cfg = crate::config::Config::from_dir(&skill_fixture(Some(true)));
+    let fx = skill_fixture(Some(true));
+    let cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
 
     for skill in &builtins.skills {
@@ -671,9 +666,10 @@ fn the_skill_catalogue_names_every_builtin_and_nothing_else() {
 fn sketching_and_benchmarking_can_be_declined() {
     // Default on, but a knob: no builtin prose lands in a consumer's context
     // without one, and declining must actually decline.
-    let cfg = crate::config::Config::from_dir(&skill_fixture_config(
+    let fx = skill_fixture_config(
         "agent_sketching_skill = false\nagent_benchmarking_skill = false\n",
-    ));
+    );
+    let cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
     for name in ["sketching", "benchmarking"] {
         assert!(
@@ -689,7 +685,8 @@ fn sketching_and_benchmarking_are_on_by_default() {
     // made in the first thirty seconds of a task, by every consumer, whether
     // or not a human is in the loop. An absent key or file means on.
     for declared in [None, Some(false), Some(true)] {
-        let cfg = crate::config::Config::from_dir(&skill_fixture(declared));
+        let fx = skill_fixture(declared);
+        let cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
         let builtins = generate_builtin_templates(&cfg, &LintPack::default());
         for want in ["sketching", "benchmarking"] {
             let skill = builtins
@@ -781,13 +778,8 @@ fn write_guard_allows(target_rel: &str) -> bool {
 pub(super) fn write_guard_allows_in(target_rel: &str, src_dirs: &[&str]) -> bool {
     use std::process::{Command, Stdio};
 
-    let repo = mockspace_manifest::scratch::root().join(format!(
-        "wg-{}-{}-{}",
-        std::process::id(),
-        src_dirs.len(),
-        target_rel.replace('/', "_")
-    ));
-    let _ = std::fs::remove_dir_all(&repo);
+    let repo_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let repo = repo_guard.path().to_path_buf();
     let rounds = repo.join("mock/design_rounds");
     std::fs::create_dir_all(&rounds).unwrap();
     std::fs::create_dir_all(repo.join("mock/crates/foo")).unwrap();
@@ -847,7 +839,6 @@ pub(super) fn write_guard_allows_in(target_rel: &str, src_dirs: &[&str]) -> bool
     let out = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-    let _ = std::fs::remove_dir_all(&repo);
 
     // Fail closed on anything that is not a verdict. Testing
     // `!stdout.contains("deny")` reads a script that errored out as an allow,
@@ -933,14 +924,16 @@ pub(super) fn pack_with_stub_tool() -> LintPack {
 
 #[test]
 fn catalogues_rule_is_on_by_default_and_off_when_declared_false() {
-    let cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let fx = skill_fixture(None);
+    let cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
     assert!(
         builtins.rules.iter().any(|r| r.name == "catalogues"),
         "on by default, no config.toml at all"
     );
 
-    let mock = skill_fixture_config("agent_catalogues = false\n");
+    let mock_guard = skill_fixture_config("agent_catalogues = false\n");
+    let mock = mock_guard.path().join("mock");
     let cfg = crate::config::Config::from_dir(&mock);
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
     assert!(
@@ -956,7 +949,8 @@ fn catalogues_rule_embeds_a_live_snapshot_not_a_fixed_string() {
     // generator actually shows up in the generated body. Without this, the
     // rule could just as well be static prose that happens to also print a
     // command name.
-    let cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let fx = skill_fixture(None);
+    let cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
     let builtins = generate_builtin_templates(&cfg, &pack_with_stub_tool());
     let rule = builtins
         .rules
@@ -1002,7 +996,8 @@ fn catalogues_rule_embeds_a_live_snapshot_not_a_fixed_string() {
 /// Found on disk in two repositories here.
 #[test]
 fn a_renamed_builtin_rule_takes_its_old_file_with_it() {
-    let mock = skill_fixture(None);
+    let mock_guard = skill_fixture(None);
+    let mock = mock_guard.path().join("mock");
     // The generated surfaces sit at the project root, beside `mockspace.toml`,
     // which the fixture writes one level above the mock dir. This used to read
     // the mock dir for both, and passed only because a fixture with no `.git`
@@ -1059,7 +1054,8 @@ fn a_renamed_builtin_rule_takes_its_old_file_with_it() {
 /// one. Every other builtin lint runs at the pack's default and is not a row.
 #[test]
 fn the_catalogues_rule_carries_the_lints_the_repository_set_as_well_as_the_tools() {
-    let mut cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let fx = skill_fixture(None);
+    let mut cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
     let all = mockspace_lint_rules::all_lints();
     let set = all
         .first()
@@ -1117,7 +1113,8 @@ fn the_catalogues_rule_carries_the_lints_the_repository_set_as_well_as_the_tools
 /// error is the control, since a rule listing no lint at all would pass the absence alone.
 #[test]
 fn a_lint_the_repository_turned_off_is_not_in_the_catalogues_rule() {
-    let mut cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let fx = skill_fixture(None);
+    let mut cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
     let all = mockspace_lint_rules::all_lints();
     let off = all
         .first()
@@ -1146,7 +1143,8 @@ fn a_lint_the_repository_turned_off_is_not_in_the_catalogues_rule() {
 /// prose growing back, and the lower bound the control that something generated.
 #[test]
 fn the_catalogues_rule_for_a_repository_that_set_nothing_is_a_pointer() {
-    let cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let fx = skill_fixture(None);
+    let cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
     let rule = builtins.rules.iter().find(|r| r.name == "catalogues").unwrap();
     let size = rule.body.len();
@@ -1156,14 +1154,16 @@ fn the_catalogues_rule_for_a_repository_that_set_nothing_is_a_pointer() {
 
 #[test]
 fn panel_discipline_rule_is_off_by_default_and_on_when_opted_in() {
-    let cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let fx = skill_fixture(None);
+    let cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
     assert!(
         !builtins.rules.iter().any(|r| r.name == "panel-discipline"),
         "off by default"
     );
 
-    let mock = skill_fixture_config("agent_panel_discipline = true\n");
+    let mock_guard = skill_fixture_config("agent_panel_discipline = true\n");
+    let mock = mock_guard.path().join("mock");
     let cfg = crate::config::Config::from_dir(&mock);
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
     assert!(
@@ -1174,7 +1174,8 @@ fn panel_discipline_rule_is_off_by_default_and_on_when_opted_in() {
 
 #[test]
 fn panel_discipline_rule_states_the_seat_cap_and_the_canon_prohibition() {
-    let mock = skill_fixture_config("agent_panel_discipline = true\n");
+    let mock_guard = skill_fixture_config("agent_panel_discipline = true\n");
+    let mock = mock_guard.path().join("mock");
     let cfg = crate::config::Config::from_dir(&mock);
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
     let rule = builtins
@@ -1407,7 +1408,8 @@ fn a_builtin_points_only_at_rules_and_skills_that_ship() {
     // generated from one this repository chose not to opt into. The design-talk
     // skill named four that no consumer has ever had: three rules that live in
     // one workspace's own `.claude/` and a sibling skill nobody wrote.
-    let cfg = crate::config::Config::from_dir(&skill_fixture(Some(true)));
+    let fx = skill_fixture(Some(true));
+    let cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
 
     let shipped: std::collections::BTreeSet<String> = builtins
@@ -1453,7 +1455,8 @@ fn no_builtin_assumes_a_workspace_or_one_operator() {
     // Each pattern here is positive evidence of an assumption, never the
     // absence of evidence against one, because a false positive fails the build
     // over prose that was fine.
-    let cfg = crate::config::Config::from_dir(&skill_fixture(Some(true)));
+    let fx = skill_fixture(Some(true));
+    let cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
     let complaints = assumptions_in(&every_builtin_body(&cfg));
     assert!(complaints.is_empty(), "{}", complaints.join("\n"));
 }
@@ -1631,7 +1634,8 @@ fn the_reference_syntax_skill_states_the_time_form_the_pattern_holds() {
 // session writing a lint meets the view contract where it opens the file.
 #[test]
 fn the_lint_authoring_rule_names_the_view_and_its_guard() {
-    let cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let fx = skill_fixture(None);
+    let cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
     let rule = builtins
         .rules
@@ -1652,7 +1656,8 @@ fn the_lint_authoring_rule_names_the_view_and_its_guard() {
 /// replace is taken back.
 #[test]
 fn a_consumer_gets_the_bench_sketch_and_test_rules_skills_and_hook() {
-    let mock = skill_fixture(None);
+    let mock_guard = skill_fixture(None);
+    let mock = mock_guard.path().join("mock");
     let root = mock.parent().expect("the fixture's mock dir has a parent");
     let rules = root.join(".claude").join("rules");
     std::fs::create_dir_all(&rules).unwrap();
@@ -1715,7 +1720,8 @@ fn a_consumer_gets_the_bench_sketch_and_test_rules_skills_and_hook() {
 /// own preamble beside the built-in one; no other rule or skill repeats them.
 #[test]
 fn the_bookends_live_in_the_mockspace_rule_and_nowhere_else() {
-    let mock = skill_fixture(None);
+    let mock_guard = skill_fixture(None);
+    let mock = mock_guard.path().join("mock");
     let root = mock.parent().expect("the fixture's mock dir has a parent");
     std::fs::write(mock.join("agent").join("PREAMBLE.md.tmpl"), "CONSUMER-PREAMBLE-LINE\n").unwrap();
 

@@ -478,7 +478,8 @@ fn a_hook_that_cannot_be_written_fails_loudly() {
 fn a_full_render_registers_the_forbidden_imports_hooks_under_write_and_edit() {
     // Through `generate_agent_rules`, where the derived hooks join the builtin ones: the hand-wired
     // test above would stay green if that join were dropped.
-    let mock = super::tests::skill_fixture(None);
+    let mock_guard = super::tests::skill_fixture(None);
+    let mock = mock_guard.path().join("mock");
     let root = mock.parent().unwrap().to_path_buf();
     let mut cfg = Config::from_dir(&mock);
     let rule = cfg_with_rule(&root);

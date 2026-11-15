@@ -39,9 +39,23 @@ pub fn root() -> PathBuf {
     mine
 }
 
-/// A fresh scratch directory under this process's root, removed when the handle drops.
+/// A fresh scratch directory under this process's root, removed when the handle drops. The name has a
+/// prefix because tempfile's default starts with a dot, a hidden path that git-shook and others skip.
 pub fn tempdir() -> std::io::Result<tempfile::TempDir> {
-    tempfile::tempdir_in(root())
+    tempfile::Builder::new().prefix("t-").tempdir_in(root())
+}
+
+/// A fresh scratch directory that stays until the calling thread ends, a panic included, for a
+/// helper that hands the path back and so cannot hold the guard itself. A test runs on a thread of
+/// its own, so that is the test.
+pub fn held() -> PathBuf {
+    thread_local! {
+        static HELD: std::cell::RefCell<Vec<tempfile::TempDir>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    let dir = tempdir().expect("make a test scratch directory");
+    let path = dir.path().to_path_buf();
+    HELD.with(|h| h.borrow_mut().push(dir));
+    path
 }
 
 /// Removes every root under `base` whose process has ended and whose modification time is

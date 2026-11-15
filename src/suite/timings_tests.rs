@@ -60,8 +60,8 @@ fn only_the_test_that_printed_work_carries_it() {
 
 #[test]
 fn a_shard_round_trips_and_a_second_write_of_it_is_refused() {
-    let dir = mockspace_manifest::scratch::root().join(format!("mock-timings-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let dir = dir_guard.path().to_path_buf();
     let e = env();
     let r = rows(&facts(&e), &[case("sim", "a", 0.25, Outcome::Pass)], &[], &no_fp);
     let path = spool(&dir, &r).unwrap().unwrap();
@@ -75,7 +75,6 @@ fn a_shard_round_trips_and_a_second_write_of_it_is_refused() {
     let again = spool(&dir, &r).unwrap_err();
     assert_eq!(again.kind(), std::io::ErrorKind::AlreadyExists);
     assert_eq!(spool(&dir, &[]).unwrap(), None);
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -103,8 +102,8 @@ fn threads_come_from_every_spelling_nextest_takes_else_the_env_else_the_cpus() {
 
 #[test]
 fn a_spooled_run_leaves_no_temp_file_and_run_ids_differ() {
-    let dir = mockspace_manifest::scratch::root().join(format!("mock-timings-tmp-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let dir = dir_guard.path().to_path_buf();
     let e = env();
     let r = rows(&facts(&e), &[case("sim", "a", 0.25, Outcome::Pass)], &[], &no_fp);
     let path = spool(&dir, &r).unwrap().unwrap();
@@ -113,7 +112,6 @@ fn a_spooled_run_leaves_no_temp_file_and_run_ids_differ() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(left, vec!["r1.ndjson".to_string()]);
-    std::fs::remove_dir_all(&dir).unwrap();
     let base = run_id_from(5, 1, 100, "/w", 0);
     assert_ne!(base, run_id_from(5, 1, 101, "/w", 0), "the pid alone");
     assert_ne!(base, run_id_from(5, 1, 100, "/v", 0), "the working directory alone");
@@ -126,8 +124,8 @@ fn a_spooled_run_leaves_no_temp_file_and_run_ids_differ() {
 /// the nextest end-to-end tests' to show; this pins what the call does.
 #[test]
 fn a_report_in_becomes_a_shard_with_the_work_on_the_right_row() {
-    let state = mockspace_manifest::scratch::root().join(format!("mock-timings-run-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&state);
+    let state_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let state = state_guard.path().to_path_buf();
     let report = r#"<testsuites><testsuite name="sim">
         <testcase name="walks" classname="sim" time="1.500"><system-err>MOCK-WORK ticks 7
 </system-err></testcase>
@@ -163,7 +161,6 @@ fn a_report_in_becomes_a_shard_with_the_work_on_the_right_row() {
     assert_eq!((walks.secs, walks.test_threads, walks.commit.as_str()), (1.5, 3, "abc1234-dirty"));
     assert_eq!(walks.load_1m_before, Some(0.25));
     assert_eq!(rows.iter().find(|r| r.test == "plain").unwrap().work_n, None);
-    std::fs::remove_dir_all(&state).unwrap();
 }
 
 fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
