@@ -79,3 +79,62 @@ fn a_unit_runs_in_the_tree_when_it_is_a_build_script_or_macro_and_its_package_is
     assert!(unit("registry+x#t@1.0.0", "lib").fresh);
     assert!(artifact_unit(r#"{"reason":"build-script-executed"}"#).is_none());
 }
+
+/// The generated lint crate's package name, as the build is handed it.
+const OWN: &str = "mockspace-lints-40d923802ebb4e36";
+
+// out of a live consumer commit: the engine crates are path dependencies of
+// the lint crate, and each build script's warning was printed twice per commit.
+#[test]
+fn a_dependency_build_script_warning_is_held_back() {
+    for line in [
+        "warning: engine-hash@0.0.0: flags-build chose rustc flags for this crate and cargo names no workspace wrapper to append them, so they are dropped",
+        // a package name with an underscore
+        "warning: engine_hash@0.0.0: a note",
+        // a pre-release version
+        "warning: engine-hash@1.0.0-rc.1: a note",
+        // a message that itself carries `: `
+        "warning: engine-hash@0.1.0: note: the flags were: -C target-cpu=native",
+        // a dependency whose name is a prefix of the lint crate's own
+        "warning: mockspace@0.0.2: a note",
+        "warning: mock@1.0.0: a note",
+        // the same line in colour, as cargo writes it to a terminal
+        "\x1b[1m\x1b[33mwarning\x1b[0m\x1b[1m:\x1b[0m engine-hash@0.0.0: a note",
+    ] {
+        assert!(is_dependency_build_script_warning(line, OWN), "{line}");
+    }
+}
+
+#[test]
+fn the_lint_crates_own_warnings_and_every_other_line_pass() {
+    for line in [
+        "warning: mockspace-lints-40d923802ebb4e36@0.0.0: the lint crate's own build script",
+        "warning: mockspace_lints_40d923802ebb4e36@0.0.0: the same, spelled as a crate",
+        "warning: unused variable: `x`",
+        "warning: `mockspace-lints` (lib) generated 1 warning",
+        "error: could not compile `engine-hash` (lib) due to 1 previous error",
+        "warning: profile package spec `x@1` in profile `release` did not match any packages",
+        "   Compiling engine-hash v0.0.0 (/p/crates/engine-hash)",
+        "\x1b[1m\x1b[33mwarning\x1b[0m\x1b[1m: unused variable: `x`\x1b[0m",
+    ] {
+        assert!(!is_dependency_build_script_warning(line, OWN), "{line}");
+    }
+}
+
+/// The relay passes every byte of a line it keeps, and a line that is not
+/// UTF-8 neither stops it nor is lost: the lines after it still come through.
+#[test]
+fn the_relay_passes_bytes_through_and_survives_a_line_that_is_not_text() {
+    let input: &[u8] = b"first\n\xff\xfe not text\nwarning: engine-hash@0.0.0: held back\nlast\n";
+    let mut out = Vec::new();
+    relay_stderr(input, &mut out, OWN).unwrap();
+    assert_eq!(out, b"first\n\xff\xfe not text\nlast\n".to_vec());
+}
+
+/// `--color always` reaches cargo only where the output it relays goes to a
+/// terminal, so a log or a pipe gets no escape codes.
+#[test]
+fn colour_is_asked_for_only_on_a_terminal() {
+    assert_eq!(colour_args(true), ["--color", "always"]);
+    assert!(colour_args(false).is_empty());
+}
