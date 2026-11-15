@@ -30,11 +30,7 @@ pub(crate) fn durable_hooks_dir() -> Option<PathBuf> {
 /// two tests installing the hooks at once do not write the same files.
 #[cfg(test)]
 fn test_config_home() -> PathBuf {
-    mockspace_manifest::scratch::root().join(format!(
-        "ms-lib-test-config-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ))
+    mockspace_manifest::scratch::held()
 }
 
 /// Pure core of [`durable_hooks_dir`]: resolves the config base from the

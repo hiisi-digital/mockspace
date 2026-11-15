@@ -25,7 +25,7 @@ use super::message_scope_tests::{bash_payload, gate_for, scratch, two_repos};
 
 /// A directory holding a `mock` that reports where it ran and fails.
 fn fake_engine() -> std::path::PathBuf {
-    let bin = scratch("fakebin");
+    let bin = mockspace_manifest::scratch::held();
     let f = bin.join("mock");
     crate::test_exec::write_executable(
         &f,
@@ -45,7 +45,7 @@ fn run(cwd: &std::path::Path, gate: &str, command: &str) -> String {
         .arg(&f)
         .current_dir(cwd)
         .env("PATH", path)
-        .env("TMPDIR", scratch("cache"))
+        .env("TMPDIR", scratch("cache").path())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())

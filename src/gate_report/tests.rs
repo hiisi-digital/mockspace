@@ -9,11 +9,8 @@ fn f(sev: &str, kind: &str, n: usize) -> Finding {
     }
 }
 
-fn scratch(name: &str) -> PathBuf {
-    let d = mockspace_manifest::scratch::root().join(format!("gate-report-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn scratch(_name: &str) -> tempfile::TempDir {
+    mockspace_manifest::scratch::tempdir().unwrap()
 }
 
 #[test]
@@ -74,7 +71,8 @@ fn a_red_gate_with_no_lint_finding_is_summarised_from_its_blocked_lines() {
 
 #[test]
 fn logs_hold_greppable_findings_the_raw_and_a_latest_link_and_are_pruned() {
-    let dir = scratch("logs");
+    let guard = scratch("logs");
+    let dir = guard.path();
     for stamp in 1 ..= 8u64 {
         write_logs(&dir, "pre-push", stamp, &[f("error", "file-size", stamp as usize)], "RAW\n")
             .unwrap();
@@ -105,7 +103,8 @@ fn only_the_deny_gates_own_messages_are_labelled_deny() {
 
 #[test]
 fn a_latest_link_is_replaced_in_place_and_leaves_no_temporary_name_behind() {
-    let dir = scratch("point");
+    let guard = scratch("point");
+    let dir = guard.path();
     write_logs(&dir, "pre-push", 1, &[f("error", "file-size", 1)], "ONE\n").unwrap();
     write_logs(&dir, "pre-push", 2, &[f("error", "file-size", 2)], "TWO\n").unwrap();
     assert_eq!(std::fs::read_to_string(dir.join("pre-push-latest.raw")).unwrap(), "TWO\n");

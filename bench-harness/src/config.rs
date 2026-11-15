@@ -1405,10 +1405,7 @@ mod tests {
         // Guards the call site: `validate_roles` existing is not the
         // fix, `load` running it is. Deleting the call turns this red
         // while the direct `validate_roles` tests stay green.
-        let dir = mockspace_manifest::scratch::root().join(format!(
-            "mockspace-bench-config-test-{}",
-            std::process::id()
-        ));
+        let dir = mockspace_manifest::scratch::held();
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("bench.toml");
         std::fs::write(

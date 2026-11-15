@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 
 use super::*;
 use crate::bootstrap::{activate, deactivate, is_active};
@@ -8,13 +7,11 @@ pub(super) fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-pub(super) fn repo(tag: &str) -> PathBuf {
-    let dir = mockspace_manifest::scratch::root().join(format!("ms-shook-{}-{tag}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    git(&dir, &["init", "-q"]);
-    git(&dir, &["config", "user.email", "t@t"]);
-    git(&dir, &["config", "user.name", "t"]);
+pub(super) fn repo(_tag: &str) -> tempfile::TempDir {
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
+    git(dir.path(), &["init", "-q"]);
+    git(dir.path(), &["config", "user.email", "t@t"]);
+    git(dir.path(), &["config", "user.name", "t"]);
     dir
 }
 
@@ -30,13 +27,15 @@ pub(super) fn have_shook() -> bool {
 
 #[test]
 fn only_gitshooks_own_directory_is_recognised() {
-    let dir = repo("path");
+    let dir_guard = repo("path");
+    let dir = dir_guard.path().to_path_buf();
     let ours = shook_dir(&dir).join("hooks");
     let ours = ours.to_string_lossy().to_string();
     assert!(is_shook_path(&dir, &ours));
     assert!(is_shook_path(&dir, &format!("{ours}/")));
     // spellings that end the same way, or name another clone's, are not ours
-    let other = repo("path-other");
+    let other_guard = repo("path-other");
+    let other = other_guard.path().to_path_buf();
     let theirs = shook_dir(&other).join("hooks").to_string_lossy().to_string();
     for not in [
         ".husky".to_string(),
@@ -55,7 +54,8 @@ fn only_gitshooks_own_directory_is_recognised() {
 
 #[test]
 fn deactivating_while_shook_holds_the_key_never_touches_the_key() {
-    let dir = repo("held");
+    let dir_guard = repo("held");
+    let dir = dir_guard.path().to_path_buf();
     let sd = shook_dir(&dir);
     fs::create_dir_all(sd.join("hooks")).unwrap();
     let key = sd.join("hooks").to_string_lossy().to_string();
@@ -77,7 +77,8 @@ fn deactivating_while_shook_holds_the_key_never_touches_the_key() {
 
 #[test]
 fn a_refused_registration_gives_the_manifest_back_as_it_was() {
-    let dir = repo("refused");
+    let dir_guard = repo("refused");
+    let dir = dir_guard.path().to_path_buf();
     let bin = dir.join("fakebin");
     fs::create_dir_all(&bin).unwrap();
     let shook = bin.join("git-shook");
@@ -113,7 +114,8 @@ fn the_manifest_names_every_durable_hook_and_quotes_the_path() {
 
 #[test]
 fn unregistering_removes_the_gate_and_leaves_other_entries() {
-    let dir = repo("unreg");
+    let dir_guard = repo("unreg");
+    let dir = dir_guard.path().to_path_buf();
     let sd = shook_dir(&dir);
     fs::create_dir_all(sd.join("manifests")).unwrap();
     fs::write(manifest_path(&dir), "x").unwrap();
@@ -136,7 +138,8 @@ fn activating_where_shook_holds_the_key_registers_and_leaves_the_key() {
         eprintln!("SKIPPED: git shook is not on the path");
         return;
     }
-    let dir = repo("act");
+    let dir_guard = repo("act");
+    let dir = dir_guard.path().to_path_buf();
     let mock = dir.join("mock");
     fs::create_dir_all(mock.join("target").join("hooks")).unwrap();
     fs::write(dir.join("shook.toml"), "[hooks.pre-commit]\nrun = [\"true\"]\n").unwrap();

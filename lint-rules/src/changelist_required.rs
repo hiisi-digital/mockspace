@@ -221,7 +221,7 @@ mod tests {
     /// this and is the failure nobody would have seen.
     #[test]
     fn a_project_that_renamed_its_source_directory_is_gated_where_its_source_is() {
-        let root = mockspace_manifest::scratch::root().join(format!("clr-renamed-{}", std::process::id()));
+        let root = mockspace_manifest::scratch::held();
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("libs/widget/src")).unwrap();
         std::fs::create_dir_all(root.join("design_rounds")).unwrap();
@@ -285,7 +285,7 @@ mod tests {
     /// A mock dir whose round holds the changelists `names`, and one source
     /// directory, `crates`.
     fn round_at(tag: &str, names: &[&str]) -> (std::path::PathBuf, Vec<PathBuf>) {
-        let root = mockspace_manifest::scratch::root().join(format!("clr-edit-{tag}-{}", std::process::id()));
+        let root = mockspace_manifest::scratch::held();
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("design_rounds")).unwrap();
         for name in names {
@@ -369,7 +369,7 @@ mod tests {
                 the worktree blob while this reads the index blob; needs the \
                 commit shape signal; tracked #41"]
     fn a_staged_then_modified_file_reads_as_what_commit_a_commits() {
-        let dir = mockspace_manifest::scratch::root().join(format!("clr_commit_a_{}", std::process::id()));
+        let dir = mockspace_manifest::scratch::held();
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("crates/x/src")).unwrap();
         let git = |args: &[&str]| {

@@ -126,11 +126,7 @@ mod routine_table_tests {
     /// would never match a nested cell.
     fn tree_configs() -> Vec<BenchConfig> {
         static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let root = mockspace_manifest::scratch::root().join(format!(
-            "mockspace-routine-table-test-{}-{}",
-            std::process::id(),
-            SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-        ));
+        let root = mockspace_manifest::scratch::held();
         std::fs::remove_dir_all(&root).ok();
         std::fs::create_dir_all(root.join("warm/arms/k/src")).unwrap();
         std::fs::write(root.join("bench.toml"), "[timing]\npasses = 4\n").unwrap();

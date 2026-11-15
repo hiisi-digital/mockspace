@@ -215,11 +215,7 @@ mod tests {
     use super::*;
 
     fn temp_results_root(tag: &str) -> PathBuf {
-        let root = mockspace_manifest::scratch::root().join(format!(
-            "mockspace-staging-test-{}-{}",
-            tag,
-            std::process::id()
-        ));
+        let root = mockspace_manifest::scratch::held();
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         root

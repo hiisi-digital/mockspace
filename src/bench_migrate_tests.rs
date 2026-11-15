@@ -12,8 +12,8 @@ const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bench
 const M1: &str = "macos-aarch64-c8-bare-apple";
 
 /// A copy of the fixture tree to migrate, without its README.
-fn tree(tag: &str) -> tempfile::TempDir {
-    let tmp = tempfile::Builder::new().prefix(&format!("bench-migrate-{tag}-")).tempdir_in(mockspace_manifest::scratch::root()).unwrap();
+fn tree(_tag: &str) -> tempfile::TempDir {
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     for rel in files(Path::new(FIXTURE)) {
         if rel == Path::new("README.md") {
             continue;

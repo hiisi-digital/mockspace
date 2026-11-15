@@ -823,20 +823,8 @@ mod check_message_tests {
         )
     }
 
-    fn scratch() -> std::path::PathBuf {
-        // A process-wide counter, not a clock. SystemTime here has microsecond
-        // resolution at best (twenty back-to-back samples yield four distinct
-        // values on this host), and `create_dir_all` succeeds silently on an
-        // existing directory, so two tests starting in the same tick shared a
-        // scratch directory and overwrote each other's fixtures.
-        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let d = mockspace_manifest::scratch::root().join(format!(
-            "ms_checkmsg_{}_{}",
-            std::process::id(),
-            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn scratch() -> tempfile::TempDir {
+        mockspace_manifest::scratch::tempdir().unwrap()
     }
 
     const PASS: &str = "#!/usr/bin/env bash\nexit 0\n";
@@ -851,7 +839,8 @@ mod check_message_tests {
         // A syntax error here fails open: the hook errors, the tool proceeds, and
         // nothing is checked. That is worse than having no hook, because it looks
         // installed.
-        let root = scratch();
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let script = hook_script(&root);
         let f = root.join("s.sh");
         std::fs::write(&f, &script).unwrap();
@@ -868,7 +857,8 @@ mod check_message_tests {
     fn it_matches_every_tool_not_just_bash() {
         // The one-line cause of the whole bug: scoped to Bash, an MCP git tool
         // was never intercepted.
-        let root = scratch();
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         assert!(hook_script(&root).contains("# @matchers: *"));
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -877,7 +867,8 @@ mod check_message_tests {
 
     #[test]
     fn a_bash_git_commit_is_submitted() {
-        let root = scratch();
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let payload = format!(
             r#"{{"tool_name":"Bash","tool_input":{{"command":"cd {} && git commit -m 'feat: x'"}}}}"#,
             root.display()
@@ -891,7 +882,8 @@ mod check_message_tests {
     fn a_bash_gh_pr_create_is_submitted() {
         // Never covered by anything before: a forge body does not pass through
         // git, so no git hook could ever see one.
-        let root = scratch();
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let payload = format!(
             r#"{{"tool_name":"Bash","tool_input":{{"command":"cd {} && gh pr create --body 'x'"}}}}"#,
             root.display()
@@ -904,7 +896,8 @@ mod check_message_tests {
     #[test]
     fn an_mcp_git_commit_tool_is_submitted() {
         // The regression that let months of bylines through.
-        let root = scratch();
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let payload = format!(
             r#"{{"tool_name":"mcp__git__git_commit","tool_input":{{"message":"feat: x","repo":"{}"}}}}"#,
             root.display()
@@ -919,7 +912,8 @@ mod check_message_tests {
 
     #[test]
     fn an_mcp_pull_request_tool_is_submitted_by_name_shape() {
-        let root = scratch();
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         for tool in
             ["mcp__forge__create_pr", "mcp__forge__pr-create", "mcp__gh__create_pull_request"]
         {
@@ -939,7 +933,8 @@ mod check_message_tests {
         // shape read every field as empty, DOMAIN stayed empty, and the gate
         // allowed everything: success reported, nothing enforced. It must
         // refuse instead, and say why.
-        let root = scratch();
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let payload = format!(
             r#"{{"tool_name":"Bash","tool_input":{{"command":"cd {} && git commit -m x"}}}}"#,
             root.display()
@@ -960,7 +955,8 @@ mod check_message_tests {
     fn a_heredoc_body_is_visible_because_the_whole_input_is_scanned() {
         // The predecessor's `[^"]*` extraction stopped at the first quote, so a
         // heredoc hid the trailer entirely.
-        let root = scratch();
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let payload = format!(
             r#"{{"tool_name":"Bash","tool_input":{{"command":"cd {} && git commit -F - <<'EOF'\nfeat: x\n\nCo-Authored-By: Claude <a@b>\nEOF"}}}}"#,
             root.display()
@@ -974,7 +970,8 @@ mod check_message_tests {
     fn a_body_passed_by_file_is_read_and_submitted() {
         // Writing the body to a file and passing `--body-file` was a complete
         // bypass, since the predecessor only ever looked at the command string.
-        let root = scratch();
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let body = root.join("body.md");
         std::fs::write(&body, "## Summary\n\nGenerated with [Claude Code](x)\n").unwrap();
         let payload = format!(
@@ -993,7 +990,8 @@ mod check_message_tests {
     fn an_unrelated_tool_is_left_alone() {
         // Matching every tool only works if irrelevant ones pass untouched;
         // otherwise the hook would block all work.
-        let root = scratch();
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let payload = format!(
             r#"{{"tool_name":"Read","tool_input":{{"file_path":"{}/x.rs"}}}}"#,
             root.display()
@@ -1005,7 +1003,8 @@ mod check_message_tests {
 
     #[test]
     fn an_unrelated_bash_command_is_left_alone() {
-        let root = scratch();
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let payload = format!(
             r#"{{"tool_name":"Bash","tool_input":{{"command":"cd {} && git status"}}}}"#,
             root.display()
@@ -1017,7 +1016,8 @@ mod check_message_tests {
 
     #[test]
     fn a_passing_verdict_allows_the_tool() {
-        let root = scratch();
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let payload = format!(
             r#"{{"tool_name":"Bash","tool_input":{{"command":"cd {} && git commit -m 'feat: x'"}}}}"#,
             root.display()
@@ -1031,7 +1031,8 @@ mod check_message_tests {
     fn it_fails_closed_with_no_launcher() {
         // Consistent with every other anomalous state: refuse and say how to fix
         // it, rather than guessing a weaker policy.
-        let root = scratch();
+        let root_guard = scratch();
+        let root = root_guard.path().to_path_buf();
         let payload = format!(
             r#"{{"tool_name":"Bash","tool_input":{{"command":"cd {} && git commit -m 'feat: x'"}}}}"#,
             root.display()

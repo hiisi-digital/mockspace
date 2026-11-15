@@ -236,26 +236,9 @@ mod tests {
     /// two tests then share one repository. That is not a flake, it is one test
     /// reading another's git config, and it presented as the version-bump arm
     /// failing while the code under it was correct.
-    fn repo() -> PathBuf {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = mockspace_manifest::scratch::root().join(format!(
-            "ms-activate-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        // Cleared first, because the counter only fixes collisions inside one
-        // run. Nothing deletes these afterwards, `create_dir_all` succeeds on an
-        // existing directory and `git init` on an existing repository keeps its
-        // config, so a later process drawing a recycled pid inherits the earlier
-        // run's `mockspace.previousHooksPath`. The two tests asserting that key
-        // is absent then fail on correct code.
-        //
-        // The same bug as the one these tests were written for, with threads
-        // swapped for processes, which is worth saying: fixing an isolation
-        // defect on one axis does not fix it on the other, and I had already
-        // done exactly that once here.
-        init_repo_at(&dir);
+    fn repo() -> tempfile::TempDir {
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
+        init_repo_at(&dir.path().to_path_buf());
         dir
     }
 
@@ -291,11 +274,12 @@ mod tests {
 
     /// A repository with a generated hooks dir, so `activate` gets past its
     /// precondition and reaches the save decision.
-    fn repo_ready_to_activate() -> (PathBuf, PathBuf) {
-        let dir = repo();
+    fn repo_ready_to_activate() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir_guard = repo();
+        let dir = dir_guard.path().to_path_buf();
         let mock = dir.join("mock");
         std::fs::create_dir_all(mock.join("target").join("hooks")).expect("hooks dir");
-        (dir, mock)
+        (dir_guard, dir, mock)
     }
 
     #[test]
@@ -314,8 +298,8 @@ mod tests {
         // counter: reading the counter and then calling `repo()` is not atomic,
         // and a parallel test taking the number in between would make this pass
         // for the wrong reason.
-        let planned =
-            mockspace_manifest::scratch::root().join(format!("ms-activate-plant-{}", std::process::id()));
+        let planned_guard = mockspace_manifest::scratch::tempdir().unwrap();
+        let planned = planned_guard.path().to_path_buf();
         std::fs::create_dir_all(&planned).expect("plant dir");
         let plant = |args: &[&str]| {
             std::process::Command::new("git")
@@ -352,7 +336,7 @@ mod tests {
         // `HOOK_VERSION` bump, activate recorded mockspace's own previous path
         // as the repository's and deactivate restored the gate while saying it
         // had handed the repository back.
-        let (dir, mock) = repo_ready_to_activate();
+        let (_g, dir, mock) = repo_ready_to_activate();
         set(&dir, "core.hooksPath", "mock/target/hooks");
 
         let _ = super::activate(&dir, &mock);
@@ -368,7 +352,7 @@ mod tests {
     fn activating_over_a_different_mockspace_version_saves_nothing() {
         // The version-bump arm specifically, since that is the one that fires on
         // an ordinary upgrade rather than on a first install.
-        let (dir, mock) = repo_ready_to_activate();
+        let (_g, dir, mock) = repo_ready_to_activate();
         set(&dir, "core.hooksPath", "/home/x/.config/mockspace/hooks-v2");
 
         let _ = super::activate(&dir, &mock);
@@ -385,7 +369,7 @@ mod tests {
         // something: without it they are satisfied by an activate that never
         // saves anything at all, which is the behaviour before the fix that
         // introduced saving.
-        let (dir, mock) = repo_ready_to_activate();
+        let (_g, dir, mock) = repo_ready_to_activate();
         set(&dir, "core.hooksPath", ".husky");
 
         let _ = super::activate(&dir, &mock);
@@ -402,7 +386,8 @@ mod tests {
         // The defect this exists for. Deactivate used to unset unconditionally,
         // so a repository on husky or lefthook lost its setting and nothing
         // anywhere remembered it, while the documentation promised the opposite.
-        let dir = repo();
+        let dir_guard = repo();
+        let dir = dir_guard.path().to_path_buf();
         set(&dir, "core.hooksPath", ".husky");
         set(&dir, PREVIOUS_HOOKS_PATH, ".husky");
         set(&dir, "core.hooksPath", "mock/target/hooks");
@@ -426,7 +411,8 @@ mod tests {
         // correct only when there was something to restore; a deactivate that
         // set the key to an empty or invented value here would break git's
         // fallback to `.git/hooks/` while looking like it worked.
-        let dir = repo();
+        let dir_guard = repo();
+        let dir = dir_guard.path().to_path_buf();
         set(&dir, "core.hooksPath", "mock/target/hooks");
 
         deactivate(&dir).expect("deactivate");
@@ -442,7 +428,8 @@ mod tests {
         // The hook path calls this on repositories in unknown states, so the
         // already-deactivated case is ordinary rather than exceptional. Git
         // reports exit 5 for an unset key and that is not a failure.
-        let dir = repo();
+        let dir_guard = repo();
+        let dir = dir_guard.path().to_path_buf();
         deactivate(&dir).expect("first");
         deactivate(&dir).expect("second");
         assert!(local_config(&dir, "core.hooksPath").is_none());
@@ -453,7 +440,8 @@ mod tests {
         // `activate` decides whether to save a previous value from this, so
         // collapsing the two would let it write an empty string over a real
         // setting and lose exactly what it was added to protect.
-        let dir = repo();
+        let dir_guard = repo();
+        let dir = dir_guard.path().to_path_buf();
         assert!(local_config(&dir, "core.hooksPath").is_none());
         set(&dir, "core.hooksPath", "");
         assert_eq!(local_config(&dir, "core.hooksPath").as_deref(), Some(""));
