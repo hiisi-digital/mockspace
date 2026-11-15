@@ -150,7 +150,7 @@ pub fn lint_edit(
         primitive_introductions,
     );
     let krate = [crate_input(crate_name, info, crate_dir.clone())];
-    let store = verdicts::DiskVerdicts::open(&pack.identity);
+    let store = verdicts::DiskVerdicts::open(repo_root, &pack.identity);
     let input = RunInput {
         reading: &reading,
         cache: store.as_ref().map(|s| s as &dyn mockspace_lint_rules::verdict::VerdictCache),
@@ -260,7 +260,7 @@ pub fn run_lints(
     // Saved units: a unit whose trace still holds is answered from the store. None when switched
     // off or when the machine has nowhere to keep them.
     let verdicts = timing::time("phase:open-verdict-store", || {
-        verdicts::DiskVerdicts::open(&pack.identity)
+        verdicts::DiskVerdicts::open(repo_root, &pack.identity)
     });
 
     // A cross-crate lint judges the whole set of crates, so a scope that names a crate still

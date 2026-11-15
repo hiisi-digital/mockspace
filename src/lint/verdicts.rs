@@ -14,19 +14,22 @@
 //!
 //! **The store is local and never committed.** It is content-addressed, so a stale entry is not
 //! wrong, only unreachable: nothing keys on it any more. That is why it can live outside the
-//! worktree and be one store for the machine, shared by every checkout and every repository (the
-//! digest holds the content, so two repositories can only share an entry when the answer is the
-//! same), and why deleting it costs one full run and nothing else. The daily sweep covers the
-//! whole of it. (`mock test`'s history is committed because a fresh container must not
-//! rerun a suite; a lint run is cheap enough cold that a committed record is not worth the merge
-//! traffic it would cause.)
+//! worktree and why deleting it costs one full run and nothing else. It is one packed file per
+//! repository and salt, so a repository holds exactly one file of verdicts, and the first write
+//! under a new salt (an engine or pack change) removes that repository's files of the old
+//! salts. A packed file untouched for fourteen days is swept. (`mock test`'s history is committed
+//! because a fresh container must not rerun a suite; a lint run is cheap enough cold that a
+//! committed record is not worth the merge traffic it would cause.)
 //!
 //! `MOCKSPACE_NO_VERDICTS=1` turns the store off for a run, which is how an incremental run is
 //! compared with a full one.
 
+use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use mockspace_lint_rules::verdict::VerdictCache;
 use sha2::{Digest, Sha256};
@@ -38,112 +41,191 @@ pub const OFF: &str = "MOCKSPACE_NO_VERDICTS";
 /// for the tests, which keep theirs inside a directory they delete.
 pub const DIR: &str = "MOCKSPACE_VERDICTS_DIR";
 
-/// Entries untouched this long are removed by the sweep.
+/// A packed file untouched this long is removed by the sweep.
 const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(14 * 24 * 60 * 60);
 
-/// The store, salted for one engine and one set of packs.
+/// The extension of a packed file.
+const PACK_EXT: &str = "pack";
+
+/// The store, salted for one engine and one set of packs, kept for one repository.
+///
+/// **One packed file per (repository, salt)**: `<base>/<repository digest>/<salt digest>.pack`,
+/// a run of records `<key> <length>\n<value>\n`. The file is read whole when the store opens and
+/// appended to under an exclusive lock on the file (`File::lock`), one whole record per append, so
+/// two `cargo mock` runs never interleave records. A record cut short by a crash is dropped, and
+/// the file truncated back to its last whole record the next time a store opens.
 pub struct DiskVerdicts {
-    dir:  PathBuf,
-    salt: [u8; 32],
+    /// The repository's directory in the store.
+    dir:     PathBuf,
+    /// This salt's packed file.
+    pack:    PathBuf,
+    salt:    [u8; 32],
+    entries: Mutex<HashMap<String, String>>,
+    /// Whether the other salts of this repository have been removed by this store yet.
+    pruned:  AtomicBool,
 }
 
 impl DiskVerdicts {
-    /// The store, or `None` when the run is not to use one: switched off, or nowhere to put it.
-    /// `pack_identity` is empty when no pack is loaded.
+    /// The store for the repository at `repo`, or `None` when the run is not to use one: switched
+    /// off, or nowhere to put it. `pack_identity` is empty when no pack is loaded.
     #[must_use]
-    pub fn open(pack_identity: &str) -> Option<Self> {
+    pub fn open(repo: &Path, pack_identity: &str) -> Option<Self> {
         // A test gives the thread its own store, whatever the environment says.
         #[cfg(test)]
         if let Some(base) = test_base::get() {
-            return Self::open_in(&base, pack_identity);
+            return Self::open_in(&base, repo, pack_identity);
         }
         if std::env::var_os(OFF).is_some_and(|v| !v.is_empty() && v != "0") {
             return None;
         }
-        Self::open_in(&base_dir()?, pack_identity)
+        Self::open_in(&base_dir()?, repo, pack_identity)
     }
 
     /// [`Self::open`] against a store at `base`, for a caller that owns where it goes. The tests use
     /// it to keep their entries inside a directory they delete.
+    ///
+    /// Opening removes what the older one-file-per-verdict layout left in `base` (two-hex shard
+    /// directories, the kept full-run keys). It is dropped and not migrated: a verdict is only a
+    /// saved answer, and the next run makes it again.
     #[must_use]
-    pub fn open_in(base: &Path, pack_identity: &str) -> Option<Self> {
-        let dir = base.to_path_buf();
+    pub fn open_in(base: &Path, repo: &Path, pack_identity: &str) -> Option<Self> {
+        fs::create_dir_all(base).ok()?;
+        remove_legacy_layout(base);
+        sweep_stale_packs(base);
+
+        let dir = base.join(&hex(&Sha256::digest(repo.as_os_str().as_encoded_bytes()))[.. 16]);
         fs::create_dir_all(&dir).ok()?;
 
         let mut salt = Sha256::new();
-        salt.update(b"verdict-store-1\0");
+        salt.update(b"verdict-store-2\0");
         salt.update(engine_identity()?.as_bytes());
         salt.update(b"\0");
         salt.update(pack_identity.as_bytes());
-        let store = Self {
+        let salt: [u8; 32] = salt.finalize().into();
+        let pack = dir.join(format!("{}.{PACK_EXT}", hex(&salt)));
+        let entries = load(&pack);
+        Some(Self {
             dir,
-            salt: salt.finalize().into(),
-        };
-        store.sweep();
-        Some(store)
+            pack,
+            salt,
+            entries: Mutex::new(entries),
+            pruned: AtomicBool::new(false),
+        })
     }
 
-    /// The directory the store keeps its entries in.
+    /// The directory the store keeps this repository's packed file in.
     #[must_use]
     pub fn dir(&self) -> &Path {
         &self.dir
     }
 
-    /// The keys an older engine kept of its last full runs, one file per worktree and mode, which
-    /// nothing writes or reads any more: a saved unit now carries its own trace. Removed whole.
-    fn sweep_last_full_runs(&self) {
-        let _ = fs::remove_dir_all(self.dir.join("last-full-run"));
-    }
-
-    fn path_of(&self, key: &str) -> PathBuf {
-        self.dir.join(&key[.. 2]).join(&key[2 ..])
-    }
-
-    /// Remove entries nothing has read in [`STALE_AFTER`], at most once a day.
-    fn sweep(&self) {
-        let marker = self.dir.join(".swept");
-        let due = fs::metadata(&marker)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.elapsed().ok())
-            .is_none_or(|age| age > std::time::Duration::from_secs(24 * 60 * 60));
-        if !due {
-            return;
-        }
-        let _ = fs::write(&marker, b"");
-        self.sweep_last_full_runs();
-        let Ok(shards) = fs::read_dir(&self.dir) else { return };
-        // Only what this store wrote: a two-hex shard directory, and in it an entry named by the
-        // rest of a key or one of its own half-written temporaries. The directory may be one the
-        // user pointed `MOCKSPACE_VERDICTS_DIR` at, with other things in it.
-        let is_hex = |s: &std::ffi::OsStr, len: usize| {
-            s.to_str().is_some_and(|s| s.len() == len && s.bytes().all(|b| b.is_ascii_hexdigit()))
-        };
-        for shard in shards.flatten().filter(|s| s.path().is_dir() && is_hex(&s.file_name(), 2)) {
-            let Ok(entries) = fs::read_dir(shard.path()) else { continue };
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let ours = is_hex(&name, 62)
-                    || name
-                        .to_str()
-                        .and_then(|n| n.strip_prefix('.')?.split_once('.'))
-                        .is_some_and(|(pid, key)| {
-                            pid.bytes().all(|b| b.is_ascii_digit()) && is_hex(key.as_ref(), 62)
-                        });
-                if !ours {
-                    continue;
-                }
-                let stale = entry
-                    .metadata()
-                    .and_then(|m| m.accessed().or_else(|_| m.modified()))
-                    .ok()
-                    .and_then(|t| t.elapsed().ok())
-                    .is_some_and(|age| age > STALE_AFTER);
-                if stale {
-                    let _ = fs::remove_file(entry.path());
-                }
+    /// Remove every packed file of this repository but this salt's: an engine or pack change
+    /// starts a new salt, and nothing keys on the old one again.
+    fn prune_other_salts(&self) {
+        let Ok(entries) = fs::read_dir(&self.dir) else { return };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p != self.pack && p.extension().is_some_and(|x| x == PACK_EXT) {
+                let _ = fs::remove_file(p);
             }
         }
+    }
+}
+
+/// The whole records of a packed file, and how many bytes they cover.
+fn parse(bytes: &[u8]) -> (HashMap<String, String>, usize) {
+    let mut out = HashMap::new();
+    let mut at = 0;
+    while let Some(nl) = bytes[at ..].iter().position(|&b| b == b'\n') {
+        let Some((key, len)) = std::str::from_utf8(&bytes[at .. at + nl])
+            .ok()
+            .and_then(|h| h.split_once(' '))
+            .and_then(|(k, l)| Some((k, l.parse::<usize>().ok()?)))
+        else {
+            break;
+        };
+        let body = at + nl + 1;
+        let end = body + len;
+        if bytes.get(end) != Some(&b'\n') {
+            break;
+        }
+        let Ok(value) = std::str::from_utf8(&bytes[body .. end]) else { break };
+        out.insert(key.to_string(), value.to_string());
+        at = end + 1;
+    }
+    (out, at)
+}
+
+/// The entries of a packed file, truncating a torn tail away under the lock.
+fn load(pack: &Path) -> HashMap<String, String> {
+    let Ok(bytes) = fs::read(pack) else { return HashMap::new() };
+    let (entries, valid) = parse(&bytes);
+    if valid == bytes.len() {
+        return entries;
+    }
+    // A cut-short record. Under the lock no writer is mid-append, so what is read now is final.
+    let Ok(file) = fs::OpenOptions::new().read(true).write(true).open(pack) else { return entries };
+    if file.lock().is_err() {
+        return entries;
+    }
+    let again = fs::read(pack).unwrap_or_default();
+    let (entries, valid) = parse(&again);
+    if valid < again.len() {
+        let _ = file.set_len(valid as u64);
+    }
+    entries
+}
+
+/// Remove what the one-file-per-verdict layout left in `base`, and nothing else: a two-hex shard
+/// directory's entries (a 62-hex key or its half-written temporary), the shard once empty, the
+/// daily marker and the kept full-run keys. The directory may be one the user pointed
+/// `MOCKSPACE_VERDICTS_DIR` at, with other things in it.
+fn remove_legacy_layout(base: &Path) {
+    let is_hex = |s: &std::ffi::OsStr, len: usize| {
+        s.to_str().is_some_and(|s| s.len() == len && s.bytes().all(|b| b.is_ascii_hexdigit()))
+    };
+    let _ = fs::remove_dir_all(base.join("last-full-run"));
+    let _ = fs::remove_file(base.join(".swept"));
+    let Ok(shards) = fs::read_dir(base) else { return };
+    for shard in shards.flatten().filter(|s| s.path().is_dir() && is_hex(&s.file_name(), 2)) {
+        let Ok(entries) = fs::read_dir(shard.path()) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let ours = is_hex(&name, 62)
+                || name.to_str().and_then(|n| n.strip_prefix('.')?.split_once('.')).is_some_and(|(pid, key)| {
+                    pid.bytes().all(|b| b.is_ascii_digit()) && is_hex(key.as_ref(), 62)
+                });
+            if ours {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+        // Only succeeds when empty, so a shard holding something of the user's stays.
+        let _ = fs::remove_dir(shard.path());
+    }
+}
+
+/// Remove packed files nothing has written or read in [`STALE_AFTER`], in every repository's
+/// directory, and a repository directory left empty.
+fn sweep_stale_packs(base: &Path) {
+    let Ok(repos) = fs::read_dir(base) else { return };
+    for repo in repos.flatten().filter(|r| r.path().is_dir()) {
+        let ours = repo.file_name().to_str().is_some_and(|n| n.len() == 16 && n.bytes().all(|b| b.is_ascii_hexdigit()));
+        if !ours {
+            continue;
+        }
+        let Ok(packs) = fs::read_dir(repo.path()) else { continue };
+        for p in packs.flatten().filter(|p| p.path().extension().is_some_and(|x| x == PACK_EXT)) {
+            let stale = p
+                .metadata()
+                .and_then(|m| m.accessed().or_else(|_| m.modified()))
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > STALE_AFTER);
+            if stale {
+                let _ = fs::remove_file(p.path());
+            }
+        }
+        let _ = fs::remove_dir(repo.path());
     }
 }
 
@@ -159,7 +241,7 @@ impl VerdictCache for DiskVerdicts {
     }
 
     fn replay(&self, key: &str) -> Option<String> {
-        fs::read_to_string(self.path_of(key)).ok()
+        self.entries.lock().ok()?.get(key).cloned()
     }
 
     fn tally(&self, hit: bool, lint: &str) {
@@ -167,17 +249,20 @@ impl VerdictCache for DiskVerdicts {
     }
 
     fn remember(&self, key: &str, encoded: &str) {
-        let path = self.path_of(key);
-        let Some(shard) = path.parent() else { return };
-        if fs::create_dir_all(shard).is_err() {
+        let Ok(mut entries) = self.entries.lock() else { return };
+        if entries.get(key).is_some_and(|v| v == encoded) {
             return;
         }
-        // Written beside and renamed over, so a reader never sees half an entry and two runs
-        // saving the same key leave one whole file. The name carries the process, so they do
-        // not write the same temporary.
-        let tmp = shard.join(format!(".{}.{}", std::process::id(), &key[2 ..]));
-        if fs::write(&tmp, encoded).is_ok() && fs::rename(&tmp, &path).is_err() {
-            let _ = fs::remove_file(&tmp);
+        let record = format!("{key} {}\n{encoded}\n", encoded.len());
+        let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&self.pack) else { return };
+        // One whole record per append, under the file's exclusive lock: two runs never interleave.
+        if file.lock().is_err() || file.write_all(record.as_bytes()).is_err() {
+            return;
+        }
+        drop(file);
+        entries.insert(key.to_string(), encoded.to_string());
+        if !self.pruned.swap(true, Ordering::Relaxed) {
+            self.prune_other_salts();
         }
     }
 }

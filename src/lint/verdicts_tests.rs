@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 use super::*;
 
 fn store(base: &Path, pack: &str) -> DiskVerdicts {
-    DiskVerdicts::open_in(base, pack).expect("a store opens in a writable directory")
+    DiskVerdicts::open_in(base, Path::new("/repo"), pack).expect("a store opens in a writable directory")
 }
 
 #[test]
@@ -46,26 +46,6 @@ fn a_different_pack_finds_nothing_the_first_saved() {
 }
 
 #[test]
-fn the_sweep_removes_what_nothing_has_read_for_two_weeks_and_keeps_the_rest() {
-    let dir = mockspace_manifest::scratch::tempdir().unwrap();
-    let s = store(dir.path(), "");
-    let old = s.digest(&[b"old"]);
-    let new = s.digest(&[b"new"]);
-    s.remember(&old, "old");
-    s.remember(&new, "new");
-
-    let long_ago = SystemTime::now() - Duration::from_secs(30 * 24 * 60 * 60);
-    let times = fs::FileTimes::new().set_accessed(long_ago).set_modified(long_ago);
-    fs::File::options().write(true).open(s.path_of(&old)).unwrap().set_times(times).unwrap();
-    // a store opened for the first time sweeps; remove the marker the first open left
-    fs::remove_file(s.dir.join(".swept")).unwrap();
-
-    let again = store(dir.path(), "");
-    assert_eq!(again.replay(&old), None, "a month-old entry is swept");
-    assert_eq!(again.replay(&new).as_deref(), Some("new"), "a fresh entry stays");
-}
-
-#[test]
 fn a_file_digest_is_the_content_and_not_the_name() {
     let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let (a, b, c) = (dir.path().join("a"), dir.path().join("b"), dir.path().join("c"));
@@ -78,46 +58,61 @@ fn a_file_digest_is_the_content_and_not_the_name() {
 }
 
 #[test]
-fn the_sweep_leaves_alone_what_the_store_did_not_write() {
+fn opening_removes_the_per_verdict_layout_and_leaves_what_is_not_the_stores() {
     let dir = mockspace_manifest::scratch::tempdir().unwrap();
-    let s = store(dir.path(), "");
-    // a directory the user shares with other things: a non-shard directory and a non-key file in a
-    // shard-looking one, both a month old
-    fs::create_dir_all(dir.path().join("notes")).unwrap();
-    fs::write(dir.path().join("notes/keep.txt"), "mine").unwrap();
-    fs::create_dir_all(dir.path().join("ab")).unwrap();
-    fs::write(dir.path().join("ab/keep.txt"), "mine").unwrap();
-    let long_ago = SystemTime::now() - Duration::from_secs(30 * 24 * 60 * 60);
-    let times = fs::FileTimes::new().set_accessed(long_ago).set_modified(long_ago);
-    for f in ["notes/keep.txt", "ab/keep.txt"] {
-        fs::File::options().write(true).open(dir.path().join(f)).unwrap().set_times(times).unwrap();
-    }
-    // the control: one of the store's own entries of the same age is swept
-    let own = s.digest(&[b"own"]);
-    s.remember(&own, "own");
-    fs::File::options().write(true).open(s.path_of(&own)).unwrap().set_times(times).unwrap();
-    fs::remove_file(s.dir.join(".swept")).unwrap();
+    let base = dir.path();
+    // the old shape: a shard directory of 62-hex entries and a half-written temporary, the daily
+    // marker and the kept keys; and, beside them, things that are not the store's
+    let key = "0123456789abcdef".repeat(4);
+    fs::create_dir_all(base.join(&key[.. 2])).unwrap();
+    fs::write(base.join(&key[.. 2]).join(&key[2 ..]), "old verdict").unwrap();
+    fs::write(base.join(&key[.. 2]).join(format!(".123.{}", &key[2 ..])), "half").unwrap();
+    fs::write(base.join(".swept"), "").unwrap();
+    fs::create_dir_all(base.join("last-full-run")).unwrap();
+    fs::write(base.join("last-full-run/live"), "key\n").unwrap();
+    fs::create_dir_all(base.join("notes")).unwrap();
+    fs::write(base.join("notes/keep.txt"), "mine").unwrap();
+    fs::create_dir_all(base.join("ab")).unwrap();
+    fs::write(base.join("ab/keep.txt"), "mine").unwrap();
 
-    let again = store(dir.path(), "");
-    assert_eq!(again.replay(&own), None, "the control: the store's own old entry is swept");
-    assert!(dir.path().join("notes/keep.txt").exists(), "a file outside a shard directory is not ours");
-    assert!(dir.path().join("ab/keep.txt").exists(), "a file in a shard that is not a key is not ours");
+    let _s = store(base, "");
+    assert!(!base.join(&key[.. 2]).exists(), "the emptied shard goes");
+    assert!(!base.join(".swept").exists() && !base.join("last-full-run").exists());
+    assert!(base.join("notes/keep.txt").exists(), "a file outside a shard directory is not ours");
+    assert!(base.join("ab/keep.txt").exists(), "a file in a shard that is not a key is not ours");
 }
 
 #[test]
-fn the_sweep_removes_the_kept_keys_an_older_engine_left() {
+fn a_packed_file_untouched_for_two_weeks_is_swept_and_a_fresh_one_stays() {
     let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let s = store(dir.path(), "");
-    let kept = s.dir.join("last-full-run");
-    fs::create_dir_all(&kept).unwrap();
-    fs::write(kept.join("live"), "key\nhead\n/a/worktree\n").unwrap();
-    let own = s.digest(&[b"a unit"]);
-    s.remember(&own, "kept");
-    fs::remove_file(s.dir.join(".swept")).unwrap();
+    let key = s.digest(&[b"old"]);
+    s.remember(&key, "old");
+    // the control: it is read back while fresh
+    assert_eq!(store(dir.path(), "").replay(&key).as_deref(), Some("old"));
+
+    let long_ago = SystemTime::now() - Duration::from_secs(30 * 24 * 60 * 60);
+    let times = fs::FileTimes::new().set_accessed(long_ago).set_modified(long_ago);
+    fs::File::options().write(true).open(&s.pack).unwrap().set_times(times).unwrap();
+    assert_eq!(store(dir.path(), "").replay(&key), None, "a month-old packed file is swept");
+}
+
+#[test]
+fn a_torn_record_is_dropped_and_later_appends_survive() {
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
+    let s = store(dir.path(), "");
+    let (a, b) = (s.digest(&[b"a"]), s.digest(&[b"b"]));
+    s.remember(&a, "whole");
+    let mut f = fs::OpenOptions::new().append(true).open(&s.pack).unwrap();
+    std::io::Write::write_all(&mut f, format!("{b} 99\nhalf a rec").as_bytes()).unwrap();
+    drop(f);
 
     let again = store(dir.path(), "");
-    assert!(!kept.exists(), "nothing reads the old run plan's keys, so they go");
-    assert_eq!(again.replay(&own).as_deref(), Some("kept"), "the control: a fresh entry stays");
+    assert_eq!(again.replay(&a).as_deref(), Some("whole"));
+    assert_eq!(again.replay(&b), None, "the torn record is not an entry");
+    let c = again.digest(&[b"c"]);
+    again.remember(&c, "after");
+    assert_eq!(store(dir.path(), "").replay(&c).as_deref(), Some("after"), "an append after the tear is read");
 }
 
 /// Every regular file under `dir`, recursively.
@@ -160,7 +155,7 @@ fn two_writers_of_one_store_lose_and_corrupt_nothing() {
         .map(|w| {
             let base = base.clone();
             std::thread::spawn(move || {
-                let s = DiskVerdicts::open_in(&base, "pack").unwrap();
+                let s = DiskVerdicts::open_in(&base, Path::new("/repo"), "pack").unwrap();
                 for n in 0 .. 150u16 {
                     let key = s.digest(&[&[w], &n.to_le_bytes()]);
                     s.remember(&key, &format!("writer {w} entry {n}\nwith a second line\n"));
@@ -171,7 +166,7 @@ fn two_writers_of_one_store_lose_and_corrupt_nothing() {
     for w in writers {
         w.join().unwrap();
     }
-    let s = DiskVerdicts::open_in(&base, "pack").unwrap();
+    let s = DiskVerdicts::open_in(&base, Path::new("/repo"), "pack").unwrap();
     for w in 0 .. 2u8 {
         for n in 0 .. 150u16 {
             let key = s.digest(&[&[w], &n.to_le_bytes()]);

@@ -2256,7 +2256,7 @@ fn registry_gate(
     let config_text = std::fs::read_to_string(&cfg.config_path);
     // The store lint verdicts live in, opened here as well because this phase runs before the lint
     // run opens its own; both are the same directory, salted by the same engine and pack.
-    let verdicts = crate::lint::verdicts::DiskVerdicts::open(&pack.identity);
+    let verdicts = crate::lint::verdicts::DiskVerdicts::open(&cfg.repo_root, &pack.identity);
     let saved = verdicts.as_ref().map(|v| v as &dyn registry::VerdictCache);
     let checked = registry::check(cfg, registry, cycles, config_text.as_deref().ok(), saved);
     let (gated, warned) = registry_scope::report(checked.findings, &changed);
