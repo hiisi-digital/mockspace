@@ -11,6 +11,8 @@ Any number that feeds a decision comes from `{mock_dir}/benches/`. Never hand-ro
 5. `cargo mock bench run [<bench>...]`: generates the driver, builds each arm with the pinned release profile, validates, measures, writes the run. `cargo mock bench list` shows what is registered.
 6. Write the findings note (below) and commit it with the run.
 
+An arm that has no path of its own for a target (a SIMD arm with no kernel there) runs the code that target does have, under the same arm name. That result is valid and wanted: on that target the approach buys nothing as the code stands. Never rename the arm, gate it off the target or drop its run for it. When the path for the target is written, the next run shows the win.
+
 ## The hooks library
 
 The generated driver is the only runner. What your own driver would do goes in `{mock_dir}/benches/src/lib.rs`, compiled into the driver:
