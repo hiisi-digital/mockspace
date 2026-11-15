@@ -452,7 +452,7 @@ mod tests {
 
         /// The mock directory of a repo mid-merge, the changelist conflicted.
         fn conflicted() -> (tempfile::TempDir, std::path::PathBuf) {
-            let tmp = tempfile::tempdir().unwrap();
+            let tmp = mockspace_manifest::scratch::tempdir().unwrap();
             let root = tmp.path();
             let mock = root.join("mock");
             must(root, &["init", "-q", "-b", "trunk"]);
@@ -495,7 +495,7 @@ mod tests {
 
         #[test]
         fn the_same_edit_with_no_merge_in_flight_is_reported() {
-            let tmp = tempfile::tempdir().unwrap();
+            let tmp = mockspace_manifest::scratch::tempdir().unwrap();
             let (root, mock) = (tmp.path(), tmp.path().join("mock"));
             must(root, &["init", "-q", "-b", "trunk"]);
             must(root, &["config", "user.email", "t@example.com"]);

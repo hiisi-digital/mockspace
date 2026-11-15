@@ -272,12 +272,12 @@ mod git_dir_tests {
 
     #[test]
     fn a_linked_worktree_resolves_to_the_clones_git_dir_where_the_hooks_are() {
-        let clone = tempfile::tempdir().unwrap();
+        let clone = mockspace_manifest::scratch::tempdir().unwrap();
         run(clone.path(), &["init", "-q", "-b", "main"]);
         fs::write(clone.path().join("f"), "x").unwrap();
         run(clone.path(), &["add", "f"]);
         run(clone.path(), &["commit", "-qm", "one"]);
-        let wt = tempfile::tempdir().unwrap();
+        let wt = mockspace_manifest::scratch::tempdir().unwrap();
         run(clone.path(), &[
             "worktree",
             "add",

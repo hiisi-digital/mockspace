@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn the_mock_directorys_lock_and_the_declared_ones_are_named_and_a_bad_entry_is_not() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let root = dir.path();
         std::fs::create_dir_all(root.join("mock")).unwrap();
         std::fs::write(root.join("mock/Cargo.lock"), "").unwrap();
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn a_repository_with_no_lock_names_none() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         assert!(lockfile_paths(dir.path(), &dir.path().join("mock"), &[]).is_empty());
     }
 }
@@ -184,7 +184,7 @@ mod merge_tests {
     /// branches that each add a member and settle the lock themselves, as a developer's own
     /// build would.
     fn two_branches() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let root = dir.path();
         git_ok(root, &["init", "-q", "-b", "dev"]);
         fs::write(
@@ -291,7 +291,7 @@ mod kept_tests {
 
     #[test]
     fn only_the_lockfiles_the_driver_wrote_down_are_owed_a_settling() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let root = dir.path();
         let ok = |a: &[&str]| {
             assert!(Command::new("git").args(a).current_dir(root).output().unwrap().status.success());

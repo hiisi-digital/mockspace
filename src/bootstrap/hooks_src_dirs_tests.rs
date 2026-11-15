@@ -51,7 +51,7 @@ pub(super) fn git(root: &Path, args: &[&str]) -> String {
 }
 
 pub(super) fn fixture() -> tempfile::TempDir {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     git(tmp.path(), &["init", "-q"]);
     tmp
 }
@@ -76,7 +76,7 @@ pub(super) fn stage(root: &Path, files: &[(&str, &str)]) {
 fn stub_bin() -> &'static Path {
     static BIN: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     BIN.get_or_init(|| {
-        let bin = test_scratch::root().join(format!("ms_hook_stubs_{}", std::process::id()));
+        let bin = mockspace_manifest::scratch::root().join(format!("ms_hook_stubs_{}", std::process::id()));
         fs::create_dir_all(&bin).unwrap();
         // `cargo` records its arguments, one call to a line, in the file the run
         // names, and passes. The others serve the byline scan.

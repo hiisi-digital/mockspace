@@ -158,7 +158,7 @@ fn write_guard_uses_new_phase_labels() {
     // the new user-visible labels. If a stray "SRC-PLAN" / "SRC" /
     // "DONE" survives the rename, the rendered deny messages will
     // contradict the docs and Phase::label().
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
     let mock_dir = tmp.path().join("mock");
     std::fs::create_dir(&mock_dir).expect("create mock dir");
     let cfg = Config::from_dir(&mock_dir);
@@ -183,7 +183,7 @@ fn write_guard_phase_detection_is_cwd_independent() {
     // Regression test for #257: phase-detection git invocations must
     // run with `git -C "$REPO_ROOT"` so they resolve repo-relative
     // pathspecs regardless of the caller's cwd.
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
     let mock_dir = tmp.path().join("mock");
     std::fs::create_dir(&mock_dir).expect("create mock dir");
     let cfg = Config::from_dir(&mock_dir);
@@ -277,7 +277,7 @@ fn gate_intact_in(clone: &std::path::Path) -> bool {
 
 #[test]
 fn the_agent_gate_holds_where_git_shook_has_the_key_registered_whatever_the_path_spells() {
-    let base = test_scratch::root().join(format!("gate-intact-{}", std::process::id()));
+    let base = mockspace_manifest::scratch::root().join(format!("gate-intact-{}", std::process::id()));
     // the clone's own path spells "mockspace", as this repository's does: the
     // unregistered control must still fail
     let clone = base.join("work").join("mockspace-clone");
@@ -322,7 +322,7 @@ fn canon_design_code_chain_is_a_generated_builtin() {
     // `canon_paths` is what says so. A namespace alone does not: this fixture
     // carried one and no `canon_paths` for a round, and the rule read that as a
     // declaration and sent the project to two directories it had never named.
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
     let mock = tmp.path().join("mock");
     std::fs::create_dir_all(&mock).expect("mock dir");
     std::fs::write(
@@ -475,7 +475,7 @@ fn canon_design_code_chain_is_a_generated_builtin() {
 /// goes to a skill.
 #[test]
 fn the_builtin_rules_stay_within_what_a_session_can_afford() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
     let cfg = Config::from_dir(&tmp.path().join("mock"));
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
 
@@ -510,7 +510,7 @@ fn the_builtin_rules_stay_within_what_a_session_can_afford() {
 
 #[test]
 fn agent_gate_is_a_generated_builtin() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
     let claude = tmp.path().join(".claude/hooks");
     let copilot = tmp.path().join(".github/hooks");
     std::fs::create_dir_all(&claude).unwrap();
@@ -561,7 +561,7 @@ pub(super) fn skill_fixture(design_talks: Option<bool>) -> std::path::PathBuf {
     // same flag otherwise share one directory and remove_dir_all it under
     // each other when the suite runs in parallel.
     static FIXTURE_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let root = test_scratch::root().join(format!(
+    let root = mockspace_manifest::scratch::root().join(format!(
         "mockspace-skilltest-{}-{}-{:?}",
         std::process::id(),
         FIXTURE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -715,7 +715,7 @@ fn write_guard_shame_carve_out_matches_a_whole_path_component() {
     // bare suffix regex it also allows `NOT_SHAME.md.tmpl` and friends
     // straight through the phase gate. This runs the pattern the hook
     // actually ships rather than asserting on its text.
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
     let mock_dir = tmp.path().join("mock");
     std::fs::create_dir(&mock_dir).expect("create mock dir");
     let cfg = Config::from_dir(&mock_dir);
@@ -781,7 +781,7 @@ fn write_guard_allows(target_rel: &str) -> bool {
 pub(super) fn write_guard_allows_in(target_rel: &str, src_dirs: &[&str]) -> bool {
     use std::process::{Command, Stdio};
 
-    let repo = test_scratch::root().join(format!(
+    let repo = mockspace_manifest::scratch::root().join(format!(
         "wg-{}-{}-{}",
         std::process::id(),
         src_dirs.len(),

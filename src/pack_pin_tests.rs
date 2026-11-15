@@ -66,7 +66,7 @@ fn a_spec_without_a_branch_is_not_rewritten() {
 
 #[test]
 fn an_untouched_spec_never_reaches_the_remote_or_the_cache() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let spec = r#"{ git = "u", rev = "abc" }"#;
     assert_eq!(pin(spec, dir.path(), at(1000), &never), Pinned::Untouched);
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -75,7 +75,7 @@ fn an_untouched_spec_never_reaches_the_remote_or_the_cache() {
 
 #[test]
 fn a_first_resolution_asks_the_remote_and_is_kept() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let asked = Cell::new(0);
     let resolve = |_: &str, _: &str| {
         asked.set(asked.get() + 1);
@@ -90,7 +90,7 @@ fn a_first_resolution_asks_the_remote_and_is_kept() {
 
 #[test]
 fn past_the_window_the_remote_is_asked_again_and_a_moved_tip_is_taken() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     pin(DEV, dir.path(), at(1000), &|_: &str, _: &str| Ok(A.to_string()));
     let later = at(1000 + TIP_TTL.as_secs() + 1);
     let got = pin(DEV, dir.path(), later, &|_: &str, _: &str| Ok(B.to_string()));
@@ -101,7 +101,7 @@ fn past_the_window_the_remote_is_asked_again_and_a_moved_tip_is_taken() {
 
 #[test]
 fn an_unreachable_remote_falls_back_to_the_last_resolution_at_any_age() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     pin(DEV, dir.path(), at(1000), &|_: &str, _: &str| Ok(A.to_string()));
     let much_later = at(1000 + 30 * 24 * 3600);
     let got = pin(DEV, dir.path(), much_later, &|_: &str, _: &str| Err("offline".into()));
@@ -120,7 +120,7 @@ fn an_unreachable_remote_falls_back_to_the_last_resolution_at_any_age() {
 
 #[test]
 fn an_unreachable_remote_with_nothing_kept_leaves_the_spec_to_cargo() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let fail = |_: &str, _: &str| Err::<String, String>("offline".into());
     assert_eq!(
         pin(DEV, dir.path(), at(1000), &fail),
@@ -131,7 +131,7 @@ fn an_unreachable_remote_with_nothing_kept_leaves_the_spec_to_cargo() {
 
 #[test]
 fn a_failed_resolution_does_not_overwrite_what_was_kept() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     pin(DEV, dir.path(), at(1000), &|_: &str, _: &str| Ok(A.to_string()));
     let later = at(1000 + TIP_TTL.as_secs() + 1);
     pin(DEV, dir.path(), later, &|_: &str, _: &str| Err("offline".into()));
@@ -147,7 +147,7 @@ fn a_failed_resolution_does_not_overwrite_what_was_kept() {
 
 #[test]
 fn a_failed_ask_is_not_kept_so_every_run_past_the_hour_asks_again() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     pin(DEV, dir.path(), at(1000), &|_: &str, _: &str| Ok(A.to_string()));
     let later = at(1000 + TIP_TTL.as_secs() + 1);
     let asked = Cell::new(0);
@@ -160,7 +160,7 @@ fn a_failed_ask_is_not_kept_so_every_run_past_the_hour_asks_again() {
         assert_eq!(asked.get(), run);
     }
     // With nothing ever kept, the same holds inside the hour too.
-    let empty = tempfile::tempdir().unwrap();
+    let empty = mockspace_manifest::scratch::tempdir().unwrap();
     asked.set(0);
     for run in 1..=3 {
         pin(DEV, empty.path(), at(1000), &fail);
@@ -172,14 +172,14 @@ fn a_failed_ask_is_not_kept_so_every_run_past_the_hour_asks_again() {
 fn a_spec_following_the_default_branch_is_not_resolved_and_goes_to_cargo_as_written() {
     let spec = r#"{ git = "u" }"#;
     assert_eq!(branch_pin(spec), None);
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     assert_eq!(pin(spec, dir.path(), at(1000), &never), Pinned::Untouched);
     assert_eq!(spec_for_cargo("p", spec, dir.path(), &never), spec);
 }
 
 #[test]
 fn a_corrupt_cache_file_is_treated_as_absent() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let file = cache_file(dir.path(), &branch_pin(DEV).unwrap());
     let bad_time = format!("notanumber\n{A}");
     for junk in ["", bad_time.as_str(), "1000\nshort", "1000"] {
@@ -194,7 +194,7 @@ fn a_corrupt_cache_file_is_treated_as_absent() {
 
 #[test]
 fn two_branches_of_one_repo_and_one_branch_of_two_repos_are_kept_apart() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let main = r#"{ git = "https://example.invalid/pack.git", branch = "main" }"#;
     let other = r#"{ git = "https://example.invalid/other.git", branch = "dev" }"#;
     pin(DEV, dir.path(), at(1000), &|_: &str, _: &str| Ok(A.to_string()));
@@ -207,7 +207,7 @@ fn two_branches_of_one_repo_and_one_branch_of_two_repos_are_kept_apart() {
 
 #[test]
 fn the_url_and_branch_are_what_the_remote_is_asked_for() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let seen = std::cell::RefCell::new(Vec::new());
     pin(DEV, dir.path(), at(1000), &|u: &str, b: &str| {
         seen.borrow_mut().push((u.to_string(), b.to_string()));
@@ -235,7 +235,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 
 #[test]
 fn ls_remote_reads_the_tip_of_the_named_branch_and_follows_it() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = dir.path();
     git(repo, &["init", "-q", "-b", "dev"]);
     git(repo, &["commit", "-q", "--allow-empty", "-m", "one"]);
@@ -259,7 +259,7 @@ fn ls_remote_reads_the_tip_of_the_named_branch_and_follows_it() {
 
 #[test]
 fn ls_remote_refuses_a_branch_that_is_not_there_and_a_tag_named_like_one() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = dir.path();
     git(repo, &["init", "-q", "-b", "dev"]);
     git(repo, &["commit", "-q", "--allow-empty", "-m", "one"]);
@@ -271,14 +271,14 @@ fn ls_remote_refuses_a_branch_that_is_not_there_and_a_tag_named_like_one() {
 
 #[test]
 fn ls_remote_refuses_a_remote_that_does_not_exist() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let url = format!("file://{}/missing", dir.path().display());
     assert!(ls_remote_head(&url, "dev").is_err());
 }
 
 #[test]
 fn a_real_branch_pin_is_written_at_the_tip_and_moves_with_it() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = dir.path().join("pack");
     std::fs::create_dir(&repo).unwrap();
     git(&repo, &["init", "-q", "-b", "dev"]);
@@ -301,7 +301,7 @@ fn a_real_branch_pin_is_written_at_the_tip_and_moves_with_it() {
 // --- the generated manifest -----------------------------------------------------
 
 fn manifest_for(packs: &[(String, String)], resolve: &dyn Fn(&str, &str) -> Result<String, String>) -> String {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = crate::config::Config::from_dir(dir.path());
     let gen_dir = dir.path().join("gen");
     // as a run does it: the tips are read once, and the manifest is made of what that gave
@@ -347,7 +347,7 @@ fn the_generated_manifest_keeps_the_branch_when_nothing_was_ever_resolved() {
 
 #[test]
 fn a_stamp_from_the_future_is_not_taken_as_fresh() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     pin(DEV, dir.path(), at(10_000), &|_: &str, _: &str| Ok(A.to_string()));
     let asked = Cell::new(0);
     let resolve = |_: &str, _: &str| {
@@ -382,7 +382,7 @@ fn a_listing_names_its_tip_by_a_sha1_or_a_sha256_object_name() {
 
 #[test]
 fn a_sha256_resolution_is_kept_and_read_back() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let sha256 = "c".repeat(64);
     pin(DEV, dir.path(), at(1000), &|_: &str, _: &str| Ok(sha256.clone()));
     assert_eq!(pin(DEV, dir.path(), at(1001), &never), Pinned::Current { rev: sha256 });
@@ -604,7 +604,7 @@ fn the_configuration_is_read_as_git_would_read_it_here() {
 
 #[test]
 fn a_configured_value_is_what_the_repository_sets_and_nothing_otherwise() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let git = |args: &[&str]| {
         let mut c = Command::new("git");
         c.args(args)
@@ -650,7 +650,7 @@ fn a_command_that_cannot_be_started_is_an_error_not_a_hang() {
 
 #[test]
 fn an_ssh_the_listing_started_outlives_the_deadline_it_was_given_up_on_in() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let mark = dir.path().join("ssh-finished");
     let url = "ssh://git@example.invalid/nothing";
     let mut git = ls_remote_command(url, "dev", &Sources::of(Some("chosen"), None, None), ASK_DEADLINE);
@@ -737,7 +737,7 @@ fn this_process_reads_both_variables_and_the_clone_it_runs_in() {
     if report_if_child() {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     git(dir.path(), &["init", "-q"]);
     assert_eq!(sources_in(dir.path(), &[]), ["None".to_string(), "None".into(), "None".into()]);
     assert_eq!(
@@ -753,7 +753,7 @@ fn this_process_reads_both_variables_and_the_clone_it_runs_in() {
 
 #[test]
 fn this_process_puts_ssh_in_batch_mode_only_in_a_clone_that_says_nothing() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     git(dir.path(), &["init", "-q"]);
     let batch = |env: &[(&str, &str)]| this_process_in(dir.path(), env, "batch");
     assert_eq!(batch(&[]), r#"Some("ssh -o BatchMode=yes")"#);

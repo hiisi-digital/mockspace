@@ -29,7 +29,7 @@ pub(super) struct Consumer {
 }
 
 pub(super) fn consumer(remote: &str) -> Consumer {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let main = tmp.path().join("clone");
     std::fs::create_dir_all(main.join("mock")).unwrap();
     git(&main, &["init", "-q"]);

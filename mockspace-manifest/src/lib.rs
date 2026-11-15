@@ -23,6 +23,9 @@ pub mod exec;
 mod follow_up;
 pub mod kept_ours;
 pub mod gate;
+/// Where tests make their scratch directories, one root per test process.
+#[cfg(any(test, feature = "scratch"))]
+pub mod scratch;
 
 pub use exec::write_executable;
 

@@ -197,7 +197,7 @@ mod tests {
     /// Two files whose names differ only where a glob would make them equal:
     /// `a[1].md` is the literal name, and as a pattern it also matches `a1.md`.
     fn repo_with_lookalikes() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let root = dir.path();
         git(root, &["init", "-q", "-b", "dev"]);
         git(root, &["config", "user.name", "t"]);

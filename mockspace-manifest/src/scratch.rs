@@ -8,7 +8,9 @@
 //! ended and that nothing has added to for six hours, and never a root whose process still
 //! runs, however old. A process whose id an ended run had takes that root over emptied.
 //!
-//! Every crate of the workspace takes this one as a dev-dependency, so there is one copy of the rule.
+//! Here, in the one package every test target reaches and that ships whole, behind the
+//! `scratch` feature, so there is one copy of the rule and a published test reads it from
+//! inside the package.
 
 use std::path::{Path, PathBuf};
 use std::sync::Once;

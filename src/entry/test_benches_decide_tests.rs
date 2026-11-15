@@ -39,7 +39,7 @@ fn decide_answers_every_one_of_the_twelve_cases() {
 
 #[test]
 fn a_green_record_reads_back_and_a_missing_one_is_none() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     assert_eq!(recorded(tmp.path()), None);
     record_green(tmp.path(), "abc");
     assert_eq!(recorded(tmp.path()).as_deref(), Some("abc"));

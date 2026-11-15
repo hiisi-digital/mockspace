@@ -23,5 +23,5 @@ tree-sitter-rust = "0.23"
 
 [dev-dependencies]
 # The scrub of the environment a test runs in, the one copy of it.
-mockspace-manifest = { path = "../mockspace-manifest" }
+mockspace-manifest = { path = "../mockspace-manifest", features = ["scratch"] }
 tempfile = "3"

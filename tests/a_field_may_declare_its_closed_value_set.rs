@@ -88,7 +88,7 @@ fn a_declared_value_passes() {
          unavailable and every arm here fails for that reason instead. Install \
          taplo to run this suite."
     );
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), "ratified");
     let out = run(tmp.path());
     assert!(
@@ -104,7 +104,7 @@ fn a_value_outside_the_closed_set_is_refused() {
         taplo_present(),
         "the enum is enforced by taplo. Install taplo to run this suite."
     );
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     // The failure this exists for is a typo, not an invented member.
     fixture(tmp.path(), "ratifed");
     let out = run(tmp.path());
@@ -131,7 +131,7 @@ fn a_field_declaring_no_set_takes_anything() {
         "compared against the two arms above, so it runs under the same \
          conditions. Install taplo to run this suite."
     );
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root, "stated");
     let mock = root.join("mock");

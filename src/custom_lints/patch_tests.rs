@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn patch_section_points_at_the_checkout_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let home = tmp.path();
     // lay out cargo's checkout: git/checkouts/<name>-<hash>/<short-rev>/lint-rules
     let lr = home.join("git/checkouts/mockspace-deadbeef/abc1234/lint-rules");
@@ -29,7 +29,7 @@ fn patch_section_covers_both_spellings_of_one_repository() {
     // onto a revision emitting the https form, while `mockspace-extra-lints`
     // and one of its own tools name the ssh form. The error named
     // `mockspace_lint_rules` twice and neither url once.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let home = tmp.path();
     let lr = home.join("git/checkouts/mockspace-deadbeef/b57007c/lint-rules");
     std::fs::create_dir_all(&lr).unwrap();
@@ -188,7 +188,7 @@ fn the_fetch_package_names_the_engine_dependency_and_nothing_else() {
 /// a root this test owns.
 #[test]
 fn a_cold_cargo_home_gets_its_checkout_from_the_fetch() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = tmp.path().join("engine");
     let home = tmp.path().join("cargo-home");
     let gen_dir = tmp.path().join("gen");
@@ -257,7 +257,7 @@ fn a_cold_cargo_home_gets_its_checkout_from_the_fetch() {
 
 #[test]
 fn patch_section_none_when_checkout_absent_or_not_git() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     // git-rev dep but no checkout on disk -> no patch.
     let dep = "{ package = \"mockspace-lint-rules\", git = \"ssh://x/m.git\", rev = \"abc\" }";
     assert!(patch_section(dep, tmp.path()).is_none());

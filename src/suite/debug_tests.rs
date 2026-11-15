@@ -187,7 +187,7 @@ fn no_env(_: &str) -> bool {
 /// all, is not: the control for every empty answer here.
 #[test]
 fn a_cargo_config_that_sets_debug_info_is_found_wherever_cargo_reads_it() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     let mock = root.join("repo/mock");
     std::fs::create_dir_all(&mock).unwrap();
@@ -239,7 +239,7 @@ fn a_cargo_config_that_sets_debug_info_is_found_wherever_cargo_reads_it() {
 
 #[test]
 fn a_setting_for_one_package_is_found_and_a_file_that_does_not_parse_is_not() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let d = tmp.path().join("one");
     write(
         &d.join("config.toml"),
@@ -333,7 +333,7 @@ fn a_config_of_the_callers_that_sets_debug_is_noticed_in_either_spelling() {
 /// package table with no `debug` in it is not one: the controls.
 #[test]
 fn packages_outside_the_workspace_that_something_names_are_found() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let dir = tmp.path().join("cfg");
     write(
         &dir.join("config.toml"),
@@ -412,7 +412,7 @@ fn rustflags_that_give_debug_info_are_found_in_the_environment() {
 /// config that has `-g`, and the variable that wins is the one named.
 #[test]
 fn one_source_of_rustflags_wins_as_cargo_has_it() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let dir = tmp.path().join("cfg");
     write(&dir.join("config.toml"), "[build]\nrustflags = [\"-g\"]\n");
     let dirs = std::slice::from_ref(&dir);
@@ -428,7 +428,7 @@ fn one_source_of_rustflags_wins_as_cargo_has_it() {
 
 #[test]
 fn rustflags_in_a_cargo_config_are_found_by_key_and_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let dir = tmp.path().join("cfg");
     write(
         &dir.join("config.toml"),

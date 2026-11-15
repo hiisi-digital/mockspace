@@ -40,7 +40,7 @@ fn git(dir: &Path, args: &[&str]) {
 
 /// A committed repository with one crate, three modules and two designs.
 fn a_repo() -> tempfile::TempDir {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let root = d.path();
     let mock = root.join("mock");
     let src = mock.join("crates/alpha/src");
@@ -278,7 +278,7 @@ fn a_plan_where_everything_was_refused_fails_rather_than_reporting_nothing_to_do
     // The exit code, which nothing asserted while a refusal was still returning
     // success, and the listing, which a reader has to actually see.
     let d = a_repo();
-    let outside = tempfile::tempdir().unwrap();
+    let outside = mockspace_manifest::scratch::tempdir().unwrap();
     let precious = outside.path().join("precious_lib.rs");
     std::fs::write(&precious, "THE ONLY COPY\n").unwrap();
 

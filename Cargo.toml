@@ -3,7 +3,6 @@ members = [
     ".",
     "cargo-mock",
     "mockspace-manifest",
-    "test-scratch",
     "lint-rules",
     "verdicts",
     "bench-core",
@@ -90,7 +89,7 @@ sha2 = "0.10"
 mockspace-store = { path = "mock/crates/mockspace-store", features = ["test-support"] }
 mockspace-registry = { path = "mock/crates/mockspace-registry", features = ["test-support"] }
 tempfile = "3"
-test-scratch = { path = "test-scratch" }
+mockspace-manifest = { path = "mockspace-manifest", features = ["scratch"] }
 # Read by `tests/a_publishing_crate_has_no_git_dependency.rs`, which parses every
 # manifest in the tree. Already a normal dependency, so this adds nothing to
 # resolve.

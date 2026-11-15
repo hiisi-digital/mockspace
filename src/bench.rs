@@ -1493,7 +1493,7 @@ mod tests {
     /// several gigabytes on a large bench tree.
     #[test]
     fn bench_test_builds_where_the_environment_or_the_caller_said() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let mock = tmp.path();
         // The environment's or a config file's target directory, or the caller's own flag: none of ours.
         assert_eq!(
@@ -1921,7 +1921,7 @@ mod tests {
     }
 
     fn temp_mock(name: &str) -> PathBuf {
-        let d = test_scratch::root().join(format!(
+        let d = mockspace_manifest::scratch::root().join(format!(
             "mockspace-bench-cmd-test-{}-{name}",
             std::process::id()
         ));
@@ -2237,7 +2237,7 @@ mod tests {
     /// rather than reported as a missing file.
     #[test]
     fn a_manifest_with_no_binary_target_is_explained() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         write(&tmp.path().join("Cargo.toml"), "[package]\nname = \"x\"\n");
         let bins: Vec<PathBuf> = built_executables(&tmp.path().join("Cargo.toml"), b"");
         assert!(bins.is_empty());

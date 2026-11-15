@@ -68,7 +68,7 @@ fn kept_after_build(mock: &Path, cache: &Path) -> usize {
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_library_of_a_pack_with_a_pure_derive_crate_of_the_tree_is_kept() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = tree(tmp.path(), "", PURE);
     assert_eq!(kept_after_build(&mock, &tmp.path().join("cache")), 1);
 }
@@ -76,7 +76,7 @@ fn the_library_of_a_pack_with_a_pure_derive_crate_of_the_tree_is_kept() {
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_library_of_a_pack_whose_derive_crate_depends_outside_the_allowlist_is_not_kept() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = tree(tmp.path(), "serde_json = \"1\"", PURE);
     assert_eq!(kept_after_build(&mock, &tmp.path().join("cache")), 0);
 }
@@ -84,7 +84,7 @@ fn the_library_of_a_pack_whose_derive_crate_depends_outside_the_allowlist_is_not
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_library_of_a_pack_whose_derive_crate_can_read_a_file_is_not_kept() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let source = format!("{PURE}fn read() {{ let _ = std::fs::read(\"Cargo.toml\"); }}\n");
     let mock = tree(tmp.path(), "", &source);
     assert_eq!(kept_after_build(&mock, &tmp.path().join("cache")), 0);

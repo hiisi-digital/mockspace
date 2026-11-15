@@ -133,7 +133,7 @@ fn last_line(t: &str) -> &str {
 
 #[test]
 fn the_benches_tree_runs_when_it_moved_or_is_asked_and_not_otherwise() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root);
 

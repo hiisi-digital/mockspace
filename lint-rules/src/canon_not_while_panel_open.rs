@@ -177,7 +177,7 @@ mod tests {
     }
 
     fn init() -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         must(tmp.path(), &["init", "-q", "-b", "trunk"]);
         must(tmp.path(), &["config", "user.email", "t@example.com"]);
         must(tmp.path(), &["config", "user.name", "t"]);

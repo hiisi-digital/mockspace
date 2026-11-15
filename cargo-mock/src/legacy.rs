@@ -102,7 +102,7 @@ source = \"git+ssh://git@github.com/hiisi-digital/mockspace.git?branch=dev#deadb
 
     #[test]
     fn the_lock_is_read_from_the_directory_it_is_given() {
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         assert!(
             pin_from_lock_at(d.path()).is_none(),
             "control: an empty directory declares nothing"

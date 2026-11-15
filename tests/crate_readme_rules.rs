@@ -59,7 +59,7 @@ fn render(cfg: &Config) {
 
 #[test]
 fn crate_readme_becomes_a_scoped_rule() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     let cfg = fixture(root);
 
@@ -112,7 +112,7 @@ fn crate_readme_becomes_a_scoped_rule() {
 /// handles it anyway rather than relying on a caller to panic on its behalf.
 #[test]
 fn emptying_the_crates_dir_still_sweeps() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     let cfg = fixture(root);
 
@@ -133,7 +133,7 @@ fn emptying_the_crates_dir_still_sweeps() {
 
 #[test]
 fn a_removed_crate_loses_its_rule() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     let cfg = fixture(root);
 
@@ -156,7 +156,7 @@ fn a_removed_crate_loses_its_rule() {
 
 #[test]
 fn a_consumer_rule_is_never_swept() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     let cfg = fixture(root);
 

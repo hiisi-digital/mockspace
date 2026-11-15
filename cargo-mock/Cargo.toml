@@ -66,3 +66,4 @@ toml = { version = "0.8", default-features = false, features = ["parse", "displa
 
 [dev-dependencies]
 tempfile = "3"
+mockspace-manifest = { path = "../mockspace-manifest", version = "0.0.2", features = ["scratch"] }

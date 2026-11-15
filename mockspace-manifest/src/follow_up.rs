@@ -209,7 +209,7 @@ mod tests {
     /// hook, and `pre-commit` run in it with `cargo` as `tool_dir` makes it. A `cargo` that builds
     /// the generated hook lets the commit through that hook; one that cannot leaves the refusal.
     fn stopped_merge(cargo: Option<bool>) -> (std::process::ExitStatus, bool) {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::scratch::tempdir().unwrap();
         let root = dir.path();
         let git = |a: &[&str]| {
             let out = std::process::Command::new("git").args(a).current_dir(root).output().unwrap();
@@ -279,7 +279,7 @@ mod tests {
             ("post-rewrite", vec!["rebase"], 2, "--commit-regenerated=rebase", true),
             ("post-rewrite", vec!["amend"], 2, "--commit-regenerated=rebase", false),
         ] {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = crate::scratch::tempdir().unwrap();
             let root = dir.path();
             let git = |a: &[&str]| {
                 let out = std::process::Command::new("git").args(a).current_dir(root).output().unwrap();

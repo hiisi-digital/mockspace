@@ -896,7 +896,7 @@ mod canon_location_is_derived {
     fn cfg_for(canon_paths: Vec<String>) -> crate::config::Config {
         // Through a real config file rather than a hand-built struct, so the
         // test exercises the same `canon_paths` parse a project does.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let mock = tmp.path().join("mock");
         std::fs::create_dir_all(&mock).unwrap();
         let declared = if canon_paths.is_empty() {
@@ -1010,7 +1010,7 @@ mod canon_location_is_derived {
     /// list being non-empty is true everywhere and decides nothing.
     #[test]
     fn a_project_declaring_no_canon_is_sent_nowhere() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let mock = tmp.path().join("mock");
         std::fs::create_dir_all(&mock).unwrap();
         std::fs::write(mock.join("mockspace.toml"), "project_name = \"probe\"\n").unwrap();

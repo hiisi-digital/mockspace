@@ -90,7 +90,7 @@ fn real_cargo() -> String {
 }
 
 fn fixture() -> Fixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     let repo = root.join("repo");
     let remote = root.join("remote.git");

@@ -48,7 +48,7 @@ fn repo_with_a_committed_file() -> tempfile::TempDir {
 }
 
 fn repo_configured(extra: &[(&str, &str)]) -> tempfile::TempDir {
-    let dir = tempfile::tempdir().expect("a temp dir");
+    let dir = mockspace_manifest::scratch::tempdir().expect("a temp dir");
     let root = dir.path();
     git(root, &["init", "-q"]);
     git(root, &["config", "user.email", "t@example.invalid"]);

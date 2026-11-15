@@ -309,7 +309,7 @@ mod tests {
         // alone reports the repo clean while `cargo mock` is broken in it,
         // which is what this repository shipped for months under a check
         // written to refuse precisely that.
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let root = d.path();
         let mock = root.join("mock");
 
@@ -354,8 +354,8 @@ mod tests {
         // Asserted as the whole set rather than as its size. A length bound is
         // not a control: this said `len() < 12` and a nine-entry walk running
         // all the way to `/` passed it.
-        let a = tempfile::tempdir().unwrap();
-        let b = tempfile::tempdir().unwrap();
+        let a = mockspace_manifest::scratch::tempdir().unwrap();
+        let b = mockspace_manifest::scratch::tempdir().unwrap();
         let dirs = cargo_config_dirs(a.path(), Some(b.path()));
         assert_eq!(
             dirs,
@@ -369,7 +369,7 @@ mod tests {
         // `current_dir` fails when the directory the process started in has
         // been deleted underneath it, which is ordinary in a long session. The
         // check still has the root and still refuses an alias beside it.
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         assert_eq!(cargo_config_dirs(d.path(), None), vec![
             d.path().to_path_buf()
         ]);
@@ -377,7 +377,7 @@ mod tests {
 
     #[test]
     fn the_alias_check_reports_the_file_it_found_it_in() {
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         assert!(
             alias_check(d.path(), Some(d.path())).is_ok(),
             "control: a clean repo"
@@ -393,7 +393,7 @@ mod tests {
         assert!(err.contains("config.toml"), "{err}");
 
         // the extensionless legacy spelling cargo also honours
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         std::fs::create_dir(d.path().join(".cargo")).unwrap();
         std::fs::write(d.path().join(".cargo/config"), "[alias]\nmock = \"x\"\n").unwrap();
         assert!(no_retired_alias(d.path()).is_err());
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn an_engine_checkout_without_lint_rules_is_refused() {
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         assert!(has_lint_rules(d.path()).is_err());
         std::fs::create_dir(d.path().join("lint-rules")).unwrap();
         assert!(

@@ -208,7 +208,7 @@ fn the_drop_rule_over_every_triple_decides_a_merge_null() {
 /// names the destination alone.
 #[test]
 fn a_file_moved_out_of_a_member_lists_the_member_it_left() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     let run = |args: &[&str]| {
         let out = Command::new("git")

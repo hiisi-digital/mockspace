@@ -1712,7 +1712,7 @@ commit = "error"
 
     /// A `mock` dir carrying an `agent/config.toml` with the given body.
     fn mock_dir_with_agent_config(body: &str) -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
         let agent = tmp.path().join("agent");
         std::fs::create_dir_all(&agent).expect("create agent dir");
         std::fs::write(agent.join("config.toml"), body).expect("write agent config");
@@ -1772,7 +1772,7 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
 
     /// A `mock` dir carrying a `mockspace.toml` with the given body.
     fn mock_dir_with_config(body: &str) -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
         std::fs::write(tmp.path().join("mockspace.toml"), body).expect("write config");
         tmp
     }

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, SystemTime};
 
-use crate::{SCRATCH_DIR, claim, reap, root};
+use super::{SCRATCH_DIR, claim, reap, root};
 
 const STALE: Duration = Duration::from_secs(6 * 60 * 60);
 
@@ -79,6 +79,6 @@ fn scratch_lands_under_this_process_root() {
     let r = root();
     assert!(r.is_dir());
     assert!(r.ends_with(Path::new(SCRATCH_DIR).join(std::process::id().to_string())));
-    let t = crate::tempdir().unwrap();
+    let t = super::tempdir().unwrap();
     assert!(t.path().starts_with(&r), "a scratch dir is made under the root");
 }

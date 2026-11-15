@@ -111,7 +111,7 @@ mod tests {
     use crate::RepoInput;
 
     fn errors(files: &[&str]) -> Vec<LintError> {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let mock = tmp.path().join("mock");
         for f in files {
             let p = mock.join("benches").join(f);

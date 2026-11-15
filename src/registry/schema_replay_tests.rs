@@ -27,7 +27,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let f = Self { root: TempDir::new().unwrap(), store: TempDir::new().unwrap(), bin: TempDir::new().unwrap() };
+        let f = Self { root: mockspace_manifest::scratch::tempdir().unwrap(), store: mockspace_manifest::scratch::tempdir().unwrap(), bin: mockspace_manifest::scratch::tempdir().unwrap() };
         fs::create_dir_all(f.root.path().join("mock/registry")).unwrap();
         fs::write(f.root.path().join("mock/registry/a.toml"), "[[vocab]]\nid = \"a\"\n").unwrap();
         fs::write(f.root.path().join(".taplo.toml"), GENERATED_CONFIG).unwrap();
@@ -233,7 +233,7 @@ fn a_taplo_that_prints_its_version_on_stderr_keys_on_it() {
 
 /// A root as mockspace writes it: the generated config, one valid registry file, the schema.
 fn real_root() -> TempDir {
-    let root = TempDir::new().unwrap();
+    let root = mockspace_manifest::scratch::tempdir().unwrap();
     let p = root.path();
     fs::create_dir_all(p.join("mock/registry")).unwrap();
     fs::create_dir_all(p.join("target/mockspace/registry-schemas")).unwrap();
@@ -266,7 +266,7 @@ fn real_check(root: &Path, store: &Path) -> bool {
 /// Pass once with real taplo, break something taplo reads, and expect the next check to fail.
 fn breaks_after_a_pass(prepare: impl Fn(&Path), break_it: impl Fn(&Path)) {
     assert!(taplo_installed(), "these tests run the real taplo; put it on PATH (the bootstrap installs it)");
-    let (root, store) = (real_root(), TempDir::new().unwrap());
+    let (root, store) = (real_root(), mockspace_manifest::scratch::tempdir().unwrap());
     prepare(root.path());
     assert!(real_check(root.path(), store.path()), "the control: the tree passes real taplo");
     assert!(real_check(root.path(), store.path()), "and replays");
@@ -301,7 +301,7 @@ fn real_taplo_a_schema_bound_by_a_root_dollar_schema_key_is_not_replayed() {
 
 #[test]
 fn real_taplo_a_symlinked_directory_of_tomls_is_not_replayed() {
-    let outside = TempDir::new().unwrap();
+    let outside = mockspace_manifest::scratch::tempdir().unwrap();
     let outside_path = outside.path().to_path_buf();
     fs::write(outside_path.join("b.toml"), "name = \"b\"\n").unwrap();
     breaks_after_a_pass(

@@ -255,7 +255,7 @@ mod tests {
         // defect it did not have it for: `bootstrap::activate` computes the
         // hooks dir to test `.exists()` and refuse. a query that creates the
         // directory makes that check pass on a tree that has never been built.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let dir = target_dir(tmp.path());
         assert_eq!(dir, tmp.path().join("target"));
         assert!(!dir.exists());
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn ensuring_creates_and_marks() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let dir = ensure_target_dir(tmp.path());
         assert!(dir.is_dir());
         assert!(dir.join(MARKER).is_file());
@@ -274,7 +274,7 @@ mod tests {
     fn an_existing_marker_is_left_alone() {
         // a person may have put something in it, or another tool may have. we
         // are not the only writer of this filename on a machine.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let dir = ensure_target_dir(tmp.path());
         fs::write(dir.join(MARKER), b"do not clobber").unwrap();
         ensure_target_dir(tmp.path());
@@ -288,7 +288,7 @@ mod tests {
     fn the_mark_goes_on_the_target_root_not_the_subdirectory() {
         // the control against marking only what was asked for: a generator
         // added later writes a sibling subdir and inherits nothing.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let sub = ensure_under_target(tmp.path(), &["mockspace", "registry-schemas"]);
         assert!(sub.is_dir());
         assert!(target_dir(tmp.path()).join(MARKER).is_file());
@@ -298,7 +298,7 @@ mod tests {
     fn the_lint_crate_dir_is_where_the_generators_write() {
         // the hook reads the pure path, the lint path creates the directory;
         // they have to be the same one.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         assert_eq!(
             lint_crate_dir(tmp.path()),
             ensure_under_target(tmp.path(), &[LINT_CRATE])
@@ -309,7 +309,7 @@ mod tests {
     fn ensuring_twice_leaves_the_tree_alone() {
         // control against a helper that churns the thing it exists to stop
         // churning.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let dir = ensure_target_dir(tmp.path());
         fs::write(dir.join("artifact"), b"x").unwrap();
         ensure_target_dir(tmp.path());
@@ -322,7 +322,7 @@ mod tests {
         // cargo writes is nowhere this engine computed, so marking
         // `<mock>/target` marks an almost-empty directory and leaves the
         // multi-gigabyte one indexed.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let rel = tmp.path().join("elsewhere").join("release");
         fs::create_dir_all(&rel).unwrap();
         let artifact = rel.join("libmockspace_lints_abc.dylib");
@@ -341,7 +341,7 @@ mod tests {
         // marking one anyway would put the file somewhere arbitrary.
         assert!(mark_target_root_of(Path::new("lib.dylib")).is_none());
         // and marking a directory that does not exist writes nothing
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let absent = tmp.path().join("nope");
         mark(&absent);
         assert!(!absent.exists());
@@ -365,7 +365,7 @@ mod tests {
     fn no_config_anywhere_finds_nothing() {
         // control for every case below: a tree with no config and a cargo home
         // with none returns `None`, so a `Some` elsewhere came from a file.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let home = tmp.path().join("home");
         fs::create_dir_all(&home).unwrap();
         assert_eq!(configured_target_dir_within(&deep(tmp.path()), tmp.path(), Some(&home)), None);
@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn the_deeper_cargo_dir_wins_over_an_ancestor() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let start = deep(tmp.path());
         put(&tmp.path().join("work/.cargo"), "config.toml", "[build]\ntarget-dir = \"/near\"\n");
         put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/far\"\n");
@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn an_ancestor_without_the_key_is_walked_past() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let start = deep(tmp.path());
         put(&tmp.path().join("work/.cargo"), "config.toml", "[net]\nretry = 1\n");
         put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/far\"\n");
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn cargo_home_is_tried_last() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let start = deep(tmp.path());
         let home = tmp.path().join("home");
         put(&home, "config.toml", "[build]\ntarget-dir = \"/home-wide\"\n");
@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn an_unparsable_file_is_skipped() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let start = deep(tmp.path());
         put(&tmp.path().join("work/.cargo"), "config.toml", "[build\ntarget-dir = = \"/bad\"\n");
         put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/good\"\n");
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn a_dotted_key_is_read() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let start = deep(tmp.path());
         put(&tmp.path().join(".cargo"), "config.toml", "build.target-dir = \"/dotted\"\n");
         assert_eq!(configured_target_dir_within(&start, tmp.path(), None), Some(PathBuf::from("/dotted")));
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn a_non_string_value_is_ignored() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let start = deep(tmp.path());
         put(&tmp.path().join("work/.cargo"), "config.toml", "[build]\ntarget-dir = 5\n");
         put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/after\"\n");
@@ -432,7 +432,7 @@ mod tests {
     fn the_file_without_an_extension_wins_when_both_exist() {
         // cargo's documentation: "If both files exist, Cargo will use the file
         // without the extension."
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let start = deep(tmp.path());
         let cargo = tmp.path().join(".cargo");
         put(&cargo, "config", "[build]\ntarget-dir = \"/plain\"\n");
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn a_relative_value_resolves_against_the_parent_of_the_cargo_dir() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let start = deep(tmp.path());
         put(&tmp.path().join("work/.cargo"), "config.toml", "[build]\ntarget-dir = \"out/t\"\n");
         // not against `start`, and not against the `.cargo` directory itself
@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn a_relative_value_in_cargo_home_resolves_against_its_parent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let start = deep(tmp.path());
         let home = tmp.path().join("user").join(".cargo");
         put(&home, "config.toml", "[build]\ntarget-dir = \"shared\"\n");
@@ -466,7 +466,7 @@ mod tests {
 
     #[test]
     fn the_environment_wins_over_a_config_and_its_absence_falls_to_it() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let start = deep(tmp.path());
         put(&tmp.path().join(".cargo"), "config.toml", "[build]\ntarget-dir = \"/from-config\"\n");
         let env = std::ffi::OsString::from("/from-env");
@@ -476,7 +476,7 @@ mod tests {
             Some(std::ffi::OsString::from("/from-config"))
         );
         // control: neither set
-        let bare = tempfile::tempdir().unwrap();
+        let bare = mockspace_manifest::scratch::tempdir().unwrap();
         assert_eq!(resolve_target_dir(None, &deep(bare.path()), bare.path(), None), None);
     }
 }

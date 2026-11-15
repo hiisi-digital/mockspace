@@ -44,7 +44,7 @@ impl Repo {
     /// The same repository with `gitignore` already in place when the first
     /// generation runs, so a generated file it names is never tracked.
     pub fn ignoring(gitignore: &str) -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let base = dir.path().canonicalize().unwrap();
         let root = base.join("repo");
         let home = base.join("home");
@@ -264,7 +264,7 @@ impl Repo {
 impl Repo {
     /// A repository mockspace has not run in yet.
     pub fn untouched() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let base = dir.path().canonicalize().unwrap();
         let root = base.join("repo");
         let home = base.join("home");
@@ -306,7 +306,7 @@ pub fn mockspace() -> Command {
     use std::sync::OnceLock;
     static HOME: OnceLock<PathBuf> = OnceLock::new();
     let home = HOME.get_or_init(|| {
-        let dir = test_scratch::root().join(format!("ms-test-home-{}", std::process::id()));
+        let dir = mockspace_manifest::scratch::root().join(format!("ms-test-home-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
     });

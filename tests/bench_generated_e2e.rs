@@ -96,7 +96,7 @@ pub fn hooks() -> Hooks {
 #[test]
 fn a_config_only_nested_tree_runs_end_to_end_through_the_generated_driver() {
     let repo = env!("CARGO_MANIFEST_DIR");
-    let root = test_scratch::root().join(format!("mockspace-bench-e2e-{}", std::process::id()));
+    let root = mockspace_manifest::scratch::root().join(format!("mockspace-bench-e2e-{}", std::process::id()));
     std::fs::remove_dir_all(&root).ok();
     let mock_dir = root.join("mock");
     let bench_dir = mock_dir.join("benches");
@@ -241,7 +241,7 @@ master_seed = 7
 #[test]
 fn an_arm_declaring_another_output_size_than_its_routine_is_refused() {
     let repo = env!("CARGO_MANIFEST_DIR");
-    let root = test_scratch::root().join(format!("mockspace-bench-size-{}", std::process::id()));
+    let root = mockspace_manifest::scratch::root().join(format!("mockspace-bench-size-{}", std::process::id()));
     std::fs::remove_dir_all(&root).ok();
     let mock_dir = root.join("mock");
     let bench_dir = mock_dir.join("benches");

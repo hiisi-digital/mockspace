@@ -143,7 +143,7 @@ fn an_incremental_run_equals_a_full_one_over_a_history() {
     let walked = git(&tree, &["rev-list", "--first-parent", "--reverse", &format!("-{n}"), "HEAD"]);
     let commits: Vec<&str> = walked.lines().collect();
     assert!(commits.len() >= 2, "a history of one commit proves nothing about replay");
-    let store = tempfile::tempdir().unwrap();
+    let store = mockspace_manifest::scratch::tempdir().unwrap();
 
     let mut differing = Vec::new();
     let mut replays = 0;

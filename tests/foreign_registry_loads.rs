@@ -323,7 +323,7 @@ fn a_foreign_registry_parses_and_validates() {
 /// of only in the arm nobody runs by default.
 #[test]
 fn the_drop_detection_reports_a_namespace_with_files_and_no_rows() {
-    let dir = tempfile::tempdir().expect("a temporary tree");
+    let dir = mockspace_manifest::scratch::tempdir().expect("a temporary tree");
     let mock = dir.path();
     std::fs::create_dir_all(mock.join("registry/ghostns")).unwrap();
 
@@ -424,7 +424,7 @@ fn the_drop_detection_reports_a_namespace_with_files_and_no_rows() {
 /// reports everything from one that reports nothing.
 #[test]
 fn a_citation_that_resolves_to_nothing_is_a_finding() {
-    let dir = tempfile::tempdir().expect("a temporary tree");
+    let dir = mockspace_manifest::scratch::tempdir().expect("a temporary tree");
     let mock = dir.path();
     std::fs::create_dir_all(mock.join("registry")).unwrap();
     std::fs::create_dir_all(mock.join("notes")).unwrap();
@@ -519,7 +519,7 @@ type = "ref[]"
 /// the tautological-assertion class this file exists to keep out.
 #[test]
 fn the_drop_detection_sees_a_drop_in_a_file_nested_two_levels_deep() {
-    let dir = tempfile::tempdir().expect("a temporary tree");
+    let dir = mockspace_manifest::scratch::tempdir().expect("a temporary tree");
     let mock = dir.path();
     std::fs::create_dir_all(mock.join("registry/law/2026")).unwrap();
     std::fs::write(
@@ -571,7 +571,7 @@ fn the_drop_detection_sees_a_drop_in_a_file_nested_two_levels_deep() {
 /// Asserts the drop is reported, for the reason given on the test above.
 #[test]
 fn the_drop_detection_follows_the_table_key_not_the_file_name() {
-    let dir = tempfile::tempdir().expect("a temporary tree");
+    let dir = mockspace_manifest::scratch::tempdir().expect("a temporary tree");
     let mock = dir.path();
     std::fs::create_dir_all(mock.join("registry")).unwrap();
     std::fs::write(
@@ -619,7 +619,7 @@ fn the_drop_detection_follows_the_table_key_not_the_file_name() {
 /// it is wrong. The predicate is deliberately wider for this reason.
 #[test]
 fn the_drop_detection_sees_a_plain_table_where_an_array_was_meant() {
-    let dir = tempfile::tempdir().expect("a temporary tree");
+    let dir = mockspace_manifest::scratch::tempdir().expect("a temporary tree");
     let mock = dir.path();
     std::fs::create_dir_all(mock.join("registry")).unwrap();
     std::fs::write(

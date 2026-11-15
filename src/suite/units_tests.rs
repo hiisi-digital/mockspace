@@ -659,7 +659,7 @@ fn a_file_the_library_pulls_brings_its_modules_and_literals_all_the_way_down() {
 
 #[test]
 fn what_a_pulled_file_reads_outside_the_member_is_the_librarys_read() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = tmp.path();
     std::fs::create_dir_all(repo.join("content")).unwrap();
     std::fs::write(repo.join("content/other.toml"), "x").unwrap();
@@ -750,7 +750,7 @@ fn a_pulled_file_with_a_mod_in_a_macro_shares_every_claimed_file() {
 /// beside the file is not what it reads, and the real one is.
 #[test]
 fn a_placeholder_rest_reads_outside_from_the_member_and_not_the_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = tmp.path();
     for f in ["content/other.toml", "mm/content/other.toml"] {
         std::fs::create_dir_all(repo.join(f).parent().unwrap()).unwrap();

@@ -17,8 +17,14 @@ categories = ["development-tools", "config"]
 keywords = ["mockspace", "manifest", "git-hooks", "toml"]
 
 [dependencies]
+# Only for the `scratch` feature, which the tests of this repository turn on.
+tempfile = { version = "3", optional = true }
 serde = { version = "1", default-features = false, features = ["std", "derive"] }
 toml = { version = "0.8", default-features = false, features = ["parse"] }
+
+[features]
+# Where tests make their scratch directories, for the test targets of this repository.
+scratch = ["dep:tempfile"]
 
 [dev-dependencies]
 tempfile = "3"

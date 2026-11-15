@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn archive_round_name_picks_earliest_timestamp() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
         let dr = tmp.path();
         // Mix CLs and topic files. The earliest 12-digit prefix wins.
         std::fs::write(dr.join("202604201200_topic.alpha.md"), "x").unwrap();
@@ -169,7 +169,7 @@ mod tests {
     #[test]
     fn archive_round_name_topic_only() {
         // TOPIC-phase abandonment with no changelist files at all.
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
         let dr = tmp.path();
         std::fs::write(dr.join("202604211500_topic.gamma.md"), "x").unwrap();
         let name = determine_round_name_from_dir(dr).expect("found a name");
@@ -180,7 +180,7 @@ mod tests {
     fn archive_round_name_skips_non_timestamp_files() {
         // Anything without a 12-digit prefix is ignored. README, leftover
         // notes, dotfiles produced elsewhere: none should affect naming.
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
         let dr = tmp.path();
         std::fs::write(dr.join("README.md"), "x").unwrap();
         std::fs::write(dr.join("notes.md"), "x").unwrap();
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn archive_round_name_empty_dir_returns_none() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
         std::fs::write(tmp.path().join("README.md"), "x").unwrap();
         assert!(determine_round_name_from_dir(tmp.path()).is_none());
     }
@@ -233,7 +233,7 @@ mod tests {
     fn round_name_from_dir_reads_old_and_new_ids_in_time_order() {
         // Mutant: `determine_round_name_from_dir` reads twelve characters, or
         // sorts the tag ahead of the minute.
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
         let dr = tmp.path();
         std::fs::write(dr.join("202610221600_topic.old.md"), "x").unwrap();
         std::fs::write(dr.join("202610221530-zzzz_topic.new.md"), "x").unwrap();

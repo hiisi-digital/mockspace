@@ -687,7 +687,7 @@ mod byline_hook_tests {
     fn scratch(tag: &str) -> PathBuf {
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let dir =
-            test_scratch::root().join(format!("mock_byline_{tag}_{}_{n}", std::process::id()));
+            mockspace_manifest::scratch::root().join(format!("mock_byline_{tag}_{}_{n}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -1444,7 +1444,7 @@ mod generated_pre_commit_tests {
     /// which is the defect being fixed: the hook was syntactically fine and
     /// exited 0 before reaching anything.
     fn run_hook(stage: &[(&str, &str)], mock_rel: &str) -> String {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         let git = |args: &[&str]| {
             Command::new("git")
@@ -1535,7 +1535,7 @@ mod generated_pre_commit_tests {
     /// satisfy both. They ask the same question now, and every arm below
     /// asserts that rather than asserting either answer on its own.
     fn both_sides(stage: &[(&str, &str)]) -> (bool, bool) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         let git = |args: &[&str]| {
             Command::new("git")
@@ -1651,7 +1651,7 @@ mod generated_pre_commit_tests {
     /// `["crates", "libs"]`, so the shape is real rather than hypothetical.
     #[test]
     fn the_hook_and_the_engine_agree_on_a_declared_source_directory_outside_crates() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         let git = |args: &[&str]| {
             Command::new("git")
@@ -1723,7 +1723,7 @@ mod generated_pre_commit_tests {
     /// named and the branch not taken.
     #[test]
     fn source_under_a_declared_directory_alone_is_scoped_to_its_crate() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         let git = |args: &[&str]| {
             Command::new("git")

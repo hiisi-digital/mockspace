@@ -293,7 +293,6 @@ mod tests {
 
     use std::fs;
 
-    use tempfile::TempDir;
 
     use super::*;
 
@@ -532,7 +531,7 @@ Mentions `Foo`.
 
     #[test]
     fn integration_no_deprecated_no_errors() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let dr = tmp.path().join("design_rounds");
         fs::create_dir_all(&dr).unwrap();
         write_cl(
@@ -551,7 +550,7 @@ Mentions `Foo`.
 
     #[test]
     fn integration_deprecated_with_active_missing_comparison() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let dr = tmp.path().join("design_rounds");
         fs::create_dir_all(&dr).unwrap();
 
@@ -602,7 +601,7 @@ Mentions `Foo`.
 
     #[test]
     fn integration_deprecated_with_complete_comparison() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let dr = tmp.path().join("design_rounds");
         fs::create_dir_all(&dr).unwrap();
 
@@ -658,7 +657,7 @@ Different design.
 
     #[test]
     fn integration_deprecated_without_active_no_error() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let dr = tmp.path().join("design_rounds");
         fs::create_dir_all(&dr).unwrap();
 

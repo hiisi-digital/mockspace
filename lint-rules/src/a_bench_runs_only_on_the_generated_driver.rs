@@ -230,7 +230,7 @@ mod tests {
     use crate::Reading;
 
     fn tree(files: &[(&str, &str)]) -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         for (path, body) in files {
             let p = tmp.path().join("mock/benches").join(path);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -337,7 +337,7 @@ mod tests {
             ("lib/src/main.rs", ""),
         ]);
         assert_eq!(runners(&tmp), Vec::<String>::new());
-        let empty = tempfile::tempdir().unwrap();
+        let empty = mockspace_manifest::scratch::tempdir().unwrap();
         assert_eq!(runners(&empty), Vec::<String>::new());
     }
 }

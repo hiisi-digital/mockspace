@@ -21,7 +21,7 @@ use mockspace::config::Config;
 /// A clone with `mockspace.toml` at its root carrying `extra` beneath the two
 /// keys every config names. Returns the tempdir and the clone's root.
 fn clone(extra: &str) -> (tempfile::TempDir, PathBuf) {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
     let root = tmp.path().to_path_buf();
     git(&root, &["init", "-q"]);
     fs::write(
@@ -148,7 +148,7 @@ fn a_worktree_takes_its_clones_answer() {
 /// ask. The file's value stands, and the load does not reach for git at all.
 #[test]
 fn a_tree_with_no_git_takes_the_files_value() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
     let root = tmp.path();
     fs::write(
         root.join("mockspace.toml"),

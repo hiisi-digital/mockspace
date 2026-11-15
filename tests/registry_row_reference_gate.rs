@@ -110,7 +110,7 @@ fn a_registry_whose_row_references_resolve_passes() {
         eprintln!("skipping: taplo is not installed, so a clean registry cannot exit 0");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), TWO_NAMESPACES, GOOD_ROWS);
     let out = run(tmp.path());
     assert_eq!(
@@ -126,7 +126,7 @@ fn a_registry_whose_row_references_resolve_passes() {
 #[test]
 fn a_slug_naming_no_row_warns_on_a_plain_run() {
     assert!(taplo_present(), "taplo absent: a plain run exits 0 only when the schema check ran");
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(
         tmp.path(),
         TWO_NAMESPACES,
@@ -144,7 +144,7 @@ fn a_slug_naming_no_row_warns_on_a_plain_run() {
 /// The case that must fail: the same registry, with the citing file staged.
 #[test]
 fn a_slug_naming_no_row_fails_the_commit_staging_its_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(
         tmp.path(),
         TWO_NAMESPACES,
@@ -166,7 +166,7 @@ fn a_slug_naming_no_row_fails_the_commit_staging_its_file() {
 
 #[test]
 fn a_qualified_value_fails_the_command() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(
         tmp.path(),
         TWO_NAMESPACES,
@@ -183,7 +183,7 @@ fn a_qualified_value_fails_the_command() {
 
 #[test]
 fn a_type_naming_no_namespace_fails_the_command() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(
         tmp.path(),
         &TWO_NAMESPACES.replace("type = \"slot\"", "type = \"slott\""),
@@ -200,7 +200,7 @@ fn a_type_naming_no_namespace_fails_the_command() {
 
 #[test]
 fn a_namespace_shadowing_a_builtin_type_fails_the_command() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(
         tmp.path(),
         &TWO_NAMESPACES.replace("key = \"slot\"\n", "key = \"boolean\"\n"),
@@ -217,7 +217,7 @@ fn a_namespace_shadowing_a_builtin_type_fails_the_command() {
 
 #[test]
 fn a_reference_into_a_value_namespace_fails_the_command() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(
         tmp.path(),
         &TWO_NAMESPACES.replace(
@@ -244,7 +244,7 @@ fn a_reference_into_a_value_namespace_fails_the_command() {
 /// been looking. The gate is gone and this is what keeps it gone.
 #[test]
 fn a_bad_declaration_does_not_suppress_a_bad_slug_elsewhere() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let config = format!(
         "{TWO_NAMESPACES}\n[[registry.namespace]]\nkey = \"other\"\ntitle = \"Other\"\n\
          description = \"An unrelated namespace with a typo in a field type.\"\n\n\
@@ -280,7 +280,7 @@ fn a_bad_declaration_does_not_suppress_a_bad_slug_elsewhere() {
 /// diff, and it is unverified by a test.
 #[test]
 fn the_view_built_from_a_real_directory_carries_the_edges() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(
         tmp.path(),
         TWO_NAMESPACES,

@@ -41,7 +41,7 @@ fn the_sources_of_a_dep_info_are_its_first_rule() {
 
 #[test]
 fn a_file_is_named_by_its_root_and_not_by_where_the_root_sits() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mut names = Vec::new();
     for parent in ["one", "a-much-longer-parent"] {
         let lints = tmp.path().join(parent).join("lints");
@@ -57,7 +57,7 @@ fn a_file_is_named_by_its_root_and_not_by_where_the_root_sits() {
 
 #[test]
 fn a_file_under_no_root_is_named_absolutely_and_the_deepest_root_wins() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let outer = tmp.path().join("outer");
     let inner = outer.join("inner");
     std::fs::create_dir_all(&inner).unwrap();
@@ -75,7 +75,7 @@ fn a_file_under_no_root_is_named_absolutely_and_the_deepest_root_wins() {
 
 #[test]
 fn what_was_recorded_holds_in_a_tree_of_the_same_content_and_not_after_an_edit() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let trees: Vec<PathBuf> = ["a", "b-with-a-longer-name"]
         .iter()
         .map(|n| {
@@ -112,7 +112,7 @@ fn what_was_recorded_holds_in_a_tree_of_the_same_content_and_not_after_an_edit()
 
 #[test]
 fn nothing_is_recorded_that_cannot_be_trusted() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let source = tmp.path().join("lints").join("probe.rs");
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
@@ -146,7 +146,7 @@ fn a_record_reads_back_as_written_and_a_foreign_one_does_not() {
 
 #[test]
 fn a_source_whose_timestamp_was_set_back_is_not_trusted() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let began = SystemTime::now();
     std::thread::sleep(Duration::from_millis(20));
     let gen_dir = tmp.path().join("gen");
@@ -168,7 +168,7 @@ fn a_source_whose_timestamp_was_set_back_is_not_trusted() {
 
 #[test]
 fn a_source_under_no_root_leaves_nothing_kept_unless_the_directory_is_the_same_for_every_tree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let outside = tmp.path().join("repo").join("name.txt");
     std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
@@ -184,7 +184,7 @@ fn a_source_under_no_root_leaves_nothing_kept_unless_the_directory_is_the_same_f
 #[cfg(unix)]
 #[test]
 fn a_file_behind_a_link_is_named_as_the_compiler_listed_it() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let lints = tmp.path().join("lints");
     let data = tmp.path().join("data");
     std::fs::create_dir_all(&lints).unwrap();
@@ -202,7 +202,7 @@ fn a_file_behind_a_link_is_named_as_the_compiler_listed_it() {
 
 #[test]
 fn a_variable_the_build_was_given_is_compared_and_one_it_was_not_is_not() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let info = "out.d: \n# env-dep:CARGO_PKG_NAME=probe\n# env-dep:NO_COLOR=1\n# env-dep:MOCKSPACE_PROBE_UNSET_VARIABLE\n";
     let dylib = built(&gen_dir, info);
@@ -218,7 +218,7 @@ fn a_variable_the_build_was_given_is_compared_and_one_it_was_not_is_not() {
 
 #[test]
 fn a_unit_dep_info_left_by_an_earlier_build_is_not_read_for_this_one() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let dylib = built(&gen_dir, "out.d: \n# env-dep:NO_COLOR=1\n");
     let roots = Roots::default();
@@ -236,7 +236,7 @@ fn a_unit_dep_info_left_by_an_earlier_build_is_not_read_for_this_one() {
 
 #[test]
 fn a_reused_build_holds_the_sources_to_the_time_it_was_made() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let source = tmp.path().join("lints").join("probe.rs");
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
@@ -259,7 +259,7 @@ fn a_reused_build_holds_the_sources_to_the_time_it_was_made() {
 
 #[test]
 fn a_unit_that_read_the_directory_of_a_manifest_in_the_tree_leaves_nothing_kept() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let tool = tmp.path().join("repo").join("tools").join("t");
     std::fs::create_dir_all(&tool).unwrap();
@@ -297,7 +297,7 @@ fn with_unit(dylib: &Path, source: &Path, fresh: bool, kind: UnitKind) -> Built 
 
 #[test]
 fn a_reused_dependency_unit_holds_its_sources_to_the_time_it_was_made() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let source = tmp.path().join("lints").join("tool.rs");
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
@@ -328,7 +328,7 @@ fn a_reused_dependency_unit_holds_its_sources_to_the_time_it_was_made() {
 
 #[test]
 fn a_unit_without_dep_info_leaves_nothing_kept() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let dylib = built(&gen_dir, "out.d: \n");
     let unit = Unit { files: vec![dylib.parent().unwrap().join("deps").join("libabsent-1.rlib")], fresh: false, kind: UnitKind::Lib, in_tree: false, manifest: PathBuf::new() };
@@ -338,7 +338,7 @@ fn a_unit_without_dep_info_leaves_nothing_kept() {
 
 #[test]
 fn a_build_script_of_a_path_package_leaves_nothing_kept() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let source = tmp.path().join("lints").join("tool.rs");
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
@@ -355,7 +355,7 @@ fn a_build_script_of_a_path_package_leaves_nothing_kept() {
 /// makes the time catch it; the hook runs between the two calls so the order is what is tested.
 #[test]
 fn a_source_edited_between_the_read_and_the_stat_is_not_recorded() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let source = tmp.path().join("lints").join("probe.rs");
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
@@ -391,7 +391,7 @@ fn a_registry_source_is_never_touched_to_make_cargo_rebuild_its_unit() {
     // Cargo fingerprints a registry crate by its version, not by the time of its files, so touching
     // one forces nothing, writes to a cache every tree shares, and puts the file after the mark
     // cargo left when it finished unpacking.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let own = tmp.path().join("lints").join("tool.rs");
     std::fs::create_dir_all(own.parent().unwrap()).unwrap();

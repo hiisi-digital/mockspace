@@ -33,7 +33,7 @@ use super::*;
 
 pub(super) fn scratch(tag: &str) -> std::path::PathBuf {
     static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let d = test_scratch::root().join(format!(
+    let d = mockspace_manifest::scratch::root().join(format!(
         "ms_msgscope_{tag}_{}_{}",
         std::process::id(),
         SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)

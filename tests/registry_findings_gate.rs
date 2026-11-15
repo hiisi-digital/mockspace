@@ -108,7 +108,7 @@ fn run_without_taplo(root: &Path) -> Option<i32> {
 
 #[test]
 fn a_duplicate_slug_fails_the_command() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), true);
     assert_eq!(
         run(tmp.path()),
@@ -127,7 +127,7 @@ fn a_duplicate_slug_fails_the_command() {
 /// the key declared once.
 #[test]
 fn a_namespace_key_declared_twice_fails_the_command() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root, false);
     let config = root.join("mock/mockspace.toml");
@@ -177,7 +177,7 @@ fn a_clean_registry_does_not() {
          be unavailable, which now fails the command, so the arm would be red for \
          a reason unrelated to duplicate slugs. Install taplo to run this suite."
     );
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), false);
     assert_eq!(
         run(tmp.path()),
@@ -200,7 +200,7 @@ fn a_clean_registry_does_not() {
 /// empty `PATH` and no namespace, and it must still pass.
 #[test]
 fn an_unverifiable_schema_check_fails_the_command() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), false);
     assert_eq!(
         run_without_taplo(tmp.path()),
@@ -212,7 +212,7 @@ fn an_unverifiable_schema_check_fails_the_command() {
 
 #[test]
 fn a_project_with_no_registry_does_not_need_the_tool() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fs::create_dir_all(root.join(".git")).unwrap();
     write(
@@ -241,7 +241,7 @@ fn a_project_with_no_registry_does_not_need_the_tool() {
 /// written, and committed so nobody does that again.
 #[test]
 fn namespaces_with_no_rows_have_no_shape_to_verify() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fs::create_dir_all(root.join(".git")).unwrap();
     write(
@@ -280,7 +280,7 @@ description = "A focused implementation that answers a question."
 /// exists. Without it, this passes for any binary that fails on every document.
 #[test]
 fn a_reference_to_no_row_fails_the_command() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root, false);
     write(
@@ -297,7 +297,7 @@ fn a_reference_to_no_row_fails_the_command() {
 
 #[test]
 fn a_reference_to_a_row_that_exists_does_not() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root, false);
     write(
@@ -325,7 +325,7 @@ fn a_reference_to_a_row_that_exists_does_not() {
 /// than a fixture, which is why this arm exists.
 #[test]
 fn an_unsubstituted_placeholder_does_not_fail_the_command() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root, false);
     write(
@@ -343,7 +343,7 @@ fn an_unsubstituted_placeholder_does_not_fail_the_command() {
 /// The discriminating pair: same document, one of each.
 #[test]
 fn a_reference_beside_a_placeholder_still_fails() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root, false);
     write(

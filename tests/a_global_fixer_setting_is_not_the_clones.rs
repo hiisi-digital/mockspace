@@ -18,7 +18,7 @@ use mockspace::config::Config;
 
 #[test]
 fn a_setting_in_the_global_config_is_not_read() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
     let root = tmp.path().join("clone");
     fs::create_dir_all(root.join("mock")).expect("create mock dir");
     fs::write(

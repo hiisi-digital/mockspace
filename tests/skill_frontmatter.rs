@@ -58,7 +58,7 @@ fn generated(root: &Path) -> String {
 
 #[test]
 fn a_skills_description_names_the_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), "Reviews {{project_name}} conventions");
     let out = generated(tmp.path());
     assert!(
@@ -76,7 +76,7 @@ fn a_skills_description_names_the_project() {
 /// rewrites descriptions.
 #[test]
 fn a_description_with_no_variable_is_unchanged() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), "Reviews conventions");
     let out = generated(tmp.path());
     assert!(

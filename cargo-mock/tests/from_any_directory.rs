@@ -75,7 +75,7 @@ fn locate_from(bin: &str, cwd: &Path) -> String {
 
 #[test]
 fn locate_answers_identically_from_every_directory_in_the_repo() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     // canonicalised, because macOS hands out a `/var` tempdir that resolves
     // through `/private/var`, and the launcher reports the resolved form.
     let root = d.path().canonicalize().unwrap();
@@ -104,7 +104,7 @@ fn the_working_directory_is_answered_under_mock_dir_and_not_under_workdir() {
     // is a contract with that file and with every hook and helper sourcing it,
     // so a rename here breaks `mock_dir()` on a well-formed repository with no
     // error anywhere: the parser simply matches nothing.
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let root = d.path().canonicalize().unwrap();
     witness(&root);
 
@@ -150,7 +150,7 @@ fn the_walk_stops_at_the_nearest_repo_and_not_at_an_outer_one() {
     // the control that gives the test above its meaning: sameness everywhere
     // would also be satisfied by a launcher that always answered the outermost
     // repo, or that ignored the working directory entirely.
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let outer = d.path().canonicalize().unwrap();
     witness(&outer);
     let inner = outer.join("member");
@@ -173,7 +173,7 @@ fn both_installed_binaries_answer_the_same_thing() {
     // `cargo-mock` is cargo's external-subcommand spelling and is invoked as
     // `cargo-mock mock <args>`, so it must drop the repeated subcommand name.
     // A launcher that did not would pass `mock` to the engine as an argument.
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let root = d.path().canonicalize().unwrap();
     witness(&root);
 
@@ -195,10 +195,10 @@ fn both_installed_binaries_answer_the_same_thing() {
 
 #[test]
 fn the_root_override_wins_over_the_directory_the_command_was_run_in() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let root = d.path().canonicalize().unwrap();
     witness(&root);
-    let elsewhere = tempfile::tempdir().unwrap();
+    let elsewhere = mockspace_manifest::scratch::tempdir().unwrap();
 
     let out = command(bin_path("mock"))
         .arg("locate")
@@ -215,7 +215,7 @@ fn the_root_override_wins_over_the_directory_the_command_was_run_in() {
 
 #[test]
 fn a_directory_in_no_repo_at_all_is_refused_and_the_message_names_both_reasons() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let dir = d.path().canonicalize().unwrap();
     // the precondition, established rather than assumed: on a machine whose
     // TMPDIR sits inside a checkout the walk would find a real repo and the

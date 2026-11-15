@@ -20,7 +20,7 @@ use std::fs;
 #[test]
 #[ignore = "runs cargo build; run with --ignored"]
 fn custom_lint_loads_and_dispatches_across_cdylib() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = tmp.path().join("mock");
     let lints = mock.join("lints");
     fs::create_dir_all(&lints).unwrap();
@@ -83,7 +83,7 @@ fn a_manifest_with_two_patch_tables_is_accepted_and_the_unused_one_is_inert() {
     // point is that cargo never reaches for it. A failure here is either a
     // parse error on the second table or an attempted fetch, and both are
     // loud.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src/lib.rs"), "pub fn nothing() {}\n").unwrap();
@@ -144,7 +144,7 @@ fn cargo_does_reach_an_unreachable_host_when_something_names_it() {
     // So this is the same manifest with the host moved from a patch table into
     // a dependency, where cargo must reach for it. It fails and names the host,
     // which is what the other case asserts the absence of.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src/lib.rs"), "pub fn nothing() {}\n").unwrap();
@@ -191,7 +191,7 @@ fn two_tables_naming_one_source_is_refused_which_is_why_they_are_deduped() {
     //
     // Without this, the case above passes whether or not the dedup exists and
     // says nothing about why it is there.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src/lib.rs"), "pub fn nothing() {}\n").unwrap();

@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn an_ignored_path_is_not_stageable_and_a_tracked_one_is() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let root = dir.path();
         let git = |args: &[&str]| {
             let out = Command::new("git")
@@ -310,7 +310,7 @@ mod tests {
     fn a_path_git_cannot_be_asked_about_is_left_out() {
         // not a repository: `check-ignore` fails with 128, which says nothing
         // about the path and must not read as "not ignored"
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         fs::write(dir.path().join("a.md"), "x\n").unwrap();
         assert!(is_ignored(dir.path(), "a.md").is_err());
         assert!(stageable(dir.path(), &["a.md".to_string()]).is_empty());
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn the_attributes_file_is_clean_when_absent_or_unchanged_and_not_when_edited() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let root = dir.path();
         let git = |args: &[&str]| {
             let out = Command::new("git")
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn staging_takes_a_path_literally() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let root = dir.path();
         let git = |args: &[&str]| {
             let out = Command::new("git")
@@ -372,7 +372,7 @@ mod tests {
 
     /// A repository with `docs/A.md` committed and a record of kept sides.
     fn repo_with_record() -> (tempfile::TempDir, PathBuf, PathBuf) {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         let git = |args: &[&str]| {
             let out = Command::new("git")

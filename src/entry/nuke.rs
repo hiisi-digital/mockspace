@@ -548,7 +548,7 @@ mod what_makes_a_deletion_recoverable {
     use super::*;
 
     fn repo(files: &[(&str, &str)], commit: bool) -> tempfile::TempDir {
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let run = |args: &[&str]| {
             std::process::Command::new("git")
                 .arg("-C")
@@ -601,7 +601,7 @@ mod what_makes_a_deletion_recoverable {
     fn a_directory_that_is_not_a_repository_is_refused() {
         // Not treated as clean. There is nowhere to recover from, which is a
         // stronger reason to refuse than a dirty tree is.
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let err = tree_is_recoverable(d.path()).unwrap_err();
         assert!(err.contains("not a git repository"), "{err}");
     }
@@ -615,7 +615,7 @@ mod what_a_nuke_takes {
     /// can carry, which is the smallest tree that tells the two tiers apart and
     /// also tells design apart from the rest of the root.
     fn tree() -> tempfile::TempDir {
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let mock = d.path().join("mock");
         fs::create_dir_all(&mock).unwrap();
         fs::write(mock.join("DESIGN.md.tmpl"), "# design\n").unwrap();
@@ -947,8 +947,8 @@ mod what_the_nuke_will_not_reach {
 
     /// A mock tree plus a directory outside it, linked to from inside.
     fn tree_with_a_link_out() -> (tempfile::TempDir, tempfile::TempDir) {
-        let d = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
+        let outside = mockspace_manifest::scratch::tempdir().unwrap();
         let src = d.path().join("mock/crates/alpha/src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -998,7 +998,7 @@ mod what_the_nuke_will_not_reach {
         // `src_dirs` is joined onto the mock dir with no containment check of its
         // own, so this shape puts the whole deletion set outside the tree that
         // `tree_is_recoverable` inspected, and that guard passes.
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let mock = d.path().join("repo/mock");
         fs::create_dir_all(&mock).unwrap();
         fs::create_dir_all(d.path().join("repo/.git")).unwrap();
@@ -1039,7 +1039,7 @@ mod what_the_nuke_will_not_reach {
         // `apply` would write but not count, so the two disagreed by one and the
         // listing overstated. A listing that disagrees with the deletion is the
         // one thing this shape exists to prevent.
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let src = d.path().join("mock/crates/alpha/src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -1069,7 +1069,7 @@ mod what_the_nuke_will_not_reach {
         // The prune used to walk the whole source tree and take any empty
         // directory, including ones the nuke had nothing to do with, and it took
         // them unlisted in a listing whose point is that it names everything.
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let src = d.path().join("mock/crates/alpha/src");
         fs::create_dir_all(src.join("emptied/deeper")).unwrap();
         fs::create_dir_all(src.join("was_empty_before")).unwrap();
@@ -1105,8 +1105,8 @@ mod what_the_nuke_will_not_write {
     /// the destruction intact and gave it a listing that reassured.
     #[test]
     fn a_stub_never_writes_through_a_symlink_to_somewhere_else() {
-        let d = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
+        let outside = mockspace_manifest::scratch::tempdir().unwrap();
         let src = d.path().join("mock/crates/alpha/src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -1151,7 +1151,7 @@ mod what_the_nuke_will_not_write {
         // `src_dirs = ["../../outside"]`. The first fix escaped the deletions and
         // then overwrote `lib.rs` in that same directory, printing a paragraph
         // saying it had left the directory alone.
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let mock = d.path().join("repo/mock");
         fs::create_dir_all(&mock).unwrap();
         fs::create_dir_all(d.path().join("repo/.git")).unwrap();
@@ -1189,7 +1189,7 @@ mod what_the_nuke_will_not_write {
         // in `collect_rs` is the only thing standing; restoring the old
         // `path.is_dir()` walk deletes through the link and every other test in
         // this file stays green.
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let src = d.path().join("mock/crates/alpha/src");
         let elsewhere = d.path().join("mock/research/probes");
         fs::create_dir_all(&src).unwrap();
