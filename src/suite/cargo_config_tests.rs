@@ -47,25 +47,25 @@ fn levels(pairs: &[(&str, &str)]) -> TestSettings {
 
 #[test]
 fn each_member_gets_its_own_opt_level_under_the_profile_built() {
-    let s = levels(&[("kaski-village", "3"), ("kaski-render", "s")]);
+    let s = levels(&[("game-village", "3"), ("game-render", "s")]);
     let c = render(&s, "dev", None, None).unwrap();
     assert!(
-        c.contains("[profile.dev.package.\"kaski-village\"]\nopt-level = 3\n"),
+        c.contains("[profile.dev.package.\"game-village\"]\nopt-level = 3\n"),
         "{c}"
     );
     assert!(
-        c.contains("[profile.dev.package.\"kaski-render\"]\nopt-level = \"s\"\n"),
+        c.contains("[profile.dev.package.\"game-render\"]\nopt-level = \"s\"\n"),
         "{c}"
     );
-    assert!(!c.contains("kaski-web"), "{c}");
+    assert!(!c.contains("game-web"), "{c}");
     let doc = c.parse::<toml_edit::DocumentMut>().unwrap();
     assert_eq!(
-        doc["profile"]["dev"]["package"]["kaski-village"]["opt-level"].as_integer(),
+        doc["profile"]["dev"]["package"]["game-village"]["opt-level"].as_integer(),
         Some(3)
     );
     let r = render(&s, "release", None, None).unwrap();
     assert!(
-        r.contains("[profile.release.package.\"kaski-village\"]"),
+        r.contains("[profile.release.package.\"game-village\"]"),
         "{r}"
     );
     assert!(!r.contains("profile.dev"), "{r}");
@@ -73,10 +73,10 @@ fn each_member_gets_its_own_opt_level_under_the_profile_built() {
 
 #[test]
 fn a_name_that_is_no_member_is_left_out_of_the_cargo_config() {
-    let s = levels(&[("kaski-village", "3"), ("gone", "2")]);
-    let members = vec!["kaski-village".to_string(), "kaski-web".to_string()];
+    let s = levels(&[("game-village", "3"), ("gone", "2")]);
+    let members = vec!["game-village".to_string(), "game-web".to_string()];
     let c = render(&s, "dev", Some(&members), None).unwrap();
-    assert!(c.contains("kaski-village"), "{c}");
+    assert!(c.contains("game-village"), "{c}");
     assert!(!c.contains("gone"), "{c}");
     // Nothing left is no config, not a file of comments.
     let only_gone = levels(&[("gone", "2")]);
@@ -98,12 +98,12 @@ fn no_member_opt_level_means_no_cargo_config() {
 /// came into the file, or every recorded pass would stop standing.
 #[test]
 fn the_fingerprints_text_is_unchanged_by_debug_info() {
-    let s = levels(&[("kaski-village", "3")]);
+    let s = levels(&[("game-village", "3")]);
     assert_eq!(
-        render(&s, "dev", Some(&names(&["kaski-village"])), None).unwrap(),
+        render(&s, "dev", Some(&names(&["game-village"])), None).unwrap(),
         "# Written by `cargo mock test` for each run, from `[test.opt_level]` in\n\
              # mockspace.toml. Edits here are lost.\n\n\
-             [profile.dev.package.\"kaski-village\"]\nopt-level = 3\n"
+             [profile.dev.package.\"game-village\"]\nopt-level = 3\n"
     );
 }
 

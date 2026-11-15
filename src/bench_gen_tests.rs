@@ -153,7 +153,7 @@ fn generated_manifests_carry_the_workspace_header_and_the_feature() {
         toml.contains("features = [\"std\"]"),
         "bench-core needs std"
     );
-    let driver = driver_cargo_toml(DEFAULT_MOCKSPACE_DEP, &[]).unwrap();
+    let driver = driver_cargo_toml(DEFAULT_MOCKSPACE_DEP, &[], "mockspace-bench-driver-0").unwrap();
     assert!(driver.contains("[workspace]"));
     assert!(driver.contains("mockspace-bench-harness"));
 }
@@ -210,4 +210,30 @@ fn write_if_changed_is_idempotent() {
     write_if_changed(&p, "two").unwrap();
     assert_eq!(std::fs::read_to_string(&p).unwrap(), "two");
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Two trees' drivers never share a name, so building one into a target
+/// directory both use cannot replace the other's while it runs; one tree's
+/// name is stable across runs.
+#[test]
+fn every_tree_has_a_driver_name_of_its_own() {
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    assert_ne!(driver_name(a.path()), driver_name(b.path()));
+    assert_eq!(driver_name(a.path()), driver_name(a.path()));
+    assert!(driver_name(a.path()).starts_with("mockspace-bench-driver-"));
+    let toml = driver_cargo_toml(DEFAULT_MOCKSPACE_DEP, &[], &driver_name(a.path())).unwrap();
+    assert!(toml.contains(&format!("name = \"{}\"", driver_name(a.path()))), "{toml}");
+}
+
+/// While one run holds a tree's lock a second cannot take it, and it can once
+/// the first lets go.
+#[test]
+fn a_second_run_of_a_tree_waits_for_the_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let held = lock_tree(dir.path()).unwrap();
+    let other = std::fs::OpenOptions::new().write(true).open(dir.path().join(".run-lock")).unwrap();
+    assert!(matches!(other.try_lock(), Err(std::fs::TryLockError::WouldBlock)));
+    drop(held);
+    assert!(other.try_lock().is_ok());
 }

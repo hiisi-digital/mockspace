@@ -12,13 +12,15 @@
 //!
 //! `mock bench run` builds the arms into tool-owned target
 //! directories with the pinned release profile, generates and builds
-//! the driver, and spawns it. A consumer-owned `Cargo.toml` at the
-//! bench root is the escape hatch: it takes the whole run over and
-//! is built and located from cargo's own artifact records.
+//! the driver, and spawns it. The generated driver is the only runner:
+//! a tree carrying one of its own (a `Cargo.toml` at the bench root, or
+//! any crate in the tree with a binary of its own) is refused, here and
+//! by the `a-bench-runs-only-on-the-generated-driver` lint.
 //!
 //! `mock bench report` invokes the driver with `--report-only` to
-//! regenerate the report files from the cached samples without
-//! re-running the harness.
+//! render a report for any run that has none, from its samples, without re-running the
+//! harness. `mock bench migrate` moves results and history written in an
+//! older layout into the one layout, where the translation is one to one.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,7 +30,7 @@ use mockspace_bench_harness::config::BuildSection;
 use mockspace_bench_harness::tree as bench_tree;
 
 use crate::config::Config;
-use crate::{bench_gen, bench_rev, bench_variants};
+use crate::{bench_gen, bench_migrate, bench_rev, bench_variants};
 
 /// Splits one subcommand's argv into positional names and flags to
 /// forward, with one shared grammar rather than the two independent
@@ -103,6 +105,7 @@ pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
         "test" => cmd_test(cfg, &rest),
         "list" => cmd_list(cfg),
         "add" => cmd_add(cfg, &rest),
+        "migrate" => bench_migrate::cmd(cfg, &rest),
         "" => {
             print_help();
             ExitCode::SUCCESS
@@ -119,12 +122,14 @@ fn print_help() {
     eprintln!("mock bench. canonical bench framework commands");
     eprintln!();
     eprintln!("subcommands:");
-    eprintln!("  init    scaffold mock/benches/ in this consumer");
-    eprintln!("  run     build variants + bench binary, run the harness");
-    eprintln!("  report  regenerate findings.md from cached results");
-    eprintln!("  test    run cargo test in every crate under the bench tree");
-    eprintln!("  list    list benches, sizes, and variants from bench.toml");
-    eprintln!("  add     scaffold a new variant crate: mock bench add <name>");
+    eprintln!("  init     scaffold mock/benches/ in this consumer");
+    eprintln!("  run      build the arms and the generated driver, run the harness");
+    eprintln!("  report   render report.md for any run that has none");
+    eprintln!("  test     run cargo test in every crate under the bench tree");
+    eprintln!("  list     list benches, sizes, and variants from bench.toml");
+    eprintln!("  add      scaffold a new variant crate: mock bench add <name>");
+    eprintln!("  migrate  move results and history in an older layout into runs:");
+    eprintln!("           mock bench migrate [--machine-class <class>] [--dry-run]");
     eprintln!();
     eprintln!("`run` and `report` accept bench names to restrict the pass:");
     eprintln!("  mock bench run <name> [<name> ...]   run only the named benches");
@@ -137,13 +142,37 @@ fn print_help() {
     eprintln!("  <bench>/support/      this bench's library crates");
     eprintln!("  support/              library crates several benches share");
     eprintln!("  src/lib.rs            optional hooks() library");
-    eprintln!("  results/  history/    generated outputs (the driver is the only writer)");
+    eprintln!("  results/<bench>/<sweep>_n<point>/<machine class>/<run>/");
+    eprintln!("                        one run: samples.csv meta.json report.md summary.tsv");
     eprintln!();
-    eprintln!("the driver binary is generated from bench.toml; a consumer-owned");
-    eprintln!("Cargo.toml at the bench root takes the whole run over (escape hatch)");
+    eprintln!("a run is written once and never replaced; runs on other machines sit");
+    eprintln!("beside it, and a cell's history is its runs on the same machine class.");
+    eprintln!("the driver is generated from bench.toml and is the only runner: a");
+    eprintln!("Cargo.toml or a binary of your own in the tree is refused");
 }
 
 // ── run ──
+
+/// Refuse a tree that carries a runner of its own, naming each one and what
+/// to do instead. The same finding the `a-bench-runs-only-on-the-generated-driver`
+/// lint reports, asked of the same predicate.
+fn refuse_custom_runners(cfg: &Config, bench_dir: &Path) -> Result<(), ExitCode> {
+    let reading = mockspace_lint_rules::Reading::new(&cfg.repo_root);
+    let view = reading.view();
+    let runners = mockspace_lint_rules::bench_runners(&view, bench_dir);
+    if runners.is_empty() {
+        return Ok(());
+    }
+    for r in &runners {
+        eprintln!("error: {r}");
+    }
+    eprintln!(
+        "error: the generated driver is the only bench runner. Port what the runner \
+         above does into the bench tree's hooks library (`src/lib.rs`, `pub fn hooks()`) \
+         and its bench.toml files, then delete it."
+    );
+    Err(ExitCode::FAILURE)
+}
 
 fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
     let bench_dir = cfg.mock_dir.join("benches");
@@ -154,57 +183,21 @@ fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+    if let Err(code) = refuse_custom_runners(cfg, &bench_dir) {
+        return code;
+    }
+    bench_migrate::warn_if_legacy(&bench_dir);
 
     // Positional args are bench names: they restrict both the run
     // (forwarded as --only) and the variant builds. `--seed` takes its
     // following token as its value, per split_positional_and_flags.
     let (names, extra) = split_positional_and_flags(args, &["--seed"]);
-
-    // The escape hatch: a consumer-owned driver crate at the bench
-    // root drives the run exactly as before. Without one, the driver
-    // is generated from bench.toml.
-    if !bench_dir.join("Cargo.toml").exists() {
-        return run_generated(cfg, &bench_dir, &names, &extra, false);
-    }
-
-    let profile = consumer_tree_profile(&bench_dir);
-    let bin_path = match build_variants_and_bin(&bench_dir, &names, &profile) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return ExitCode::FAILURE;
-        },
-    };
-
-    let mut cmd = Command::new(&bin_path);
-    cmd.env(
-        mockspace_bench_harness::harness::BUILD_PROFILE_ENV,
-        profile_env_value(profile.iter().map(String::as_str)),
-    );
-    for n in &names {
-        cmd.args(["--only", n]);
-    }
-    for e in &extra {
-        cmd.arg(e);
-    }
-    let status = cmd.current_dir(&bench_dir).status();
-
-    match status {
-        Ok(s) if s.success() => ExitCode::SUCCESS,
-        Ok(s) => {
-            eprintln!("bench binary exited with {:?}", s.code());
-            ExitCode::FAILURE
-        },
-        Err(e) => {
-            eprintln!("error: failed to spawn {}: {e}", bin_path.display());
-            ExitCode::FAILURE
-        },
-    }
+    run_generated(cfg, &bench_dir, &names, &extra, false)
 }
 
 // ── report ──
 
-fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
+fn cmd_report(cfg: &Config, args: &[&str]) -> ExitCode {
     let bench_dir = cfg.mock_dir.join("benches");
     if !bench_dir.exists() {
         eprintln!(
@@ -213,47 +206,15 @@ fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-
-    if !bench_dir.join("Cargo.toml").exists() {
-        let names: Vec<&str> = _args
-            .iter()
-            .copied()
-            .filter(|a| !a.starts_with("--"))
-            .collect();
-        return run_generated(cfg, &bench_dir, &names, &["--report-only"], true);
+    if let Err(code) = refuse_custom_runners(cfg, &bench_dir) {
+        return code;
     }
-
-    let profile = consumer_tree_profile(&bench_dir);
-    let bin_path = match build_bin_only(&bench_dir, &profile) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return ExitCode::FAILURE;
-        },
-    };
-
-    let mut cmd = Command::new(&bin_path);
-    cmd.env(
-        mockspace_bench_harness::harness::BUILD_PROFILE_ENV,
-        profile_env_value(profile.iter().map(String::as_str)),
-    );
-    cmd.arg("--report-only");
-    for a in _args.iter().filter(|a| !a.starts_with("--")) {
-        cmd.args(["--only", a]);
-    }
-    let status = cmd.current_dir(&bench_dir).status();
-
-    match status {
-        Ok(s) if s.success() => ExitCode::SUCCESS,
-        Ok(s) => {
-            eprintln!("bench binary exited with {:?}", s.code());
-            ExitCode::FAILURE
-        },
-        Err(e) => {
-            eprintln!("error: failed to spawn {}: {e}", bin_path.display());
-            ExitCode::FAILURE
-        },
-    }
+    let names: Vec<&str> = args
+        .iter()
+        .copied()
+        .filter(|a| !a.starts_with("--"))
+        .collect();
+    run_generated(cfg, &bench_dir, &names, &["--report-only"], true)
 }
 
 /// How to describe the profile a `cargo test` run used, for the summary line.
@@ -294,7 +255,7 @@ fn describe_cargo_profile(extra: &[&str]) -> String {
 
 /// A bench tree is built from many small crates (arms, support
 /// libraries, an optional hooks lib), most of them path dependencies
-/// of the generated or consumer-owned driver rather than members of
+/// of the generated driver rather than members of
 /// any cargo workspace. `cargo test` run at the tree root therefore
 /// tests only the driver crate itself and reports its zero tests as
 /// a pass; the crates that actually carry assertions, typically the
@@ -323,6 +284,9 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+    if let Err(code) = refuse_custom_runners(cfg, &bench_dir) {
+        return code;
+    }
 
     // `--profile <name>` takes its following token as its value, per
     // split_positional_and_flags: without this, `mock bench test --profile
@@ -341,43 +305,38 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
     // one, and the walk alone reports "nothing to run" on a tree that
     // plainly has an arm in it. Write the same manifest `mock bench run`
     // would (never build it; `cargo test` builds what it needs), and
-    // fold it into the set to walk. Skipped entirely on the escape-hatch
-    // shape (a consumer-owned root `Cargo.toml`), since `bench_gen::plan`
-    // does not describe that tree and the walk above already found
-    // everything real in it.
-    if !bench_dir.join("Cargo.toml").is_file() {
-        if let Ok(plan) = bench_gen::plan(&bench_dir) {
-            let dep = bench_gen::mockspace_dep(&plan.manifest);
-            for arm in &plan.arms {
-                if arm.has_manifest {
-                    continue; // already on disk; the walk above found it
-                }
-                let toml = match bench_gen::arm_cargo_toml(arm, &dep, &plan.support) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        eprintln!(
-                            "error: generating a manifest for {}/arms/{}: {e}",
-                            arm.bench, arm.arm
-                        );
-                        return ExitCode::FAILURE;
-                    },
-                };
-                let gen_dir = bench_gen::arm_gen_dir(&cfg.mock_dir, arm);
-                if let Err(e) = bench_gen::write_if_changed(&gen_dir.join("Cargo.toml"), &toml) {
+    // fold it into the set to walk.
+    if let Ok(plan) = bench_gen::plan(&bench_dir) {
+        let dep = bench_gen::mockspace_dep(&plan.manifest);
+        for arm in &plan.arms {
+            if arm.has_manifest {
+                continue; // already on disk; the walk above found it
+            }
+            let toml = match bench_gen::arm_cargo_toml(arm, &dep, &plan.support) {
+                Ok(t) => t,
+                Err(e) => {
                     eprintln!(
                         "error: generating a manifest for {}/arms/{}: {e}",
                         arm.bench, arm.arm
                     );
                     return ExitCode::FAILURE;
-                }
-                manifests.push(gen_dir.join("Cargo.toml"));
+                },
+            };
+            let gen_dir = bench_gen::arm_gen_dir(&cfg.mock_dir, arm);
+            if let Err(e) = bench_gen::write_if_changed(&gen_dir.join("Cargo.toml"), &toml) {
+                eprintln!(
+                    "error: generating a manifest for {}/arms/{}: {e}",
+                    arm.bench, arm.arm
+                );
+                return ExitCode::FAILURE;
             }
+            manifests.push(gen_dir.join("Cargo.toml"));
         }
-        // A `plan` error (no bench declared anywhere, an invalid
-        // manifest) is not this command's to report a second time: the
-        // walk above already found whatever is really on disk, and if
-        // that is nothing, the refusal immediately below says so.
     }
+    // A `plan` error (no bench declared anywhere, an invalid
+    // manifest) is not this command's to report a second time: the
+    // walk above already found whatever is really on disk, and if
+    // that is nothing, the refusal immediately below says so.
     manifests.sort();
     manifests.dedup();
 
@@ -578,7 +537,7 @@ fn manifest_display(manifest: &Path, bench_dir: &Path, mock_dir: &Path) -> Strin
 ///
 /// **This does not stop descending at a found manifest.** A bench
 /// tree's own root carries a `Cargo.toml` (the driver bin crate, or
-/// the consumer-owned escape-hatch crate), and every arm and support
+/// a driver crate of the consumer's own, which `run` refuses), and every arm and support
 /// crate lives in a subdirectory of that same root, so stopping at
 /// the first manifest found finds only the driver and nothing it was
 /// meant to reach: a large real tree has one root manifest and ninety-four
@@ -655,39 +614,6 @@ fn parse_test_result_lines(stdout: &str) -> (u64, u64, u64) {
 
 // ── helpers ──
 
-/// The effective release profile for a **consumer-owned-driver** tree.
-///
-/// `[build]` reached only the generated path: `profile_args_for` had one
-/// production caller, inside `run_generated`, while every build on this path
-/// went through `build_argv`, which took no config and passed the framework
-/// constant. So a tree with its own driver could declare `opt-level = 0`,
-/// see no error, and be built at 3, with the run's own metadata then
-/// truthfully recording the 3 that was used and nothing recording that the
-/// declaration had been dropped. `BuildSection`'s doc promises the opposite:
-/// the values travel on the command line "where a manifest cannot silently
-/// drop them".
-///
-/// A tree with no `bench.toml` gets the framework defaults, which is the
-/// documented behaviour rather than a fallback. A `bench.toml` that exists
-/// and does not parse is reported, because defaulting silently on an
-/// unreadable declaration is the failure this function exists to remove.
-fn consumer_tree_profile(bench_dir: &Path) -> Vec<String> {
-    let path = bench_dir.join("bench.toml");
-    if !path.exists() {
-        return profile_args_for(None);
-    }
-    match mockspace_bench_harness::config::BenchManifest::load(&path) {
-        Ok(m) => profile_args_for(m.build.as_ref()),
-        Err(e) => {
-            eprintln!(
-                "warning: {} could not be read ({e}), so [build] could not be applied and the framework's default release profile is in use.",
-                path.display()
-            );
-            profile_args_for(None)
-        },
-    }
-}
-
 /// Every executable cargo reports building for `manifest`.
 ///
 /// Asked rather than guessed. The name was hardcoded to `benches`,
@@ -730,39 +656,6 @@ fn built_executables(manifest: &Path, stdout: &[u8]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The argv of every build this module runs.
-///
-/// One function so the profile cannot be passed on one path and
-/// forgotten on the other, and so a test can assert the flags are
-/// present without spawning cargo. They were previously written out
-/// at both call sites, where dropping them from both left every test
-/// green.
-fn build_argv(manifest: &Path, profile: &[String]) -> Vec<std::ffi::OsString> {
-    let mut argv: Vec<std::ffi::OsString> =
-        ["build", "--release", "--message-format=json-render-diagnostics"]
-            .iter()
-            .map(Into::into)
-            .collect();
-    argv.extend(profile.iter().map(Into::into));
-    argv.push("--manifest-path".into());
-    argv.push(manifest.as_os_str().to_owned());
-    argv
-}
-
-/// Run one cargo build and return its stdout for artifact parsing.
-fn cargo_build_json(manifest: &Path, what: &str, profile: &[String]) -> Result<Vec<u8>, String> {
-    let out = Command::new("cargo")
-        .args(build_argv(manifest, profile))
-        .output()
-        .map_err(|e| format!("spawning cargo for {what}: {e}"))?;
-    if !out.status.success() {
-        // Diagnostics are already rendered to stderr by
-        // `json-render-diagnostics`, so the consumer has seen them.
-        return Err(format!("cargo build failed for {what}"));
-    }
-    Ok(out.stdout)
-}
-
 /// Build the variant crates the named benches use, or every crate under
 /// `variants/` when `names` is empty, each into the target directory its
 /// `bench.toml` entries name, so the harness finds it where the entry says.
@@ -800,59 +693,6 @@ fn build_variants(bench_dir: &Path, names: &[&str], profile: &[String]) -> Resul
         }
     }
     Ok(())
-}
-
-fn build_variants_and_bin(bench_dir: &Path, names: &[&str], profile: &[String]) -> Result<PathBuf, String> {
-    build_variants(bench_dir, names, profile)?;
-    build_bin_only(bench_dir, profile)
-}
-
-/// Build the bench binary and return the path cargo says it wrote.
-///
-/// Building and locating are one step because they share an answer:
-/// the artifact record cargo emits during the build already carries
-/// the absolute path. Splitting them is what let the two drift, with
-/// the locator guessing a name and a directory the build never
-/// promised.
-fn build_bin_only(bench_dir: &Path, profile: &[String]) -> Result<PathBuf, String> {
-    let manifest = bench_dir.join("Cargo.toml");
-    if !manifest.exists() {
-        return Err(format!(
-            "{} not found; the scaffold may have been deleted",
-            manifest.display()
-        ));
-    }
-    eprintln!("  building bench binary...");
-    let stdout = cargo_build_json(&manifest, "bench binary", profile)?;
-    let mut bins = built_executables(&manifest, &stdout);
-    match bins.len() {
-        1 => Ok(bins.remove(0)),
-        0 => {
-            Err(format!(
-                "{} declares no binary target, so there is nothing to run. Add a [[bin]] \
-             section or a src/main.rs.",
-                manifest.display()
-            ))
-        },
-        _ => {
-            let names: Vec<String> = bins
-                .iter()
-                .map(|b| {
-                    b.file_name()
-                        .map(|f| f.to_string_lossy().into_owned())
-                        .unwrap_or_default()
-                })
-                .collect();
-            Err(format!(
-                "{} declares {} binary targets ({}), so which one drives the harness is \
-                 ambiguous. Leave one [[bin]] in the bench package and move the others \
-                 elsewhere.",
-                manifest.display(),
-                names.len(),
-                names.join(", ")
-            ))
-        },
-    }
 }
 
 /// The effective release-profile flags: the framework defaults with
@@ -915,14 +755,12 @@ fn profile_env_value<'a>(flags: impl IntoIterator<Item = &'a str>) -> String {
         .join(",")
 }
 
-/// One cargo build with explicit profile flags and an optional
-/// tool-owned target directory; returns stdout for artifact parsing.
-fn cargo_build_at(
-    manifest: &Path,
-    what: &str,
-    profile: &[String],
-    target_dir: Option<&Path>,
-) -> Result<Vec<u8>, String> {
+/// The argv of every build this module runs.
+///
+/// One function so the profile cannot be passed on one build and forgotten
+/// on another, and so a test can assert the flags are present without
+/// spawning cargo.
+fn build_argv(manifest: &Path, profile: &[String], target_dir: Option<&Path>) -> Vec<std::ffi::OsString> {
     let mut argv: Vec<std::ffi::OsString> =
         ["build", "--release", "--message-format=json-render-diagnostics"]
             .iter()
@@ -935,6 +773,18 @@ fn cargo_build_at(
     }
     argv.push("--manifest-path".into());
     argv.push(manifest.as_os_str().to_owned());
+    argv
+}
+
+/// One cargo build with explicit profile flags and an optional
+/// tool-owned target directory; returns stdout for artifact parsing.
+fn cargo_build_at(
+    manifest: &Path,
+    what: &str,
+    profile: &[String],
+    target_dir: Option<&Path>,
+) -> Result<Vec<u8>, String> {
+    let argv = build_argv(manifest, profile, target_dir);
     let out = Command::new("cargo")
         .args(argv)
         .output()
@@ -946,7 +796,7 @@ fn cargo_build_at(
 }
 
 /// Resolve exactly one built executable from a build's artifact
-/// records, with the same refusals as the legacy path.
+/// records.
 fn single_executable(manifest: &Path, stdout: &[u8], what: &str) -> Result<PathBuf, String> {
     let mut bins = built_executables(manifest, stdout);
     match bins.len() {
@@ -979,6 +829,14 @@ fn run_generated(
     extra: &[&str],
     report_only: bool,
 ) -> ExitCode {
+    // One run of a tree at a time, held until the driver exits.
+    let _tree_lock = match bench_gen::lock_tree(&bench_gen::driver_gen_dir(&cfg.mock_dir)) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("error: taking the bench tree's run lock: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
     let plan = match bench_gen::plan(bench_dir) {
         Ok(p) => p,
         Err(e) => {
@@ -1084,7 +942,7 @@ fn run_generated(
             .canonicalize()
             .unwrap_or_else(|_| hooks_lib.clone())
     });
-    let cargo_toml = match bench_gen::driver_cargo_toml(&dep, &plan.support) {
+    let cargo_toml = match bench_gen::driver_cargo_toml(&dep, &plan.support, &bench_gen::driver_name(bench_dir)) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("error: {e}");
@@ -1138,6 +996,9 @@ fn run_generated(
         mockspace_bench_harness::harness::BUILD_PROFILE_ENV,
         profile_env_value(profile.iter().map(String::as_str)),
     );
+    if let Some(commit) = crate::bench_commit::commit_marked(&cfg.repo_root, &cfg.mock_dir, bench_dir) {
+        cmd.env(crate::bench_commit::COMMIT_ENV, commit);
+    }
     for n in names {
         cmd.args(["--only", n]);
     }
@@ -1480,8 +1341,8 @@ const STARTER_ROOT_BENCH_TOML: &str = r#"# Bench tree globals. Each bench is a s
 #   members = ["**"]      # the default when the section is absent
 #   exclude = []
 #
-# A consumer-owned Cargo.toml at this root takes the whole run over
-# (the escape hatch for drivers the generator cannot express).
+# The driver is generated from these files and is the only runner: a
+# Cargo.toml or a src/main.rs of your own at this root is refused.
 
 [timing]
 passes = 4
@@ -1596,10 +1457,11 @@ driver binary is generated from `bench.toml` on every run.
   and the optional hooks library link.
 - `src/lib.rs` (optional): `pub fn hooks() -> Hooks` with any of
   `routine_for`, `after_cell`, `on_init`, `after_init`.
-- `results/<bench>/`: samples (CSV), meta, and reports per cell,
-  written transactionally. Safe to delete; a run regenerates it.
-- `history/<bench>/`: the append-only per-cell ledger (median, CI,
-  commit) that feeds regression detection. Tracked; never deleted.
+- `results/<bench>/<sweep>_n<point>/<machine class>/<run>/`: one
+  directory per run, holding `samples.csv`, `meta.json`, `report.md`
+  and `summary.tsv`. A run never replaces an earlier one, and runs on
+  different machines sit side by side. Tracked; the history of a cell
+  is its runs, which is what regression detection reads.
 
 ## Workflow
 
@@ -1610,14 +1472,14 @@ driver binary is generated from `bench.toml` on every run.
 4. `mock bench run [names...]` generates the driver, builds arms into
    tool-owned target directories with the pinned release profile, and
    measures. A bench name selects all its sweeps.
-5. `mock bench report` regenerates reports from cached samples.
+5. `mock bench report` renders a report for any run that has none.
 
-## Escape hatch
-
-A consumer-owned `Cargo.toml` (+ `src/main.rs`) at this root replaces
-the generated driver entirely; `mock bench run` builds and runs it
-instead. The library driver (`mockspace_bench_harness::driver`) keeps
-the same manifest semantics either way.
+The generated driver is the only runner. A driver of your own here is
+refused by `mock bench run` and by the lint
+`a-bench-runs-only-on-the-generated-driver`; anything it did belongs in
+the hooks library. Results in an older layout are refused by
+`bench-results-live-in-the-harness-layout`, and `mock bench migrate`
+moves the ones it can translate.
 "#;
 
 #[cfg(test)]
@@ -1704,7 +1566,7 @@ mod tests {
     fn find_crate_manifests_finds_nested_crates_and_skips_target() {
         let root = temp_mock("find-manifests");
         // The root itself carries a manifest, exactly as every real bench
-        // tree does (the generated or consumer-owned driver bin crate).
+        // tree with a runner of its own did (a driver bin crate at the root).
         // Omitting this is what let the "stop descending at a found
         // manifest" defect through: every fixture in the first version of
         // this test lacked the one file that triggers it. See
@@ -1843,7 +1705,6 @@ mod tests {
         let bench_dir = root.join("benches");
         std::fs::create_dir_all(&bench_dir).unwrap();
         std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
-        write_minimal_driver_crate(&bench_dir);
         std::fs::create_dir_all(bench_dir.join("support/no-tests-here/src")).unwrap();
         std::fs::write(
             bench_dir.join("support/no-tests-here/Cargo.toml"),
@@ -1875,7 +1736,6 @@ mod tests {
         let bench_dir = root.join("benches");
         std::fs::create_dir_all(&bench_dir).unwrap();
         std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
-        write_minimal_driver_crate(&bench_dir);
         std::fs::create_dir_all(bench_dir.join("support/real-crate")).unwrap();
         std::fs::write(
             bench_dir.join("support/real-crate/Cargo.toml"),
@@ -1891,6 +1751,32 @@ mod tests {
             "a filter matching no discovered crate must be refused rather than silently \
              running the whole tree"
         );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The refusal `run`, `report` and `test` each make first, asked directly:
+    /// a tree carrying a root driver crate is refused, and the control, the
+    /// same tree with the driver taken out and a hooks library and an arm in
+    /// its place, is not.
+    #[test]
+    fn a_root_driver_crate_is_refused_and_a_generated_tree_is_not() {
+        let root = temp_mock("refuses-root-driver");
+        let bench_dir = root.join("benches");
+        std::fs::create_dir_all(bench_dir.join("src")).unwrap();
+        std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
+        std::fs::write(bench_dir.join("src/lib.rs"), "pub fn hooks() {}\n").unwrap();
+        std::fs::create_dir_all(bench_dir.join("hash/arms/fnv/src")).unwrap();
+        std::fs::write(bench_dir.join("hash/arms/fnv/src/lib.rs"), "#![no_std]\n").unwrap();
+        let cfg = Config::from_dir(&root);
+        assert!(refuse_custom_runners(&cfg, &bench_dir).is_ok(), "the control: a tree the generated driver runs");
+
+        std::fs::write(
+            bench_dir.join("Cargo.toml"),
+            "[package]\nname = \"driver\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        std::fs::write(bench_dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+        assert!(refuse_custom_runners(&cfg, &bench_dir).is_err(), "a root driver crate");
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -2001,15 +1887,6 @@ mod tests {
         let bench_dir = root.join("benches");
         std::fs::create_dir_all(bench_dir.join("support/the-crate")).unwrap();
         std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
-        // The root driver manifest, present in every real tree (the
-        // generated driver or the consumer-owned escape hatch). Its
-        // absence here previously hid the fact that the walk stopped
-        // descending the moment it found a root manifest, since a fixture
-        // with none never exercised that branch. Needs a real target
-        // (write_minimal_driver_crate), not a name-only placeholder: a
-        // manifest cargo cannot build breaks every sibling crate's build
-        // too, since cargo walks up looking for a workspace root.
-        write_minimal_driver_crate(&bench_dir);
         for entry in ["Cargo.toml", "src"] {
             copy_recursive(
                 &source.join(entry),
@@ -2051,28 +1928,6 @@ mod tests {
         std::fs::remove_dir_all(&d).ok();
         std::fs::create_dir_all(&d).unwrap();
         d
-    }
-
-    /// A root driver `Cargo.toml` that actually builds, for fixtures whose
-    /// `cmd_test` call really invokes `cargo test`. A `[package]`-only
-    /// manifest with no `[lib]`/`[[bin]]` and no source file parses fine on
-    /// its own but makes `cargo` refuse it outright the moment anything
-    /// tries to build it ("no targets specified in the manifest"), and
-    /// because cargo walks up looking for a workspace root when it builds
-    /// a *sibling* crate too, that refusal is not contained to the root:
-    /// every crate under `bench_dir` fails to build until the root has a
-    /// real target. No `[workspace]` header, matching a real root
-    /// manifest exactly, which has none; adding
-    /// one here would make this directory try to claim its own
-    /// subdirectories as workspace members and refuse them for not being
-    /// declared, which is the "[workspace] header trap" the ergonomics
-    /// survey names and precisely the opposite failure from the one this
-    /// helper exists to avoid.
-    fn write_minimal_driver_crate(bench_dir: &Path) {
-        std::fs::create_dir_all(bench_dir.join("src")).unwrap();
-        let manifest = "[package]\nname = \"driver\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[[bin]]\nname = \"driver\"\npath = \"src/main.rs\"\n";
-        std::fs::write(bench_dir.join("Cargo.toml"), manifest).unwrap();
-        std::fs::write(bench_dir.join("src/main.rs"), "fn main() {}\n").unwrap();
     }
 
     fn success() -> String {
@@ -2261,7 +2116,7 @@ mod tests {
     /// and never reached a command.
     #[test]
     fn the_build_argv_carries_the_profile_and_the_json_format() {
-        let argv: Vec<String> = build_argv(Path::new("/x/Cargo.toml"), &profile_args_for(None))
+        let argv: Vec<String> = build_argv(Path::new("/x/Cargo.toml"), &profile_args_for(None), None)
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
@@ -2333,67 +2188,12 @@ mod tests {
         assert!(!desc.contains("debug"), "{desc}");
     }
 
-    /// A `[build]` override in a consumer-owned-driver tree reaches the
-    /// build argv.
-    ///
-    /// The regression: `build_argv` took no config and passed a constant,
-    /// and `profile_args_for` had one caller, in `run_generated`. So the
-    /// generated path honoured `[build]` and the consumer-owned path
-    /// silently ignored it. `BuildSection`'s own doc promises the values
-    /// travel "where a manifest cannot silently drop them"; on one of the
-    /// two paths they were dropped before they got there.
-    #[test]
-    fn a_build_override_reaches_the_argv_on_the_consumer_driver_path() {
-        let dir = std::env::temp_dir().join(format!("ms-build-ovr-{}", std::process::id()));
-        let _ = fs::create_dir_all(&dir);
-        fs::write(
-            dir.join("bench.toml"),
-            "[build]\nopt-level = 0\nlto = \"off\"\ncodegen-units = 16\n",
-        )
-        .expect("writing bench.toml");
-        let profile = consumer_tree_profile(&dir);
-        let argv: Vec<String> = build_argv(Path::new("/x/Cargo.toml"), &profile)
-            .iter()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        assert!(
-            argv.contains(&"profile.release.opt-level=0".to_string()),
-            "the declared override must reach the build: {argv:?}"
-        );
-        assert!(
-            !argv.contains(&"profile.release.opt-level=3".to_string()),
-            "the framework default must not survive alongside it: {argv:?}"
-        );
-        // And the record the driver receives must agree with what was built,
-        // or the artifact names a profile that was not used.
-        assert_eq!(
-            profile_env_value(profile.iter().map(String::as_str)),
-            "opt-level=0,lto=\"off\",codegen-units=16"
-        );
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// The control: with no `bench.toml` the framework defaults apply, so
-    /// the test above is detecting the override rather than detecting that
-    /// `consumer_tree_profile` returns something.
-    #[test]
-    fn a_tree_with_no_bench_toml_gets_the_framework_defaults() {
-        let dir = std::env::temp_dir().join(format!("ms-build-def-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        let _ = fs::create_dir_all(&dir);
-        let profile = consumer_tree_profile(&dir);
-        assert_eq!(
-            profile_env_value(profile.iter().map(String::as_str)),
-            "opt-level=3,lto=\"fat\",codegen-units=1"
-        );
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// The control for the test above: a value that is not passed
+    /// The control for `the_build_argv_carries_the_profile_and_the_json_format`:
+    /// a value that is not passed
     /// must not be reported as present, or the assertion is vacuous.
     #[test]
     fn the_build_argv_does_not_carry_a_profile_setting_we_never_pass() {
-        let argv: Vec<String> = build_argv(Path::new("/x/Cargo.toml"), &profile_args_for(None))
+        let argv: Vec<String> = build_argv(Path::new("/x/Cargo.toml"), &profile_args_for(None), None)
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();

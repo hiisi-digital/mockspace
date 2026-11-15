@@ -308,10 +308,10 @@ cooldowns_ms = [0, 100]
 #[test]
 fn report_from_csv_round_trip_emits_findings_md() {
     // #604: CSV cache to findings.md generator. Round-trip
-    // synthetic samples through `write_csv` then
+    // synthetic samples through `write_run` then
     // `report_from_csv`; assert the resulting markdown is non-
     // empty and carries the title from the call.
-    use mockspace_bench_harness::{report_from_csv, write_csv};
+    use mockspace_bench_harness::{report_from_csv, write_run};
     let tmp = std::env::temp_dir().join(format!(
         "mockspace_bench_csv_to_findings_{}",
         std::process::id()
@@ -327,8 +327,7 @@ fn report_from_csv_round_trip_emits_findings_md() {
         cache_path:  String::new(),
         report_path: String::new(),
     };
-    write_csv(&result, csv_path.to_str().expect("utf-8 path"))
-        .expect("write csv from synthetic result");
+    write_run(&result, &tmp, "20261115T000000Z-a").expect("write the run from synthetic result");
     report_from_csv(
         &csv_path,
         findings_path.to_str().expect("utf-8 path"),

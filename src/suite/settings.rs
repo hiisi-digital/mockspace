@@ -130,7 +130,7 @@ impl std::str::FromStr for OptLevel {
     }
 }
 
-/// Ten seconds: kaski's drawn tests start a Bevy app on a software Vulkan
+/// Ten seconds: a consumer's drawn tests start a Bevy app on a software Vulkan
 /// device and op saw one take about 160 seconds alone, while a test drawing
 /// nothing takes well under a second. A stand-in, since no per-test
 /// distribution has been taken yet; `research/202610091400_suite-selection.md`
@@ -139,7 +139,7 @@ pub const DEFAULT_HEAVY_AFTER_SECS: f64 = 10.0;
 /// One at a time. A software Vulkan device already spreads one frame over every
 /// core, so a second heavy test beside it mostly contends.
 pub const DEFAULT_HEAVY_THREADS: u32 = 1;
-/// Fifteen minutes: about five times the slowest drawn test kaski has run
+/// Fifteen minutes: about five times the slowest drawn test a consumer has run
 /// alone, so a test is killed for hanging rather than for being slow.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 900;
 
@@ -381,12 +381,12 @@ mod tests {
     /// spells them, so a number and its string are one level.
     #[test]
     fn a_member_carries_its_opt_level() {
-        let s = parse("[opt_level]\nkaski-village = 3\nkaski-render = \"s\"\nkaski-web = \"1\"\n")
+        let s = parse("[opt_level]\ngame-village = 3\ngame-render = \"s\"\ngame-web = \"1\"\n")
             .unwrap();
         let want: BTreeMap<String, OptLevel> = [
-            ("kaski-village", OptLevel::Three),
-            ("kaski-render", OptLevel::Size),
-            ("kaski-web", OptLevel::One),
+            ("game-village", OptLevel::Three),
+            ("game-render", OptLevel::Size),
+            ("game-web", OptLevel::One),
         ]
         .map(|(k, v)| (k.to_string(), v))
         .into();
@@ -409,8 +409,8 @@ mod tests {
     #[test]
     fn an_opt_level_cargo_would_refuse_is_refused_with_its_member() {
         for bad in ["4", "-1", "\"fast\"", "\"\""] {
-            let e = parse(&format!("[opt_level]\nkaski-village = {bad}\n")).unwrap_err();
-            assert!(e.contains("kaski-village"), "{bad}: {e}");
+            let e = parse(&format!("[opt_level]\ngame-village = {bad}\n")).unwrap_err();
+            assert!(e.contains("game-village"), "{bad}: {e}");
         }
     }
 

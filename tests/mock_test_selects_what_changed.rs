@@ -413,7 +413,7 @@ fn a_change_to_the_opt_levels_runs_what_passed_before() {
     assert!(ok && !t.contains("nothing to run"), "a level changed:\n{t}");
 }
 
-/// kaski's shape of the same failure: the heavy test lives in an example
+/// A consumer's shape of the same failure: the heavy test lives in an example
 /// binary, which the history remembers after the example is deleted.
 #[test]
 fn a_deleted_example_with_a_heavy_test_does_not_stop_the_next_run() {

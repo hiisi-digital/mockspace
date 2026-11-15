@@ -8,16 +8,18 @@
 //! Loads variant cdylibs in subprocess isolation, drives them with
 //! workload programs, collects per-batch samples, validates outputs
 //! across variants, runs Pareto + multi-dim analysis, and emits
-//! findings.md plus a CSV cache for historical comparison.
+//! each run's samples, meta, `report.md` and `summary.tsv` into a run directory
+//! of its own, which the history is read across.
 //!
 //! ## Two entry points, and only one of them validates
 //!
-//! [`driver::drive_spec`] (and its compat wrapper [`driver::drive`]) is the
-//! whole manifest-driven loop: it loads `mock/benches/bench.toml`, resolves
-//! every `(bench, size)` cell, runs the duplicate-disassembly check and
-//! [`validation::validate`] before any timing, drives the orchestrator, and
-//! writes the CSV, the findings file, the history ledger and the index. A
-//! consumer `main` shrinks to its registrations.
+//! [`driver::drive_spec`] is the whole manifest-driven loop, and the one
+//! runner: `mock bench run` generates the binary that calls it from
+//! `bench.toml`, and a consumer-owned driver is refused. It loads
+//! `mock/benches/bench.toml`, resolves every `(bench, size)` cell, runs the
+//! duplicate-disassembly check and [`validation::validate`] before any timing,
+//! drives the orchestrator, and writes each cell's run into its own directory
+//! under `results/` (see [`layout`]) and the index over them.
 //!
 //! [`run`] is the lower entry point: it takes one [`BenchConfig`] and calls
 //! [`harness::run_orchestrator`] directly. **It does not validate.** No
@@ -39,6 +41,7 @@
 mod test_ambient;
 
 pub use mockspace_bench_core as core;
+pub use mockspace_bench_layout as layout;
 
 pub mod analysis;
 pub mod cache;
@@ -104,30 +107,26 @@ pub use disasm::check_duplicates as check_disasm_duplicates;
 pub use driver::{
     AfterCell,
     CellVerdict,
-    DriverRegistry,
     DriverSpec,
     Hooks,
     InitContext,
     InitVerdict,
     RunPlan,
-    drive,
     drive_spec,
 };
 pub use env::{EnvMeta, collect_env_meta};
 pub use error::BenchError;
-pub use harness::{run_orchestrator, run_worker, run_worker_validate, write_csv};
+pub use harness::{run_orchestrator, run_worker, run_worker_validate, write_run};
 pub use history::{
-    DEFAULT_HISTORY_DIR,
     HistoryEntry,
     Regression,
-    append as append_history,
-    append_in as append_history_in,
     detect_regressions,
     detect_regressions_window,
     flagged_for as regression_flagged_for,
-    git_commit,
-    load as load_history,
-    load_in as load_history_in,
+    ledger_commit,
+    load_cell as load_cell_history,
+    parse_summary,
+    render_summary,
     timestamp,
 };
 pub use inline_bench::{InlineResult, InlineVariant, run_inline};
@@ -194,9 +193,7 @@ pub fn run(
 /// [`generate_report`], and write it to `path`.
 ///
 /// `mode` selects which subset of samples feeds the analysis.
-/// Mockspace consumers typically call this twice (once per mode) and
-/// emit `findings_warm.md` + `findings_cold.md`, or pick the mode
-/// most representative of their workload.
+/// The driver calls it once, for `"warm"`, writing the run's `report.md`.
 ///
 /// **Throughput tables**: this variant does not auto-fill
 /// `DataSet.meta.ops_per_call`, so the report skips the throughput /
@@ -205,12 +202,12 @@ pub fn run(
 pub fn write_report(result: &BenchResult, mode: &str, path: &str) -> Result<(), BenchError> {
     let ds = result.dataset(mode);
     let md = generate_report(&ds, &result.title);
-    std::fs::write(path, md).map_err(|e| BenchError::io("writing findings.md", e))?;
+    std::fs::write(path, md).map_err(|e| BenchError::io("writing report.md", e))?;
     Ok(())
 }
 
 /// Routine-aware [`write_report`]: auto-fills `meta.ops_per_call`
-/// from the [`RoutineSpec`] bridge so `findings.md` includes
+/// from the [`RoutineSpec`] bridge so the report includes
 /// throughput / Gops/s tables when the routine declares ops.
 pub fn write_report_for_routine(
     result: &BenchResult,
@@ -220,11 +217,11 @@ pub fn write_report_for_routine(
 ) -> Result<(), BenchError> {
     let ds = result.dataset_for_routine(routine, mode);
     let md = generate_report(&ds, &result.title);
-    std::fs::write(path, md).map_err(|e| BenchError::io("writing findings.md", e))?;
+    std::fs::write(path, md).map_err(|e| BenchError::io("writing report.md", e))?;
     Ok(())
 }
 
-/// Generate `findings.md` from a CSV cache file without re-running
+/// Generate a run's report from its `samples.csv` without re-running
 /// the orchestrator (#604: v1-parity bench findings markdown
 /// generator).
 ///
@@ -235,7 +232,7 @@ pub fn write_report_for_routine(
 ///
 /// The synthetic result carries the CSV path as its `cache_path`
 /// and an empty [`EnvMeta`]. Nothing in this crate reads the
-/// `.meta.json` sidecar back, so a report regenerated this way is
+/// run's `meta.json` back, so a report regenerated this way is
 /// missing the environment the run happened in, and it is missing
 /// the methodology too: `passes`, `runs_per_pass`, `batch_size`,
 /// `harness_runs`, `cooldowns_ms` and `master_seed` are not

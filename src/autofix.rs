@@ -749,7 +749,7 @@ mod tests {
     /// A landing merge staged the trunk's own file, written by somebody else and
     /// not in rustfmt's shape; the fixer reformatted it, the merge then added a
     /// change neither parent carried, and the phase gate refused the landing as
-    /// an authored source edit outside a changelist (kaski, 6 and 8 November).
+    /// an authored source edit outside a changelist (a consumer, 6 and 8 November).
     /// Mutation: `authored` returning `staged` whole, so the trunk's file is
     /// rewritten. The control: a file the merge resolved is still formatted.
     #[test]

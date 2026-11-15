@@ -22,7 +22,7 @@
 //! 4. `after_cell`: per cell, after the cell's samples, meta and
 //!    report are written into its staged output directory and the
 //!    validation drops are final. Staging is not yet promoted, and a
-//!    `Fail` verdict withholds the cell's history append outright,
+//!    `Fail` verdict withholds the cell's summary outright,
 //!    so a gated-out run cannot become the next run's regression
 //!    baseline. The staged artifacts still promote: they are the
 //!    evidence of what ran and why it was failed.

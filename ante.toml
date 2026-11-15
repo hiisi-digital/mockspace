@@ -36,6 +36,7 @@ include = [
   "src/**/*.rs",
   "lint-rules/src/**/*.rs",
   "bench-core/src/**/*.rs",
+  "bench-layout/src/**/*.rs",
   "bench-harness/src/**/*.rs",
   "bench-harness/build.rs",
   "bench-macro/src/**/*.rs",

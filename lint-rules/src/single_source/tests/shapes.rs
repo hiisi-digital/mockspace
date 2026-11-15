@@ -71,7 +71,7 @@ fn a_declaration_copied_into_a_second_crate_is_one_concept_defined_twice() {
 
 #[test]
 fn two_concepts_sharing_a_bare_name_are_not_one_finding() {
-    // The measured cases: kaski's `Frame` is a per-frame driver in one crate, what a camera frames in
+    // The measured cases: a consumer's `Frame` is a per-frame driver in one crate, what a camera frames in
     // a second, a published simulation frame in a third and a counter in a fourth.
     // Mutation: the shape ignored, which is the lint as it was and finds each of these.
     differ(

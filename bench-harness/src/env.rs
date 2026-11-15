@@ -5,7 +5,7 @@
 
 //! Environment metadata captured once per harness run.
 //!
-//! Recorded into the CSV cache alongside each sample so historical
+//! Recorded into each run's `meta.json` beside its samples so historical
 //! comparisons can isolate hardware / toolchain / commit drift.
 //! Round 1 ships the type and a stub collector that returns empty
 //! strings; Round 3 wires up the real `sysctl` / `/proc/cpuinfo` /
@@ -31,9 +31,9 @@ pub struct EnvMeta {
     /// `rust-toolchain.toml`.
     pub rustc:        String,
     /// Short git commit (`git rev-parse --short HEAD`) of the consumer, with a
-    /// `-dirty` suffix when `git status --porcelain` reports anything.
-    /// Empty when not in a git tree. Written to the `.meta.json` sidecar and
-    /// read by nothing in this crate.
+    /// `-dirty` suffix when a build input of the bench tree, tracked or new, differs
+    /// from it, as [`run_commit`] says. Empty when not in a git tree.
+    /// Written to the run's `meta.json`, and the commit its summary rows carry.
     pub git_commit:   String,
     /// Unix timestamp at run start (seconds since epoch).
     pub timestamp:    u64,
@@ -86,20 +86,21 @@ pub fn machine_class(f: &MachineFacts<'_>) -> String {
     )
 }
 
+/// The values `std::env::consts::OS` and `ARCH` take.
+const KNOWN_TOKENS: [&str; 54] = [
+    "linux", "macos", "windows", "freebsd", "netbsd", "openbsd", "dragonfly", "android",
+    "ios", "tvos", "watchos", "solaris", "illumos", "haiku", "redox", "fuchsia", "wasi",
+    "emscripten", "vxworks", "cygwin", "aix", "nto", "espidf", "horizon", "l4re", "hurd",
+    "x86", "x86_64", "arm", "aarch64", "arm64ec", "loongarch64", "m68k", "csky", "mips",
+    "mips64", "mips32r6", "mips64r6", "powerpc", "powerpc64", "riscv32", "riscv64", "s390x",
+    "sparc", "sparc64", "hexagon", "wasm32", "wasm64", "xtensa", "avr", "msp430", "nvptx64",
+    "bpf", "amdgpu",
+];
+
 /// The os or arch from a closed list, `other` for anything outside it, so free text
 /// (a hostname inside an os string) cannot reach the label.
 fn token(s: &str) -> &'static str {
-    // The values `std::env::consts::OS` and `ARCH` take.
-    const KNOWN: [&str; 54] = [
-        "linux", "macos", "windows", "freebsd", "netbsd", "openbsd", "dragonfly", "android",
-        "ios", "tvos", "watchos", "solaris", "illumos", "haiku", "redox", "fuchsia", "wasi",
-        "emscripten", "vxworks", "cygwin", "aix", "nto", "espidf", "horizon", "l4re", "hurd",
-        "x86", "x86_64", "arm", "aarch64", "arm64ec", "loongarch64", "m68k", "csky", "mips",
-        "mips64", "mips32r6", "mips64r6", "powerpc", "powerpc64", "riscv32", "riscv64", "s390x",
-        "sparc", "sparc64", "hexagon", "wasm32", "wasm64", "xtensa", "avr", "msp430", "nvptx64",
-        "bpf", "amdgpu",
-    ];
-    KNOWN.iter().copied().find(|k| *k == s).unwrap_or("other")
+    KNOWN_TOKENS.iter().copied().find(|k| *k == s).unwrap_or("other")
 }
 
 /// The CPU family from a brand string, from a closed list; `other` otherwise.
@@ -117,6 +118,30 @@ fn cpu_family(brand: &str) -> &'static str {
     } else {
         "other"
     }
+}
+
+/// Whether a machine class agrees with what an older meta recorded of the
+/// machine that ran it: the `uname -sr` it kept as `os` and the CPU brand it
+/// kept as `cpu`. The class's os token must be the one that `uname` name
+/// means, where it means one this knows, and its cpu family the one the brand
+/// reduces to. Used to check a class a person supplies for results whose meta
+/// predates the class, so a wrong one is refused rather than written into the
+/// path.
+#[must_use]
+pub fn class_agrees_with(class: &str, uname_os: &str, cpu_brand: &str) -> bool {
+    let parts: Vec<&str> = class.split('-').collect();
+    if parts.len() != 5 {
+        return false;
+    }
+    let os = match uname_os.split_whitespace().next().unwrap_or("") {
+        "Darwin" => Some("macos"),
+        "Linux" => Some("linux"),
+        "FreeBSD" => Some("freebsd"),
+        "NetBSD" => Some("netbsd"),
+        "OpenBSD" => Some("openbsd"),
+        _ => None,
+    };
+    os.is_none_or(|os| parts[0] == os) && (cpu_brand.is_empty() || parts[4] == cpu_family(cpu_brand))
 }
 
 /// The first field of `/proc/loadavg` (`0.52 0.58 0.59 1/467 12345`).
@@ -198,21 +223,25 @@ pub fn collect_env_meta() -> EnvMeta {
         cpu,
         os:           collect_os(),
         rustc:        collect_rustc(),
-        git_commit:   collect_git_commit_marked(),
+        git_commit:   run_commit(),
         timestamp:    collect_timestamp(),
         counter_freq: mockspace_bench_core::counter::counter_frequency(),
     }
 }
 
-/// The short commit, with `-dirty` when the tree has uncommitted changes, so a
-/// number stays traceable to an exact source state and not a nearby commit.
-/// Empty outside a git tree.
+/// The short commit, with `-dirty` when a tracked file in the tree differs
+/// from it. Empty outside a git tree.
+///
+/// Untracked files never count: a file git does not track is not part of the
+/// commit, whether it is a run's own output or a generated file a repository
+/// forgot to ignore. A bench run spawned by `mock bench run` takes the narrower mark the tool
+/// hands it, [`run_commit`].
 #[must_use]
 pub fn collect_git_commit_marked() -> String {
     let mut c = collect_git_commit();
     if !c.is_empty() {
         let dirty = std::process::Command::new("git")
-            .args(["status", "--porcelain"])
+            .args(["status", "--porcelain", "--untracked-files=no"])
             .output()
             .map(|o| !o.stdout.is_empty())
             .unwrap_or(false);
@@ -221,6 +250,26 @@ pub fn collect_git_commit_marked() -> String {
         }
     }
     c
+}
+
+/// The environment variable `mock bench run` sets on the driver it spawns:
+/// the commit the run measured, with `-dirty` only when a file, tracked or new, the
+/// bench tree is built from differed from it. The tool judges that, since it
+/// is what knows the tree's build inputs (the files under the bench tree less
+/// its outputs, every crate a bench manifest reaches by path, and the
+/// workspace's own manifests, lockfiles, toolchain pin and cargo
+/// configuration).
+pub const COMMIT_ENV: &str = "MOCKSPACE_BENCH_COMMIT";
+
+/// The commit a bench run records: the one `mock bench run` handed the driver
+/// in [`COMMIT_ENV`], or, for a driver run by hand, the tree's commit marked
+/// dirty by any tracked change ([`collect_git_commit_marked`]).
+#[must_use]
+pub fn run_commit() -> String {
+    std::env::var(COMMIT_ENV)
+        .ok()
+        .filter(|c| !c.trim().is_empty())
+        .unwrap_or_else(collect_git_commit_marked)
 }
 
 /// Only what a test run's rows carry: machine class, cpus, load and the time.
@@ -368,5 +417,44 @@ mod tests {
     fn an_arch_outside_the_x86_and_arm_families_is_not_pooled_with_them() {
         let f = MachineFacts { arch: "powerpc64", ..facts("x") };
         assert!(machine_class(&f).contains("-powerpc64-"));
+    }
+
+    /// A class handed in for an older meta is checked against what that meta
+    /// kept: the M1 results carry `Darwin` and `Apple M1`, so a macOS Apple
+    /// class agrees and a Linux one, or an Intel one, does not.
+    #[test]
+    fn a_supplied_class_must_agree_with_the_os_and_cpu_the_meta_kept() {
+        assert!(class_agrees_with("macos-aarch64-c8-bare-apple", "Darwin 25.6.0", "Apple M1"));
+        assert!(!class_agrees_with("linux-aarch64-c8-bare-apple", "Darwin 25.6.0", "Apple M1"));
+        assert!(!class_agrees_with("macos-aarch64-c8-bare-intel", "Darwin 25.6.0", "Apple M1"));
+        assert!(!class_agrees_with("macos-aarch64-c8-bare", "Darwin 25.6.0", "Apple M1"));
+        assert!(class_agrees_with("linux-x86_64-c4-container-intel", "Linux 6.18", "Intel(R) Xeon(R)"));
+    }
+
+    /// Every label the harness can compute is a class the layout accepts as a
+    /// directory name, over every os and arch token (and one outside the
+    /// list), every cpu family, both container flags and every core bucket:
+    /// zero and each power of two and the count just past it, up to 4097.
+    #[test]
+    fn every_label_the_harness_computes_is_a_class_the_layout_accepts() {
+        let brands = ["Apple M1", "Intel(R) Xeon(R)", "AMD EPYC 7B13", "Neoverse-N1", "Mystery CPU"];
+        let tokens: Vec<&str> = KNOWN_TOKENS.iter().copied().chain(["not-a-token"]).collect();
+        let cpus: Vec<u64> = std::iter::once(0).chain((0 .. 13).flat_map(|k| [1u64 << k, (1u64 << k) + 1])).collect();
+        let mut checked = 0usize;
+        for os in &tokens {
+            for arch in &tokens {
+                for brand in brands {
+                    for container in [false, true] {
+                        for &n in &cpus {
+                            let f = MachineFacts { os, arch, cpus: n, container, cpu_brand: brand };
+                            let label = machine_class(&f);
+                            assert!(mockspace_bench_layout::is_machine_class(&label), "{label}");
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(checked, 55 * 55 * 5 * 2 * 27);
     }
 }

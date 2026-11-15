@@ -76,7 +76,7 @@ fn every_workspace_input_moves_the_digest_at_both_bases() {
     }
 }
 
-/// kaski's support crates depend on workspace members by path. A broken member
+/// a consumer's support crates depend on workspace members by path. A broken member
 /// has to run the benches again.
 #[test]
 fn a_path_dependency_of_a_bench_crate_moves_the_digest() {

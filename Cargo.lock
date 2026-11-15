@@ -267,11 +267,17 @@ version = "0.0.0"
 dependencies = [
  "libloading",
  "mockspace-bench-core",
+ "mockspace-bench-layout",
  "mockspace-manifest",
  "serde",
+ "serde_json",
  "sha2",
  "toml",
 ]
+
+[[package]]
+name = "mockspace-bench-layout"
+version = "0.0.0"
 
 [[package]]
 name = "mockspace-bench-macro"
@@ -297,6 +303,7 @@ dependencies = [
 name = "mockspace-lint-rules"
 version = "0.0.0"
 dependencies = [
+ "mockspace-bench-layout",
  "mockspace-manifest",
  "mockspace-verdicts",
  "tempfile",

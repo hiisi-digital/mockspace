@@ -5,22 +5,22 @@
 
 //! Historical trend tracking and regression detection.
 //!
-//! Append-only log of benchmark results: each run appends a record
-//! with timestamp, git commit, variant, N, mode, median, CI bounds.
-//! [`detect_regressions`] reads the log and flags entries where the
-//! current CI does not overlap the historical baseline.
+//! A cell's history is its runs. Each run directory carries a
+//! [`SUMMARY_FILE`](mockspace_bench_layout::SUMMARY_FILE) of per-variant
+//! medians and confidence intervals, written once with the run, and
+//! [`load_cell`] reads them back across every run of the cell on one machine
+//! class. There is no ledger appended to in place: two machines' runs are two
+//! sets of files that merge without touching each other, and a machine's
+//! timings are never compared against another's.
+//! [`detect_regressions`] flags entries whose current CI does not overlap the
+//! historical baseline.
 
-use std::io::{BufRead, Write};
 use std::path::Path;
 
-use crate::error::BenchError;
-
-/// Default history-log root, relative to cwd. Override via
-/// [`append_in`] / [`load_in`] for non-cwd workflows.
-pub const DEFAULT_HISTORY_DIR: &str = ".bench_history";
+use mockspace_bench_layout::{Cell, SUMMARY_FILE, SUMMARY_HEADER};
 
 /// One historical data point.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct HistoryEntry {
     pub timestamp:  u64,
     pub git_commit: String,
@@ -33,40 +33,13 @@ pub struct HistoryEntry {
     pub ci_hi_ns:   f64,
 }
 
-const SCHEMA_HEADER: &str = "# schema_v1\ttimestamp\tgit_commit\tbenchmark\tvariant\tn\tmode\tmedian_ns\tci_lo_ns\tci_hi_ns";
-
-/// Append entries to the history log under
-/// [`DEFAULT_HISTORY_DIR`]`/<benchmark>.tsv` relative to cwd. Writes
-/// the schema header if the file is new or empty. Use
-/// [`append_in`] to override the root.
-pub fn append(benchmark: &str, entries: &[HistoryEntry]) -> Result<(), BenchError> {
-    append_in(Path::new(DEFAULT_HISTORY_DIR), benchmark, entries)
-}
-
-/// Append entries to a history log rooted at `root`.
-pub fn append_in(root: &Path, benchmark: &str, entries: &[HistoryEntry]) -> Result<(), BenchError> {
-    std::fs::create_dir_all(root).map_err(|e| BenchError::io("creating history dir", e))?;
-    let path = root.join(format!("{}.tsv", benchmark));
-
-    let is_new = std::fs::metadata(&path)
-        .map(|m| m.len() == 0)
-        .unwrap_or(true);
-
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| BenchError::io("opening history file", e))?;
-
-    if is_new {
-        writeln!(file, "{}", SCHEMA_HEADER)
-            .map_err(|e| BenchError::io("writing history schema header", e))?;
-    }
-
+/// A run's summary file: the schema header, then one row per entry.
+#[must_use]
+pub fn render_summary(entries: &[HistoryEntry]) -> String {
+    let mut out = format!("{SUMMARY_HEADER}\n");
     for e in entries {
-        writeln!(
-            file,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}",
+        out.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\n",
             e.timestamp,
             e.git_commit,
             e.benchmark,
@@ -76,30 +49,17 @@ pub fn append_in(root: &Path, benchmark: &str, entries: &[HistoryEntry]) -> Resu
             e.median_ns,
             e.ci_lo_ns,
             e.ci_hi_ns
-        )
-        .map_err(|e| BenchError::io("writing history entry", e))?;
+        ));
     }
-    Ok(())
+    out
 }
 
-/// Load all history for a benchmark from
-/// [`DEFAULT_HISTORY_DIR`]`/<benchmark>.tsv` relative to cwd. Missing
-/// log file yields an empty vector (not an error). Comment / header
-/// lines are skipped. Use [`load_in`] to override the root.
-pub fn load(benchmark: &str) -> Vec<HistoryEntry> {
-    load_in(Path::new(DEFAULT_HISTORY_DIR), benchmark)
-}
-
-/// Load history for a benchmark from a log rooted at `root`.
-pub fn load_in(root: &Path, benchmark: &str) -> Vec<HistoryEntry> {
-    let path = root.join(format!("{}.tsv", benchmark));
-    let file = match std::fs::File::open(&path) {
-        Ok(f) => f,
-        Err(_) => return Vec::new(),
-    };
-
+/// The rows of a summary file, or of an old ledger, which has the same schema.
+/// Comment and header lines are skipped, and so is a row with too few fields.
+#[must_use]
+pub fn parse_summary(text: &str) -> Vec<HistoryEntry> {
     let mut entries = Vec::new();
-    for line in std::io::BufReader::new(file).lines().flatten() {
+    for line in text.lines() {
         if line.starts_with('#') {
             continue;
         }
@@ -119,6 +79,30 @@ pub fn load_in(root: &Path, benchmark: &str) -> Vec<HistoryEntry> {
         }
     }
     entries
+}
+
+/// Every summary row of one cell on one machine class, across its runs, oldest
+/// run first. Runs on other machine classes are not read: a timing is compared
+/// only with timings taken on the same class of machine. A run with no summary
+/// (one an `after_cell` hook failed) contributes nothing.
+#[must_use]
+pub fn load_cell(results_root: &Path, bench: &str, cell: &Cell, machine: &str) -> Vec<HistoryEntry> {
+    mockspace_bench_layout::runs(results_root)
+        .into_iter()
+        .filter(|r| r.bench == bench && &r.cell == cell && r.machine == machine)
+        .filter_map(|r| std::fs::read_to_string(r.dir.join(SUMMARY_FILE)).ok())
+        .flat_map(|text| parse_summary(&text))
+        .collect()
+}
+
+/// The commit a summary row records: the run's marked commit, or `unknown`
+/// where there was none, never an empty field.
+#[must_use]
+pub fn ledger_commit(commit: &str) -> String {
+    match commit.trim() {
+        "" => "unknown".to_string(),
+        c => c.to_string(),
+    }
 }
 
 /// One variant's standing against its own history, for one cell.
@@ -241,27 +225,6 @@ pub fn detect_regressions_window(
     results
 }
 
-/// Get the current short git commit hash for the consumer's working
-/// directory. Returns `"unknown"` outside a git tree.
-///
-/// The exit status is checked. `git rev-parse` outside a tree exits 128 with an
-/// empty stdout, and `Command::output()` reports spawning it as success, so the
-/// unchecked form wrote an empty string into the ledger as the commit a
-/// measurement was taken at.
-pub fn git_commit() -> String {
-    let out = match std::process::Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .output()
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return "unknown".into(),
-    };
-    match String::from_utf8(out.stdout) {
-        Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
-        _ => "unknown".into(),
-    }
-}
-
 /// Current timestamp as Unix epoch seconds.
 pub fn timestamp() -> u64 {
     std::time::SystemTime::now()
@@ -373,17 +336,46 @@ mod tests {
         assert!(detect_regressions(&current, &other).is_empty());
     }
 
-    /// The doc says `git_commit` returns `"unknown"` outside a git tree. `git`
-    /// exits 128 there and prints nothing to stdout, and `.output().ok()`
-    /// reports that as success, so the empty stdout was trimmed into `""` and
-    /// written into the ledger as the commit.
+    /// The run's commit is the one its rows record, and a run with none (taken
+    /// outside a git tree) records `unknown` rather than an empty field, which a
+    /// reader would take as the commit a measurement was taken at.
     #[test]
     fn the_commit_is_never_recorded_as_an_empty_string() {
-        let c = git_commit();
-        assert!(
-            !c.is_empty(),
-            "git_commit returned an empty string; the ledger records it as the \
-             commit a measurement was taken at"
-        );
+        assert_eq!(ledger_commit(""), "unknown");
+        assert_eq!(ledger_commit("  "), "unknown");
+        assert_eq!(ledger_commit("abc1234-dirty"), "abc1234-dirty");
+    }
+
+    #[test]
+    fn a_summary_round_trips_and_skips_its_header() {
+        let rows = vec![entry("fnv1a", "warm", 7, 100.0, 98.0, 102.0)];
+        let text = render_summary(&rows);
+        assert!(text.starts_with("# schema_v1\t"), "{text}");
+        assert_eq!(parse_summary(&text), rows);
+    }
+
+    /// History is read across runs of one machine class only: a run on another
+    /// class, or of another cell, never becomes this cell's baseline.
+    #[test]
+    fn a_cell_s_history_is_its_runs_on_one_machine_class() {
+        let root = std::env::temp_dir().join(format!("mockspace-history-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let cell = Cell { sweep: "hash".into(), n: 64 };
+        let other_cell = Cell { sweep: "hash".into(), n: 128 };
+        let here = "linux-x86_64-c4-bare-amd";
+        let there = "macos-aarch64-c8-bare-apple";
+        let put = |cell: &Cell, machine: &str, run: &str, ts: u64| {
+            let dir = root.join(mockspace_bench_layout::run_rel("hash", cell, machine, run));
+            std::fs::create_dir_all(&dir).unwrap();
+            let rows = [entry("fnv1a", "warm", ts, 100.0, 98.0, 102.0)];
+            std::fs::write(dir.join(SUMMARY_FILE), render_summary(&rows)).unwrap();
+        };
+        put(&cell, here, "20261114T000000Z-a", 1);
+        put(&cell, here, "20261115T000000Z-b", 2);
+        put(&cell, there, "20261115T000000Z-b", 3);
+        put(&other_cell, here, "20261115T000000Z-b", 4);
+        let stamps: Vec<u64> = load_cell(&root, "hash", &cell, here).iter().map(|e| e.timestamp).collect();
+        assert_eq!(stamps, [1, 2]);
+        std::fs::remove_dir_all(&root).ok();
     }
 }

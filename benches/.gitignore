@@ -1,6 +1,2 @@
 # Bench harness outputs (regenerated on every run).
-*.csv
-*.meta.json
-*_findings.md
-*_meta_findings.md
-*.tsv
+out/

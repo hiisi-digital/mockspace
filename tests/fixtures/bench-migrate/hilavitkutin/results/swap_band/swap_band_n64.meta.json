@@ -1,0 +1,1 @@
+{"cpu":"Apple M1","os":"Darwin 25.6.0","rustc":"rustc 1.98.0-nightly (57d06900f 2026-05-27)","git_commit":"266650fb-dirty","timestamp":1794698888,"counter_freq":24000000,"framework":"mockspace-bench-harness","build_profile":"opt-level=3,lto=\"fat\",codegen-units=1"}

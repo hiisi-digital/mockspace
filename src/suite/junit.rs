@@ -208,9 +208,9 @@ mod tests {
 
     #[test]
     fn a_binary_belongs_to_the_package_before_its_separator() {
-        assert_eq!(package_of("kaski-render"), "kaski-render");
-        assert_eq!(package_of("kaski-web::drawn"), "kaski-web");
-        assert_eq!(package_of("kaski-web::bin/page"), "kaski-web");
+        assert_eq!(package_of("game-render"), "game-render");
+        assert_eq!(package_of("game-web::drawn"), "game-web");
+        assert_eq!(package_of("game-web::bin/page"), "game-web");
     }
 
     #[test]

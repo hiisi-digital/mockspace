@@ -75,8 +75,11 @@ fn main() -> ExitCode {
                 bridge: routine_bridge!(HashMix),
             };
 
-            let csv_path = format!("{}_n{}.csv", bench_name, config.n);
-            let report_path = format!("{}_n{}_findings.md", bench_name, config.n);
+            // Scratch output of this self-test, replaced on every run; a
+            // consumer's runs go through the generated driver instead.
+            let out_dir = Path::new("out").join(format!("{}_n{}", bench_name, config.n));
+            let csv_path = out_dir.join(harness::layout::SAMPLES_FILE).display().to_string();
+            let report_path = out_dir.join(harness::layout::REPORT_FILE).display().to_string();
 
             if report_only {
                 let samples = match harness::load_samples_csv(Path::new(&csv_path)) {
@@ -119,8 +122,9 @@ fn main() -> ExitCode {
                         return ExitCode::FAILURE;
                     },
                 };
-                if let Err(e) = harness::write_csv(&result, &csv_path) {
-                    eprintln!("error: writing csv: {e}");
+                let _ = std::fs::remove_dir_all(&out_dir);
+                if let Err(e) = harness::write_run(&result, &out_dir, "self-bench") {
+                    eprintln!("error: writing the run: {e}");
                     return ExitCode::FAILURE;
                 }
                 if let Err(e) =

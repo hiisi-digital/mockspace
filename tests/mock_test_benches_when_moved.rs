@@ -11,7 +11,7 @@
 //! with nothing changed alike. The tree here is the one `mock bench init`
 //! makes: a root `bench.toml`, a bench with a `bench.toml`, a manifest-less arm
 //! and a support crate that depends on a workspace crate by path, the way
-//! kaski's do. The assertions are on the `=== benches` header, which is printed
+//! consumers' trees do. The assertions are on the `=== benches` header, which is printed
 //! exactly when the tree is run, on the note printed when it is left out, and
 //! on the last line of the run.
 //!

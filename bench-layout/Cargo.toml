@@ -1,0 +1,18 @@
+[package]
+name = "mockspace-bench-layout"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Where the mockspace bench harness keeps every run it measures, as one path grammar the harness, the tool and the lints share"
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+readme = "README.md"
+keywords = ["benchmarking", "mockspace"]
+categories = ["development-tools", "development-tools::profiling"]
+
+# No dependencies, on purpose: the lint pack links this into every consumer's
+# generated lint cdylib, and the harness and the tool link it too.
+
+[lib]
+name = "mockspace_bench_layout"
+path = "src/lib.rs"

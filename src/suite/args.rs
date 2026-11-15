@@ -211,7 +211,7 @@ mod tests {
             "--full",
             "--no-cache",
             "-p",
-            "kaski-web",
+            "game-web",
             "--features",
             "editor",
             "--release",
@@ -220,7 +220,7 @@ mod tests {
             "drawn",
         ]);
         assert_eq!((i.mode, i.cache), (Mode::Full, false));
-        assert_eq!(i.packages, vec!["kaski-web"]);
+        assert_eq!(i.packages, vec!["game-web"]);
         assert_eq!(i.passed, vec!["--features", "editor", "--release"]);
         assert_eq!(i.test_args, vec!["--skip", "drawn"]);
         assert!(i.narrowed(), "a test filter after `--` narrows the run");
