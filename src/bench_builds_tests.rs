@@ -76,6 +76,19 @@ fn is_bench_core_rlib(name: &str) -> bool {
     name.starts_with("libmockspace_bench_core-") && name.ends_with(".rlib")
 }
 
+/// Copies of the shared dependency built from this checkout's sources: its
+/// dependency record names the path, so another checkout building beside this
+/// test in the same target is not counted.
+fn bench_core_copies(roots: &[&Path]) -> usize {
+    let repo = env!("CARGO_MANIFEST_DIR");
+    found(roots, &is_bench_core_rlib)
+        .iter()
+        .filter(|rlib| {
+            std::fs::read_to_string(rlib.with_extension("d")).is_ok_and(|d| d.contains(repo))
+        })
+        .count()
+}
+
 /// Whether `name` is something cargo wrote for one of `crates` (crate names with
 /// underscores): an artifact, a dependency record or a fingerprint directory.
 fn is_a_build_of(name: &str, crates: &[String]) -> bool {
@@ -131,7 +144,7 @@ fn a_run_leaves_no_arm_or_driver_build_and_compiles_the_shared_dependency_once()
 
     let own_target = mock_dir.join("target");
     let shared = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or(own_target.clone());
-    let before = found(&[&shared], &is_bench_core_rlib).len();
+    let before = bench_core_copies(&[&shared]);
 
     let cfg = crate::config::Config::from_dir(&mock_dir);
     let code = crate::bench::cmd(&cfg, &["run"]);
@@ -158,7 +171,7 @@ fn a_run_leaves_no_arm_or_driver_build_and_compiles_the_shared_dependency_once()
     // the shared dependency: every copy of it, in the fixture and the shared
     // target, new to this run. One compile means one new copy at most; the old
     // layout made one for each arm target and one for the driver's target.
-    let after = found(&[root, &shared], &is_bench_core_rlib).len();
+    let after = bench_core_copies(&[root, &shared]);
     let new_copies = after.saturating_sub(before);
     assert!(new_copies <= 1, "{new_copies} copies of the shared dependency were compiled by one run");
 }
@@ -273,6 +286,8 @@ fn a_sweep_removes_a_hashless_arm_and_leaves_a_dependency_of_the_same_crate_name
     assert!(!release.join("deps").join("a.d").exists(), "the arm's record");
     let deps = entries(&release.join("deps"), &|n| n.starts_with("a-") || n.starts_with("liba-"));
     assert_eq!(deps.len(), 3, "the dependency's record, rlib and rmeta stay: {deps:?}");
+    let fingerprints = entries(&release.join(".fingerprint"), &|n| n.starts_with("a-"));
+    assert_eq!(fingerprints.len(), 2, "the arm's fingerprint directory stays and so does the dependency's: {fingerprints:?}");
 }
 
 /// A binary's file names carry the metadata hash, so the files of its stem and

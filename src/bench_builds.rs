@@ -18,6 +18,14 @@
 //! A cdylib has no hash in its file name, so `release/lib<arm>.so` is the same
 //! path for every arm of that name in every tree sharing the target. A package
 //! whose uplifted file now is one this run did not write is left alone.
+//!
+//! Two limits of that guard. A build outside the run that writes the same path
+//! after cargo exits and before the file's inode is recorded here would be taken
+//! for this run's own, and swept with it: the window is the span between one
+//! `cargo build` returning and `record` or `link_arm` reading the file, the
+//! run holds the tree lock throughout, and another tree's run is not covered by
+//! it. Off unix a file has no identity here, so nothing can be told apart and the
+//! sweep removes no file at all: the builds stay for the next run.
 
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -164,6 +172,10 @@ impl Builds {
     /// and, where that name carries cargo's metadata hash, the other files of the
     /// stem and the fingerprint directory of the hash.
     fn remove(b: &Built) {
+        // off unix there is no file identity: leave every file, as for a foreign one
+        if !cfg!(unix) {
+            return;
+        }
         let ids: Vec<FileId> = b.files.iter().filter_map(|(_, id)| *id).collect();
         for (path, _) in &b.files {
             let Some(profile) = path.parent() else { continue };
