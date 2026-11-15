@@ -289,7 +289,7 @@ fn partial_extraction_failure_still_reports_dupes_found_among_the_rest() {
 // the skip path is not expected to trigger in normal use.
 
 fn scratch_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
+    let dir = mockspace_manifest::scratch::root().join(format!(
         "mockspace_bench_disasm_test_{}_{}",
         std::process::id(),
         name

@@ -184,7 +184,7 @@ mod tests {
             // existing directory, so two tests starting in the same tick shared a
             // scratch directory and overwrote each other's fixtures.
             static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let root = std::env::temp_dir().join(format!(
+            let root = mockspace_manifest::scratch::root().join(format!(
                 "fmtonly-{}-{}-{}",
                 name,
                 std::process::id(),

@@ -128,7 +128,7 @@ fn sources_and_notes_are_not_outputs() {
 
 #[test]
 fn runs_are_found_oldest_first_and_odd_directories_are_passed_over() {
-    let root = std::env::temp_dir().join(format!("bench-layout-runs-{}", std::process::id()));
+    let root = mockspace_manifest::scratch::root().join(format!("bench-layout-runs-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let cell = Cell {
         sweep: "hash".into(),

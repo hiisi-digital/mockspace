@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn csv_parses_perf_columns_and_is_backward_compatible() {
-        let dir = std::env::temp_dir().join(format!("perf_csv_{}", std::process::id()));
+        let dir = mockspace_manifest::scratch::root().join(format!("perf_csv_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
         // newest format: 17 columns including the appended matrix columns
@@ -327,7 +327,7 @@ mod round_trip_tests {
                 report_path: String::new(),
             };
             let dir =
-                std::env::temp_dir().join(format!("mockspace-bh-roundtrip-{}", std::process::id()));
+                mockspace_manifest::scratch::root().join(format!("mockspace-bh-roundtrip-{}", std::process::id()));
             std::fs::create_dir_all(&dir).unwrap();
             let _ = std::fs::remove_dir_all(&dir);
             crate::harness::write_run(&result, &dir, "r").unwrap();
@@ -375,7 +375,7 @@ mod round_trip_tests {
             report_path: String::new(),
         };
         let dir =
-            std::env::temp_dir().join(format!("mockspace-bh-roundtrip-bad-{}", std::process::id()));
+            mockspace_manifest::scratch::root().join(format!("mockspace-bh-roundtrip-bad-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         crate::harness::write_run(&result, &dir, "r").unwrap();

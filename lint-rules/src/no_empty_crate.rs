@@ -268,7 +268,7 @@ mod tests {
     /// A mock dir whose round holds the changelists `names`, the doc one
     /// carrying `doc_text`.
     fn round(tag: &str, names: &[&str], doc_text: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("nec-{tag}-{}", std::process::id()));
+        let root = mockspace_manifest::scratch::root().join(format!("nec-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("design_rounds")).unwrap();
         for name in names {

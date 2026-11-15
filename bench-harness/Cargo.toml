@@ -34,7 +34,7 @@ stage-link = []
 
 [dev-dependencies]
 # The scrub of the environment a test runs in, the one copy of it.
-mockspace-manifest = { path = "../mockspace-manifest" }
+mockspace-manifest = { path = "../mockspace-manifest", features = ["_internal-test-scratch"] }
 # Parses the meta a run writes, in its test, so the file is read as JSON and not
 # matched as text. Already in the lockfile through the tool.
 serde_json = "1"

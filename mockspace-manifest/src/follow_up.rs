@@ -100,7 +100,7 @@ mod tests {
             let h = durable_hook(name, 3);
             assert!(h.contains("$generated\" \"$@\""), "{name}: delegates");
             assert!(!h.contains("BLOCKED"), "{name}: nothing here can refuse");
-            let f = std::env::temp_dir().join(format!("ms_gate_fu_{name}_{}.sh", std::process::id()));
+            let f = crate::scratch::root().join(format!("ms_gate_fu_{name}_{}.sh", std::process::id()));
             std::fs::write(&f, &h).unwrap();
             let out = std::process::Command::new("bash").arg("-n").arg(&f).output().unwrap();
             let _ = std::fs::remove_file(&f);
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn a_probe_answers_from_the_mock_directory_this_working_tree_has_and_runs_nothing() {
-        let dir = std::env::temp_dir().join(format!("ms_probe_{}", std::process::id()));
+        let dir = crate::scratch::root().join(format!("ms_probe_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("linux")).unwrap();
         let sh = |args: &[&str]| {

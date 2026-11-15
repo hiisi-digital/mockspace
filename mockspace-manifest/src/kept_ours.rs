@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn the_shared_shell_is_valid_and_names_the_same_file_the_driver_writes() {
         assert!(KEPT_OURS_SHELL.contains(KEPT_OURS_FILE));
-        let f = std::env::temp_dir().join(format!("ms_kept_{}.sh", std::process::id()));
+        let f = crate::scratch::root().join(format!("ms_kept_{}.sh", std::process::id()));
         std::fs::write(&f, KEPT_OURS_SHELL).unwrap();
         let out = std::process::Command::new("bash").arg("-n").arg(&f).output().unwrap();
         let _ = std::fs::remove_file(&f);

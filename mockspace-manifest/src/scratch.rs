@@ -7,10 +7,12 @@
 //! leaves its root behind. The first test of a later run removes the roots whose process has
 //! ended and that nothing has added to for six hours, and never a root whose process still
 //! runs, however old. A process whose id an ended run had takes that root over emptied.
+//! Off unix nothing tells whether a process exists, so there no root is ever removed and the
+//! roots of every run stay until somebody clears them.
 //!
 //! Here, in the one package every test target reaches and that ships whole, behind the
-//! `scratch` feature, so there is one copy of the rule and a published test reads it from
-//! inside the package.
+//! internal `_internal-test-scratch` feature, so there is one copy of the rule and a published
+//! test reads it from inside the package. Unstable and no part of the public API.
 
 use std::path::{Path, PathBuf};
 use std::sync::Once;
@@ -89,7 +91,8 @@ fn alive(pid: u32) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Where nothing says whether a process exists, every root counts as live and stays.
+/// Where nothing says whether a process exists, every root counts as live and stays, so off
+/// unix nothing is ever reaped.
 #[cfg(not(unix))]
 fn alive(_pid: u32) -> bool {
     true

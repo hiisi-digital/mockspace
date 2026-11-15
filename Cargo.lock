@@ -278,6 +278,9 @@ dependencies = [
 [[package]]
 name = "mockspace-bench-layout"
 version = "0.0.0"
+dependencies = [
+ "mockspace-manifest",
+]
 
 [[package]]
 name = "mockspace-bench-macro"

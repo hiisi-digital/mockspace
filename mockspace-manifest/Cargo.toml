@@ -17,14 +17,16 @@ categories = ["development-tools", "config"]
 keywords = ["mockspace", "manifest", "git-hooks", "toml"]
 
 [dependencies]
-# Only for the `scratch` feature, which the tests of this repository turn on.
+# Only for the `_internal-test-scratch` feature.
 tempfile = { version = "3", optional = true }
 serde = { version = "1", default-features = false, features = ["std", "derive"] }
 toml = { version = "0.8", default-features = false, features = ["parse"] }
 
 [features]
-# Where tests make their scratch directories, for the test targets of this repository.
-scratch = ["dep:tempfile"]
+# Internal and unstable, not part of the public API and under no semver promise: where the
+# tests of this repository make their scratch directories. A published test reaches it from
+# inside the package, which a path-only helper crate would not let it do.
+_internal-test-scratch = ["dep:tempfile"]
 
 [dev-dependencies]
 tempfile = "3"

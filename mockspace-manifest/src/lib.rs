@@ -23,8 +23,9 @@ pub mod exec;
 mod follow_up;
 pub mod kept_ours;
 pub mod gate;
-/// Where tests make their scratch directories, one root per test process.
-#[cfg(any(test, feature = "scratch"))]
+/// Internal and unstable, for this repository's tests only: where they make scratch directories.
+#[cfg(any(test, feature = "_internal-test-scratch"))]
+#[doc(hidden)]
 pub mod scratch;
 
 pub use exec::write_executable;

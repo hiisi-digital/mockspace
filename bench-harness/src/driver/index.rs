@@ -108,7 +108,7 @@ mod tests {
 
     fn temp_root(tag: &str) -> std::path::PathBuf {
         let root =
-            std::env::temp_dir().join(format!("mockspace-index-test-{tag}-{}", std::process::id()));
+            mockspace_manifest::scratch::root().join(format!("mockspace-index-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         root

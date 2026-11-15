@@ -964,7 +964,7 @@ mod tests {
     /// The same id on another class is no collision.
     #[test]
     fn a_taken_run_id_takes_the_next_suffix() {
-        let root = std::env::temp_dir().join(format!("mockspace-run-id-{}", std::process::id()));
+        let root = mockspace_manifest::scratch::root().join(format!("mockspace-run-id-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(unique_run_id(&root, M, R), R);
         let cell = Cell { sweep: "hash".into(), n: 64 };
@@ -980,7 +980,7 @@ mod tests {
     /// run wrote carries its methodology, which the samples cannot restate.
     #[test]
     fn report_only_leaves_an_existing_report_alone() {
-        let root = std::env::temp_dir().join(format!("mockspace-reportless-{}", std::process::id()));
+        let root = mockspace_manifest::scratch::root().join(format!("mockspace-reportless-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let cell = Cell { sweep: "hash".into(), n: 64 };
         for (run, report) in [("20261114T000000Z-a", true), ("20261115T000000Z-b", false)] {
@@ -1053,7 +1053,7 @@ mod tests {
     }
 
     fn temp_tree(name: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
+        let root = mockspace_manifest::scratch::root().join(format!(
             "mockspace-driver-test-{}-{name}",
             std::process::id()
         ));
