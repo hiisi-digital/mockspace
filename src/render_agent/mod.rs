@@ -45,6 +45,7 @@ use crate::render_design;
 const RENAMED_BUILTIN_RULES: &[(&str, &str)] = &[
     ("tool-catalogue", "catalogues"),
     ("bench-and-sketch-discipline", "benches"),
+    ("generated", "generated-agent-rules"),
 ];
 
 mod helpers;
@@ -132,6 +133,15 @@ pub fn generate_agent_rules(
 
     vars.push(("PREAMBLE".to_string(), preamble.clone()));
     vars.push(("POSTAMBLE".to_string(), postamble.clone()));
+
+    // The bookends are said once, in the always-loaded `mockspace` rule, and
+    // stamped on nothing else: every rule loaded beside it would repeat them.
+    let banner = BuiltinRule {
+        name:     "mockspace".to_string(),
+        apply_to: vec![],
+        body:     format!("{preamble}\n\n{postamble}"),
+    };
+    let (preamble, postamble) = (String::new(), String::new());
     let mut count = 0;
 
     // --- MAIN.md.tmpl -> .claude/CLAUDE.md + .github/copilot-instructions.md ---
@@ -206,7 +216,7 @@ pub fn generate_agent_rules(
         }
     }
 
-    for builtin_rule in &builtins.rules {
+    for builtin_rule in std::iter::once(&banner).chain(&builtins.rules) {
         // Skip if consumer has a template with the same name
         if consumer_rule_names.contains(&builtin_rule.name) {
             eprintln!("  {} (builtin, overridden by consumer)", builtin_rule.name);
@@ -616,14 +626,12 @@ pub fn generate_agent_rules(
     count
 }
 
-/// Assemble content with preamble before body and postamble after.
 /// Maximum word count for each of the built-in and consumer-authored
-/// preamble/postamble bookends. Bookends are re-stamped on every rule
-/// file and every skill body, so keeping them under this budget prevents
-/// context bloat when multiple rules load simultaneously.
+/// preamble/postamble bookends. They load every session, in the `mockspace`
+/// rule, so they stay constant reminders only.
 pub const BOOKEND_MAX_WORDS: usize = 25;
 
-/// Built-in preamble stamped before every rule body and MAIN instructions.
+/// Built-in preamble, the first half of the always-loaded `mockspace` rule.
 /// Must stay within `BOOKEND_MAX_WORDS`: enforced by unit test below.
 pub const BUILTIN_PREAMBLE: &str = concat!(
     "> **MOCKSPACE:** docs=design. source=untrusted. ",
@@ -632,11 +640,10 @@ pub const BUILTIN_PREAMBLE: &str = concat!(
     "No shortcuts.",
 );
 
-/// Built-in postamble stamped after every rule body and MAIN instructions.
+/// Built-in postamble, the second half of the always-loaded `mockspace` rule.
 /// Must stay within `BOOKEND_MAX_WORDS`: enforced by unit test below.
 pub const BUILTIN_POSTAMBLE: &str = concat!(
-    "---\n",
-    "> **VERIFY:** lint-only --commit green? src CL covers it? ",
+    "> **VERIFY:** `cargo mock --lint-only --commit` green? src CL covers it? ",
     "Never edit `.claude/`/`.github/` directly. ",
     "Deprecate, never addendum.",
 );

@@ -50,7 +50,7 @@ pub(crate) fn validate_bookend_size(content: &str, filename: &str) {
     if words > BOOKEND_MAX_WORDS {
         eprintln!(
             "cargo::warning=mockspace: {filename} is {words} words ({} over budget). \
-             Bookends are re-stamped on every rule/skill load; tight constant \
+             Bookends load every session in the `mockspace` rule; tight constant \
              reminders only. Move longer invariants into MAIN.md.tmpl.",
             words - BOOKEND_MAX_WORDS
         );

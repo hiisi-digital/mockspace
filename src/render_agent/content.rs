@@ -180,8 +180,10 @@ pub(crate) fn generate_lint_derived_content(
         let copilot_fm = format!("---\napplyTo: [{apply_to_list}]\n---\n\n");
 
         let rule_name = format!("lint-forbidden-{slug}");
-        let claude_content = format!("{claude_fm}{header_md}\n{preamble}\n\n{body}\n{postamble}");
-        let copilot_content = format!("{copilot_fm}{header_md}\n{preamble}\n\n{body}\n{postamble}");
+        let claude_content =
+            format!("{claude_fm}{}", format_with_bookends(header_md, preamble, &body, postamble));
+        let copilot_content =
+            format!("{copilot_fm}{}", format_with_bookends(header_md, preamble, &body, postamble));
 
         let claude_path = claude_rules_dir.join(format!("{rule_name}.md"));
         render_design::write_generated_ok(&claude_path, &claude_content);

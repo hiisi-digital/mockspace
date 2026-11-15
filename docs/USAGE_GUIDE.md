@@ -645,8 +645,8 @@ Source templates:
 ```
 mock/agent/
 ├── MAIN.md.tmpl                  [main instructions]
-├── PREAMBLE.md.tmpl              [optional, prepended to main]
-├── POSTAMBLE.md.tmpl             [optional, appended to main]
+├── PREAMBLE.md.tmpl              [optional, opens the always-loaded `mockspace` rule]
+├── POSTAMBLE.md.tmpl             [optional, closes the `mockspace` rule]
 ├── rules/<name>.md.tmpl          [scoped rules]
 ├── skills/<name>/SKILL.md.tmpl   [named skills]
 ├── agents/<name>.md.tmpl         [sub-agent personas, Claude only]

@@ -18,15 +18,15 @@ use super::*;
 pub(crate) const GUIDE_SUBJECTS: &[(&str, &str)] = &[
     (
         "bench",
-        "MOCKSPACE BENCHES: a number that feeds a decision comes from @MOCK@/benches/: 'cargo mock bench add <bench> <arm>', the arm's code in <bench>/arms/<arm>/src/lib.rs, then 'cargo mock bench run <bench>'. No timing loop of your own; what a runner would do goes in the hooks library @MOCK@/benches/src/lib.rs. Skill: benchmarking.",
+        "MOCKSPACE BENCHES: no timing loop of your own. 'cargo mock bench add <bench> <arm>', code in <bench>/arms/<arm>/src/lib.rs, 'cargo mock bench run <bench>'; runner logic goes in @MOCK@/benches/src/lib.rs. Skill: benchmarking.",
     ),
     (
         "sketch",
-        "MOCKSPACE SKETCHES: a feasibility probe is a committed sketch in @MOCK@/research/sketches/<YYYYMMDDHHMM>_<slug>/, built under the repository's toolchain, with a FINDINGS.md whose '**Outcome:**' line reads WORKS, FAILS WITH <error> or INCONCLUSIVE. 'cargo mock sketches --open' lists those without one. Skill: sketching.",
+        "MOCKSPACE SKETCHES: probe in @MOCK@/research/sketches/<YYYYMMDDHHMM>_<slug>/, under the repository's toolchain, with FINDINGS.md '**Outcome:**' WORKS / FAILS WITH <error> / INCONCLUSIVE. Skill: sketching.",
     ),
     (
         "test",
-        "MOCKSPACE TESTS: run 'cargo mock test', not cargo test. One concern per tests/<name>.rs binary, shared helpers through 'mod common;', fixtures named by a literal path. 'cargo mock test-units' shows how the tests split. Skill: testing.",
+        "MOCKSPACE TESTS: 'cargo mock test', not cargo test. One concern per tests/<name>.rs, helpers via 'mod common;', fixtures by literal path. Skill: testing.",
     ),
 ];
 
