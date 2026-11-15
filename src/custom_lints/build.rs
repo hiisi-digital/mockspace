@@ -173,7 +173,7 @@ pub(crate) fn build_cdylib(
         .env_clear()
         .envs(std::env::vars_os().filter(|(k, _)| k.to_str().is_some_and(keeps_env)))
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::piped());
     let mut child = command
         .spawn()
         .map_err(|e| format!("could not run cargo build for the lint cdylib: {e}"))?;
@@ -182,6 +182,22 @@ pub(crate) fn build_cdylib(
         .stdout
         .take()
         .ok_or_else(|| "cargo build gave no stdout to read artifacts from".to_string())?;
+    // A build script of a dependency speaks to whoever builds that dependency
+    // as their own: here it is a library of the lint crate, so its warnings say
+    // nothing the committer can act on, and they are not passed on. Everything
+    // else cargo writes to stderr is, as it comes.
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "cargo build gave no stderr to pass on".to_string())?;
+    let own = crate_name.to_string();
+    let relay = std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if !is_dependency_build_script_warning(&line, &own) {
+                eprintln!("{line}");
+            }
+        }
+    });
     let mut found = None;
     let mut fresh = false;
     let mut units: Vec<Unit> = Vec::new();
@@ -197,6 +213,7 @@ pub(crate) fn build_cdylib(
     let status = child
         .wait()
         .map_err(|e| format!("could not wait on cargo build for the lint cdylib: {e}"))?;
+    let _ = relay.join();
     if !status.success() {
         return Err("building the custom-lint cdylib failed; see cargo output above".to_string());
     }
@@ -295,6 +312,23 @@ pub(crate) fn cdylib_artifact(line: &str, crate_name: &str) -> Option<PathBuf> {
             p.extension()
                 .is_some_and(|e| e == "dylib" || e == "so" || e == "dll")
         })
+}
+
+/// Whether a line of cargo's stderr is a `cargo::warning` from the build
+/// script of a package other than the lint crate itself: cargo writes those as
+/// `warning: <package>@<version>: <text>`. `own` is the lint crate's name,
+/// which is its package name with a hash after it.
+fn is_dependency_build_script_warning(line: &str, own: &str) -> bool {
+    let Some((unit, _)) = line.strip_prefix("warning: ").and_then(|rest| rest.split_once(": ")) else {
+        return false;
+    };
+    let Some((package, version)) = unit.split_once('@') else {
+        return false;
+    };
+    let named = !package.is_empty()
+        && package.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    let versioned = version.starts_with(|c: char| c.is_ascii_digit());
+    named && versioned && !own.replace('-', "_").starts_with(&package.replace('-', "_"))
 }
 
 #[cfg(test)]

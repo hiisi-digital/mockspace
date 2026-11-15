@@ -79,3 +79,28 @@ fn a_unit_runs_in_the_tree_when_it_is_a_build_script_or_macro_and_its_package_is
     assert!(unit("registry+x#t@1.0.0", "lib").fresh);
     assert!(artifact_unit(r#"{"reason":"build-script-executed"}"#).is_none());
 }
+
+// out of a live kaski commit: the engine crates are path dependencies of the
+// lint crate, and each build script's warning was printed twice per commit.
+#[test]
+fn a_dependency_build_script_warning_is_held_back() {
+    assert!(is_dependency_build_script_warning(
+        "warning: kaski-engine-hash@0.0.0: hilavitkutin-build chose rustc flags for this crate and cargo names no workspace wrapper to append them, so they are dropped",
+        "mockspace_lints_40d923802ebb4e36",
+    ));
+}
+
+#[test]
+fn the_lint_crates_own_warnings_and_every_other_line_pass() {
+    let own = "mockspace_lints_40d923802ebb4e36";
+    for line in [
+        "warning: mockspace-lints@0.0.0: the lint crate's own build script",
+        "warning: unused variable: `x`",
+        "warning: `mockspace-lints` (lib) generated 1 warning",
+        "error: could not compile `kaski-engine-hash` (lib) due to 1 previous error",
+        "warning: profile package spec `x@1` in profile `release` did not match any packages",
+        "   Compiling kaski-engine-hash v0.0.0 (/p/crates/kaski-engine-hash)",
+    ] {
+        assert!(!is_dependency_build_script_warning(line, own), "{line}");
+    }
+}
