@@ -119,3 +119,67 @@ fn the_sweep_removes_the_kept_keys_an_older_engine_left() {
     assert!(!kept.exists(), "nothing reads the old run plan's keys, so they go");
     assert_eq!(again.replay(&own).as_deref(), Some("kept"), "the control: a fresh entry stays");
 }
+
+/// Every regular file under `dir`, recursively.
+fn files_under(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        for e in fs::read_dir(&d).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() { todo.push(p) } else { out.push(p) }
+        }
+    }
+    out
+}
+
+#[test]
+fn verdicts_written_under_two_salts_leave_one_file_and_one_salt() {
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
+    let old = store(dir.path(), "pack-a");
+    for n in 0 .. 5u8 {
+        old.remember(&old.digest(&[&[n]]), "saved by pack-a");
+    }
+    let new = store(dir.path(), "pack-b");
+    for n in 0 .. 5u8 {
+        new.remember(&new.digest(&[&[n]]), "saved by pack-b");
+    }
+    let files = files_under(dir.path());
+    assert_eq!(files.len(), 1, "one packed file for one repo and its current salt, found {files:?}");
+    let reopened = store(dir.path(), "pack-b");
+    for n in 0 .. 5u8 {
+        assert_eq!(reopened.replay(&reopened.digest(&[&[n]])).as_deref(), Some("saved by pack-b"));
+    }
+}
+
+#[test]
+fn two_writers_of_one_store_lose_and_corrupt_nothing() {
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
+    let base = dir.path().to_path_buf();
+    let writers: Vec<_> = (0 .. 2u8)
+        .map(|w| {
+            let base = base.clone();
+            std::thread::spawn(move || {
+                let s = DiskVerdicts::open_in(&base, "pack").unwrap();
+                for n in 0 .. 150u16 {
+                    let key = s.digest(&[&[w], &n.to_le_bytes()]);
+                    s.remember(&key, &format!("writer {w} entry {n}\nwith a second line\n"));
+                }
+            })
+        })
+        .collect();
+    for w in writers {
+        w.join().unwrap();
+    }
+    let s = DiskVerdicts::open_in(&base, "pack").unwrap();
+    for w in 0 .. 2u8 {
+        for n in 0 .. 150u16 {
+            let key = s.digest(&[&[w], &n.to_le_bytes()]);
+            assert_eq!(
+                s.replay(&key).as_deref(),
+                Some(format!("writer {w} entry {n}\nwith a second line\n").as_str()),
+                "entry {w}/{n} survived whole"
+            );
+        }
+    }
+}
