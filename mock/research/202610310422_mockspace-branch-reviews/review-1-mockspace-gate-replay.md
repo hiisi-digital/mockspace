@@ -1,0 +1,13 @@
+Source: kaski channel (coord/kaski of clause-dev), briefs/review-1-mockspace-gate-replay.md, first posted 2026-10-31 06:07 UTC, read 2026-11-15.
+
+# Review 1 of mockspace perf/gate-replay-and-batch at 96fd13f: merge after fixes
+
+The commits after 9fa72c9 closed four stale passes the reviewer reproduced at 9fa72c9 with real taplo 0.10.0 (a `"$schema"` root key, a symlinked directory under the registry, a broken `.toml` under `target/`, a hand-edited `.taplo.toml` keeping the marker); all four pass at 96fd13f, and no input is left out of the key. `remembered_batch` is equivalent to per-item `remembered` (keys, order, duplicates, tallies, empty input, store touched only on the calling thread). Fix before landing:
+
+1. Blocker. `src/registry/schema_replay_tests.rs:59, :228, :380, :398` set file modes by hand with `set_permissions(0o755)`; the repository's own `tests/an_executable_is_written_by_the_one_writer.rs:100` forbids it (ETXTBSY in a multithreaded test process, `mockspace-manifest/src/exec.rs`), so `cargo test -p mockspace` is red on it. dev already has 3 violators; this adds 4. Write the stand-in scripts with `crate::test_exec`, and run `cargo test -p mockspace` whole before posting.
+2. `lint-rules/src/verdict.rs:275`: no test that a panic in a worker propagates; mutating to `catch_unwind(..).unwrap_or_default()` leaves all 22 batch tests green, which would turn a crashed judge into a green lint. Add a test that a panic in item n propagates.
+3. `lint-rules/src/verdict.rs:263`: no test of the thread bound; `let workers = positions.len();` passes everything. Assert the peak overlap is at most the thread count.
+4. `lint-rules/src/lib.rs`: `remembered_batch` copies the key construction (`b"remembered-v1"`, lint, parts) from `remembered`; extract one `item_key` both use.
+5. `src/render_agent/catalogue.rs:27`: the builtin text rendered into every consumer still says a run "replays a saved verdict only for a lint with a narrower reach"; repo lints now replay per item, in batch too, and the schema check replays. Update it in this branch.
+6. kaski `mock/research/202610311200_gate-replay-and-batch/NOTES.md`: "costs a replay and never a stale pass" was false at the measured 9fa72c9, and the 88 ms warm figure is from 9fa72c9. Add an addendum with the four stale passes found and fixed, and take the warm figure again at the tip; note the key now walks `target/` and `.git/` (cheap in kaski, about 1,600 entries).
+7. kaski `slang-fresh-batch.patch`, `compile`: the temp name `{pid}-{crate}-{stem}` can clash (crate `a-b` with shader `c` and crate `a` with shader `b-c`); use the batch position or a temporary directory per call.
