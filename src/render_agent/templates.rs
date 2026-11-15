@@ -26,6 +26,7 @@ pub(crate) const BUILTIN_SKILL_DIRS: &[&str] = &[
     "reference-syntax",
     "merging",
     "test-history",
+    "testing",
 ];
 
 pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> BuiltinTemplates {
@@ -337,21 +338,67 @@ Fires when changing framework design, adding or modifying a type or a crate, or 
                 crate_prefix,
             ),
         },
+        // Benches, sketches and tests: one short card each, loaded everywhere,
+        // since the moment each fires (a timing loop, a probe, a test run) is
+        // not tied to a path. The procedure is in the skill each one names.
         BuiltinRule {
-            name:     "bench-and-sketch-discipline".to_string(),
-            apply_to: vec![format!("{mock_rel}/benches/**"), format!("{mock_rel}/research/**")],
+            name:     "benches".to_string(),
+            apply_to: vec![],
             body:     substitute_builtin_vars(
-                r#"## Benches live in the bench framework, never in sketches
+                r#"## Benches: every number that feeds a decision comes from `{mock_dir}/benches/`
 
-- Any benchmark, and any measurement whose numbers feed a decision, goes in `{mock_dir}/benches/` under the mockspace bench framework: `cargo mock bench init` scaffolds, `cargo mock bench run` drives, `bench.toml` registers benches and sizes, each variant is its own cdylib crate under `variants/` on `mockspace-bench-core` + `mockspace-bench-macro`.
-- The driver `cargo mock bench run` generates is the only runner: no `Cargo.toml` or `main` of the tree's own, no crate in it with a binary, bench or example, no script, make or just file, no cargo alias or target runner. Every run lands once in `{mock_dir}/benches/results/<bench>/<sweep>_n<point>/<machine class>/<run>/` and is never replaced; output anywhere else is refused, and `cargo mock bench migrate` moves what translates.
-- Sketches (`{mock_dir}/research/sketches/`) check feasibility only: does it compile, does the trait solve, does the shape work, with a WORKS / FAILS / INCONCLUSIVE outcome.
-- A sketch that needs a timer, an iteration loop or a performance claim is a bench and moves to `{mock_dir}/benches/`. A question with both halves splits: feasibility is a sketch, measurement is a bench.
-- Do not re-roll the framework's pieces in a bench: timing helpers, bump providers and stat collection come from `mockspace-bench-core`.
+- Never time by hand: no `Instant::now()` loop, no criterion, no `cargo bench`, no timer in a sketch or a test.
+- `cargo mock bench add <bench> <arm>` scaffolds; the arm is `<bench>/arms/<arm>/src/lib.rs`, the bench is `<bench>/bench.toml`; `cargo mock bench run [<bench>...]` measures.
+- The generated driver is the only runner. What a runner of your own would do goes in the hooks library `{mock_dir}/benches/src/lib.rs` (`pub fn hooks() -> Hooks`) or a `bench.toml`.
+- Results land in `{mock_dir}/benches/results/<bench>/<sweep>_n<point>/<machine class>/<run>/`, committed, never replaced. `cargo mock bench migrate` moves an older layout.
+- Lints: `a-bench-runs-only-on-the-generated-driver`, `bench-results-live-in-the-harness-layout`.
+- Quote a number with its run directory and profile.
 
-Fires before writing any timing loop, and before any claim that one thing is faster, cheaper or smaller than another.
+Fires before writing a timing loop or claiming one thing is faster, cheaper or smaller than another.
 
-Invoke the skill before starting. **Use the `sketching` skill** for feasibility work and **the `benchmarking` skill** for measurement.
+**Use the `benchmarking` skill** before the first bench.
+"#,
+                &mock_rel,
+                project_name,
+                crate_prefix,
+            ),
+        },
+        BuiltinRule {
+            name:     "sketches".to_string(),
+            apply_to: vec![],
+            body:     substitute_builtin_vars(
+                r#"## Sketches: a feasibility question gets a committed sketch with its outcome
+
+- Does it compile, does the bound solve, is the gate needed: a sketch in `{mock_dir}/research/sketches/<YYYYMMDDHHMM>_<slug>/`, built under the repository's toolchain. Never `/tmp`, never a bare `rustc` run.
+- It holds a `FINDINGS.md` whose `**Outcome:**` line reads `WORKS`, `FAILS WITH <error>` or `INCONCLUSIVE`, with each attempt and its compiler output.
+- Committed, never deleted. A wrong one is superseded by a new sketch citing it.
+- A sketch needing a timer is a bench.
+- `cargo mock sketches` lists every sketch with its outcome, and flags one with no outcome or one that times something.
+
+Fires before any probe whose answer changes what gets built.
+
+**Use the `sketching` skill** before the first probe.
+"#,
+                &mock_rel,
+                project_name,
+                crate_prefix,
+            ),
+        },
+        BuiltinRule {
+            name:     "tests".to_string(),
+            apply_to: vec![],
+            body:     substitute_builtin_vars(
+                r#"## Tests run through `cargo mock test`
+
+- `cargo mock test`, never a bare `cargo test` in `{mock_dir}/`: it runs the members, the tool crates, the bench crates and the lint tree, and reruns only what moved.
+- One concern per integration test, `tests/<name>.rs` or `tests/<name>/main.rs`: each is its own binary and reruns only when its own files move. Shared helpers are a module each binary declares (`mod common;`).
+- Name a fixture by a literal path; `env!`, `std::env` or `file!()` in a test makes its binary rerun on every test file of the member.
+- Commit `{mock_dir}/test-history/` with the work.
+- `cargo mock test-units` shows how each member's tests split into binaries, which are wide and which files no binary claims.
+
+Fires before running, writing or moving a test.
+
+**Use the `testing` skill** for the flags, heavy tests and the history.
 "#,
                 &mock_rel,
                 project_name,
@@ -617,14 +664,7 @@ The `design-round` skill carries the conversation flow and file layout.
 
 ## Test
 
-- `cargo mock test`, not `cargo test`: it also runs the tool, bench and lint trees.
-- Members rerun only when their fingerprint moved since their suite last passed. Under nextest, integration-test binaries rerun only when their own files, the library or dependencies moved.
-- `--cheap` defers heavy tests that have passed before. `--full` runs every member asked for, every binary. `--no-cache` runs cached heavy tests and left-out binaries too. `--plain` uses `cargo test` and reaches doc tests. `--benches` includes the bench tree; `-p` leaves it out without it.
-- Run `--full --no-cache` once at the end of a piece of work and once after merging the trunk.
-- `[test]` keys: `heavy_after_secs` (10), `heavy_threads` (1), `timeout_secs` (900), `commit` (warn runs `--cheap`, error also blocks, off and info run nothing), `debug`, `lean`. `[test.opt_level]` maps a member to an opt level (0 to 3, "s", "z").
-- Members build without debug info. Symbols only for a member whose tests failed last time, or `--debug=<crate>` / `-p <crate> --debug`. `--no-debug` gives none. `[test] lean = false` leaves the profile alone. Rustflags with `-g` or `-C debuginfo=` give every crate symbols and cannot be overridden.
-- Commit `{mock_dir}/test-history/` with the work unless `[test.history]` keeps it on a git ref. Do not hand-edit it. A deleted test or binary is pruned by the next run.
-- `cargo mock help test` says what selects and what is cached. Everything after `test` goes to cargo.
+- `cargo mock test`, not `cargo test`. The `testing` skill carries what it runs, what reruns, the flags and how to lay tests out.
 
 ## Never
 
@@ -737,6 +777,20 @@ Stop implementing and run a design round to fix the mock (`design-round` skill),
             skill_description: "Use when a merge or rebase touches a file under test-history/, when a commit is refused for nulling a member's green record, or when merge-test-history refuses a file. Covers how the merge driver settles a green, a binary's pass and per-test timings, what it refuses, and what the pre-commit guard accepts.".to_string(),
             body: substitute_builtin_vars(
                 include_str!("skills/test-history/SKILL.md"),
+                &mock_rel,
+                project_name,
+                crate_prefix,
+            ),
+            files: vec![],
+        },
+        // How `cargo mock test` runs, selects and records, and how tests are laid
+        // out so the selection can narrow; the `tests` rule names the moment.
+        BuiltinSkill {
+            dir_name: "testing".to_string(),
+            skill_name: "testing".to_string(),
+            skill_description: "Use before running, writing or moving a test in a mockspace repository. Covers what `cargo mock test` runs and reruns, how to lay out integration tests and fixtures so a change reruns only its own binary, heavy tests, the flags, the `[test]` configuration and `cargo mock test-units`.".to_string(),
+            body: substitute_builtin_vars(
+                include_str!("skills/testing/SKILL.md"),
                 &mock_rel,
                 project_name,
                 crate_prefix,

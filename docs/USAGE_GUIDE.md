@@ -133,7 +133,9 @@ Those are the transitions. The subcommands that are not transitions:
 | `cargo mock check-edit` | Ask one per-crate lint (`--lint`) whether a Rust file (`--file`) would be clean once an edit is made: stdin is the new text, or with `--replace <file>` the text that replaces the one in that file. Takes `--edits <file>`, a JSON list of replacements, for a multi-edit tool. Exits 0 clean, 1 with the lint's blocking findings, 2 when the request cannot be answered (an unknown lint or gate, a lint judging the whole crate, a relative `--file`). The generated `forbidden-imports` hook calls it |
 | `cargo mock query` | Query the registry |
 | `cargo mock links <namespace>::<slug>` | The rows a row links to and the rows linking to it, with the `ref` field each link is written in |
-| `cargo mock bench` | Run the bench harness |
+| `cargo mock bench` | Run the bench harness: `init`, `add <bench> [<arm>]`, `run [<bench>...]`, `report`, `list`, `test`, `migrate` |
+| `cargo mock sketches` | Every sketch under `<mock>/research/sketches/` with the outcome its `FINDINGS.md` records; `--open` keeps those with none, or with a source that times something |
+| `cargo mock test-units` | How each member's tests divide into binaries, which are wide, and the files under `tests/` no binary claims |
 | `cargo mock test` | Run the tests of every tree mockspace owns, the members and the benches only where something they depend on changed, or the benches when `--benches`, `--full` or `--no-cache` asks (`[test]` below) |
 | `cargo mock panel` | Mint or consolidate a panel seat, or report a panel's state |
 | `cargo mock pdf` | Render the design documents to PDF |

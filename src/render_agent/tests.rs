@@ -1645,3 +1645,68 @@ fn the_lint_authoring_rule_names_the_view_and_its_guard() {
     let guard = mockspace_lint_rules::lints_read_through_the_view::LintsReadThroughTheView;
     assert_eq!(mockspace_lint_rules::Lint::name(&guard), "lints-read-through-the-view");
 }
+
+/// A consumer's generated surface carries the bench, sketch and test guidance:
+/// the three rules (loaded everywhere, so no `paths:` scope), the three skills,
+/// and the guide hook wired for commands, writes and edits. The rule these
+/// replace is taken back.
+#[test]
+fn a_consumer_gets_the_bench_sketch_and_test_rules_skills_and_hook() {
+    let mock = skill_fixture(None);
+    let root = mock.parent().expect("the fixture's mock dir has a parent");
+    let rules = root.join(".claude").join("rules");
+    std::fs::create_dir_all(&rules).unwrap();
+    let stale = rules.join("bench-and-sketch-discipline.md");
+    std::fs::write(&stale, "the old card").unwrap();
+
+    let cfg = crate::config::Config::from_dir(&mock);
+    generate_agent_rules(
+        &CrateMap::default(),
+        &cfg,
+        &crate::registry::Registry::default(),
+        &pack_with_stub_tool(),
+    );
+
+    for (rule, says) in [
+        ("benches", "cargo mock bench add <bench> <arm>"),
+        ("sketches", "cargo mock sketches"),
+        ("tests", "cargo mock test-units"),
+    ] {
+        let text = std::fs::read_to_string(rules.join(format!("{rule}.md")))
+            .unwrap_or_else(|e| panic!("{rule}.md was not generated: {e}"));
+        assert!(text.contains(says), "{rule}.md does not say {says}");
+        assert!(!text.contains("\npaths:"), "{rule}.md is scoped to paths, so it loads too late");
+        assert!(
+            root.join(".github/instructions").join(format!("{rule}.instructions.md")).is_file(),
+            "{rule} is missing on the copilot surface"
+        );
+    }
+    assert!(!stale.is_file(), "the card the three replace is taken back");
+
+    for (skill, says) in [
+        ("benchmarking", "pub fn hooks() -> Hooks"),
+        ("sketching", "cargo mock sketches"),
+        ("testing", "cargo mock test-units"),
+    ] {
+        let text = std::fs::read_to_string(root.join(".claude/skills").join(skill).join("SKILL.md"))
+            .unwrap_or_else(|e| panic!("skill {skill} was not generated: {e}"));
+        assert!(text.contains(says), "skill {skill} does not say {says}");
+    }
+
+    let hook = root.join(".claude/hooks/mockspace-guide.sh");
+    assert!(hook.is_file(), "the guide hook was not generated");
+    assert!(root.join(".github/hooks/mockspace-guide.sh").is_file());
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    for tool in ["Bash", "Write", "Edit"] {
+        let wired = settings["hooks"]["PreToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["matcher"] == tool)
+            .flat_map(|e| e["hooks"].as_array().cloned().unwrap_or_default())
+            .any(|h| h["command"].as_str().is_some_and(|c| c.contains("mockspace-guide.sh")));
+        assert!(wired, "the guide hook is not wired for {tool}");
+    }
+}

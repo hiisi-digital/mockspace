@@ -2,37 +2,63 @@
 
 A bench answers a measurement question: which is faster, what does it cost, where is the band boundary. Any number that feeds a decision comes from here. Invoke before the first timing loop; never hand-roll an `Instant::now()` loop.
 
+## Workflow
+
+1. `cargo mock bench init` scaffolds `{mock_dir}/benches/` once: the root `bench.toml`, a `README.md` and a `sample` bench with one arm to copy from.
+2. `cargo mock bench add <bench> <arm>` (or `<bench>/<arm>`) scaffolds a bench with its `bench.toml`, or adds an arm to one. One bench is one question; its arms are the competing answers.
+3. Write the arm's measured code in `<bench>/arms/<arm>/src/lib.rs`, inside `timed! { run { ... } }`. Its manifest is generated; a `Cargo.toml` written in the arm directory takes it over. Code several arms share goes in `<bench>/support/` or the root `support/`, as ordinary library crates.
+4. In `<bench>/bench.toml` set `title`, `workload`, `arms`, `points`, and the roles `baseline` (the arm every delta is against) and `floor` (a null-cost arm subtracted first).
+5. `cargo mock bench run [<bench>...]` generates the driver, builds each arm into a tool-owned target with the pinned release profile, validates, measures and writes the run. `cargo mock bench list` prints what is registered.
+6. Write the findings note (Deliverable below) and commit it with the run.
+
+## The hooks library
+
+What a driver of your own would have done goes in `{mock_dir}/benches/src/lib.rs`. The generated driver includes it as a module, so it is the one place consumer Rust runs inside the driver:
+
+```rust
+use mockspace_bench_harness::driver::{AfterCell, CellVerdict, Hooks};
+
+pub fn hooks() -> Hooks {
+    Hooks { routine_for: Some(routines), after_cell: Some(check), ..Hooks::default() }
+}
+```
+
+- `routine_for`: serves a routine for a cell whose input is not plain bytes; `None` falls through to the byte dispatch. Build the table with `routine_table!`.
+- `after_cell`: runs after each cell's artifacts are staged; its verdict feeds the exit code.
+- `on_init`: runs once after the manifest loads, before anything is built; may abort.
+- `after_init`: runs once after every cell resolves and the preflight passes, before the first cell.
+
 ## The three layers
 
-- `mockspace-bench-core` (what a variant links): `FfiBenchCall`, the `timed!` and `timed_calibrated!` macros, `abi_hash`, `byte_routine_dispatch!`.
-  - A variant cdylib exports `bench_entry`, `bench_name`, `bench_abi_hash`, `bench_output_size`; the driver finds them by dlsym.
-  - A variant whose `bench_output_size(n)` differs from the output buffer of the routine the bench resolved is refused before it runs. A bench missing from the `routine_for` table falls through to the byte routine at `[dispatch] out` bytes.
+- `mockspace-bench-core` (what an arm links): `FfiBenchCall`, the `timed!` and `timed_calibrated!` macros, `abi_hash`, `byte_routine_dispatch!`.
+  - A arm cdylib exports `bench_entry`, `bench_name`, `bench_abi_hash`, `bench_output_size`; the driver finds them by dlsym.
+  - An arm whose `bench_output_size(n)` differs from the output buffer of the routine the bench resolved is refused before it runs. A bench missing from the `routine_for` table falls through to the byte routine at `[dispatch] out` bytes.
   - `#[bench_variant]` generates the export on rebuild. A hand-written arm (including every one `bench add` scaffolded before the export existed) adds `extern "C" fn bench_output_size(n: usize) -> usize` itself, or it is refused.
   - The check sees only a size that differs: a bench missing from `routine_for` whose output is the byte routine's size falls through to bytes unnoticed.
-- `mockspace-bench-harness` (transport): cdylib-per-variant isolation, subprocess driver, workload programs, validation, analysis, history, and the spec-to-variant-crate codegen (`MatrixSpec` / `expand` / `render` / `generate`). It does not judge whether a measurement is honest.
+- `mockspace-bench-harness` (transport): cdylib-per-arm isolation, subprocess driver, workload programs, validation, analysis, history, and the spec-to-variant-crate codegen (`MatrixSpec` / `expand` / `render` / `generate`). It does not judge whether a measurement is honest.
 - A driver that times arms out of a target directory other worktrees build into runs from a staged build: `<dir>/release/` holding the driver and its arms, `binaries.sha256` (`sha256sum`'s format, paths inside `<dir>`) and `build.txt` beside it. `mockspace_bench_harness::staging::StagedBuild::of_current_exe` refuses an unstaged driver and `verify` checks the digests, the running driver's among them; `link_into`, behind the `stage-link` feature, is built only on the targets the harness's `build.rs` names and returns a `StageLink` that removes the link when dropped. The consumer writes the staged build.
 - `mockspace-bench-matrix` (the discipline): use it for any comparison across more than one axis.
 
 ## Commands
 
-- `cargo mock bench init` scaffolds; `add <name>` adds a variant; `run [names...]` measures; `report` renders a report from the samples of any run that has none, and leaves a report a run wrote alone, since only that one states the methodology; `list` prints what is registered; `test` runs `cargo test` in every crate under the bench tree; `migrate [--machine-class <class>] [--dry-run]` moves results and history in an older layout into run directories.
+- `cargo mock bench init` scaffolds; `add <bench> [<arm>]` scaffolds a bench or an arm; `run [names...]` measures; `report` renders a report from the samples of any run that has none, and leaves a report a run wrote alone, since only that one states the methodology; `list` prints what is registered; `test` runs `cargo test` in every crate under the bench tree; `migrate [--machine-class <class>] [--dry-run]` moves results and history in an older layout into run directories.
 - The driver `run` generates from `bench.toml` is the only runner. A `Cargo.toml` or `src/main.rs` at the bench root, a crate in the tree with a binary, a cargo bench or an example of its own, a script (`.sh`, `.bash`, `.zsh`, `.py`, `.nu`, or any shebang file), a `Makefile` or `justfile`, and a `.cargo/config.toml` with aliases or a target `runner` are refused by `run`, `report`, `test` and the lint `a-bench-runs-only-on-the-generated-driver`. What a runner did goes in the hooks library (`src/lib.rs`, `pub fn hooks()`) and the `bench.toml` files.
 - `test` walks the tree directly (a bare `cargo test` at the root sees only the driver crate and reports a misleading `0 passed`). A crate name narrows to the crates whose path contains it and a name matching nothing is refused with the list of what exists. Flags after the subcommand go to cargo (`--release`/`-r`, `-- --test-threads=1`); a value-taking flag's value (`--profile <name>`) travels with the flag.
 - Every test count printed carries the profile it ran under. Report a timing or count with its profile.
 
 ## Why the framework
 
-- Per-variant cdylib isolation: release, fat LTO, one codegen unit, own subprocess. Two variants in one binary share a codegen unit and the optimiser can erase the distinction under test.
+- Per-arm cdylib isolation: release, fat LTO, one codegen unit, own subprocess. Two arms in one binary share a codegen unit and the optimiser can erase the distinction under test.
 - A shared realistic workload: scalar dependency chains, pointer chases, cache pressure and branchy context surround the measured call.
-- Validation before timing: every variant runs across deterministic seeds, each in its own worker subprocess. A mismatch is the finding: the implementations drifted and the timing comparison is meaningless.
-- Automatic disassembly dedup: identical `bench_entry` machine code across variants is reported.
+- Validation before timing: every arm runs across deterministic seeds, each in its own worker subprocess. A mismatch is the finding: the implementations drifted and the timing comparison is meaningless.
+- Automatic disassembly dedup: identical `bench_entry` machine code across arms is reported.
 - Statistics: quintiles, per-cooldown breakdown, lag-1 autocorrelation as a drift signal, bootstrap CIs on the median and on paired differences, a sign test, Benjamini-Hochberg FDR adjustment.
-- History: every run writes its own `summary.tsv` (timestamp, git commit, variant, N, mode, median and CI bounds) into its run directory; a later run on the same machine class flags entries whose CI no longer overlaps the earlier runs'. Runs on other machine classes are never compared.
+- History: every run writes its own `summary.tsv` (timestamp, git commit, arm, N, mode, median and CI bounds) into its run directory; a later run on the same machine class flags entries whose CI no longer overlaps the earlier runs'. Runs on other machine classes are never compared.
 - Do not re-roll timing helpers, bump providers, stat collection or validation.
 
 ## Hardware counters
 
-- The PMU says why a variant won (same instructions, fewer branch mispredicts).
+- The PMU says why an arm won (same instructions, fewer branch mispredicts).
 - `PerfSnapshot` carries `instructions`, `cycles` and `ipc()`. Only those two fixed counters are wired. `cache_misses` and `branch_misses` are zero placeholders: never report them; zero means not wired.
 - Available only with the `perf-counters` feature on Apple Silicon macOS, with the framework present, as root, and a passing support probe. `setup()` returns whether it armed. Fields are zero when unavailable, so check `setup()` before concluding.
 - `teardown()` must run on every exit path. The PMU is a process-global claim; an early return that skips it breaks the next process.

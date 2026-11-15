@@ -254,9 +254,34 @@ const COMMANDS: &[Cmd] = &[
         name:    "bench",
         summary: "run the bench harness",
         args:    &[],
-        help:    "Runs the bench harness. Everything after `bench` (a variant \
-                  name, flags such as --release) is forwarded to it verbatim, so \
-                  its own usage governs from that point on.",
+        help:    "Runs the bench harness: `init`, `add <bench> [<arm>]`, `run \
+                  [<bench>...]`, `report`, `list`, `test`, `migrate`. Everything \
+                  after `bench` is forwarded to it verbatim, so its own usage \
+                  governs from that point on.",
+    },
+    Cmd {
+        name:    "sketches",
+        summary: "list every sketch with the outcome its findings record",
+        args:    &[],
+        help:    "Reads every directory under <mock>/research/sketches/ and prints \
+                  its name and the outcome its FINDINGS.md records on an \
+                  `**Outcome:**` line (WORKS, FAILS or INCONCLUSIVE), or that it has \
+                  no FINDINGS.md or no outcome line, and names a Rust source that \
+                  times something, which makes the sketch a bench. `--open` keeps \
+                  only the sketches wanting attention. A report: it changes nothing \
+                  and exits 0.",
+    },
+    Cmd {
+        name:    "test-units",
+        summary: "show how each member's tests divide into binaries",
+        args:    &[],
+        help:    "For each member named, or every member, prints each \
+                  integration-test binary with how many files it is built from, \
+                  marks the wide ones (they read the environment or file!(), or \
+                  declare a module that cannot be followed, so they rerun on every \
+                  test file of the member), and names the Rust files under tests/ no \
+                  binary claims, which move every binary. The same layout `mock test` \
+                  selects by. A report: it changes nothing.",
     },
     Cmd {
         name:    "panel",

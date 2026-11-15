@@ -42,11 +42,16 @@ use crate::render_design;
 // off leaves its file behind the same way. The replacement is a sweep keyed on
 // the generated marker `render_design::write_generated` already writes, which
 // needs its own pass because the directory also holds consumer-authored rules.
-const RENAMED_BUILTIN_RULES: &[(&str, &str)] = &[("tool-catalogue", "catalogues")];
+const RENAMED_BUILTIN_RULES: &[(&str, &str)] = &[
+    ("tool-catalogue", "catalogues"),
+    ("bench-and-sketch-discipline", "benches"),
+];
 
 mod helpers;
 pub(crate) use helpers::*;
 mod builtins;
+mod guide_hook;
+pub(crate) use guide_hook::*;
 pub(crate) use builtins::*;
 mod wire;
 pub(crate) use wire::*;

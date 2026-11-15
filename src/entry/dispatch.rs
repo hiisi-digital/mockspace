@@ -865,6 +865,16 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 let bench_args = subcommand_args(&args, "bench");
                 return bench::cmd(&cfg, &bench_args);
             },
+            "sketches" => {
+                let rest: Vec<String> =
+                    subcommand_args(&args, "sketches").into_iter().map(str::to_string).collect();
+                return crate::sketches::cmd(&cfg, &rest);
+            },
+            "test-units" => {
+                let rest: Vec<String> =
+                    subcommand_args(&args, "test-units").into_iter().map(str::to_string).collect();
+                return crate::suite::layout_report::run(&cfg, &rest);
+            },
             "test" => {
                 let test_args = subcommand_args(&args, "test");
                 if let Err(code) = super::make_first::run(&cfg, pack) {

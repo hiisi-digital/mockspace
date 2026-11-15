@@ -46,6 +46,7 @@ pub mod select;
 pub mod settings;
 pub mod timings;
 pub mod units;
+pub mod layout_report;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

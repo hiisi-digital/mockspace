@@ -68,6 +68,10 @@ pub struct Fingerprints {
     /// The paths outside each member that its sources name, relative to the
     /// repository root, for the report.
     pub reaches: BTreeMap<String, Vec<PathBuf>>,
+    /// How each member's files divide into test binaries, for the report.
+    pub layouts: BTreeMap<String, Layout>,
+    /// The Rust files under each member's `tests/` that no binary claims.
+    pub unclaimed: BTreeMap<String, Vec<PathBuf>>,
 }
 
 impl Fingerprints {
@@ -205,6 +209,16 @@ pub fn compute(
         fp.shared.insert(name.clone(), hex(&h.finalize()));
         fp.reaches
             .insert(name.clone(), reaches.into_iter().collect());
+        // A Rust file under `tests/` no binary claims is shared, so it moves
+        // every binary of the member; `mock test-units` reports it.
+        let tests_dir = dir.join("tests");
+        let unclaimed: Vec<PathBuf> = own_files
+            .iter()
+            .filter(|f| f.starts_with(&tests_dir) && f.extension().is_some_and(|e| e == "rs"))
+            .filter(|f| !layout.units.is_empty() && !layout.claimed.contains(*f))
+            .cloned()
+            .collect();
+        fp.unclaimed.insert(name.clone(), unclaimed);
         layouts.insert(name.clone(), layout);
     }
 
@@ -277,6 +291,7 @@ pub fn compute(
                 .insert(format!("{name}::{target}"), hex(&h.finalize()));
         }
     }
+    fp.layouts = layouts;
     Ok(fp)
 }
 
