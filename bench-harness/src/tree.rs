@@ -794,11 +794,7 @@ mod tests {
     impl Tree {
         pub(super) fn new(name: &str) -> Tree {
             static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let root = mockspace_manifest::scratch::root().join(format!(
-                "mockspace-benchspace-test-{}-{}-{name}",
-                std::process::id(),
-                SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            ));
+            let root = mockspace_manifest::scratch::held();
             std::fs::remove_dir_all(&root).ok();
             std::fs::create_dir_all(&root).unwrap();
             Tree {

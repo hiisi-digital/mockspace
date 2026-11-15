@@ -72,11 +72,10 @@ pub(super) fn stage(root: &Path, files: &[(&str, &str)]) {
 /// The stub drains its stdin before it exits. The scan pipes every commit
 /// message into the launcher under `pipefail`, so a stub that exits without
 /// reading is killed on the other end by SIGPIPE and the hook ends silently,
-/// which is a refusal that looks like an empty output. Written once per process.
-fn stub_bin() -> &'static Path {
-    static BIN: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-    BIN.get_or_init(|| {
-        let bin = mockspace_manifest::scratch::root().join(format!("ms_hook_stubs_{}", std::process::id()));
+/// which is a refusal that looks like an empty output. Written per call, into a directory the calling thread holds.
+fn stub_bin() -> std::path::PathBuf {
+    {
+        let bin = mockspace_manifest::scratch::held();
         fs::create_dir_all(&bin).unwrap();
         // `cargo` records its arguments, one call to a line, in the file the run
         // names, and passes. The others serve the byline scan.
@@ -89,7 +88,7 @@ fn stub_bin() -> &'static Path {
             );
         }
         bin
-    })
+    }
 }
 
 /// What the hook printed, and the arguments of each `cargo` call it made.

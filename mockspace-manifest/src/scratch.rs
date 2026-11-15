@@ -35,13 +35,59 @@ pub fn root() -> PathBuf {
     FIRST.call_once(|| {
         reap(&base, STALE);
         claim(&mine);
+        remove_at_exit(&mine);
     });
     mine
 }
 
-/// A fresh scratch directory under this process's root, removed when the handle drops.
+/// Removes this process's root when the process ends normally, whatever a thread left in it, so
+/// a clean run leaves nothing under the scratch directory but other processes' roots. A killed
+/// process runs nothing, and its root is left to [`reap`].
+#[cfg(unix)]
+fn remove_at_exit(mine: &Path) {
+    static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    unsafe extern "C" {
+        fn atexit(f: extern "C" fn()) -> i32;
+    }
+    extern "C" fn clear() {
+        if let Some(p) = ROOT.get() {
+            let _ = std::fs::remove_dir_all(p);
+        }
+    }
+    // Absolute, so a later `set_current_dir` cannot move what the exit handler removes.
+    let mine = std::path::absolute(mine).unwrap_or_else(|_| mine.to_path_buf());
+    if ROOT.set(mine).is_ok() {
+        // SAFETY: `clear` is a plain `extern "C"` function with no captured state. It may run while
+        // test threads are still alive and race them over the files, which is harmless here, and it
+        // must never panic: every result in it is discarded.
+        unsafe { atexit(clear) };
+    }
+}
+
+/// Off unix there is no exit hook here, so the root stays for [`reap`].
+#[cfg(not(unix))]
+fn remove_at_exit(_mine: &Path) {}
+
+/// A fresh scratch directory under this process's root, removed when the handle drops. The name has a
+/// prefix because tempfile's default starts with a dot, a hidden path that git-shook and others skip.
 pub fn tempdir() -> std::io::Result<tempfile::TempDir> {
-    tempfile::tempdir_in(root())
+    tempfile::Builder::new().prefix("t-").tempdir_in(root())
+}
+
+/// A fresh scratch directory that stays until the calling thread ends, a panic included, for a
+/// helper that hands the path back and so cannot hold the guard itself. A test runs on a thread of
+/// its own, so that is the test. Two caveats: a test run on the main thread (libtest spawns a thread per test even
+/// under `--test-threads=1`, and falls back to the main thread only where it cannot spawn one) never drops thread-locals, so nothing is
+/// removed until the process-exit removal of the whole root; and a call made on a helper thread the
+/// test spawns is removed when that helper ends, which can be before the test is done with it.
+pub fn held() -> PathBuf {
+    thread_local! {
+        static HELD: std::cell::RefCell<Vec<tempfile::TempDir>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    let dir = tempdir().expect("make a test scratch directory");
+    let path = dir.path().to_path_buf();
+    HELD.with(|h| h.borrow_mut().push(dir));
+    path
 }
 
 /// Removes every root under `base` whose process has ended and whose modification time is

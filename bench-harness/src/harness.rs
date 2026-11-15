@@ -1074,7 +1074,7 @@ mod env_meta_json_tests {
     /// and the first one's bytes stand.
     #[test]
     fn a_run_file_is_never_replaced() {
-        let dir = mockspace_manifest::scratch::root().join(format!("mockspace-write-new-{}", std::process::id()));
+        let dir = mockspace_manifest::scratch::held();
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("samples.csv");

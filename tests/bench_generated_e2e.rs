@@ -96,8 +96,8 @@ pub fn hooks() -> Hooks {
 #[test]
 fn a_config_only_nested_tree_runs_end_to_end_through_the_generated_driver() {
     let repo = env!("CARGO_MANIFEST_DIR");
-    let root = mockspace_manifest::scratch::root().join(format!("mockspace-bench-e2e-{}", std::process::id()));
-    std::fs::remove_dir_all(&root).ok();
+    let root_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let root = root_guard.path().to_path_buf();
     let mock_dir = root.join("mock");
     let bench_dir = mock_dir.join("benches");
 
@@ -228,7 +228,6 @@ master_seed = 7
         "the generated arm manifest stays out of the consumer's tree"
     );
 
-    std::fs::remove_dir_all(&root).ok();
 }
 
 /// An arm writing more than the routine it resolved to allocates is refused
@@ -241,8 +240,8 @@ master_seed = 7
 #[test]
 fn an_arm_declaring_another_output_size_than_its_routine_is_refused() {
     let repo = env!("CARGO_MANIFEST_DIR");
-    let root = mockspace_manifest::scratch::root().join(format!("mockspace-bench-size-{}", std::process::id()));
-    std::fs::remove_dir_all(&root).ok();
+    let root_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let root = root_guard.path().to_path_buf();
     let mock_dir = root.join("mock");
     let bench_dir = mock_dir.join("benches");
 
@@ -467,7 +466,6 @@ master_seed = 7
     );
     assert!(!bench_dir.join("target").exists(), "the per-arm links stay after a plain run");
 
-    std::fs::remove_dir_all(&root).ok();
 }
 
 /// Takes the machine's git environment out of this process before `main`.

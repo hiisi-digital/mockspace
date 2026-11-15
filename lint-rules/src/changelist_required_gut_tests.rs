@@ -25,11 +25,7 @@ fn stub(proc_macro: bool) -> String {
 /// A repository in DOC whose crate `x` has `lib.rs` and `more.rs` committed with items.
 fn committed(tag: &str) -> PathBuf {
     static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let root = mockspace_manifest::scratch::root().join(format!(
-        "clr-gut-{tag}-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
+    let root = mockspace_manifest::scratch::held();
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("crates/x/src")).unwrap();
     std::fs::create_dir_all(root.join("design_rounds")).unwrap();

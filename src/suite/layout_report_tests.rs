@@ -20,9 +20,9 @@ fn git(root: &Path, args: &[&str]) {
 }
 
 /// A git repository with one workspace member, `solo`, under `mock/`.
-fn repo(tag: &str) -> Config {
-    let root = mockspace_manifest::scratch::root().join(format!("ms_test_units_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+fn repo(_tag: &str) -> (tempfile::TempDir, Config) {
+    let guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let root = guard.path().to_path_buf();
     let krate = root.join("mock/solo");
     std::fs::create_dir_all(krate.join("src")).unwrap();
     std::fs::write(
@@ -42,15 +42,14 @@ fn repo(tag: &str) -> Config {
     let mut cfg = Config::from_dir(Path::new("/nonexistent-mock-dir"));
     cfg.repo_root = root.clone();
     cfg.mock_dir = root.join("mock");
-    cfg
+    (guard, cfg)
 }
 
 #[test]
 fn a_member_that_is_not_in_the_workspace_fails_and_a_real_one_does_not() {
-    let cfg = repo("unknown");
+    let (_guard, cfg) = repo("unknown");
     let code = run(&cfg, &["nope".to_string()]);
     let control = run(&cfg, &["solo".to_string()]);
-    let _ = std::fs::remove_dir_all(&cfg.repo_root);
     assert_eq!(code, ExitCode::FAILURE);
     assert_eq!(control, ExitCode::SUCCESS);
 }

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, SystemTime};
 
-use super::{SCRATCH_DIR, claim, reap, root};
+use super::{SCRATCH_DIR, claim, held, reap, root};
 
 const STALE: Duration = Duration::from_secs(6 * 60 * 60);
 
@@ -81,4 +81,27 @@ fn scratch_lands_under_this_process_root() {
     assert!(r.ends_with(Path::new(SCRATCH_DIR).join(std::process::id().to_string())));
     let t = super::tempdir().unwrap();
     assert!(t.path().starts_with(&r), "a scratch dir is made under the root");
+}
+
+#[test]
+fn a_held_directory_goes_when_its_thread_ends_even_on_a_panic() {
+    let paths = std::thread::spawn(|| {
+        let a = held();
+        let b = held();
+        std::fs::write(a.join("f"), "x").unwrap();
+        assert!(a.is_dir() && b.is_dir() && a != b);
+        (a, b)
+    })
+    .join()
+    .unwrap();
+    assert!(!paths.0.exists() && !paths.1.exists(), "gone with the thread");
+    let panicked = std::thread::spawn(|| {
+        let p = held();
+        std::fs::write(p.join("f"), "x").unwrap();
+        std::panic::panic_any(p);
+    })
+    .join()
+    .unwrap_err();
+    let p = panicked.downcast::<PathBuf>().unwrap();
+    assert!(!p.exists(), "a panic removes it as well");
 }

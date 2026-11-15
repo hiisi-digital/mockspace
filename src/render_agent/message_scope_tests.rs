@@ -31,15 +31,8 @@ use std::process::Command;
 
 use super::*;
 
-pub(super) fn scratch(tag: &str) -> std::path::PathBuf {
-    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let d = mockspace_manifest::scratch::root().join(format!(
-        "ms_msgscope_{tag}_{}_{}",
-        std::process::id(),
-        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&d).unwrap();
-    d
+pub(super) fn scratch(_tag: &str) -> tempfile::TempDir {
+    mockspace_manifest::scratch::tempdir().unwrap()
 }
 
 fn cfg_at(repo_root: &std::path::Path) -> Config {
@@ -109,7 +102,7 @@ fn claimed(out: &str) -> bool {
 /// Two repositories side by side, which is what the workspace actually looks
 /// like and what the single-root fixtures could not express.
 pub(super) fn two_repos(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-    let base = scratch(tag);
+    let base = mockspace_manifest::scratch::held();
     let mine = base.join("mine");
     let other = base.join("other");
     std::fs::create_dir_all(&mine).unwrap();

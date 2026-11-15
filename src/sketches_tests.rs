@@ -32,8 +32,8 @@ fn a_timer_in_a_sketch_is_seen_and_plain_code_is_not() {
 
 #[test]
 fn the_survey_reads_each_sketch_and_open_keeps_only_those_wanting_attention() {
-    let root = mockspace_manifest::scratch::root().join(format!("ms_sketches_{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let root = root_guard.path().to_path_buf();
     let write = |rel: &str, text: &str| {
         let p = root.join(rel);
         fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -48,7 +48,6 @@ fn the_survey_reads_each_sketch_and_open_keeps_only_those_wanting_attention() {
     write("202601010000_done/target/x.rs", "Instant::now");
 
     let all = survey(&root);
-    let _ = fs::remove_dir_all(&root);
     assert_eq!(all.len(), 3);
     assert_eq!(all[0].outcome, Outcome::Works);
     assert_eq!(all[0].timer, None, "target/ is skipped");
@@ -64,8 +63,8 @@ fn the_survey_reads_each_sketch_and_open_keeps_only_those_wanting_attention() {
 
 #[test]
 fn an_unknown_flag_fails_and_a_known_one_does_not() {
-    let root = mockspace_manifest::scratch::root().join(format!("ms_sketches_cmd_{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let root = root_guard.path().to_path_buf();
     let mut cfg = Config::from_dir(Path::new("/nonexistent-mock-dir"));
     cfg.mock_dir = root.join("mock");
     assert_eq!(cmd(&cfg, &["--bogus".to_string()]), ExitCode::FAILURE);
@@ -73,3 +72,5 @@ fn an_unknown_flag_fails_and_a_known_one_does_not() {
     assert_eq!(cmd(&cfg, &["--open".to_string()]), ExitCode::SUCCESS);
     assert_eq!(cmd(&cfg, &[]), ExitCode::SUCCESS);
 }
+
+

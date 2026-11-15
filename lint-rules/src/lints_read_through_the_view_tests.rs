@@ -99,7 +99,7 @@ struct Pack(PathBuf);
 
 impl Pack {
     fn new(name: &str, files: &[(&str, &str)]) -> Self {
-        let root = mockspace_manifest::scratch::root().join(format!("mockspace-guard-{name}-{}", std::process::id()));
+        let root = mockspace_manifest::scratch::held();
         let _ = std::fs::remove_dir_all(&root);
         for (rel, text) in files {
             let p = root.join(rel);
@@ -141,7 +141,7 @@ fn the_pack_guard_names_the_file_and_skips_tests() {
 
 #[test]
 fn a_guard_over_nothing_does_not_pass() {
-    let missing = mockspace_manifest::scratch::root().join(format!("mockspace-guard-none-{}", std::process::id()));
+    let missing = mockspace_manifest::scratch::held().join("missing");
     let refused = std::panic::catch_unwind(|| assert_lints_read_through_the_view(&missing));
     assert!(refused.is_err());
 }
