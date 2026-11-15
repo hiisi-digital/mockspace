@@ -201,7 +201,7 @@ fn a_cached_variant_is_reloaded_and_a_changed_one_is_rerun() {
     // unconditionally on its first line. It was named for a round trip and
     // completed none. It also `set_current_dir`, which is process-global in a
     // test binary whose tests run on parallel threads.
-    let tmp = std::env::temp_dir().join(format!("mockspace_bench_cache_{}", std::process::id()));
+    let tmp = mockspace_manifest::scratch::root().join(format!("mockspace_bench_cache_{}", std::process::id()));
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).unwrap();
 
@@ -266,7 +266,7 @@ fn a_cached_variant_is_reloaded_and_a_changed_one_is_rerun() {
 
 #[test]
 fn manifest_loads_and_converts_to_config() {
-    let tmp = std::env::temp_dir().join(format!("mockspace_bench_manifest_{}", std::process::id()));
+    let tmp = mockspace_manifest::scratch::root().join(format!("mockspace_bench_manifest_{}", std::process::id()));
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).unwrap();
 
@@ -312,7 +312,7 @@ fn report_from_csv_round_trip_emits_findings_md() {
     // `report_from_csv`; assert the resulting markdown is non-
     // empty and carries the title from the call.
     use mockspace_bench_harness::{report_from_csv, write_run};
-    let tmp = std::env::temp_dir().join(format!(
+    let tmp = mockspace_manifest::scratch::root().join(format!(
         "mockspace_bench_csv_to_findings_{}",
         std::process::id()
     ));

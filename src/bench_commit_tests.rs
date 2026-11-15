@@ -28,7 +28,7 @@ const RUN: &str = "results/hash/hash_n64/linux-x86_64-c4-bare-amd/20261115T09300
 /// the tree by path, an unrelated crate beside it, and committed outputs in
 /// the current layout and in the old ledger.
 fn repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     let mock = root.join("mock");
     let bench = mock.join("benches");

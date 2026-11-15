@@ -80,7 +80,7 @@ mockspace::lint_pack! {
 #[test]
 #[ignore = "runs cargo build; run with --ignored"]
 fn a_tool_runs_with_cargo_target_dir_set_in_the_environment() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture(tmp.path());
     let elsewhere = tmp.path().join("somewhere-else");
 
@@ -140,7 +140,7 @@ fn without_the_variable_the_artifact_lands_under_the_shared_generated_crate() {
     // engine that writes to `elsewhere` no matter what the environment says.
     // The generated crate is outside the worktree now, in the user's cache, so
     // that is where cargo's default puts the build.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture(tmp.path());
     let cache = tmp.path().join("cache");
     let base = cache.join("mockspace").join("lints");

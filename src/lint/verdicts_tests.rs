@@ -13,7 +13,7 @@ fn store(base: &Path, pack: &str) -> DiskVerdicts {
 
 #[test]
 fn a_verdict_saved_is_replayed_and_an_unknown_key_is_not() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let s = store(dir.path(), "");
     let key = s.digest(&[b"file", b"text"]);
     assert_eq!(s.replay(&key), None, "the control: nothing is saved yet");
@@ -26,7 +26,7 @@ fn a_verdict_saved_is_replayed_and_an_unknown_key_is_not() {
 
 #[test]
 fn the_same_parts_split_differently_are_different_keys() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let s = store(dir.path(), "");
     assert_ne!(s.digest(&[b"ab", b"c"]), s.digest(&[b"a", b"bc"]), "parts are framed");
     assert_ne!(s.digest(&[b"abc"]), s.digest(&[b"abc", b""]), "and an empty part counts");
@@ -34,7 +34,7 @@ fn the_same_parts_split_differently_are_different_keys() {
 
 #[test]
 fn a_different_pack_finds_nothing_the_first_saved() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let old = store(dir.path(), "pack-a");
     let key = old.digest(&[b"x"]);
     old.remember(&key, "saved by pack-a");
@@ -47,7 +47,7 @@ fn a_different_pack_finds_nothing_the_first_saved() {
 
 #[test]
 fn the_sweep_removes_what_nothing_has_read_for_two_weeks_and_keeps_the_rest() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let s = store(dir.path(), "");
     let old = s.digest(&[b"old"]);
     let new = s.digest(&[b"new"]);
@@ -67,7 +67,7 @@ fn the_sweep_removes_what_nothing_has_read_for_two_weeks_and_keeps_the_rest() {
 
 #[test]
 fn a_file_digest_is_the_content_and_not_the_name() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let (a, b, c) = (dir.path().join("a"), dir.path().join("b"), dir.path().join("c"));
     fs::write(&a, b"same").unwrap();
     fs::write(&b, b"same").unwrap();
@@ -79,7 +79,7 @@ fn a_file_digest_is_the_content_and_not_the_name() {
 
 #[test]
 fn the_sweep_leaves_alone_what_the_store_did_not_write() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let s = store(dir.path(), "");
     // a directory the user shares with other things: a non-shard directory and a non-key file in a
     // shard-looking one, both a month old
@@ -106,7 +106,7 @@ fn the_sweep_leaves_alone_what_the_store_did_not_write() {
 
 #[test]
 fn the_sweep_removes_the_kept_keys_an_older_engine_left() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let s = store(dir.path(), "");
     let kept = s.dir.join("last-full-run");
     fs::create_dir_all(&kept).unwrap();

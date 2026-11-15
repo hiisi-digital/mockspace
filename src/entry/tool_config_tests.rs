@@ -76,7 +76,7 @@ impl Tool for Probe {
 /// Loads a repository whose config is `toml`, configures a pack holding the probe from it through
 /// the dispatcher's own `configure_pack`, and runs the probe, returning what it saw.
 fn run_with(toml: &str) -> Seen {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(repo.join(".git")).unwrap();
     std::fs::create_dir_all(repo.join("mock/crates")).unwrap();

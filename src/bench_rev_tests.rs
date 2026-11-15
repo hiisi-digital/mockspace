@@ -52,7 +52,7 @@ fn arms(revs: &[(&str, Option<&str>)]) -> Vec<(String, Option<String>)> {
 
 #[test]
 fn the_arms_locks_decide_and_the_remote_is_not_asked() {
-    let cache = tempfile::tempdir().unwrap();
+    let cache = mockspace_manifest::scratch::tempdir().unwrap();
     for set in [
         arms(&[("h/x", Some(A))]),
         arms(&[("h/x", Some(A)), ("h/y", Some(A))]),
@@ -64,7 +64,7 @@ fn the_arms_locks_decide_and_the_remote_is_not_asked() {
 
 #[test]
 fn arms_locked_at_two_commits_are_refused_naming_each() {
-    let cache = tempfile::tempdir().unwrap();
+    let cache = mockspace_manifest::scratch::tempdir().unwrap();
     let set = arms(&[("h/x", Some(A)), ("h/y", Some(B)), ("h/z", None)]);
     let err = run_rev(&set, DEV, cache.path(), &never).unwrap_err();
     for part in [&format!("h/x at {A}"), &format!("h/y at {B}"), "cargo update -p"] {
@@ -99,8 +99,8 @@ fn a_run_settles_on_the_locks_of_the_benches_it_selects_and_no_others() {
     // Two benches measured at two commits, which is how a consumer's tree
     // stands whenever one bench is newer than another. Running either alone
     // settles on its own commit; only a run over both is refused.
-    let root = tempfile::tempdir().unwrap();
-    let cache = tempfile::tempdir().unwrap();
+    let root = mockspace_manifest::scratch::tempdir().unwrap();
+    let cache = mockspace_manifest::scratch::tempdir().unwrap();
     let all = on_disk(root.path(), &[
         ("old", "a", Some(A)),
         ("old", "b", Some(A)),
@@ -128,7 +128,7 @@ fn a_run_settles_on_the_locks_of_the_benches_it_selects_and_no_others() {
 
 #[test]
 fn with_no_arm_locked_the_tip_is_taken_and_kept() {
-    let cache = tempfile::tempdir().unwrap();
+    let cache = mockspace_manifest::scratch::tempdir().unwrap();
     let asked = Cell::new(0);
     let resolve = |url: &str, branch: &str| {
         asked.set(asked.get() + 1);
@@ -143,14 +143,14 @@ fn with_no_arm_locked_the_tip_is_taken_and_kept() {
 
 #[test]
 fn with_no_arm_locked_and_no_tip_to_be_had_nothing_is_aligned() {
-    let cache = tempfile::tempdir().unwrap();
+    let cache = mockspace_manifest::scratch::tempdir().unwrap();
     let offline = |_: &str, _: &str| Err::<String, String>("offline".into());
     assert_eq!(run_rev(&[], DEV, cache.path(), &offline), Ok(None));
 }
 
 #[test]
 fn a_spec_the_consumer_pinned_is_left_to_the_consumer() {
-    let cache = tempfile::tempdir().unwrap();
+    let cache = mockspace_manifest::scratch::tempdir().unwrap();
     // Even arms that disagree are not this module's business then: the
     // consumer chose the commit, and the dlopen hash is what is left.
     let split = arms(&[("h/x", Some(A)), ("h/y", Some(B))]);
@@ -172,7 +172,7 @@ fn a_lock_elsewhere_or_missing_is_moved_and_one_already_there_is_not() {
         calls.borrow_mut().push((m.to_path_buf(), r.to_string()));
         Ok(())
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     align(dir.path(), B, &update).unwrap();
     std::fs::write(
         dir.path().join("Cargo.lock"),
@@ -191,7 +191,7 @@ fn a_lock_elsewhere_or_missing_is_moved_and_one_already_there_is_not() {
 
 #[test]
 fn a_failed_move_is_the_run_failing() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let err = align(dir.path(), B, &|_: &Path, _: &str| Err("no network".into())).unwrap_err();
     assert_eq!(err, "no network");
 }
@@ -221,7 +221,7 @@ struct Tree {
 }
 
 fn tree() -> Tree {
-    let root = tempfile::tempdir().unwrap();
+    let root = mockspace_manifest::scratch::tempdir().unwrap();
     let fw = root.path().join("fw");
     write(
         &fw.join("Cargo.toml"),

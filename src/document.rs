@@ -430,7 +430,7 @@ mod tests {
 
     #[test]
     fn the_sweep_removes_a_retired_document_and_leaves_a_hand_written_one() {
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let docs = d.path();
 
         // Written by an earlier run, not written by this one: retired.
@@ -471,7 +471,7 @@ mod tests {
 
     #[test]
     fn a_retired_document_does_not_take_an_image_that_shares_its_name() {
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let docs = d.path();
 
         // The case that made the rule too wide. A generated document retires,
@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn a_retired_diagram_takes_its_rendered_image_with_it() {
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let docs = d.path();
 
         // A diagram this run no longer generates. The `.dot` carries the
@@ -549,7 +549,7 @@ mod tests {
         // it belongs to was swept, so a stem whose text half is somebody's
         // must reach nothing: otherwise the rule is "delete images", written
         // in a way that looks narrower than it is.
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let docs = d.path();
         let theirs_dot = docs.join("sketch.dot");
         let theirs_png = docs.join("sketch.png");
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn the_sweep_reads_the_header_and_not_a_mention_of_it() {
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let docs = d.path();
 
         // The control for the check above, and the reason the marker is looked
@@ -627,7 +627,7 @@ mod tests {
 
     #[test]
     fn generating_twice_with_no_input_change_leaves_the_file_alone() {
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let mut cfg = Config::from_dir(d.path());
         cfg.docs_dir = d.path().join("docs");
 
@@ -662,7 +662,7 @@ mod tests {
         // The control for the test above: the same two runs, with the body
         // changed between them, must write. Otherwise "leaves it alone" is a
         // property of a writer that never writes.
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let mut cfg = Config::from_dir(d.path());
         cfg.docs_dir = d.path().join("docs");
 
@@ -687,7 +687,7 @@ mod tests {
         // path that stopped emitting the header would leave every document it
         // writes permanently unsweepable, and nothing else would notice. This
         // is the other end of that contract.
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let mut cfg = Config::from_dir(d.path());
         cfg.docs_dir = d.path().join("docs");
 

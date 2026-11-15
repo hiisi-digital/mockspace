@@ -184,7 +184,7 @@ fn aborting_a_stopped_merge_still_works() {
 /// concludes a stopped merge, and the scenario above that runs it is its test.
 #[test]
 fn git_drops_what_a_pre_merge_commit_hook_stages() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let root = dir.path();
     let git = |args: &[&str]| {
         let out = Command::new("git")

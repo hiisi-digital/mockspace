@@ -53,7 +53,7 @@ struct Pair {
 /// built library path, of its own: two cases sharing a key would be one crate
 /// built by two tests at once, and the race under test would be theirs.
 fn pair(tag: &str) -> Pair {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let main = tmp.path().join("clone");
     std::fs::create_dir_all(main.join("mock")).unwrap();
     git(&main, &["init", "-q"]);

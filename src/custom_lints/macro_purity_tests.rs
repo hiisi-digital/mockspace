@@ -197,7 +197,7 @@ fn info(sources: &[&Path]) -> String {
 
 #[test]
 fn a_macro_is_held_when_its_sources_and_those_of_the_crates_of_the_tree_it_uses_are_pure() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let own = written(&tmp.path().join("derive"), "lib.rs", "pub fn f() {}");
     let helper = written(&tmp.path().join("helper").join("src"), "lib.rs", "pub fn h() {}");
     assert!(held(&info(&[&own]), tmp.path(), &[info(&[&helper])]));
@@ -205,7 +205,7 @@ fn a_macro_is_held_when_its_sources_and_those_of_the_crates_of_the_tree_it_uses_
 
 #[test]
 fn a_macro_is_not_held_when_a_crate_of_the_tree_it_uses_can_read_a_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let own = written(&tmp.path().join("derive"), "lib.rs", "pub fn f() {}");
     let helper = written(&tmp.path().join("helper").join("src"), "lib.rs", "pub fn h() {}");
     let deep = written(&tmp.path().join("helper").join("src").join("deep"), "io.rs", "fn r() { std::fs::read(\"Cargo.toml\"); }");
@@ -213,7 +213,7 @@ fn a_macro_is_not_held_when_a_crate_of_the_tree_it_uses_can_read_a_file() {
 }
 
 fn a_macro_is_not_held_without_sources_or_with_one_it_cannot_read() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     assert!(!held("derive.d:\n", tmp.path(), &[]), "an empty source list");
     assert!(!held("", tmp.path(), &[]), "an empty dep-info");
     let gone = tmp.path().join("gone.rs");
@@ -225,7 +225,7 @@ fn a_macro_is_not_held_without_sources_or_with_one_it_cannot_read() {
 
 #[test]
 fn a_relative_source_is_read_against_the_directory_the_build_ran_in() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     written(&tmp.path().join("rel"), "lib.rs", "pub fn f() {}");
     assert!(held("derive.d: rel/lib.rs\n", tmp.path(), &[]));
     written(&tmp.path().join("bad"), "lib.rs", "fn f() { std::env::var(\"X\"); }");

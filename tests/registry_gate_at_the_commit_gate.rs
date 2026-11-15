@@ -141,7 +141,7 @@ fn a_sound_registry_passes_the_commit_gate() {
          not run is exactly the failure this file exists to catch, and it is \
          invisible on a host that has taplo. Install taplo to run this suite."
     );
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), &Lie::None);
     let out = commit_gate(tmp.path());
     assert!(
@@ -161,7 +161,7 @@ fn a_missing_required_field_fails_the_commit_gate() {
          not run is exactly the failure this file exists to catch, and it is \
          invisible on a host that has taplo. Install taplo to run this suite."
     );
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), &Lie::MissingRequired);
     let out = commit_gate(tmp.path());
     let err = String::from_utf8_lossy(&out.stderr);
@@ -179,7 +179,7 @@ fn a_missing_required_field_fails_the_commit_gate() {
 
 #[test]
 fn a_duplicate_slug_fails_the_commit_gate() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), &Lie::DuplicateSlug);
     let out = commit_gate(tmp.path());
     let err = String::from_utf8_lossy(&out.stderr);
@@ -196,7 +196,7 @@ fn a_duplicate_slug_fails_the_commit_gate() {
 
 #[test]
 fn a_dangling_row_reference_fails_the_commit_gate() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), &Lie::DanglingReference);
     let out = commit_gate(tmp.path());
     let err = String::from_utf8_lossy(&out.stderr);
@@ -242,7 +242,7 @@ fn a_lying_registry_still_generates_its_documents() {
          for a reason unrelated to the duplicate slug this arm is about. \
          Install taplo to run this suite."
     );
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), &Lie::DuplicateSlug);
 
     let out = generation_run(tmp.path());
@@ -285,7 +285,7 @@ fn the_registry_gate_runs_once_per_generation_run() {
         "the count includes the schema check, which is taplo's. Install taplo to \
          run this suite."
     );
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), &Lie::None);
     let err = String::from_utf8_lossy(&generation_run(tmp.path()).stderr).into_owned();
     let banners = err.matches("--- registry ---").count();

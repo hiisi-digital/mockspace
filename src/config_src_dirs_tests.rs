@@ -28,7 +28,7 @@ fn refusal_of(mock: &Path) -> Option<String> {
 /// A repo whose `mock` directory holds `crates`, an `outside` beside the
 /// repository, and a `mockspace.toml` declaring `entries`.
 fn repo_declaring(entries: &str) -> tempfile::TempDir {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = tmp.path().join("repo/mock");
     std::fs::create_dir_all(mock.join("crates")).unwrap();
     std::fs::create_dir_all(mock.join("a/b")).unwrap();

@@ -198,7 +198,7 @@ fn a_dependency_cycle_ends_and_still_reaches_every_member() {
 
 #[test]
 fn a_directory_that_is_not_a_repository_has_no_digest() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = tmp.path().join("mock");
     write(&mock.join("benches/x.rs"), "");
     assert_eq!(digest(tmp.path(), &mock, &mock.join("benches")), None);

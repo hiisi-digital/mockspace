@@ -42,7 +42,7 @@ fn refusal_run(block: &[String], repo: &Path) -> (i32, Vec<String>) {
 }
 
 fn repo_with_a_kept_record() -> tempfile::TempDir {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let git = |args: &[&str]| {
         let out = Command::new("git")
             .current_dir(tmp.path())

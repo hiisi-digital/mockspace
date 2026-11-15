@@ -29,7 +29,7 @@ struct Fixture {
 }
 
 fn fixture(cargo_home_config: bool) -> Fixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let base = tmp.path().canonicalize().unwrap();
     let root = base.join("ws");
     let home = base.join("home");

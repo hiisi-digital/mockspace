@@ -25,7 +25,7 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let source = tmp.path().join("lints").join("probe.rs");
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
     std::fs::write(&source, "v1").unwrap();

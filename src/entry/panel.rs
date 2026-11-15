@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn seating_writes_a_file_a_second_seat_reads_back() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let cfg = cfg_in(tmp.path());
 
         assert_eq!(
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn seating_without_a_topic_is_refused_and_writes_nothing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let cfg = cfg_in(tmp.path());
         assert_eq!(cmd_seat(&cfg, &["slug", "persona"]), ExitCode::from(2));
         assert!(!crate::panel::inventory_path(&cfg.mock_dir, "slug").exists());
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn consolidating_with_no_seats_is_refused() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let cfg = cfg_in(tmp.path());
         assert_eq!(
             cmd_consolidate(&cfg, &["slug", "nothing", "to", "say"]),
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn the_cadence_gate_reaches_the_cli_and_recovers_after_consolidating() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let mut cfg = cfg_in(tmp.path());
         cfg.panel_consolidate_every = 1;
 
@@ -253,14 +253,14 @@ mod tests {
 
     #[test]
     fn status_on_a_project_with_no_panels_says_so_rather_than_nothing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let cfg = cfg_in(tmp.path());
         assert_eq!(cmd_status(&cfg, &[]), ExitCode::SUCCESS);
     }
 
     #[test]
     fn an_unknown_verb_is_refused() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let cfg = cfg_in(tmp.path());
         assert_eq!(run(&cfg, &["frobnicate"]), ExitCode::from(2));
     }
@@ -274,7 +274,7 @@ mod tests {
         // mechanism); this pins that the declaration is still true, because
         // `run` itself refuses with no verb at all, which is what the
         // shared mechanism would have done if it reached builtins.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let cfg = cfg_in(tmp.path());
         assert_eq!(run(&cfg, &[]), ExitCode::from(2));
     }

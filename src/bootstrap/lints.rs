@@ -244,7 +244,7 @@ mod tool_discovery_tests {
     use super::*;
 
     fn tools_dir() -> (tempfile::TempDir, PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let dir = tmp.path().join("mock").join("tools");
         fs::create_dir_all(&dir).unwrap();
         (tmp, dir)
@@ -333,7 +333,7 @@ mod tool_discovery_tests {
 
     #[test]
     fn a_project_with_no_tools_directory_has_no_tools() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         assert_eq!(tool_names(tmp.path()), Vec::<String>::new());
     }
 
@@ -341,7 +341,7 @@ mod tool_discovery_tests {
     fn tool_names_reads_the_directory_without_building_anything() {
         // The property the dispatcher depends on: names are known before any
         // cdylib exists, so an unknown subcommand does not trigger a build.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let mock = tmp.path().join("mock");
         fs::create_dir_all(mock.join("tools")).unwrap();
         write_crate(&mock.join("tools"), "corpus-talk", "corpus-talk");

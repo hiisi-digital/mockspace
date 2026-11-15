@@ -115,7 +115,7 @@ mod tests {
     }
 
     fn rig(hook_text: impl Fn(&Path) -> String, cargo_exit: i32) -> Rig {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let p = dir.path();
         executable(
             &p.join("cargo"),

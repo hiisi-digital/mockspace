@@ -211,28 +211,28 @@ mod tests {
 
     #[test]
     fn empty_members_list_is_memberless() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nresolver = \"2\"\nmembers = []\n");
         assert!(is_memberless_virtual_workspace(tmp.path()));
     }
 
     #[test]
     fn multiline_empty_members_list_is_memberless() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nmembers = [\n]\n");
         assert!(is_memberless_virtual_workspace(tmp.path()));
     }
 
     #[test]
     fn absent_members_is_memberless() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nresolver = \"2\"\n");
         assert!(is_memberless_virtual_workspace(tmp.path()));
     }
 
     #[test]
     fn a_populated_members_list_is_not_memberless() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(
             tmp.path(),
             "[workspace]\nmembers = [\n    \"crates/foo\",\n]\n",
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn a_package_manifest_is_never_memberless() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(
             tmp.path(),
             "[package]\nname = \"foo\"\n\n[workspace]\nmembers = []\n",
@@ -252,21 +252,21 @@ mod tests {
 
     #[test]
     fn a_manifest_that_is_not_a_workspace_is_not_memberless() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "resolver = \"2\"\n");
         assert!(!is_memberless_virtual_workspace(tmp.path()));
     }
 
     #[test]
     fn an_unparseable_manifest_is_not_forgiven() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "[workspace\nmembers = ");
         assert!(!is_memberless_virtual_workspace(tmp.path()));
     }
 
     #[test]
     fn a_missing_manifest_is_not_forgiven() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         assert!(!is_memberless_virtual_workspace(tmp.path()));
     }
 
@@ -274,7 +274,7 @@ mod tests {
     fn forgives_failure_short_circuits_on_a_populated_workspace() {
         // no cargo invocation happens, so this holds even though the listed
         // member does not exist on disk.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nmembers = [\"crates/foo\"]\n");
         assert!(!forgives_failure(tmp.path(), &["check"]));
     }
@@ -285,7 +285,7 @@ mod tests {
         // produces the same no-members diagnostic. Matching only on a
         // dotted-header table would fail the gate on a legitimately memberless
         // repo.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(
             tmp.path(),
             "workspace = { resolver = \"2\", members = [] }\n",
@@ -299,7 +299,7 @@ mod tests {
         // real cargo invocation. Every other test here covers the refusing
         // side; without this one, nothing proves forgiveness ever happens, and
         // a predicate that always returned false would still pass the suite.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nresolver = \"2\"\nmembers = []\n");
         assert!(
             forgives_failure(tmp.path(), &["check"]),
@@ -313,7 +313,7 @@ mod tests {
         // situation as an empty list from the repo's point of view, but cargo
         // reports it as a failed member load of the glob itself rather than as
         // no members.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nmembers = [\"crates/*\"]\n");
         std::fs::create_dir_all(tmp.path().join("crates")).unwrap();
         assert!(
@@ -326,7 +326,7 @@ mod tests {
     fn a_glob_that_matches_a_directory_is_a_member_and_is_not_forgiven() {
         // the control: a glob that matches a broken crate is a real breakage,
         // reported "via" the pattern, and neither half of the check forgives it
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nmembers = [\"crates/*\"]\n");
         std::fs::create_dir_all(tmp.path().join("crates/x")).unwrap();
         assert!(!is_memberless_virtual_workspace(tmp.path()));
@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn a_plain_member_and_a_glob_in_a_parent_segment_are_never_memberless() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nmembers = [\"crates/a\"]\n");
         assert!(!is_memberless_virtual_workspace(tmp.path()));
         manifest(tmp.path(), "[workspace]\nmembers = [\"*/x\"]\n");
@@ -350,7 +350,7 @@ mod tests {
     fn a_glob_over_a_directory_holding_only_a_file_still_matches_nothing() {
         // git cannot commit an empty directory, so a repo before its crates exist
         // holds `crates/.gitkeep`; cargo counts directories only
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nmembers = [\"crates/*\"]\n");
         std::fs::create_dir_all(tmp.path().join("crates")).unwrap();
         std::fs::write(tmp.path().join("crates/.gitkeep"), "").unwrap();
@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn a_glob_whose_parent_directory_is_absent_matches_nothing_and_is_forgiven() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nmembers = [\"crates/*\"]\n");
         assert!(forgives_failure(tmp.path(), &["check"]));
     }
@@ -371,7 +371,7 @@ mod tests {
         // cargo reports the first member it fails on, the empty glob, so the diagnostic
         // alone says forgive; the manifest half's quantifier over every member is what
         // refuses here
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nmembers = [\"crates/*\", \"tools/real\"]\n");
         std::fs::create_dir_all(tmp.path().join("crates")).unwrap();
         assert!(!is_memberless_virtual_workspace(tmp.path()));
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn two_globs_that_both_match_nothing_are_forgiven() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nmembers = [\"crates/*\", \"tools/*\"]\n");
         std::fs::create_dir_all(tmp.path().join("crates")).unwrap();
         std::fs::create_dir_all(tmp.path().join("tools")).unwrap();
@@ -391,7 +391,7 @@ mod tests {
     fn a_character_class_is_not_read_so_it_is_never_memberless() {
         // the matcher reads `*` and `?` only; a class it would read as literal text
         // would match nothing and skip the tests of a workspace with real members
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nmembers = [\"crates/[a-z]*\"]\n");
         std::fs::create_dir_all(tmp.path().join("crates/foo")).unwrap();
         assert!(!is_memberless_virtual_workspace(tmp.path()));
@@ -411,7 +411,7 @@ mod tests {
         // cargo drops `exclude`d paths from the expanded `members`, so this workspace has
         // no members and cargo says so. Counting `crates/foo` as present refuses a repo
         // that is legitimately memberless.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(
             tmp.path(),
             "[workspace]\nmembers = [\"crates/*\"]\nexclude = [\"crates/foo\"]\n",
@@ -427,7 +427,7 @@ mod tests {
     #[test]
     fn a_glob_with_a_match_that_is_not_excluded_is_not_memberless() {
         // the control: excluding one directory does not hide a sibling the glob also matches
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(
             tmp.path(),
             "[workspace]\nmembers = [\"crates/*\"]\nexclude = [\"crates/foo\"]\n",
@@ -439,7 +439,7 @@ mod tests {
 
     #[test]
     fn a_plain_member_that_is_also_excluded_is_memberless() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         manifest(
             tmp.path(),
             "[workspace]\nmembers = [\"crates/foo\"]\nexclude = [\"./crates/foo/\"]\n",

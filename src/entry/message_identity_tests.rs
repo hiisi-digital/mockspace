@@ -186,7 +186,7 @@ fn an_older_engine_reads_a_newer_hooks_stream_with_the_message_whole() {
             .collect()
     }
 
-    let repo = tempfile::tempdir().unwrap();
+    let repo = mockspace_manifest::scratch::tempdir().unwrap();
     let dir = repo.path();
     git_in(dir, &[], &["init", "-q", "-b", "main"]);
     let person = "Jane Doe <jane@example.com>";
@@ -221,7 +221,7 @@ fn a_separator_inside_a_name_is_stripped_by_the_hook_so_the_record_parses() {
     // Git accepts these bytes in a name. The hook takes both out of the four
     // fields before framing, so the identity arrives as the name without them
     // and the record is whole.
-    let repo = tempfile::tempdir().unwrap();
+    let repo = mockspace_manifest::scratch::tempdir().unwrap();
     let dir = repo.path();
     git_in(dir, &[], &["init", "-q", "-b", "main"]);
     git_in(
@@ -325,7 +325,7 @@ fn probe_pack(seen: &Seen) -> LintPack {
 }
 
 fn config() -> (tempfile::TempDir, Config) {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = tmp.path().join("mock");
     std::fs::create_dir_all(&mock).unwrap();
     std::fs::write(mock.join("mockspace.toml"), "project_name = \"probe\"\n").unwrap();
@@ -478,7 +478,7 @@ fn path_with(stub_dir: &Path) -> String {
 /// Run the real pre-push scan body in `repo` against a stub launcher that keeps
 /// whatever it is sent on stdin, and return those bytes.
 fn what_the_push_scan_sends(repo: &Path, head: &str) -> Vec<u8> {
-    let stub_dir = tempfile::tempdir().unwrap();
+    let stub_dir = mockspace_manifest::scratch::tempdir().unwrap();
     let sent: PathBuf = stub_dir.path().join("stdin.bin");
     let stub = stub_dir.path().join("mock");
     crate::test_exec::write_executable(
@@ -513,7 +513,7 @@ fn the_push_scan_sends_each_commit_with_its_own_author_and_committer() {
     // and committed, and an agent authored under a person's committer. Every
     // record has to carry its own pair, which a stream sharing one identity
     // across the batch would get wrong for two of the three.
-    let repo = tempfile::tempdir().unwrap();
+    let repo = mockspace_manifest::scratch::tempdir().unwrap();
     let dir = repo.path();
     git_in(dir, &[], &["init", "-q", "-b", "main"]);
     let person = "Jane Doe <jane@example.com>";

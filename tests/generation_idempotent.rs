@@ -30,7 +30,7 @@ fn write(path: &Path, content: &str) {
 
 #[test]
 fn per_crate_doc_regeneration_is_timestamp_stable() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
 
     // Minimal mock workspace: a repo root with .git, a mock/ dir carrying
@@ -122,7 +122,7 @@ fn per_crate_doc_regeneration_is_timestamp_stable() {
 /// directory, because a repo generating for the first time has none.
 #[test]
 fn passthrough_templates_expand_placeholders() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
 
     fs::create_dir_all(root.join(".git")).unwrap();
@@ -182,7 +182,7 @@ fn passthrough_templates_expand_placeholders() {
 /// leak applied to every crate doc.
 #[test]
 fn per_crate_docs_expand_placeholders() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
 
     fs::create_dir_all(root.join(".git")).unwrap();
@@ -229,7 +229,7 @@ fn per_crate_docs_expand_placeholders() {
 /// summaries at all, so nothing surfaced it.
 #[test]
 fn summary_links_match_the_files_written() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fs::create_dir_all(root.join(".git")).unwrap();
     let mock = root.join("mock");
@@ -295,7 +295,7 @@ fn summary_links_match_the_files_written() {
 #[test]
 #[ignore = "runs the binary and shells out; run with --ignored"]
 fn the_binary_leaves_a_tree_it_just_generated_alone() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     // A real repository and a real workspace manifest, because this runs the
     // binary rather than a library entry point and the binary checks for both.
@@ -429,7 +429,7 @@ fn the_binary_touches_no_generated_file_the_second_time() {
         return;
     }
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     std::process::Command::new("git")
         .args(["init", "-q"])

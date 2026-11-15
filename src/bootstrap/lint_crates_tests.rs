@@ -6,7 +6,7 @@
 use super::*;
 
 fn write_toml(contents: &str) -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let path = dir.path().join("mockspace.toml");
     fs::write(&path, contents).unwrap();
     (dir, path)
@@ -24,7 +24,7 @@ fn gen_pre_push_passes_bash_syntax_check() {
     // (unbalanced quotes, missing fi/done, format-string slips). Does
     // not execute the script, just parses it.
     let script = gen_pre_push("mock", &HookLayout::of(&["crates"]), Path::new("/dev/null"));
-    let mut path = std::env::temp_dir();
+    let mut path = mockspace_manifest::scratch::root();
     path.push(format!("mockspace_pre_push_test_{}.sh", std::process::id()));
     std::fs::write(&path, &script).unwrap();
     let output = std::process::Command::new("bash")

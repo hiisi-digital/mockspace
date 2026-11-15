@@ -211,7 +211,7 @@ mod tests {
     /// with no summary is passed over rather than read as an empty table.
     #[test]
     fn each_cell_shows_its_latest_summarised_run_per_machine_class() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let results = dir.path().join(layout::RESULTS_DIR);
         let cell = layout::Cell { sweep: "width-l1".into(), n: 80003 };
         let put = |machine: &str, run: &str, median: f64, summary: bool| {

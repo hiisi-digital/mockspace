@@ -545,7 +545,7 @@ fn the_publish_scan_reaches_every_member_including_this_one() {
 
     // And the parse itself, on text rather than on this repository, so the two
     // assertions above cannot both hold by accident of one hand-written array.
-    let d = tempfile::tempdir().expect("no tempdir");
+    let d = mockspace_manifest::scratch::tempdir().expect("no tempdir");
     std::fs::write(
         d.path().join("Cargo.toml"),
         "[workspace]\nmembers = [\n    \".\",\n    \"a/b/c\",\n]\n\n[package]\nname = \"x\"\n",

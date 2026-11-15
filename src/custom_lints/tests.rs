@@ -3,7 +3,7 @@ use super::*;
 /// A repo with a lint, a pack and two tools, so a scope has something to
 /// leave out.
 fn repo_with_lints_packs_and_tools() -> (tempfile::TempDir, crate::config::Config) {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = dir.path().join("mock");
     std::fs::create_dir_all(mock.join("lints")).unwrap();
     std::fs::write(
@@ -57,7 +57,7 @@ fn a_name_that_is_no_tool_directory_scopes_to_nothing() {
 
 #[test]
 fn collector_lib_shape() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let lints = dir.path().join("lints");
     std::fs::create_dir_all(&lints).unwrap();
     std::fs::write(
@@ -96,7 +96,7 @@ fn collector_lib_shape() {
 /// carries a comment about it while pinning nothing.
 #[test]
 fn every_entry_point_is_recognised_and_none_stands_in_for_another() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let lints = dir.path().join("lints");
     std::fs::create_dir_all(&lints).unwrap();
 
@@ -139,7 +139,7 @@ fn every_entry_point_is_recognised_and_none_stands_in_for_another() {
 /// first".
 #[test]
 fn one_file_may_register_several_kinds() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let lints = dir.path().join("lints");
     std::fs::create_dir_all(&lints).unwrap();
     std::fs::write(
@@ -165,7 +165,7 @@ fn tool(dir: &str, package: &str, at: &Path) -> ToolCrate {
 
 #[test]
 fn a_tool_crate_is_collected_through_the_same_entry_point_a_pack_uses() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let lints = dir.path().join("lints");
     std::fs::create_dir_all(&lints).unwrap();
     let t = tool("phrase-search", "demo-phrase-search", dir.path());
@@ -182,7 +182,7 @@ fn a_tool_crate_is_collected_through_the_same_entry_point_a_pack_uses() {
 
 #[test]
 fn a_tool_crate_lands_on_the_dependency_line_by_package_name_and_path() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = crate::config::Config::from_dir(dir.path());
     let gen_dir = dir.path().join("gen_dir");
     let t = tool("phrase-search", "demo-phrase-search", dir.path());
@@ -217,7 +217,7 @@ fn a_repo_with_only_tools_still_gets_a_cdylib() {
     // The early return in `load` short-circuits on "no lints and no packs".
     // Before tools were counted there, a repo whose only custom content is
     // a tool built nothing and `mock <tool>` found nothing.
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = dir.path().join("mock");
     std::fs::create_dir_all(mock.join("tools").join("only-tool").join("src")).unwrap();
     std::fs::write(
@@ -236,7 +236,7 @@ fn a_repo_with_only_tools_still_gets_a_cdylib() {
 
 #[test]
 fn manifest_renames_lint_rules_to_mockspace() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = crate::config::Config::from_dir(dir.path());
     let gen_dir = dir.path().join("gen_dir");
     let dep = "{ package = \"mockspace-lint-rules\", git = \"u\", rev = \"r\" }";
@@ -261,7 +261,7 @@ fn manifest_renames_lint_rules_to_mockspace() {
 
 #[test]
 fn an_engine_path_is_refused_when_a_repo_declares_a_pack() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = crate::config::Config::from_dir(dir.path());
     let path_dep = "{ package = \"mockspace-lint-rules\", path = \"/engine/lint-rules\" }";
     let packs = [("p".to_string(), "{ git = \"ssh://g/p.git\", branch = \"dev\" }".to_string())];

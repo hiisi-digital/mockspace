@@ -607,7 +607,7 @@ fn a_file_linked_into_a_crate_and_a_directory_linked_from_outside_the_repository
     assert!(refused(&hook_says(&repo, &real, violation)), "a linked file edited at its real path");
     assert!(!refused(&hook_says(&repo, &real, "pub fn g() {}\n")));
     // A module directory outside the repository, linked in, edited at its real path.
-    let outside = tempfile::tempdir().unwrap();
+    let outside = mockspace_manifest::scratch::tempdir().unwrap();
     write(&outside.path().join("mod.rs"), "pub fn h() {}\n");
     std::os::unix::fs::symlink(outside.path(), sim.join("src/ext")).unwrap();
     let gate_text = outside.path().join("mod.rs");

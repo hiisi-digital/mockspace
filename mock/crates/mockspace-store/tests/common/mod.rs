@@ -73,7 +73,7 @@ pub struct World {
 
 impl World {
     pub fn new() -> Self {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = mockspace_manifest::scratch::tempdir().expect("tempdir");
         let bare = dir.path().join("remote.git");
         std::fs::create_dir(&bare).unwrap();
         git(&bare, &["init", "-q", "--bare"]);

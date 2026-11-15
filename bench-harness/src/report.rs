@@ -1074,7 +1074,7 @@ mod methodology_tests {
                 cannot restate the methodology of the run it re-renders"]
     fn a_report_regenerated_from_a_csv_states_the_same_methodology() {
         let dir =
-            std::env::temp_dir().join(format!("mockspace-bh-methodology-{}", std::process::id()));
+            mockspace_manifest::scratch::root().join(format!("mockspace-bh-methodology-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let csv = dir.join(mockspace_bench_layout::SAMPLES_FILE);
         let out = dir.join(mockspace_bench_layout::REPORT_FILE);

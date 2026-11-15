@@ -16,3 +16,6 @@ categories = ["development-tools", "development-tools::profiling"]
 [lib]
 name = "mockspace_bench_layout"
 path = "src/lib.rs"
+
+[dev-dependencies]
+mockspace-manifest = { path = "../mockspace-manifest", features = ["_internal-test-scratch"] }

@@ -27,7 +27,7 @@ struct Repo {
 
 impl Repo {
     fn new(tag: &str) -> Repo {
-        let root = std::env::temp_dir().join(format!(
+        let root = mockspace_manifest::scratch::root().join(format!(
             "mockspace-suite-units-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()

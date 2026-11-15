@@ -29,7 +29,7 @@ fn clone_with(dir: &Path, value: Option<&str>) {
 #[test]
 fn a_clone_answers_what_it_was_set_to_and_nothing_where_it_was_not() {
     for (value, want) in [(Some("false"), Some(false)), (Some("true"), Some(true)), (None, None)] {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         clone_with(dir.path(), value);
         assert_eq!(clone_says(dir.path(), "autoFmt"), want, "{value:?}");
     }
@@ -38,14 +38,14 @@ fn a_clone_answers_what_it_was_set_to_and_nothing_where_it_was_not() {
 #[test]
 #[should_panic(expected = "does not parse as a boolean")]
 fn a_value_that_is_not_a_boolean_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     clone_with(dir.path(), Some("sometimes"));
     let _ = clone_says(dir.path(), "autoFmt");
 }
 
 #[test]
 fn a_root_without_a_git_marker_has_no_clone_to_ask() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     assert_eq!(clone_says(dir.path(), "autoFmt"), None);
 }
 
@@ -54,7 +54,7 @@ fn a_root_without_a_git_marker_has_no_clone_to_ask() {
 /// would not parse, and panicked.
 #[test]
 fn an_empty_git_directory_has_no_clone_to_ask() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     std::fs::create_dir(dir.path().join(".git")).unwrap();
     assert_eq!(clone_says(dir.path(), "autoFmt"), None);
 }
@@ -64,7 +64,7 @@ fn an_empty_git_directory_has_no_clone_to_ask() {
 #[test]
 #[should_panic(expected = "git cannot read the clone")]
 fn a_broken_git_file_is_refused_rather_than_read_as_no_clone() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     std::fs::write(dir.path().join(".git"), "not a gitdir line\n").unwrap();
     let _ = clone_says(dir.path(), "autoFmt");
 }
@@ -74,7 +74,7 @@ fn a_broken_git_file_is_refused_rather_than_read_as_no_clone() {
 /// this root's.
 #[test]
 fn a_surrounding_clone_does_not_answer_for_a_root_inside_it() {
-    let outer = tempfile::tempdir().unwrap();
+    let outer = mockspace_manifest::scratch::tempdir().unwrap();
     clone_with(outer.path(), Some("false"));
     let inner = outer.path().join("inner");
     std::fs::create_dir_all(inner.join(".git")).unwrap();

@@ -430,7 +430,7 @@ mod tests {
     /// which is the case rustup warns about and the one the loop's order
     /// decides.
     fn run_named(root: &[(&str, Option<&str>)], copy: &[(&str, Option<&str>)]) -> Vec<LintError> {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let repo = tmp.path();
         let mock = repo.join("mock");
         std::fs::create_dir_all(&mock).unwrap();

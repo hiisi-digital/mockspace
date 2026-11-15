@@ -35,7 +35,7 @@ pub struct Remote {
 
 impl Remote {
     pub fn new() -> Self {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let bare = tmp.path().join("remote.git");
         std::fs::create_dir(&bare).unwrap();
         git(&bare, &["init", "-q", "--bare"]);

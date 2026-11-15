@@ -75,7 +75,7 @@ impl Dir {
     pub(super) fn new(name: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let n = NEXT.fetch_add(1, Ordering::SeqCst);
-        let root = std::env::temp_dir().join(format!("mockspace-reading-{name}-{}-{n}", std::process::id()));
+        let root = mockspace_manifest::scratch::root().join(format!("mockspace-reading-{name}-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         Self(root)

@@ -25,7 +25,7 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     let bin = tmp.path().join("bin");
     let args = tmp.path().join("args.txt");

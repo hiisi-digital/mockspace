@@ -107,7 +107,7 @@ fn each_flavour_keeps_its_own() {
 
 #[test]
 fn the_record_survives_the_file_and_a_bad_file_is_no_record() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     assert_eq!(Failed::load(dir.path()), Failed::default());
     let mut f = Failed::default();
     f.settle("", &names(&["a"]), &[case("a", Outcome::Fail)], true);
@@ -162,7 +162,7 @@ fn a_plain_pass_takes_the_members_it_ran_off_the_record_and_no_others() {
 /// The write goes through a file beside it, which is gone once it lands.
 #[test]
 fn the_record_is_written_beside_itself_and_renamed_over() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let mut f = Failed::default();
     f.settle("", &names(&["a"]), &[case("a", Outcome::Fail)], true);
     f.save(dir.path()).unwrap();

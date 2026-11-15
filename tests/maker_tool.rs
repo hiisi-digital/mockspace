@@ -224,7 +224,7 @@ fn text(b: &[u8]) -> String {
 #[test]
 #[ignore = "runs cargo build; run with --ignored"]
 fn a_maker_is_held_to_what_it_declares_it_writes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture(tmp.path());
 
     // Inside the declaration: reported, and a success.
@@ -250,7 +250,7 @@ fn a_maker_is_held_to_what_it_declares_it_writes() {
 #[test]
 #[ignore = "runs cargo build; run with --ignored"]
 fn a_maker_declaring_nothing_is_refused_before_it_runs() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture(tmp.path());
     let out = engine(&mock, &["bare"]);
     let err = text(&out.stderr);
@@ -265,7 +265,7 @@ fn a_maker_declaring_nothing_is_refused_before_it_runs() {
 #[test]
 #[ignore = "runs cargo build; run with --ignored"]
 fn help_for_a_maker_says_what_it_writes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture(tmp.path());
     let out = engine(&mock, &["help", "gen"]);
     let stdout = text(&out.stdout);
@@ -293,7 +293,7 @@ fn help_for_a_maker_says_what_it_writes() {
 fn a_maker_that_blocks_having_written_nothing_has_broken_its_contract() {
     // The loophole: `Make` over a path never written, plus blocking findings,
     // is a check with a failing case and no `NotALint` reason.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture(tmp.path());
     let out = engine(&mock, &["dodge"]);
     let err = text(&out.stderr);
@@ -307,7 +307,7 @@ fn a_false_no_failing_case_exits_as_a_broken_contract() {
     // Exit 2, the same as an undeclared write, rather than the 1 its finding
     // alone would give: the tool broke its contract, which is a different
     // statement from a corpus finding.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture(tmp.path());
     let out = engine(&mock, &["liar"]);
     let err = text(&out.stderr);
@@ -319,7 +319,7 @@ fn a_false_no_failing_case_exits_as_a_broken_contract() {
 #[ignore = "runs cargo build; run with --ignored"]
 fn a_maker_is_refused_where_its_writes_cannot_be_observed() {
     // Fail closed: a maker nobody can hold to its declaration does not run.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture_without_git(tmp.path());
     let out = engine(&mock, &["gen"]);
     let err = text(&out.stderr);
@@ -339,7 +339,7 @@ fn a_maker_is_refused_where_its_writes_cannot_be_observed() {
 fn a_maker_that_wrote_its_declared_file_and_blocks_has_broken_its_contract() {
     // A threshold check hiding as a maker: it writes the one path it declared
     // and blocks on something else. A maker's findings never block.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture(tmp.path());
     let out = engine(&mock, &["gen", "block"]);
     let err = text(&out.stderr);
@@ -351,7 +351,7 @@ fn a_maker_that_wrote_its_declared_file_and_blocks_has_broken_its_contract() {
 #[test]
 #[ignore = "runs cargo build; run with --ignored"]
 fn a_maker_writing_where_its_argument_says_is_held_to_the_resolved_root() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture(tmp.path());
 
     // Help shows the pattern and the root it is bounded by.
@@ -407,7 +407,7 @@ mod lint_cache;
 #[test]
 #[ignore = "runs cargo build; run with --ignored"]
 fn a_maker_of_an_ignored_product_runs_before_the_checks_when_it_is_missing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture(tmp.path());
     let product = mock.parent().unwrap().join("built/out.txt");
     assert!(!product.exists());

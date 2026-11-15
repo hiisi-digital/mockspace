@@ -32,7 +32,7 @@ fn registry_crate(tmp: &Path, crate_bytes: &[u8], lock_checksum: &str) -> (PathB
 
 #[test]
 fn a_registry_crate_extracted_just_now_is_trusted_by_its_checksum_and_not_its_change_time() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let bytes = b"the crate file as the registry served it";
     let (home, gen_dir, source) = registry_crate(tmp.path(), bytes, &digest_bytes(bytes));
     let dylib = built(&gen_dir, &format!("out.d: {}\n", source.display()));
@@ -57,7 +57,7 @@ fn a_registry_crate_extracted_just_now_is_trusted_by_its_checksum_and_not_its_ch
 
 #[test]
 fn a_registry_crate_is_not_trusted_unless_its_file_matches_the_lock() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let bytes = b"the crate file as the registry served it";
     let hour = Duration::from_secs(3600);
     for (what, served, lock) in [
@@ -91,7 +91,7 @@ fn a_registry_crate_is_not_trusted_unless_its_file_matches_the_lock() {
 
 #[test]
 fn a_registry_file_edited_after_cargo_unpacked_it_is_not_trusted() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let bytes = b"the crate file as the registry served it";
     let (home, gen_dir, source) = registry_crate(tmp.path(), bytes, &digest_bytes(bytes));
     let dylib = built(&gen_dir, &format!("out.d: {}\n", source.display()));
@@ -125,7 +125,7 @@ fn a_unit_cargo_reused_is_not_vouched_for_by_an_unpack_made_after_it() {
     // A file was edited, a unit was built from the edit, the package was unpacked again, and cargo
     // reused the unit (it fingerprints a registry crate by version). The fresh files are no newer
     // than the new `.cargo-ok` and the `.crate` still matches, yet they are not what the unit read.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let bytes = b"the crate file as the registry served it";
     let (home, gen_dir, source) = registry_crate(tmp.path(), bytes, &digest_bytes(bytes));
     let dylib = built(&gen_dir, &format!("out.d: {}\n", source.display()));
@@ -145,7 +145,7 @@ fn a_unit_cargo_reused_is_not_vouched_for_by_an_unpack_made_after_it() {
 
 #[test]
 fn a_registry_package_cargo_left_no_mark_on_is_not_trusted() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let bytes = b"the crate file as the registry served it";
     let (home, gen_dir, source) = registry_crate(tmp.path(), bytes, &digest_bytes(bytes));
     std::fs::remove_file(source.ancestors().nth(2).unwrap().join(".cargo-ok")).unwrap();

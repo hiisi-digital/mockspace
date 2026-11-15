@@ -219,7 +219,7 @@ mod tests {
     use super::*;
 
     fn repo() -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let run = |args: &[&str]| {
             let ok = Command::new("git")
                 .env_remove("GIT_DIR")
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn a_tree_without_git_has_no_snapshot() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         assert_eq!(snapshot(tmp.path(), &[]), None);
     }
 

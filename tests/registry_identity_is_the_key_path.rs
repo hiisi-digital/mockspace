@@ -100,7 +100,7 @@ fn write(path: &Path, text: &str) {
 /// Write `rows` as the registry of a fresh mock directory, one `(file, row indexes)` per entry,
 /// and load it.
 fn load(layout: &[(&str, &[usize])]) -> (tempfile::TempDir, Vec<RegistryNamespace>, Registry) {
-    let dir = tempfile::tempdir().expect("a temporary tree");
+    let dir = mockspace_manifest::scratch::tempdir().expect("a temporary tree");
     let mock = dir.path();
     write(&mock.join("mockspace.toml"), CONFIG);
     let all = rows();
@@ -204,7 +204,7 @@ fn a_moved_row_keeps_every_relation_pointing_at_it() {
 
 #[test]
 fn one_key_path_in_two_files_is_refused_and_both_files_are_named() {
-    let dir = tempfile::tempdir().expect("a temporary tree");
+    let dir = mockspace_manifest::scratch::tempdir().expect("a temporary tree");
     let mock = dir.path();
     write(&mock.join("mockspace.toml"), CONFIG);
     let sky = rows()[2].block();
@@ -227,7 +227,7 @@ fn one_key_path_in_two_files_is_refused_and_both_files_are_named() {
 #[test]
 fn the_same_row_id_in_two_namespaces_is_two_rows() {
     // a namespace is the first segment of the key path, and ids are only unique within one
-    let dir = tempfile::tempdir().expect("a temporary tree");
+    let dir = mockspace_manifest::scratch::tempdir().expect("a temporary tree");
     let mock = dir.path();
     write(&mock.join("mockspace.toml"), CONFIG);
     write(
@@ -263,7 +263,7 @@ fn renaming_a_slug_does_not_move_a_group() {
     // `aardvark` to `yak` changes which row is first by key path, and with it which group a
     // reader meets first if groups follow first sight rather than their own value
     let headings = |first_slug: &str| {
-        let dir = tempfile::tempdir().expect("a temporary tree");
+        let dir = mockspace_manifest::scratch::tempdir().expect("a temporary tree");
         let mock = dir.path();
         write(&mock.join("mockspace.toml"), CONFIG);
         let text: String = rows()[7 ..]
@@ -291,7 +291,7 @@ fn rows_with_no_group_stay_apart_from_a_group_that_is_really_called_ungrouped() 
     // a real group value `ungrouped` sorts among the others, and a row with no group value at all
     // is not that group: it renders after every real group, under a heading of its own, and the
     // two never share a table
-    let dir = tempfile::tempdir().expect("a temporary tree");
+    let dir = mockspace_manifest::scratch::tempdir().expect("a temporary tree");
     let mock = dir.path();
     write(&mock.join("mockspace.toml"), CONFIG);
     let text = "\

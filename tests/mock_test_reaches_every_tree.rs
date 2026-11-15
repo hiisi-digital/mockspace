@@ -111,7 +111,7 @@ fn text(o: &Output) -> String {
 
 #[test]
 fn it_names_every_tool_tree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), None, &["alpha", "zeta"], &[]);
     let o = run(tmp.path());
     let t = text(&o);
@@ -125,7 +125,7 @@ fn it_names_every_tool_tree() {
 fn it_exits_non_zero_when_a_tree_fails() {
     // The property a test runner exists for, and the one no arm asserted. With
     // the failure path mutated to SUCCESS every other arm here stayed green.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     // A crate name no other arm uses. Every arm builds into one shared
     // CARGO_TARGET_DIR, so two crates called `alpha` at different temporary
     // paths collide on cargo's fingerprint, and this arm reused the artifact
@@ -154,7 +154,7 @@ fn it_does_not_claim_a_tree_that_is_not_there() {
     // it was ever given, or matching too loosely, satisfies that arm and is
     // wrong. `zeta` is absent from this fixture and must be absent from the
     // output.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), None, &["alpha"], &[]);
     let t = text(&run(tmp.path()));
     // `=== tool :` rather than the bare name, because the same name appears in
@@ -174,7 +174,7 @@ fn a_memberless_workspace_is_a_note_and_not_a_failure() {
     // "the manifest is virtual, and the workspace has no members". Passing that
     // through means the one tree a plain `cargo test` was supposed to cover
     // reports a hard failure caused by nothing being there.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), None, &["alpha"], &[]);
     let t = text(&run(tmp.path()));
     assert!(
@@ -191,7 +191,7 @@ fn a_memberless_workspace_is_a_note_and_not_a_failure() {
 fn a_member_is_reached_when_there_is_one() {
     // The control for the arm above: without it, always skipping the workspace
     // would satisfy it. A declared member must put the workspace tree back.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), Some("crates/a-member"), &[], &[]);
     let t = text(&run(tmp.path()));
     assert!(
@@ -210,7 +210,7 @@ fn a_crate_that_is_neither_member_nor_root_is_named_with_its_fix() {
     // crate to `members`. That is the wrong direction: membership puts a cdylib
     // into the consumer's dependency graph. The one-line fix is reported
     // instead, and the crate is not silently dropped from the run.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), None, &["alpha"], &[]);
     let manifest = tmp.path().join("mock/tools/alpha/Cargo.toml");
     let stripped = fs::read_to_string(&manifest)
@@ -244,7 +244,7 @@ fn it_reaches_a_bench_tree_that_has_no_manifest_anywhere() {
     //
     // So the bench third is delegated to `mock bench test` rather than walked,
     // and this asserts the tree is reached at all rather than silently absent.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), None, &[], &[]);
     write(
         &tmp.path()
@@ -262,7 +262,7 @@ fn it_reaches_a_bench_tree_that_has_no_manifest_anywhere() {
 fn it_says_there_is_nothing_when_there_is_nothing() {
     // The control for the arm above: without it, a version that always prints
     // the bench heading would satisfy it.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), None, &[], &[]);
     let t = text(&run(tmp.path()));
     assert!(
@@ -293,7 +293,7 @@ fn run_building_into(root: &Path, target: Option<&Path>, extra: &[&str]) -> Outp
 /// gigabytes of it on a large bench tree.
 #[test]
 fn the_bench_crates_build_into_the_target_dir_the_environment_chose() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), None, &[], &["benchy"]);
     write(
         &tmp.path().join("mock/benches/benchy/src/lib.rs"),

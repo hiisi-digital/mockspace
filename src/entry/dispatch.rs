@@ -1957,7 +1957,7 @@ mod tests {
 
     /// A `<mock>` holding one tool directory, named, with nothing built.
     fn mock_with_tool_dir(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let mock = tmp.path().join("mock");
         let c = mock.join("tools").join(name);
         std::fs::create_dir_all(c.join("src")).unwrap();
@@ -1981,7 +1981,7 @@ mod tests {
         // one that still had its own copy of the same name, which is exactly
         // the copy adopting a pack deletes, so the check passed in the only
         // arrangement that made it meaningless.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let mock = tmp.path().join("mock");
         std::fs::create_dir_all(&mock).unwrap();
         let pack = pack_with(&["coverage"]);
@@ -2007,7 +2007,7 @@ mod tests {
     fn control_neither_source_invents_a_name() {
         // The vacuity control. An implementation returning some fixed list, or
         // one that never returned empty, would pass both arms above.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let empty = LintPack::default();
         assert_eq!(
             dispatchable_tool_names(tmp.path(), &empty),
@@ -2336,7 +2336,7 @@ mod scoped_tool_tests {
     }
 
     fn tools(names: &[&str]) -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         for n in names {
             let t = dir.path().join(n);
             std::fs::create_dir_all(&t).unwrap();
@@ -2391,7 +2391,7 @@ mod scoped_tool_law_tests {
         // `check` would pass a rule that only knew that one.
         let mut names: Vec<&str> = super::super::help::known_commands();
         names.extend(["help", "--help", "-h", "-?"]);
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         for n in names.iter().filter(|n| !n.starts_with('-')) {
             let t = dir.path().join(n);
             std::fs::create_dir_all(&t).unwrap();
@@ -2407,7 +2407,7 @@ mod scoped_tool_law_tests {
     #[test]
     fn a_value_flag_names_no_tool_even_with_that_directory_present() {
         // `--scope ticket-add` is a value, not a subcommand, and the run is a lint run.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let t = dir.path().join("ticket-add");
         std::fs::create_dir_all(&t).unwrap();
         std::fs::write(t.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();

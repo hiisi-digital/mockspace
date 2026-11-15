@@ -172,7 +172,7 @@ fn a_panel_is_open_the_moment_it_has_an_unconsolidated_seat() {
 
 #[test]
 fn a_saved_inventory_loads_back_identical() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let path = inventory_path(tmp.path(), "example-ir");
     let mut inv = PanelInventory {
         slug: "example-ir".to_string(),
@@ -189,7 +189,7 @@ fn a_saved_inventory_loads_back_identical() {
 
 #[test]
 fn loading_an_absent_file_is_an_empty_panel_named_from_the_slug() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let path = inventory_path(tmp.path(), "brand-new");
     let inv = load(&path, "brand-new").unwrap();
     assert_eq!(inv.slug, "brand-new");
@@ -198,7 +198,7 @@ fn loading_an_absent_file_is_an_empty_panel_named_from_the_slug() {
 
 #[test]
 fn load_all_finds_every_panel_and_none_that_are_not_there() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mut a = PanelInventory {
         slug: "alpha".to_string(),
         ..PanelInventory::default()
@@ -221,7 +221,7 @@ fn load_all_finds_every_panel_and_none_that_are_not_there() {
 
 #[test]
 fn load_all_on_a_project_with_no_panel_directory_is_empty_not_an_error() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     assert_eq!(load_all(tmp.path()), Vec::new());
 }
 
@@ -237,7 +237,7 @@ fn load_all_on_a_project_with_no_panel_directory_is_empty_not_an_error() {
 /// intermittently and this must fail every time the lock is removed.
 #[test]
 fn concurrent_mints_take_distinct_seats_and_none_is_lost() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let path = inventory_path(tmp.path(), "race");
     // A cadence past the number of seats, so this measures the lock rather
     // than tripping the consolidation gate partway through.

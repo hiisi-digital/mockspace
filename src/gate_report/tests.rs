@@ -10,7 +10,7 @@ fn f(sev: &str, kind: &str, n: usize) -> Finding {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("gate-report-{name}-{}", std::process::id()));
+    let d = mockspace_manifest::scratch::root().join(format!("gate-report-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d

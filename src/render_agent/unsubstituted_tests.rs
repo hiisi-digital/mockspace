@@ -5,7 +5,7 @@ use super::*;
 
 #[test]
 fn no_builtin_rule_or_skill_ships_a_template_token() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = tmp.path().join("mock");
     std::fs::create_dir_all(&mock).unwrap();
     std::fs::write(mock.join("mockspace.toml"), "project_name = \"probe\"\n").unwrap();

@@ -20,7 +20,7 @@ const DOC_DECLARED_EMPTY: &str = "# Doc changelist: none\n";
 /// A repository whose mock dir is its root, which is how most fixtures here are
 /// laid out.
 fn repo() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("design_rounds")).unwrap();
     // so a repository with no round in it yet still has a first commit
     std::fs::write(dir.path().join("mockspace.toml"), "").unwrap();
@@ -267,7 +267,7 @@ fn before_the_first_commit_every_closed_round_is_judged() {
 #[test]
 fn a_mock_dir_under_the_root_reads_its_own_history() {
     for mock_name in ["mock", "linux"] {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let root = dir.path();
         let mock = root.join(mock_name);
         std::fs::create_dir_all(mock.join("design_rounds")).unwrap();
@@ -384,7 +384,7 @@ fn the_messages_name_a_verb_that_exists() {
 
 #[test]
 fn no_design_rounds_directory_is_nothing_to_judge() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     assert!(check(dir.path()).is_empty());
 }
 
@@ -426,7 +426,7 @@ fn only_a_bare_title_says_nothing() {
 
 #[test]
 fn a_file_that_cannot_be_read_is_not_called_empty() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     assert!(!says_nothing(&crate::Reading::new(dir.path()).view(), &dir.path().join("absent.md")));
     std::fs::write(dir.path().join("empty.md"), "").unwrap();
     assert!(says_nothing(&crate::Reading::new(dir.path()).view(), &dir.path().join("empty.md")));

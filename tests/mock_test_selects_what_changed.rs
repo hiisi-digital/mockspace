@@ -122,7 +122,7 @@ fn a_piece_of_work_runs_only_what_it_reaches() {
         eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root);
 
@@ -248,7 +248,7 @@ fn a_deleted_heavy_binary_does_not_stop_the_next_run() {
         eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root);
     add_slow_binary(root);
@@ -296,7 +296,7 @@ fn a_run_with_nothing_to_run_builds_nothing() {
         eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root);
     let (ok, t) = mock(root, &[]);
@@ -340,7 +340,7 @@ fn a_members_opt_level_reaches_the_build() {
         eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     opt_level_fixture(root);
     let (ok, t) = mock(root, &["--full"]);
@@ -351,7 +351,7 @@ fn a_members_opt_level_reaches_the_build() {
 /// unreadable graph all run `cargo test`, and it gets the same config.
 #[test]
 fn a_members_opt_level_reaches_a_plain_cargo_test() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     opt_level_fixture(root);
     let (ok, t) = mock(root, &["--plain"]);
@@ -369,7 +369,7 @@ fn a_change_to_the_opt_levels_runs_what_passed_before() {
         eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root);
     let (ok, t) = mock(root, &[]);
@@ -421,7 +421,7 @@ fn a_deleted_example_with_a_heavy_test_does_not_stop_the_next_run() {
         eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root);
     let manifest = root.join("mock/crates/alone/Cargo.toml");
@@ -562,7 +562,7 @@ fn a_change_confined_to_one_test_file_runs_that_binary_alone() {
         eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     binaries_fixture(root);
     let uses = root.join("mock/crates/uses");
@@ -658,7 +658,7 @@ fn a_member_with_a_failing_binary_reruns_only_that_binary() {
         eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     binaries_fixture(root);
     let uses = root.join("mock/crates/uses");
@@ -710,7 +710,7 @@ fn a_binary_that_last_failed_is_not_taken_on_an_earlier_pass() {
         eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     binaries_fixture(root);
     let (ok, t) = mock(root, &[]);
@@ -744,7 +744,7 @@ fn a_shared_target_dir_does_not_lose_the_run_record() {
         eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root);
     let shared = tmp.path().join("shared-target");
@@ -777,7 +777,7 @@ fn a_run_narrowed_to_one_target_leaves_the_others_owed() {
         eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     binaries_fixture(root);
     let uses = root.join("mock/crates/uses");

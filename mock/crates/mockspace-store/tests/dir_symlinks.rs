@@ -11,7 +11,7 @@ use mockspace_store::{DirStore, Edit, Reader, Reapply, Store};
 
 #[test]
 fn a_symlinked_directory_is_walked_into_as_the_old_walk_did() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let (root, other) = (d.path().join("root"), d.path().join("other"));
     std::fs::create_dir_all(&root).unwrap();
     std::fs::create_dir_all(other.join("deep")).unwrap();
@@ -33,7 +33,7 @@ fn a_symlinked_directory_is_walked_into_as_the_old_walk_did() {
 
 #[test]
 fn a_write_to_a_symlinked_file_goes_to_its_target_and_the_link_stays() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let root = d.path().join("root");
     std::fs::create_dir_all(&root).unwrap();
     let target = d.path().join("elsewhere.toml");
@@ -57,7 +57,7 @@ fn a_write_to_a_symlinked_file_goes_to_its_target_and_the_link_stays() {
 
 #[test]
 fn a_write_to_a_dangling_symlink_creates_its_target_as_fs_write_did() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let root = d.path().join("root");
     std::fs::create_dir_all(&root).unwrap();
     let target = d.path().join("not-yet.toml");
@@ -76,7 +76,7 @@ fn a_write_to_a_dangling_symlink_creates_its_target_as_fs_write_did() {
 
 #[test]
 fn a_symlink_back_to_an_ancestor_does_not_loop_the_listing() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let root = d.path().join("root");
     std::fs::create_dir_all(root.join("sub")).unwrap();
     std::fs::write(root.join("sub/a.toml"), "a").unwrap();
@@ -88,7 +88,7 @@ fn a_symlink_back_to_an_ancestor_does_not_loop_the_listing() {
 #[test]
 fn a_dangling_symlink_is_listed_by_name_and_reads_as_absent() {
     // the old walk took anything that was not a directory for a file and left the read to fail
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let root = d.path().join("root");
     std::fs::create_dir_all(&root).unwrap();
     symlink(d.path().join("gone"), root.join("dangling.toml")).unwrap();
@@ -99,7 +99,7 @@ fn a_dangling_symlink_is_listed_by_name_and_reads_as_absent() {
 
 #[test]
 fn a_write_through_a_symlink_with_a_relative_target_lands_beside_the_link() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let root = d.path().join("root");
     std::fs::create_dir_all(root.join("sub")).unwrap();
     std::fs::write(root.join("target-of-the-relative-link.toml"), "old").unwrap();
@@ -129,7 +129,7 @@ fn a_write_through_a_symlink_with_a_relative_target_lands_beside_the_link() {
 #[test]
 fn a_write_through_a_cycle_of_links_fails_and_leaves_the_link() {
     // `fs::write` followed links until the system gave up and then failed (ELOOP)
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let root = d.path().join("root");
     std::fs::create_dir_all(&root).unwrap();
     symlink("b.toml", root.join("a.toml")).unwrap();
@@ -154,7 +154,7 @@ fn a_write_through_a_cycle_of_links_fails_and_leaves_the_link() {
 #[test]
 fn a_write_to_a_link_whose_target_directory_is_missing_fails_and_creates_nothing() {
     // `fs::write` did not create directories, so a link into a directory that is not there fails
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let root = d.path().join("root");
     std::fs::create_dir_all(&root).unwrap();
     let outside = d.path().join("outside");

@@ -11,7 +11,7 @@ use super::*;
 /// A bench tree with three variant crates: one named by its directory, one
 /// whose library name differs from its directory, one with no `[lib]`.
 fn plant(bench_toml: &str) -> tempfile::TempDir {
-    let t = tempfile::tempdir().unwrap();
+    let t = mockspace_manifest::scratch::tempdir().unwrap();
     let crates = [
         ("fnv1a", "[package]\nname = \"fnv1a\"\n"),
         ("satfold-seq", "[package]\nname = \"bench-satfold-seq\"\n[lib]\nname = \"bench_satfold_seq\"\n"),

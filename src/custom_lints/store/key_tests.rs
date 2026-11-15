@@ -94,7 +94,7 @@ fn a_branch_pack_whose_tip_moved_gets_a_different_manifest_path() {
     // each call gets a pin cache of its own, so each reads the tip fresh: the
     // two resolvers are the remote at two moments
     let key = |tip: &'static str| {
-        let base = tempfile::tempdir().unwrap();
+        let base = mockspace_manifest::scratch::tempdir().unwrap();
         let p = path_of(base.path(), &mock, DEP, &packs, &move |_: &str, _: &str| {
             Ok(tip.to_string())
         });

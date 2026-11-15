@@ -33,7 +33,7 @@ fn files_under(dir: &Path) -> Vec<String> {
 
 #[test]
 fn an_edit_is_judged_as_it_will_read_and_saves_nothing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = tmp.path().join("mock");
     let src = mock.join("crates");
     let krate = src.join("sim-a");
@@ -127,7 +127,7 @@ impl mockspace_lint_rules::CrateLint for Counted {
 /// and an edit's run replays every file it does not reach from what the plain run saved.
 #[test]
 fn an_edit_replays_the_files_it_does_not_reach() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = tmp.path().join("mock");
     let src = mock.join("crates");
     let krate = src.join("sim-a");
