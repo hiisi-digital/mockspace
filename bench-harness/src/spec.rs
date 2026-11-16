@@ -133,6 +133,7 @@ mod routine_table_tests {
         std::fs::write(
             root.join("warm/bench.toml"),
             r#"
+            kind = "tracking"
             title = "Warm"
             arms = ["k"]
             [sweep.width-l1]

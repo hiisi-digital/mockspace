@@ -57,7 +57,10 @@ use crate::config::{
     de_seed_opt,
     de_sizes,
 };
+use mockspace_bench_layout::{Kind, lock_name};
+
 use crate::error::BenchError;
+use crate::kinds::no_kind_reason;
 
 /// One discovered arm: a directory under `<member>/arms/` of a
 /// composed-form member.
@@ -73,6 +76,9 @@ pub struct ArmSource {
     /// Whether the arm carries a `Cargo.toml` of its own.
     /// Without one the tool generates the manifest.
     pub has_manifest: bool,
+    /// The kind of the bench the arm belongs to, which decides what a
+    /// generated manifest takes ([`Kind::generated_arm_takes_root_support`]).
+    pub kind:         Kind,
 }
 
 /// One discovered support crate: a directory under `support/` at the
@@ -111,6 +117,8 @@ pub struct TreeManifest {
 #[serde(deny_unknown_fields)]
 struct ComposedBench {
     title:       String,
+    #[serde(default, deserialize_with = "crate::config::de_kind")]
+    kind:        Option<Kind>,
     #[serde(default = "default_workload")]
     workload:    String,
     #[serde(default, deserialize_with = "de_seed_opt")]
@@ -186,6 +194,7 @@ pub fn load(benches_dir: &Path) -> Result<TreeManifest, BenchError> {
         compose_member(benches_dir, &member, &mut manifest, &mut tree)?;
     }
 
+    declare_kinds(benches_dir, &mut manifest)?;
     manifest.nested_mode = !manifest.nested.is_empty();
     manifest.validate_roles()?;
     check_names(&manifest)?;
@@ -205,6 +214,27 @@ pub fn load(benches_dir: &Path) -> Result<TreeManifest, BenchError> {
     }
     tree.manifest = manifest;
     Ok(tree)
+}
+
+/// Refuse a bench that declares no kind, and place the lock of each root
+/// `[bench.<name>]` snapshot beside the root `bench.toml`. A member placed the
+/// locks of its own benches when it was composed.
+fn declare_kinds(benches_dir: &Path, manifest: &mut BenchManifest) -> Result<(), BenchError> {
+    for key in manifest.bench_names() {
+        let nested = manifest.nested.contains_key(&key);
+        let Some(section) = manifest.bench.get_mut(&key) else {
+            continue;
+        };
+        let Some(kind) = section.kind else {
+            return Err(BenchError::InvalidConfig {
+                reason: no_kind_reason(&key),
+            });
+        };
+        if kind == Kind::Snapshot && !nested {
+            section.lock = Some(benches_dir.join(lock_name(Some(&key))));
+        }
+    }
+    Ok(())
 }
 
 /// Names the results layout keeps for itself, under `results/` or at the
@@ -358,37 +388,8 @@ fn discover(benches_dir: &Path, pattern: &str) -> Vec<String> {
     found
 }
 
-/// Match a `/`-separated glob against a relative path. A whole
-/// component of `**` matches any number of components including
-/// zero; within a component, `*` matches any run of characters
-/// (`bench-*`, `*-probe`), never crossing a `/`.
-pub fn glob_match(pattern: &str, path: &str) -> bool {
-    fn component(pat: &str, text: &str) -> bool {
-        match pat.split_once('*') {
-            None => pat == text,
-            Some((prefix, rest)) => {
-                let Some(after) = text.strip_prefix(prefix) else {
-                    return false;
-                };
-                (0 ..= after.len())
-                    .filter(|i| after.is_char_boundary(*i))
-                    .any(|i| component(rest, &after[i ..]))
-            },
-        }
-    }
-    fn rec(pat: &[&str], path: &[&str]) -> bool {
-        match pat.split_first() {
-            None => path.is_empty(),
-            Some((&"**", rest)) => (0 ..= path.len()).any(|skip| rec(rest, &path[skip ..])),
-            Some((comp, rest)) => {
-                !path.is_empty() && component(comp, path[0]) && rec(rest, &path[1 ..])
-            },
-        }
-    }
-    let pat: Vec<&str> = pattern.split('/').filter(|c| !c.is_empty()).collect();
-    let path: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
-    rec(&pat, &path)
-}
+/// The `[benchspace]` glob grammar, one copy shared with the lint pack.
+pub use mockspace_bench_layout::glob_match;
 
 /// Compose one member into the manifest, dispatching on the shape
 /// its own file declares.
@@ -486,6 +487,9 @@ fn compose_sections_member(
             })
             .collect();
         composed.timing = merge_timing(section.timing.as_ref(), member_timing.as_ref());
+        if composed.kind == Some(Kind::Snapshot) {
+            composed.lock = file.parent().map(|d| d.join(lock_name(Some(name))));
+        }
         insert_composed(manifest, key, composed, member, name)?;
     }
     tree.flat_members.push(member.to_string());
@@ -506,7 +510,11 @@ fn compose_composed_member(
             reason: format!("{}: {e}", file.display()),
         }
     })?;
-    let arms = discover_arms(member, dir);
+    let kind = parsed.kind.ok_or_else(|| BenchError::InvalidConfig {
+        reason: no_kind_reason(member),
+    })?;
+    let lock = (kind == Kind::Snapshot).then(|| dir.join(lock_name(None)));
+    let arms = discover_arms(member, dir, kind);
     tree.support.extend(support_in(dir, Some(member)));
 
     if !parsed.points.is_empty() && !parsed.sweep.is_empty() {
@@ -606,6 +614,8 @@ fn compose_composed_member(
             delta:       sweep.delta.clone().or_else(|| parsed.delta.clone()),
             timing:      merge_timing(sweep.timing.as_ref(), parsed.timing.as_ref()),
             normalise:   None,
+            kind:        Some(kind),
+            lock:        lock.clone(),
         };
         insert_composed(manifest, key, section, member, &sweep_name)?;
     }
@@ -738,7 +748,7 @@ fn resolve_arm_entry(member: &str, entry: &str, arms: &[ArmSource]) -> Result<St
         .into_owned())
 }
 
-fn discover_arms(bench: &str, bench_dir: &Path) -> Vec<ArmSource> {
+fn discover_arms(bench: &str, bench_dir: &Path, kind: Kind) -> Vec<ArmSource> {
     let arms_dir = bench_dir.join("arms");
     let Ok(entries) = std::fs::read_dir(&arms_dir) else {
         return Vec::new();
@@ -753,6 +763,7 @@ fn discover_arms(bench: &str, bench_dir: &Path) -> Vec<ArmSource> {
                 bench: bench.to_string(),
                 arm,
                 has_manifest: p.join("Cargo.toml").is_file(),
+                kind,
                 dir: p,
             })
         })
@@ -782,6 +793,10 @@ fn support_in(dir: &Path, bench: Option<&str>) -> Vec<SupportSource> {
     found.sort_by(|a, b| a.name.cmp(&b.name));
     found
 }
+
+#[cfg(test)]
+#[path = "tree_kind_tests.rs"]
+mod kind_tests;
 
 #[cfg(test)]
 mod tests {
@@ -823,6 +838,7 @@ mod tests {
 
     /// The composed form: top-level fields, no wrapper table.
     pub(super) const HASH_BENCH: &str = r#"
+        kind = "tracking"
         title = "Hash mixers"
         workload = "realistic"
         arms = ["fnv", "xx"]
@@ -862,6 +878,7 @@ mod tests {
             members = ["declared"]
 
             [bench.rootbench]
+            kind = "tracking"
             title = "Root"
             workload = "default"
             variants = ["variants/v/target/release/libv.dylib"]
@@ -907,12 +924,14 @@ mod tests {
             passes = 5
 
             [bench.rsb_clean]
+            kind = "tracking"
             title = "Clean"
             workload = "rsb_clean"
             variants = ["rsb_v0", "../target/release/rsb_v1"]
             sizes = [16]
 
             [bench.rsb_heavy]
+            kind = "tracking"
             title = "Heavy"
             workload = "rsb_heavy"
             variants = ["rsb_v0"]
@@ -999,6 +1018,7 @@ mod tests {
             "bench.toml",
             r#"
             [bench.ema_axis_h]
+            kind = "tracking"
             title = "EMA"
             workload = "realistic"
             variants = ["variants/neon/target/release/libneon.dylib"]
@@ -1025,7 +1045,7 @@ mod tests {
             t.write("bench.toml", EMPTY_ROOT);
             let body = match sweep {
                 Some(s) => format!(
-                    "title = \"t\"\nworkload = \"realistic\"\narms = [\"fnv\", \"xx\"]\n[sweep.\"{s}\"]\npoints = [64]\n"
+                    "kind = \"tracking\"\ntitle = \"t\"\nworkload = \"realistic\"\narms = [\"fnv\", \"xx\"]\n[sweep.\"{s}\"]\npoints = [64]\n"
                 ),
                 None => HASH_BENCH.to_string(),
             };
@@ -1132,6 +1152,7 @@ mod tests {
             "bench.toml",
             r#"
             [bench.hash]
+            kind = "tracking"
             title = "Root hash"
             workload = "default"
             variants = ["variants/v/target/release/libv.dylib"]
@@ -1154,6 +1175,7 @@ mod tests {
         t.write(
             "warm/bench.toml",
             r#"
+            kind = "tracking"
             title = "Warm container"
             workload = "realistic"
             master_seed = 7
@@ -1203,6 +1225,7 @@ mod tests {
         t.write(
             "warm/bench.toml",
             r#"
+            kind = "tracking"
             title = "Warm container"
             workload = "realistic"
             arms = ["kernel", "native"]
@@ -1345,7 +1368,7 @@ mod invariants {
         );
         t.write(
             "m/bench.toml",
-            "title = \"M\"\nworkload = \"realistic\"\narms = [\"fnv\"]\npoints = [1]\n\
+            "kind = \"tracking\"\ntitle = \"M\"\nworkload = \"realistic\"\narms = [\"fnv\"]\npoints = [1]\n\
              \n[timing]\npasses = 5\n",
         );
         t.mkdir("m/arms/fnv/src");
@@ -1378,7 +1401,7 @@ mod invariants {
         t.write("bench.toml", "[timing]\npasses = 9\n");
         t.write(
             "m/bench.toml",
-            "title = \"M\"\nworkload = \"realistic\"\narms = [\"fnv\"]\n\
+            "kind = \"tracking\"\ntitle = \"M\"\nworkload = \"realistic\"\narms = [\"fnv\"]\n\
              \n[timing]\npasses = 5\n\n[sweep.s]\npoints = [1]\n\n\
              [sweep.s.timing]\npasses = 2\n",
         );
@@ -1397,7 +1420,7 @@ mod invariants {
         );
         t.write(
             "m/bench.toml",
-            "title = \"M\"\nworkload = \"realistic\"\narms = [\"fnv\"]\n\
+            "kind = \"tracking\"\ntitle = \"M\"\nworkload = \"realistic\"\narms = [\"fnv\"]\n\
              \n[timing]\nvalidation_seeds = 20\n\n[sweep.s]\npoints = [1]\n\n\
              [sweep.s.timing]\ndeterminism_check_seeds = 2\n\n[sweep.u]\npoints = [1]\n",
         );
@@ -1422,7 +1445,7 @@ mod invariants {
         t.write("bench.toml", "[timing]\nvalidation_seeds = 90\n");
         t.write(
             "m/bench.toml",
-            "title = \"M\"\nworkload = \"realistic\"\narms = [\"fnv\"]\n\
+            "kind = \"tracking\"\ntitle = \"M\"\nworkload = \"realistic\"\narms = [\"fnv\"]\n\
              \n[timing]\nvalidation_seeds = 20\ndeterminism_check_seeds = 5\n\n\
              [sweep.s]\npoints = [1]\n\n\
              [sweep.s.timing]\nvalidation_seeds = 3\ndeterminism_check_seeds = 2\n",
@@ -1493,13 +1516,13 @@ mod invariants {
         t.write("bench.toml", "[benchspace]\nmembers = [\"a\", \"a/b\"]\n");
         t.write(
             "a/bench.toml",
-            "title = \"A\"\nworkload = \"realistic\"\narms = [\"fnv\"]\n\
+            "kind = \"tracking\"\ntitle = \"A\"\nworkload = \"realistic\"\narms = [\"fnv\"]\n\
              \n[sweep.b]\npoints = [1]\n",
         );
         t.mkdir("a/arms/fnv/src");
         t.write(
             "a/b/bench.toml",
-            "title = \"B\"\nworkload = \"realistic\"\narms = [\"fnv\"]\npoints = [1]\n",
+            "kind = \"tracking\"\ntitle = \"B\"\nworkload = \"realistic\"\narms = [\"fnv\"]\npoints = [1]\n",
         );
         t.mkdir("a/b/arms/fnv/src");
         let err = load(&t.root).unwrap_err().to_string();

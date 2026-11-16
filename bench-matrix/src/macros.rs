@@ -36,6 +36,7 @@
 ///
 /// bench_matrix! {
 ///     name: "carrier_dispatch",
+///     kind: "snapshot",
 ///     crate_path: bench_carrier,
 ///     crate_dep: "bench-carrier = {{ path = \"../../carrier\"{carrier_features} }}",
 ///     extra_deps: [ "mockspace-bench-core = { path = \"...\" }" ],
@@ -58,6 +59,7 @@ macro_rules! bench_matrix {
     // ── warm regime: cells are |s, seed| (2-arg) ──
     (
         name: $name:literal,
+        kind: $kind:literal,
         crate_path: $cp:path,
         crate_dep: $dep:literal,
         extra_deps: [ $( $ed:literal ),* $(,)? ],
@@ -110,7 +112,7 @@ macro_rules! bench_matrix {
         pub fn matrix_decls() -> ::std::vec::Vec<$crate::MatrixDecl> {
             $crate::__bench_matrix_decl!(
                 @build $crate::Regime::Warm,
-                $name, $cp, $dep, [ $( $ed ),* ], $seed, $axis, [ $( $sv ),* ],
+                $name, $kind, $cp, $dep, [ $( $ed ),* ], $seed, $axis, [ $( $sv ),* ],
                 [ $( $sz ),* ], $base, [ $( $floor )? ],
                 [ $(
                     { $tag, [ $( $feat ),* ], [ $( $cst )? ] }
@@ -122,6 +124,7 @@ macro_rules! bench_matrix {
     // ── cold_cycle(M) regime: cells are |s, k, seed| (3-arg) ──
     (
         name: $name:literal,
+        kind: $kind:literal,
         crate_path: $cp:path,
         crate_dep: $dep:literal,
         extra_deps: [ $( $ed:literal ),* $(,)? ],
@@ -160,7 +163,7 @@ macro_rules! bench_matrix {
         pub fn matrix_decls() -> ::std::vec::Vec<$crate::MatrixDecl> {
             $crate::__bench_matrix_decl!(
                 @build $crate::Regime::ColdCycle($m),
-                $name, $cp, $dep, [ $( $ed ),* ], $seed, $axis, [ $( $sv ),* ],
+                $name, $kind, $cp, $dep, [ $( $ed ),* ], $seed, $axis, [ $( $sv ),* ],
                 [ $( $sz ),* ], $base, [ $( $floor )? ],
                 [ $(
                     { $tag, [ $( $feat ),* ], [ $( $cst )? ] }
@@ -172,6 +175,7 @@ macro_rules! bench_matrix {
     // ── stream regime: cells are |s, input| (2-arg, second is the input slice) ──
     (
         name: $name:literal,
+        kind: $kind:literal,
         crate_path: $cp:path,
         crate_dep: $dep:literal,
         extra_deps: [ $( $ed:literal ),* $(,)? ],
@@ -209,7 +213,7 @@ macro_rules! bench_matrix {
         pub fn matrix_decls() -> ::std::vec::Vec<$crate::MatrixDecl> {
             $crate::__bench_matrix_decl!(
                 @build $crate::Regime::Stream,
-                $name, $cp, $dep, [ $( $ed ),* ], $seed, $axis, [ $( $sv ),* ],
+                $name, $kind, $cp, $dep, [ $( $ed ),* ], $seed, $axis, [ $( $sv ),* ],
                 [ $( $sz ),* ], $base, [ $( $floor )? ],
                 [ $(
                     { $tag, [ $( $feat ),* ], [ $( $cst )? ] }
@@ -229,13 +233,14 @@ macro_rules! bench_matrix {
 macro_rules! __bench_matrix_decl {
     (
         @build $regime:expr,
-        $name:literal, $cp:path, $dep:literal, [ $( $ed:literal ),* ], $seed:literal,
+        $name:literal, $kind:literal, $cp:path, $dep:literal, [ $( $ed:literal ),* ], $seed:literal,
         $axis:ident, [ $( $sv:literal ),* ], [ $( $sz:literal ),* ], $base:literal,
         [ $( $floor:literal )? ],
         [ $( { $tag:ident, [ $( $feat:literal ),* ], [ $( $has_setup:tt )* ] } )+ ]
     ) => {
         ::std::vec![ $crate::MatrixDecl {
             name:        $name.to_string(),
+            kind:        $kind.to_string(),
             crate_path:  stringify!($cp).to_string(),
             crate_dep:   $dep.to_string(),
             extra_deps:  ::std::vec![ $( $ed.to_string() ),* ],

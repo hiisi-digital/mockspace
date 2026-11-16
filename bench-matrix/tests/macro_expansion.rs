@@ -33,6 +33,7 @@ mod warm_family {
 
     mockspace_bench_matrix::bench_matrix! {
         name: "demo_dispatch",
+        kind: "snapshot",
         crate_path: demo_consumer,
         crate_dep: "demo-consumer = {{ path = \"../c\"{carrier_features} }}",
         extra_deps: [ "mockspace-bench-core = { path = \"x\" }" ],
@@ -67,6 +68,7 @@ mod cold_family {
 
     mockspace_bench_matrix::bench_matrix! {
         name: "demo_cold",
+        kind: "tracking",
         crate_path: demo_consumer,
         crate_dep: "demo-consumer = {{ path = \"../c\"{carrier_features} }}",
         extra_deps: [ ],
@@ -94,6 +96,7 @@ mod stream_family {
 
     mockspace_bench_matrix::bench_matrix! {
         name: "demo_ceiling",
+        kind: "snapshot",
         crate_path: demo_consumer,
         crate_dep: "demo-consumer = {{ path = \"../c\"{carrier_features} }}",
         extra_deps: [ ],
@@ -141,6 +144,7 @@ fn warm_matrix_decls_are_correct() {
     assert_eq!(decls.len(), 1);
     let d = &decls[0];
     assert_eq!(d.name, "demo_dispatch");
+    assert_eq!(d.kind, "snapshot");
     assert_eq!(d.crate_path, "demo_consumer");
     assert_eq!(d.master_seed, "0x5eed_d15b_a7c4_0002");
     assert_eq!(d.sweep.name, "profile");
@@ -195,6 +199,7 @@ fn cold_matrix_decls_are_correct() {
     assert_eq!(decls.len(), 1);
     let d = &decls[0];
     assert_eq!(d.name, "demo_cold");
+    assert_eq!(d.kind, "tracking", "each family carries its own declared kind");
     assert_eq!(d.regime, Regime::ColdCycle(16));
     assert_eq!(d.floor, None, "no floor declared");
     assert_eq!(d.sweep.values, vec!["real", "madd"]);

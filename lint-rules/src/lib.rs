@@ -39,6 +39,8 @@
 //! `mock/lints/*.rs` files into one cdylib and runs the union.
 
 pub mod a_bench_runs_only_on_the_generated_driver;
+pub mod a_bench_keeps_the_contract_of_its_kind;
+pub use a_bench_keeps_the_contract_of_its_kind::{Declared as BenchKindDeclared, KindFinding as BenchKindFinding, KindPlan as BenchKindPlan, bench_kinds, plans as bench_kind_plans};
 pub use a_bench_runs_only_on_the_generated_driver::{Runner as BenchRunner, bench_runners};
 mod bench_results_live_in_the_harness_layout;
 pub mod canon_not_while_panel_open;
@@ -1778,6 +1780,7 @@ pub fn all_repo_lints() -> Vec<Box<dyn RepoLint>> {
         Box::new(the_mock_toolchain_matches_the_root::TheMockToolchainMatchesTheRoot),
         Box::new(lints_read_through_the_view::LintsReadThroughTheView),
         Box::new(a_bench_runs_only_on_the_generated_driver::ABenchRunsOnlyOnTheGeneratedDriver),
+        Box::new(a_bench_keeps_the_contract_of_its_kind::ABenchKeepsTheContractOfItsKind),
         Box::new(bench_results_live_in_the_harness_layout::BenchResultsLiveInTheHarnessLayout),
     ]
 }

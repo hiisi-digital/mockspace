@@ -31,6 +31,9 @@ pub struct HistoryEntry {
     pub median_ns:  f64,
     pub ci_lo_ns:   f64,
     pub ci_hi_ns:   f64,
+    /// The code the row measured: a snapshot's lock id, `-` for a tracking
+    /// bench, empty for a row written before the column existed.
+    pub source:     String,
 }
 
 /// A run's summary file: the schema header, then one row per entry.
@@ -39,7 +42,7 @@ pub fn render_summary(entries: &[HistoryEntry]) -> String {
     let mut out = format!("{SUMMARY_HEADER}\n");
     for e in entries {
         out.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\n",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\n",
             e.timestamp,
             e.git_commit,
             e.benchmark,
@@ -48,7 +51,8 @@ pub fn render_summary(entries: &[HistoryEntry]) -> String {
             e.mode,
             e.median_ns,
             e.ci_lo_ns,
-            e.ci_hi_ns
+            e.ci_hi_ns,
+            e.source
         ));
     }
     out
@@ -75,6 +79,7 @@ pub fn parse_summary(text: &str) -> Vec<HistoryEntry> {
                 median_ns:  p[6].parse().unwrap_or(0.0),
                 ci_lo_ns:   p[7].parse().unwrap_or(0.0),
                 ci_hi_ns:   p[8].parse().unwrap_or(0.0),
+                source:     p.get(9).map(|s| s.trim().to_string()).unwrap_or_default(),
             });
         }
     }
@@ -248,6 +253,7 @@ mod tests {
             median_ns:  med,
             ci_lo_ns:   lo,
             ci_hi_ns:   hi,
+            source:     "-".into(),
         }
     }
 
@@ -350,8 +356,20 @@ mod tests {
     fn a_summary_round_trips_and_skips_its_header() {
         let rows = vec![entry("fnv1a", "warm", 7, 100.0, 98.0, 102.0)];
         let text = render_summary(&rows);
-        assert!(text.starts_with("# schema_v1\t"), "{text}");
+        assert!(text.starts_with("# schema_v2\t"), "{text}");
         assert_eq!(parse_summary(&text), rows);
+    }
+
+    /// A row written before the `source` column existed, nine fields as the old
+    /// ledger and the first summaries wrote it, still parses, and says it
+    /// names no source rather than taking the next row's or a default one.
+    #[test]
+    fn a_row_from_before_the_source_column_reads_as_naming_no_source() {
+        let old = "# schema_v1\tx\n7\tabc1234\thash_n64\tfnv1a\t64\twarm\t100.0\t98.0\t102.0\n";
+        let rows = parse_summary(old);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source, "");
+        assert_eq!(rows[0].median_ns, 100.0);
     }
 
     /// History is read across runs of one machine class only: a run on another

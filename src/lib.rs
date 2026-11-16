@@ -22,6 +22,7 @@ pub mod bench;
 mod bench_builds;
 mod bench_commit;
 pub mod bench_docs;
+mod bench_kinds;
 mod bench_migrate;
 pub mod bench_gen;
 mod bench_rev;

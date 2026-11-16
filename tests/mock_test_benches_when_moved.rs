@@ -85,7 +85,7 @@ fn fixture(root: &Path) {
     );
     write(
         &benches.join("sample/bench.toml"),
-        "title = \"Sample\"\nworkload = \"default\"\narms = [\"a\"]\npoints = [64]\n\
+        "kind = \"tracking\"\ntitle = \"Sample\"\nworkload = \"default\"\narms = [\"a\"]\npoints = [64]\n\
          master_seed = 7\n",
     );
     write(

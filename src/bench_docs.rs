@@ -137,14 +137,18 @@ pub fn generate(cfg: &Config) -> Vec<std::path::PathBuf> {
         "# Benchmarks\n\nLatest measured medians per cell and machine class, from \
          the latest run of each. Succinct by design: for the full data behind \
          any number (per-sample CSVs, environment metadata, statistical \
-         findings), see `mock/benches/results/` in the repository.\n\n",
+         findings), see `mock/benches/results/` in the repository.\n\n\
+         A snapshot's number measures reference code that never changes, so it \
+         moves only with the machine, the toolchain or the harness. A tracking \
+         bench's number measures the code at the commit named, and its history \
+         across commits is the code's trend.\n\n",
     );
 
     for (cell, machine, run, rows) in &runs {
         let benchmark = format!("{cell} on {machine}");
         let file_key = format!("{}.{machine}", cell.replace('/', "."));
         md.push_str(&format!("## {benchmark}\n\n"));
-        md.push_str(&format!("Run `{run}`.\n\n"));
+        md.push_str(&format!("Run `{run}`{}.\n\n", mockspace_bench_harness::kinds::measured(rows)));
         md.push_str("| variant | median | vs best |\n|---|---|---|\n");
         let best = rows
             .iter()
@@ -228,6 +232,7 @@ mod tests {
                     median_ns:  median,
                     ci_lo_ns:   median,
                     ci_hi_ns:   median,
+                    source:     "-".into(),
                 };
                 fs::write(d.join(layout::SUMMARY_FILE), mockspace_bench_harness::render_summary(&[e])).unwrap();
             }

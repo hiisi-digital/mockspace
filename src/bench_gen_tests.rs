@@ -132,6 +132,7 @@ fn generated_manifests_carry_the_workspace_header_and_the_feature() {
         arm:          "fnv-fast".into(),
         dir:          PathBuf::from("/tree/hash/arms/fnv-fast"),
         has_manifest: false,
+        kind:         mockspace_bench_harness::layout::Kind::Tracking,
     };
     let toml = arm_cargo_toml(&arm, DEFAULT_MOCKSPACE_DEP, &[]).unwrap();
     assert!(toml.starts_with("# GENERATED"));
@@ -151,6 +152,39 @@ fn generated_manifests_carry_the_workspace_header_and_the_feature() {
     let driver = driver_cargo_toml(DEFAULT_MOCKSPACE_DEP, &[], "mockspace-bench-driver-0").unwrap();
     assert!(driver.contains("[workspace]"));
     assert!(driver.contains("mockspace-bench-harness"));
+}
+
+/// A generated tracking arm takes the root support crates and its own bench's,
+/// a generated snapshot arm only its own bench's, and neither takes another
+/// bench's.
+#[test]
+fn a_generated_arm_takes_the_support_its_kind_admits() {
+    use mockspace_bench_harness::layout::Kind;
+    let dir_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let support = |bench: Option<&str>, name: &str| {
+        let dir = dir_guard.path().join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), format!("[package]\nname = \"{name}\"\n")).unwrap();
+        SupportSource {
+            bench: bench.map(str::to_string),
+            name:  name.into(),
+            dir,
+        }
+    };
+    let all = [support(None, "shared"), support(Some("hash"), "own"), support(Some("other"), "theirs")];
+    let arm = |kind| ArmSource {
+        bench:        "hash".into(),
+        arm:          "fnv".into(),
+        dir:          PathBuf::from("/tree/hash/arms/fnv"),
+        has_manifest: false,
+        kind,
+    };
+    let deps = |kind| -> Vec<&str> {
+        let toml = arm_cargo_toml(&arm(kind), DEFAULT_MOCKSPACE_DEP, &all).unwrap();
+        ["shared", "own", "theirs"].into_iter().filter(|n| toml.contains(&format!("{n} = "))).collect()
+    };
+    assert_eq!(deps(Kind::Tracking), ["shared", "own"]);
+    assert_eq!(deps(Kind::Snapshot), ["own"]);
 }
 
 #[test]

@@ -22,7 +22,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use mockspace_bench_layout::Kind;
+
 use crate::error::BenchError;
+use crate::kinds::{no_kind_reason, source_of};
 
 // ── Tier 1: TOML-loadable manifest (`mock/benches/bench.toml`) ──
 
@@ -286,6 +289,34 @@ pub struct BenchSection {
     /// surfaced. See [`NormaliseSection`].
     #[serde(default)]
     pub normalise:   Option<NormaliseSection>,
+    /// What the bench is for: `"snapshot"`, isolated reference code frozen by
+    /// its lock, or `"tracking"`, built against living code and read across
+    /// commits ([`Kind`]). Optional only so the refusal can name the bench:
+    /// [`crate::tree::load`] refuses a bench that declares none, and
+    /// [`BenchManifest::for_size`] refuses one too.
+    #[serde(default, deserialize_with = "de_kind", serialize_with = "ser_kind")]
+    pub kind:        Option<Kind>,
+    /// Where a snapshot's lock sits. Set by [`crate::tree::load`] from where
+    /// the bench is declared, never written in a `bench.toml`.
+    #[serde(skip)]
+    pub lock:        Option<PathBuf>,
+}
+
+/// Read `kind` from its spelling, refusing any word that names no kind.
+pub(crate) fn de_kind<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Kind>, D::Error> {
+    let s = String::deserialize(d)?;
+    Kind::parse(&s).map(Some).ok_or_else(|| {
+        serde::de::Error::custom(format!(
+            "`kind = \"{s}\"` names no bench kind; a bench is `\"snapshot\"` or `\"tracking\"`"
+        ))
+    })
+}
+
+fn ser_kind<S: serde::Serializer>(k: &Option<Kind>, s: S) -> Result<S::Ok, S::Error> {
+    match k {
+        Some(k) => s.serialize_str(k.name()),
+        None => s.serialize_none(),
+    }
 }
 
 /// Differential-analysis config: declare a baseline VARIANT to
@@ -834,6 +865,10 @@ impl BenchManifest {
         } else {
             (None, None, None)
         };
+        let kind = section.kind.ok_or_else(|| BenchError::InvalidConfig {
+            reason: no_kind_reason(bench_name),
+        })?;
+        let source = source_of(bench_name, kind, section.lock.as_deref())?;
         let (bench, sweep) = self
             .nested
             .get(bench_name)
@@ -877,6 +912,8 @@ impl BenchManifest {
             normalise_baseline: nz_baseline,
             normalise_mode: nz_mode,
             normalise_floor: nz_floor,
+            kind,
+            source,
         })
     }
 
@@ -959,6 +996,13 @@ pub struct BenchConfig {
     /// the report subtracts this variant's per-call time from every variant before
     /// ratios, isolating pure dispatch cost. `None` = no floor differencing.
     pub normalise_floor:    Option<String>,
+    /// The bench's kind, which decides how its history is read.
+    pub kind:               Kind,
+    /// The code a run measured, as its summary rows record it: a snapshot's
+    /// lock id ([`mockspace_bench_layout::source_id`]), or
+    /// [`mockspace_bench_layout::TRACKING_SOURCE`] for a tracking bench, whose
+    /// code the run's commit names.
+    pub source:             String,
 }
 
 /// Tunable iteration counts. Defaults match the polka-dots
@@ -1026,6 +1070,8 @@ impl Default for BenchConfig {
             normalise_baseline: None,
             normalise_mode:     None,
             normalise_floor:    None,
+            kind:               Kind::Tracking,
+            source:             mockspace_bench_layout::TRACKING_SOURCE.to_string(),
         }
     }
 }
@@ -1040,7 +1086,8 @@ mod tests {
 
     const BASE: &str = r#"
         [bench.b]
-        title = "B"
+        kind = "tracking"
+            title = "B"
         workload = "default"
         variants = ["alpha", "beta"]
         sizes = [64, 1024]
@@ -1062,6 +1109,7 @@ mod tests {
         let m = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             variants = ["alpha"]
@@ -1081,6 +1129,7 @@ mod tests {
         let m = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             variants = ["alpha", "beta", "gamma"]
@@ -1103,6 +1152,7 @@ mod tests {
         let m = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             variants = ["alpha", "beta"]
@@ -1125,6 +1175,7 @@ mod tests {
         let m = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             master_seed = "0xFFFF_FFFF_FFFF_FFFF"
@@ -1136,6 +1187,7 @@ mod tests {
         let dec = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             master_seed = "12345"
@@ -1151,6 +1203,7 @@ mod tests {
         let m = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             master_seed = 0x1234_5678
@@ -1166,6 +1219,7 @@ mod tests {
         let m = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             variants = ["a"]
@@ -1188,7 +1242,7 @@ mod tests {
 
     fn seeds(global: &str, per_bench: &str) -> Result<HarnessTuning, BenchError> {
         let text = format!(
-            "[bench.b]\ntitle = \"B\"\nworkload = \"default\"\nvariants = [\"a\"]\n\
+            "[bench.b]\nkind = \"tracking\"\ntitle = \"B\"\nworkload = \"default\"\nvariants = [\"a\"]\n\
              sizes = [64]\n\n[bench.b.timing]\n{per_bench}\n\n[timing]\n{global}\n"
         );
         manifest(&text)
@@ -1284,7 +1338,7 @@ mod tests {
 
     #[test]
     fn a_misspelled_seed_key_is_refused_rather_than_ignored() {
-        let text = "[bench.b]\ntitle = \"B\"\nworkload = \"default\"\nvariants = [\"a\"]\n\
+        let text = "[bench.b]\nkind = \"tracking\"\ntitle = \"B\"\nworkload = \"default\"\nvariants = [\"a\"]\n\
                     sizes = [64]\n\n[bench.b.timing]\nvalidation_seed = 1\n";
         assert!(toml::from_str::<BenchManifest>(text).is_err());
         assert!(toml::from_str::<BenchManifest>("[timing]\nquality_seeds = 1\n").is_err());
@@ -1295,6 +1349,7 @@ mod tests {
         let m = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             variants = ["a"]
@@ -1315,6 +1370,7 @@ mod tests {
         let canonical = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             arms = ["alpha", "beta"]
@@ -1333,6 +1389,7 @@ mod tests {
         let m = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
 
@@ -1352,6 +1409,7 @@ mod tests {
         let err = toml::from_str::<BenchManifest>(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             variants = ["a"]
@@ -1368,6 +1426,7 @@ mod tests {
         let m = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             arms = ["alpha", "beta", "nullarm"]
@@ -1389,6 +1448,7 @@ mod tests {
         let m = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             arms = ["alpha", "beta"]
@@ -1412,6 +1472,7 @@ mod tests {
             &path,
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             arms = ["alpha"]
@@ -1432,6 +1493,7 @@ mod tests {
         let m = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             arms = ["alpha", "beta"]
@@ -1452,6 +1514,7 @@ mod tests {
         let m = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             arms = ["alpha", "nullarm"]
@@ -1495,6 +1558,7 @@ mod tests {
         let m = manifest(
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             sizes = [64]
@@ -1510,7 +1574,7 @@ mod tests {
     #[test]
     fn an_unknown_top_level_section_is_refused_and_named() {
         let err = toml::from_str::<BenchManifest>(
-            "[telemetry]\nenabled = true\n\n[bench.b]\ntitle = \"t\"\nworkload = \"w\"\n",
+            "[telemetry]\nenabled = true\n\n[bench.b]\nkind = \"tracking\"\ntitle = \"t\"\nworkload = \"w\"\n",
         )
         .expect_err("an unread section must not parse");
         let msg = format!("{err}");
@@ -1547,7 +1611,7 @@ mod tests {
     /// and every timing in the run is skewed.
     #[test]
     fn a_typoed_bench_key_is_refused_rather_than_defaulted() {
-        let src = "[bench.b]\ntitle = \"t\"\nworkload = \"w\"\nthreadedd = true\n";
+        let src = "[bench.b]\nkind = \"tracking\"\ntitle = \"t\"\nworkload = \"w\"\nthreadedd = true\n";
         let err = toml::from_str::<BenchManifest>(src).expect_err("a typo must not parse");
         assert!(format!("{err}").contains("threadedd"));
     }
@@ -1558,7 +1622,7 @@ mod tests {
     /// asserts the offending key survives to the message.
     #[test]
     fn a_typo_inside_the_array_of_tables_sizes_form_names_the_key() {
-        let src = "[bench.b]\ntitle = \"t\"\nworkload = \"w\"\n\n\
+        let src = "[bench.b]\nkind = \"tracking\"\ntitle = \"t\"\nworkload = \"w\"\n\n\
                    [[bench.b.sizes]]\nn = 64\nvariantss = [\"a\"]\n";
         let err = toml::from_str::<BenchManifest>(src).expect_err("a typo must not parse");
         let msg = format!("{err}");
@@ -1571,12 +1635,12 @@ mod tests {
     #[test]
     fn both_sizes_shapes_survive_the_hand_written_deserializer() {
         let bare = manifest(
-            "[bench.b]\ntitle = \"t\"\nworkload = \"w\"\nvariants = [\"a\"]\nsizes = [16, 32]\n",
+            "[bench.b]\nkind = \"tracking\"\ntitle = \"t\"\nworkload = \"w\"\nvariants = [\"a\"]\nsizes = [16, 32]\n",
         );
         assert_eq!(bare.bench["b"].sizes.len(), 2);
         assert_eq!(bare.bench["b"].sizes[0].n, 16);
         let tabled = manifest(
-            "[bench.b]\ntitle = \"t\"\nworkload = \"w\"\n\n\
+            "[bench.b]\nkind = \"tracking\"\ntitle = \"t\"\nworkload = \"w\"\n\n\
              [[bench.b.sizes]]\nn = 64\nvariants = [\"a\"]\n",
         );
         assert_eq!(tabled.bench["b"].sizes[0].n, 64);
@@ -1592,7 +1656,7 @@ mod tests {
         let src = "\n[timing]\npasses = 2\nruns_per_pass = 3\nbatch_size = 4\n\
                    harness_runs = 5\ncooldowns_ms = [1, 2]\n\n\
                    [docgen]\nenabled = true\n\n\
-                   [bench.b]\ntitle = \"t\"\nworkload = \"w\"\nmaster_seed = 7\n\
+                   [bench.b]\nkind = \"tracking\"\ntitle = \"t\"\nworkload = \"w\"\nmaster_seed = 7\n\
                    variants = [\"a\"]\nmay_differ = true\nrequired = true\n\
                    threaded = true\n\n\
                    [bench.b.timing]\npasses = 9\nruns_per_pass = 8\nbatch_size = 7\n\
@@ -1626,7 +1690,8 @@ mod role_resolution {
 
     const ARMS_PER_SIZE: &str = r#"
         [bench.h]
-        title = "H"
+        kind = "tracking"
+            title = "H"
         workload = "w"
         [[bench.h.sizes]]
         n = 64
@@ -1662,6 +1727,7 @@ mod role_resolution {
     fn arms_declared_per_size_are_what_a_role_is_checked_against() {
         let bad = r#"
             [bench.h]
+            kind = "tracking"
             title = "H"
             workload = "w"
             baseline = "nope"
@@ -1681,6 +1747,7 @@ mod role_resolution {
     fn a_size_that_narrows_its_arms_may_not_keep_a_role_it_excluded() {
         let toml = r#"
             [bench.h]
+            kind = "tracking"
             title = "H"
             workload = "w"
             variants = ["kernel", "native"]
@@ -1701,6 +1768,7 @@ mod role_resolution {
     fn a_size_that_supplies_the_role_arm_is_accepted() {
         let toml = r#"
             [bench.h]
+            kind = "tracking"
             title = "H"
             workload = "w"
             variants = ["kernel"]
@@ -1719,6 +1787,7 @@ mod role_resolution {
     fn a_path_arm_resolves_the_same_on_every_platform() {
         let toml = r#"
             [bench.h]
+            kind = "tracking"
             title = "H"
             workload = "w"
             baseline = "native"
@@ -1737,6 +1806,7 @@ mod role_resolution {
     fn delta_is_a_mode_and_is_not_checked_against_the_arms() {
         let toml = r#"
             [bench.h]
+            kind = "tracking"
             title = "H"
             workload = "w"
             baseline = "fnv"

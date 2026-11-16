@@ -92,6 +92,7 @@ fn to_spec(decl: &MatrixDecl, sweep_value: &str) -> MatrixSpec {
     MatrixSpec {
         bench:             bench.clone(),
         title:             format!("{} ({sweep_value})", decl.name),
+        kind:              decl.kind.clone(),
         carrier_dep:       decl.crate_dep.clone(),
         extra_deps:        decl.extra_deps.clone(),
         master_seed:       decl.master_seed.clone(),
@@ -158,6 +159,7 @@ mod tests {
     fn boundary_decl() -> MatrixDecl {
         MatrixDecl {
             name:        "abi_cross_scalar".to_string(),
+            kind:        "snapshot".to_string(),
             crate_path:  "bench_carrier".to_string(),
             crate_dep:   "bench-carrier = { path = \"../../carrier\" }".to_string(),
             extra_deps:  vec![],

@@ -4,6 +4,9 @@
 # consumer codebase: mockspace itself.
 
 [bench.hash-mix]
+# Tracking: what this bench follows is the living harness the variants
+# and the driver are built against, not a frozen reference.
+kind = "tracking"
 title = "u64 hash-mix function comparison"
 workload = "default"
 master_seed = 0x1234_5678_9ABC_DEF0

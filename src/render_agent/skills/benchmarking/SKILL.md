@@ -13,6 +13,16 @@ Any number that feeds a decision comes from `{mock_dir}/benches/`. Never hand-ro
 
 An arm that has no path of its own for a target (a SIMD arm with no kernel there) runs the code that target does have, under the same arm name. That result is valid and wanted: on that target the approach buys nothing as the code stands. Never rename the arm, gate it off the target or drop its run for it. When the path for the target is written, the next run shows the win.
 
+## The two kinds
+
+Every bench declares one in its `bench.toml`, and the kind decides what it may build from and how its numbers are read. The lint `a-bench-keeps-the-contract-of-its-kind`, and `run` and `report` before they build, refuse a bench with no kind or out of its contract.
+
+- `kind = "snapshot"`: isolated reference code that stays as it is. Every arm builds only from crates and files inside `{mock_dir}/benches/`: its own `arms/`, its own `support/`, a root `support/` crate an arm's own manifest names by path. No crate outside the tree, no git or registry dependency (the `mockspace-bench-*` crates are the instrument and do not count). A generated arm manifest takes only the bench's own `support/`. `cargo mock bench freeze <bench>` writes `<bench>/snapshot.lock` (a section's is `<section>.snapshot.lock`): the sha256 of every file it builds from, its `bench.toml` included. Those files never change after; changed reference code is a new snapshot beside the old one. Its history is the runs of that lock on one machine class, so a move is `DRIFT` of the machine, toolchain or harness, not of the code.
+- `kind = "tracking"`: built against living code, at least one arm reaching a crate outside the bench tree (the repository's own crates, in the usual case). No lock. Its history is the runs at clean commits on one machine class, so a move is a `REGRESSION` of the code; a run on a dirty tree is shown against history and never flagged.
+- Each run's `summary.tsv` records the code it measured in its `source` column (the lock's id, or `-`), and its `report.md` opens with the kind and how to read it. Compare arms within a run freely; compare a snapshot's runs only of one source, a tracking bench's only at commits.
+- A tree from before the kinds: `cargo mock bench migrate --kinds [--dry-run]` writes the kind each bench's reach admits and freezes the snapshots.
+- A matrix family declares its kind in `bench_matrix!` (`kind: "snapshot"`), by what its carrier crate reaches.
+
 ## The hooks library
 
 The generated driver is the only runner. What your own driver would do goes in `{mock_dir}/benches/src/lib.rs`, compiled into the driver:
@@ -38,6 +48,7 @@ pub fn hooks() -> Hooks {
 - `report`: renders a report for a run that has none; never touches one the run wrote.
 - `test`: `cargo test` in every crate under the bench tree (a bare `cargo test` at the root sees only the driver). A name narrows by path; flags after it go to cargo. Counts print with their profile.
 - `cargo mock bench migrate [--machine-class <class>] [--dry-run]`: moves an older results layout into run directories.
+- `cargo mock bench freeze [<bench>...]`: writes the lock of each snapshot that has none; refuses to rewrite one its files no longer match.
 
 ## The layers
 
@@ -45,7 +56,7 @@ pub fn hooks() -> Hooks {
 - `mockspace-bench-harness`, transport: cdylib-per-arm isolation, subprocess driver, workloads, validation, analysis, history, codegen (`MatrixSpec` / `expand` / `render` / `generate`). It does not judge honesty. A driver timing arms from a shared target dir runs from a staged build: `<dir>/release/`, `binaries.sha256`, `build.txt`; `staging::StagedBuild::of_current_exe` refuses an unstaged driver, `verify` checks digests, `link_into` (feature `stage-link`) returns a `StageLink` removed on drop.
 - `mockspace-bench-matrix`: any comparison over more than one axis.
 
-What the framework already does, never re-rolled: per-arm release, fat LTO, one codegen unit, own subprocess; a realistic workload around the call; validation over deterministic seeds before timing (a mismatch is the finding); disassembly dedup; quintiles, autocorrelation, bootstrap CIs, sign test, Benjamini-Hochberg; per-run `summary.tsv` compared only within one machine class.
+What the framework already does, never re-rolled: per-arm release, fat LTO, one codegen unit, own subprocess; a realistic workload around the call; validation over deterministic seeds before timing (a mismatch is the finding); disassembly dedup; quintiles, autocorrelation, bootstrap CIs, sign test, Benjamini-Hochberg; per-run `summary.tsv` compared only within one machine class, and by the bench's kind.
 
 ## Hardware counters
 
@@ -53,14 +64,14 @@ What the framework already does, never re-rolled: per-arm release, fat LTO, one 
 
 ## The matrix layer
 
-- One `bench_matrix!` block (`name`, `crate_path`, `crate_dep`, `extra_deps`, `seed`, `sweep`, `sizes`, `baseline`, `floor`, `regime` = `warm` | `cold_cycle(M)`) in a `pub mod bench` of the library, plus a short generator binary. Each `(sweep value, cell, size)` is its own cdylib and subprocess.
+- One `bench_matrix!` block (`name`, `kind`, `crate_path`, `crate_dep`, `extra_deps`, `seed`, `sweep`, `sizes`, `baseline`, `floor`, `regime` = `warm` | `cold_cycle(M)`) in a `pub mod bench` of the library, plus a short generator binary. Each `(sweep value, cell, size)` is its own cdylib and subprocess.
 - Cells are real typed functions, passed as a generic parameter, never a `fn` pointer.
 - The scaffold owns, never reintroduced: the anti-hoist `acc` chain, the shared sixteen-seed table, one keep-alive per iteration, the setup/iteration split (breakeven `k* = (S_b - S_a) / (I_a - I_b)`), the fidelity digest. Pick `warm` or `cold_cycle(M)` by the deployment and say which.
 
 ## Configuration
 
 - Root `{mock_dir}/benches/bench.toml`: `[timing]`, `[dispatch]`, `[build]`, `[workload.*]`, optional `[bench.<name>]`, and membership in `[benchspace]` (`members = ["**"]` default, `exclude = []`; globs or literal dirs, a literal must exist).
-- A bench's `bench.toml` has fields at top level: `title`, `workload`, `arms`, `points`, `master_seed`, `may_differ`, `required`, `threaded`, `baseline`, `floor`, `delta`, and a `timing` override (`passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`, `validation_seeds`, `determinism_check_seeds`). `[sweep.<name>]` overrides both.
+- A bench's `bench.toml` has fields at top level: `kind` (required, never in a sweep), `title`, `workload`, `arms`, `points`, `master_seed`, `may_differ`, `required`, `threaded`, `baseline`, `floor`, `delta`, and a `timing` override (`passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`, `validation_seeds`, `determinism_check_seeds`). `[sweep.<name>]` overrides both.
 - Set `may_differ = false`, `required = true` unless stated otherwise. An expensive arm lowers the seed counts; zero is refused.
 
 ## Deliverable

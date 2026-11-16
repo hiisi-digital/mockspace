@@ -272,6 +272,7 @@ fn manifest_loads_and_converts_to_config() {
 
     let manifest_text = r#"
 [bench.demo]
+kind = "tracking"
 title = "Demo bench"
 workload = "default"
 master_seed = 0x1234_5678_9ABC_DEF0

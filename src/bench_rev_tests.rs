@@ -89,6 +89,7 @@ fn on_disk(root: &Path, arms: &[(&str, &str, Option<&str>)]) -> Vec<ArmSource> {
                 arm:          (*arm).into(),
                 dir,
                 has_manifest: rev.is_some(),
+                kind:         mockspace_bench_harness::layout::Kind::Tracking,
             }
         })
         .collect()

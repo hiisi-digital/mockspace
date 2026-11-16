@@ -107,6 +107,7 @@ pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
         "list" => cmd_list(cfg),
         "add" => cmd_add(cfg, &rest),
         "migrate" => bench_migrate::cmd(cfg, &rest),
+        "freeze" => crate::bench_kinds::cmd_freeze(cfg, &rest),
         "" => {
             print_help();
             ExitCode::SUCCESS
@@ -131,6 +132,10 @@ fn print_help() {
     eprintln!("  add      scaffold a new variant crate: mock bench add <name>");
     eprintln!("  migrate  move results and history in an older layout into runs:");
     eprintln!("           mock bench migrate [--machine-class <class>] [--dry-run]");
+    eprintln!("           or declare every bench's kind and freeze the snapshots:");
+    eprintln!("           mock bench migrate --kinds [--dry-run]");
+    eprintln!("  freeze   write the lock of each snapshot that has none:");
+    eprintln!("           mock bench freeze [<bench> ...]");
     eprintln!();
     eprintln!("`run` and `report` accept bench names to restrict the pass:");
     eprintln!("  mock bench run <name> [<name> ...]   run only the named benches");
@@ -147,6 +152,13 @@ fn print_help() {
     eprintln!("  src/lib.rs            optional hooks() library");
     eprintln!("  results/<bench>/<sweep>_n<point>/<machine class>/<run>/");
     eprintln!("                        one run: samples.csv meta.json report.md summary.tsv");
+    eprintln!();
+    eprintln!("every bench declares `kind = \"snapshot\"` or `kind = \"tracking\"`:");
+    eprintln!("  snapshot  isolated reference code: its arms build only from the bench tree,");
+    eprintln!("            its lock records those files and they never change; its history");
+    eprintln!("            is runs of the one lock, so a move is drift of machine or toolchain");
+    eprintln!("  tracking  builds against living code outside the bench tree; its history");
+    eprintln!("            is runs at clean commits, so a move is the code's regression");
     eprintln!();
     eprintln!("a run is written once and never replaced; runs on other machines sit");
     eprintln!("beside it, and a cell's history is its runs on the same machine class.");
@@ -189,6 +201,9 @@ fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
     if let Err(code) = refuse_custom_runners(cfg, &bench_dir) {
         return code;
     }
+    if let Err(code) = crate::bench_kinds::refuse_kind_findings(cfg, &bench_dir) {
+        return code;
+    }
     bench_migrate::warn_if_legacy(&bench_dir);
 
     // Positional args are bench names: they restrict both the run
@@ -211,6 +226,9 @@ fn cmd_report(cfg: &Config, args: &[&str]) -> ExitCode {
         return ExitCode::FAILURE;
     }
     if let Err(code) = refuse_custom_runners(cfg, &bench_dir) {
+        return code;
+    }
+    if let Err(code) = crate::bench_kinds::refuse_kind_findings(cfg, &bench_dir) {
         return code;
     }
     let names: Vec<&str> = args
@@ -1252,6 +1270,8 @@ fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
     eprintln!("scaffolded {bench}/arms/{arm}/src/lib.rs (its manifest is generated). Next:");
     eprintln!("  1. implement the run block in {bench}/arms/{arm}/src/lib.rs");
     eprintln!("  2. reference \"{arm}\" from the bench's `arms` list if it is not there yet");
+    eprintln!("  3. a snapshot: `mock bench freeze {bench}` once the arms are written; a tracking");
+    eprintln!("     bench: `kind = \"tracking\"` and an arm naming the living crate it follows");
     ExitCode::SUCCESS
 }
 
@@ -1381,7 +1401,15 @@ const STARTER_BENCH_DIR_TOML: &str = r#"# One bench: one question, one set of co
 # roles: `baseline = "arm"` selects the arm every delta is computed
 # against; `floor = "arm"` a null-cost arm subtracted from every arm
 # first.
+#
+# The kind says what the bench is for. A snapshot is isolated reference
+# code: its arms build only from the bench tree, and once they are
+# written `mock bench freeze <bench>` locks their files, which never
+# change after. A tracking bench builds against living code, an arm
+# naming a crate outside the bench tree, and its history is read
+# across commits; it carries no lock.
 
+kind = "snapshot"
 title = "SAMPLE_TITLE"
 workload = "default"
 arms = ["SAMPLE_ARM"]
@@ -1470,7 +1498,10 @@ driver binary is generated from `bench.toml` on every run.
 - `<bench>/bench.toml`: the bench. Its fields sit at the top level
   with no wrapper table, because the directory name is the bench's
   name. Optional [sweep.<name>] sections carry per-sweep points and
-  overrides.
+  overrides. Its `kind` is `snapshot` or `tracking`.
+- `<bench>/snapshot.lock`: a snapshot's lock, written by
+  `mock bench freeze`, the digest of every file the snapshot builds
+  from. A snapshot's files never change once it is locked.
 - `<bench>/arms/<arm>/src/lib.rs`: one measured cdylib per arm. The
   manifest is generated; writing a Cargo.toml in the arm directory
   takes it over.
@@ -1494,6 +1525,25 @@ driver binary is generated from `bench.toml` on every run.
    tool-owned target directories with the pinned release profile, and
    measures. A bench name selects all its sweeps.
 5. `mock bench report` renders a report for any run that has none.
+
+## Two kinds of bench
+
+A snapshot is isolated reference code that stays as it is: its arms
+build only from crates and files inside this tree, and its lock holds
+them fixed. Its history is the runs of that one lock on one machine
+class, so a timing that moves says the machine, the toolchain or the
+harness drifted, and the run reports it as `DRIFT`.
+
+A tracking bench builds against living code, at least one arm naming a
+crate outside this tree. Its history is the runs at clean commits on
+one machine class, so a timing that moves says the code moved, and the
+run reports it as `REGRESSION`. A run on a dirty tree is compared and
+never flagged.
+
+Both are refused by `mock bench run` and by the lint
+`a-bench-keeps-the-contract-of-its-kind` when they break their
+contract. `mock bench migrate --kinds` declares the kind each bench of
+an older tree admits and freezes the snapshots.
 
 The generated driver is the only runner. A driver of your own here is
 refused by `mock bench run` and by the lint
@@ -2004,6 +2054,7 @@ mod tests {
             arm:          "kernel".into(),
             dir:          arm_dir.clone(),
             has_manifest: true,
+            kind:         mockspace_bench_harness::layout::Kind::Tracking,
         };
         let err = check_arm_lib_name(&arm).unwrap_err();
         assert!(err.contains("belongs under support/"), "{err}");

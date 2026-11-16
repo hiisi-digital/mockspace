@@ -37,6 +37,7 @@ pub struct DispatchState { pub d: Decoded, pub r: Vec<u64>, pub sinks: Vec<u32> 
 
 bench_matrix! {
     name: "carrier_dispatch",
+    kind: "snapshot",               // snapshot | tracking, by what the carrier reaches
     crate_path: bench_carrier,
     crate_dep: "bench-carrier = {{ path = \"../../carrier\"{carrier_features} }}",
     extra_deps: [ "mockspace-bench-core = { path = \"...\" }" ],
@@ -117,6 +118,7 @@ pub fn matrix_decls() -> Vec<mockspace_bench_matrix::MatrixDecl> {
     };
     vec![MatrixDecl {
         name: "carrier_dispatch".into(),
+        kind: "snapshot".into(),
         crate_path: "bench_carrier".into(),
         crate_dep: "bench-carrier = {{ path = \"../../carrier\"{carrier_features} }}".into(),
         extra_deps: vec![/* bench-core, bench-macro, bench-matrix dep lines */],

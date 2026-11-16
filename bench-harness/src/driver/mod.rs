@@ -664,7 +664,10 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
             if let Some(floor) = config.normalise_floor.as_deref() {
                 ds = ds.with_floor(floor);
             }
-            let md = crate::generate_report(&ds, &result.title);
+            let md = crate::kinds::with_kind_paragraph(
+                &crate::generate_report(&ds, &result.title),
+                &crate::kinds::methodology(config.kind, &config.source, &result.env.git_commit),
+            );
             if let Err(e) = std::fs::write(&findings_path, md) {
                 eprintln!("error: writing report: {e}");
                 return ExitCode::FAILURE;
@@ -714,16 +717,20 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
                 median_ns:  m,
                 ci_lo_ns:   lo,
                 ci_hi_ns:   hi,
+                source:     config.source.clone(),
             });
         }
         // The earlier runs of this cell on this machine class; this run is
         // still staged, so it is not among them.
         let historical = history::load_cell(&results_root, &config.bench, &cell, &machine);
-        let regressions = history::detect_regressions(&entries, &historical);
-        for r in &regressions {
+        let standing = crate::kinds::standing(config.kind, &config.source, &entries, &historical);
+        for r in &standing.rows {
             if r.flagged {
-                eprintln!("  REGRESSION: {}", r.render(&config.bench_name));
+                eprintln!("  {}: {}", standing.label, r.render(&config.bench_name));
             }
+        }
+        if let Some(note) = &standing.note {
+            eprintln!("  not flagged: {note}");
         }
         for e in &entries {
             summary.push(SummaryRow {
@@ -732,7 +739,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
                 variant:       e.variant.clone(),
                 median_ns:     e.median_ns,
                 ratio_vs_best: if best > 0.0 { e.median_ns / best } else { 1.0 },
-                regression:    history::flagged_for(&regressions, &e.variant),
+                moved:         history::flagged_for(&standing.rows, &e.variant).then_some(standing.label),
             });
         }
         if cell_failed {
@@ -772,7 +779,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
                 row.variant,
                 fmt_ns(row.median_ns),
                 row.ratio_vs_best,
-                if row.regression { "  REGRESSION" } else { "" }
+                row.moved.map(|l| format!("  {l}")).unwrap_or_default()
             );
         }
     }
@@ -1060,6 +1067,7 @@ mod tests {
             root.join("bench.toml"),
             r#"
             [bench.b]
+            kind = "tracking"
             title = "B"
             workload = "default"
             variants = ["missing-arm/lib.dylib"]

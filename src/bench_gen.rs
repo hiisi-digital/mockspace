@@ -302,8 +302,10 @@ pub fn driver_cargo_toml(dep: &str, support: &[SupportSource], name: &str) -> Re
 
 /// Generate the manifest for an arm directory that has none: the
 /// `[workspace]` header (so an outer workspace cannot capture it),
-/// the cdylib crate type, the pinned framework deps, and this
-/// bench's support crates.
+/// the cdylib crate type, the pinned framework deps, and the support
+/// crates its kind takes: this bench's own, and for a tracking arm the
+/// ones at the tree root too
+/// ([`Kind::generated_arm_takes_root_support`](mockspace_bench_harness::layout::Kind::generated_arm_takes_root_support)).
 pub fn arm_cargo_toml(
     arm: &ArmSource,
     dep: &str,
@@ -324,7 +326,10 @@ pub fn arm_cargo_toml(
     );
     for s in support
         .iter()
-        .filter(|s| s.bench.is_none() || s.bench.as_deref() == Some(arm.bench.as_str()))
+        .filter(|s| match s.bench.as_deref() {
+            None => arm.kind.generated_arm_takes_root_support(),
+            Some(b) => b == arm.bench,
+        })
     {
         let name = support_package_name(s)?;
         manifest.push_str(&format!(

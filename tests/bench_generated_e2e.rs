@@ -125,6 +125,7 @@ cooldowns_ms = [0]
         write(
             &bench_dir.join(bench).join("bench.toml"),
             r#"
+kind = "snapshot"
 title = "Plus one"
 workload = "default"
 arms = ["plusone"]
@@ -149,6 +150,7 @@ master_seed = 7
     // on disk, which is what tells this failure apart from a run
     // that never completed. ──
     let cfg = mockspace::config::Config::from_dir(&mock_dir);
+    freeze_all(&cfg);
     let code = mockspace::bench::cmd(&cfg, &["run"]);
     assert_eq!(
         format!("{code:?}"),
@@ -197,6 +199,18 @@ master_seed = 7
         std::fs::read_to_string(&summary).unwrap().contains("plusone"),
         "the summary rows carry the arm's exported name"
     );
+    // a snapshot's rows name the lock they measured, and its report says what
+    // kind of bench it is and how its history reads
+    let lock = std::fs::read(bench_dir.join("hash/snapshot.lock")).unwrap();
+    let source = {
+        use sha2::Digest;
+        let hex: String = sha2::Sha256::digest(&lock).iter().map(|b| format!("{b:02x}")).collect();
+        hex[.. 12].to_string()
+    };
+    let rows = mockspace_bench_harness::history::parse_summary(&std::fs::read_to_string(&summary).unwrap());
+    assert!(!rows.is_empty() && rows.iter().all(|r| r.source == source), "{rows:?}");
+    let report = std::fs::read_to_string(hash_run.join("report.md")).unwrap();
+    assert!(report.contains(&format!("Kind: snapshot, source `{source}`")), "{report}");
     assert!(
         !runs_of(&bench_dir, "gate")[0].join("summary.tsv").exists(),
         "a Fail verdict withholds the cell's summary"
@@ -269,6 +283,7 @@ cooldowns_ms = [0]
         write(
             &bench_dir.join(bench).join("bench.toml"),
             r#"
+kind = "snapshot"
 title = "Plus one"
 workload = "default"
 arms = ["plusone"]
@@ -304,6 +319,7 @@ master_seed = 7
         write(
             &bench_dir.join(bench).join("bench.toml"),
             r#"
+kind = "snapshot"
 title = "Plus one"
 workload = "default"
 arms = ["plusone"]
@@ -325,6 +341,7 @@ master_seed = 7
     write(
         &bench_dir.join("mixed").join("bench.toml"),
         r#"
+kind = "snapshot"
 title = "Plus one"
 workload = "default"
 arms = ["plusone", "wideone"]
@@ -349,6 +366,7 @@ master_seed = 7
     // `--keep-builds`: the preflight below reads the arms the run built, which a
     // run removes otherwise.
     let cfg = mockspace::config::Config::from_dir(&mock_dir);
+    freeze_all(&cfg);
     let code = mockspace::bench::cmd(&cfg, &["run", "--keep-builds"]);
     assert_eq!(
         format!("{code:?}"),
@@ -466,6 +484,13 @@ master_seed = 7
     );
     assert!(!bench_dir.join("target").exists(), "the per-arm links stay after a plain run");
 
+}
+
+/// Freeze every snapshot of the tree, as its author does once the arms are
+/// written, so the run's contract check passes.
+fn freeze_all(cfg: &mockspace::config::Config) {
+    let code = mockspace::bench::cmd(cfg, &["freeze"]);
+    assert_eq!(format!("{code:?}"), format!("{:?}", std::process::ExitCode::SUCCESS), "freeze");
 }
 
 /// Takes the machine's git environment out of this process before `main`.

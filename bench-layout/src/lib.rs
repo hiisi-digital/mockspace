@@ -33,8 +33,20 @@
 
 use std::path::{Path, PathBuf};
 
+mod kind;
 #[cfg(test)]
 mod tests;
+
+pub use kind::{
+    Kind,
+    LOCK_HEADER,
+    SECTION_LOCK_SUFFIX,
+    SNAPSHOT_LOCK,
+    TRACKING_SOURCE,
+    glob_match,
+    lock_name,
+    source_id,
+};
 
 /// The directory under the bench tree root that holds every run.
 pub const RESULTS_DIR: &str = "results";
@@ -54,9 +66,12 @@ pub const INDEX_FILE: &str = "INDEX.md";
 pub const VOID_DIR: &str = "void";
 /// A run in progress, staged until it completes.
 pub const INFLIGHT_DIR: &str = ".inflight";
-/// The header line of a [`SUMMARY_FILE`], the schema the old ledger used.
+/// The header line of a [`SUMMARY_FILE`]: the schema the old ledger used, and a
+/// tenth column, `source`, naming the code a row measured. A snapshot's row
+/// carries its [`source_id`], a tracking bench's carries [`TRACKING_SOURCE`],
+/// and a row written before the column existed has none.
 pub const SUMMARY_HEADER: &str =
-    "# schema_v1\ttimestamp\tgit_commit\tbenchmark\tvariant\tn\tmode\tmedian_ns\tci_lo_ns\tci_hi_ns";
+    "# schema_v2\ttimestamp\tgit_commit\tbenchmark\tvariant\tn\tmode\tmedian_ns\tci_lo_ns\tci_hi_ns\tsource";
 
 /// One cell of a bench: a sweep at one point, named `<sweep>_n<point>`.
 ///

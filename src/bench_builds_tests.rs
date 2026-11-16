@@ -131,7 +131,7 @@ fn a_run_leaves_no_arm_or_driver_build_and_compiles_the_shared_dependency_once()
     write(
         &bench_dir.join("pair").join("bench.toml"),
         &format!(
-            "title = \"Pair\"\nworkload = \"default\"\narms = [\"{}\", \"{}\"]\npoints = [64]\nmaster_seed = 7\n",
+            "kind = \"snapshot\"\ntitle = \"Pair\"\nworkload = \"default\"\narms = [\"{}\", \"{}\"]\npoints = [64]\nmaster_seed = 7\n",
             arms[0], arms[1]
         ),
     );
@@ -147,6 +147,8 @@ fn a_run_leaves_no_arm_or_driver_build_and_compiles_the_shared_dependency_once()
     let before = bench_core_copies(&[&shared]);
 
     let cfg = crate::config::Config::from_dir(&mock_dir);
+    let frozen = crate::bench::cmd(&cfg, &["freeze"]);
+    assert_eq!(format!("{frozen:?}"), format!("{:?}", std::process::ExitCode::SUCCESS), "the freeze");
     let code = crate::bench::cmd(&cfg, &["run"]);
     assert_eq!(format!("{code:?}"), format!("{:?}", std::process::ExitCode::SUCCESS), "the fixture run");
     assert!(

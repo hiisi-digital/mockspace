@@ -436,8 +436,12 @@ pub(crate) fn apply(bench_dir: &Path, plan: &Plan) -> Result<usize, String> {
     Ok(written)
 }
 
-/// `mock bench migrate [--machine-class <class>] [--dry-run]`.
+/// `mock bench migrate [--machine-class <class>] [--dry-run]`, and
+/// `mock bench migrate --kinds [--dry-run]`, which is `crate::bench_kinds`'s.
 pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
+    if args.contains(&"--kinds") {
+        return crate::bench_kinds::cmd_migrate(cfg, args);
+    }
     let mut machine: Option<&str> = None;
     let mut dry_run = false;
     let mut i = 0;

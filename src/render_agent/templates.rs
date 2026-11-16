@@ -321,6 +321,10 @@ The `mockup-workflow` skill: gate boundaries and the validation pipeline. The `m
 - No timing of your own: no `Instant::now()` loop, criterion, `cargo bench`, or timer in a sketch or test.
 - `cargo mock bench add <bench> <arm>`, code in `<bench>/arms/<arm>/src/lib.rs`, config in `<bench>/bench.toml`, then `cargo mock bench run [<bench>...]`.
 - The generated driver is the only runner; custom behaviour goes in `{mock_dir}/benches/src/lib.rs` (`pub fn hooks() -> Hooks`).
+- Every bench declares `kind = "snapshot"` or `kind = "tracking"` in its `bench.toml`; the lint `a-bench-keeps-the-contract-of-its-kind` and `run` refuse one that does not, or breaks its contract.
+- Snapshot: isolated reference code. Arms build only from crates and files inside `{mock_dir}/benches/`; `cargo mock bench freeze <bench>` writes its `snapshot.lock`, and its files never change after. A move against its history is `DRIFT` of machine, toolchain or harness.
+- Tracking: builds against living code, an arm reaching a crate outside the bench tree; no lock. Its history is runs at clean commits, a move is a `REGRESSION`; a dirty-tree run is never flagged.
+- Changed reference code is a new snapshot beside the old one, never an edit under its lock. `cargo mock bench migrate --kinds` declares an older tree's kinds.
 - Results: `{mock_dir}/benches/results/<bench>/<sweep>_n<point>/<machine class>/<run>/`, committed, never replaced.
 - Quote a number with its run directory and profile.
 - A run builds the arms and the driver in the shared target and removes them once the results are written; `--keep-builds` keeps them for a second run.

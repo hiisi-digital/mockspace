@@ -64,6 +64,10 @@ pub struct MatrixSpec {
     /// Report title; `{key}` substituted per composition (so the title can name
     /// the axis values, though most benches keep it fixed).
     pub title:             String,
+    /// The bench kind, `"snapshot"` or `"tracking"`, written into the section.
+    /// Which one the matrix is depends on what its carrier crate reaches, so it
+    /// is declared, never guessed.
+    pub kind:              String,
     /// The dependency line body for the carrier crate. This IS rendered, so its
     /// literal TOML inline-table braces must be escaped as `{{` / `}}`, e.g.
     /// `bench-carrier = {{ path = "../../carrier"{carrier_features} }}`.
@@ -112,6 +116,12 @@ impl MatrixSpec {
     /// collides with a generator-injected key. Callers that expand or generate a
     /// spec should validate it first; `generate` does so before writing anything.
     pub fn validate(&self) -> Result<(), String> {
+        if mockspace_bench_layout::Kind::parse(&self.kind).is_none() {
+            return Err(format!(
+                "matrix `{}` declares kind `{}`; a bench is `snapshot` or `tracking`",
+                self.bench, self.kind
+            ));
+        }
         if self.axes.is_empty() {
             return Err("matrix has no axes; the product is a single empty composition".into());
         }
@@ -315,6 +325,7 @@ pub fn render_bench_section(spec: &MatrixSpec, comps: &[Composition]) -> String 
         "title = \"{}\"\n",
         render(&spec.title, &title_subst)
     ));
+    out.push_str(&format!("kind = \"{}\"\n", spec.kind));
     out.push_str("workload = \"realistic\"\n");
     out.push_str(&format!("master_seed = {}\n", spec.master_seed));
     out.push_str(&format!("[bench.{}.normalise]\n", spec.bench));
@@ -381,6 +392,7 @@ mod tests {
         MatrixSpec {
             bench:             "carrier_dispatch".into(),
             title:             "Dispatch shape sweep".into(),
+            kind:              "snapshot".into(),
             carrier_dep:       "bench-carrier = {{ path = \"../../carrier\"{carrier_features} }}"
                 .into(),
             extra_deps:        vec!["mockspace-bench-core = { path = \"x\" }".into()],
@@ -529,6 +541,18 @@ mod tests {
     #[test]
     fn validate_accepts_a_well_formed_spec() {
         assert!(dispatch_spec().validate().is_ok());
+    }
+
+    /// The section carries the declared kind, and a word naming no kind is
+    /// refused before anything is generated.
+    #[test]
+    fn the_section_carries_the_kind_and_an_unknown_kind_is_refused() {
+        let spec = dispatch_spec();
+        let section = render_bench_section(&spec, &expand(&spec));
+        assert!(section.contains("kind = \"snapshot\"\n"), "{section}");
+        let mut bad = dispatch_spec();
+        bad.kind = "frozen".into();
+        assert!(bad.validate().unwrap_err().contains("kind `frozen`"));
     }
 
     #[test]

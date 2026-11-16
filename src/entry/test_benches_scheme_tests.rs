@@ -55,7 +55,7 @@ fn generated_repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
     );
     write(
         &mock.join("benches/sample/bench.toml"),
-        "title = \"Sample\"\nworkload = \"default\"\narms = [\"a\"]\npoints = [64]\n\
+        "kind = \"snapshot\"\ntitle = \"Sample\"\nworkload = \"default\"\narms = [\"a\"]\npoints = [64]\n\
          master_seed = 7\n",
     );
     write(&root.join("vendor/bench-core/src/lib.rs"), "1");

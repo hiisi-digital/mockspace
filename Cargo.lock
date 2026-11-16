@@ -310,6 +310,7 @@ dependencies = [
  "mockspace-bench-layout",
  "mockspace-manifest",
  "mockspace-verdicts",
+ "sha2",
  "tempfile",
  "toml",
  "tree-sitter",

@@ -70,6 +70,9 @@ pub struct SweepAxis {
 pub struct MatrixDecl {
     /// Bench-family prefix; each swept bench is `<name>_<sweep_value>`.
     pub name:        String,
+    /// The bench kind every bench of the family declares, `"snapshot"` or
+    /// `"tracking"`, written into each generated `[bench.*]` section.
+    pub kind:        String,
     /// How a sibling crate names the consumer crate in `use`/paths, e.g.
     /// `bench_carrier`.
     pub crate_path:  String,
