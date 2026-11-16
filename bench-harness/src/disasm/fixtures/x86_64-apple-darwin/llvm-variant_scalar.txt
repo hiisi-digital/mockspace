@@ -1,0 +1,61 @@
+
+variant_scalar.o:	file format mach-o 64-bit x86-64
+
+Disassembly of section __TEXT,__text:
+
+0000000000000000 <__RNvCsdlSolg5Okjs_14variant_scalar7do_work>:
+       0:      	pushq	%rbp
+       1:      	movq	%rsp, %rbp
+       4:      	movzbl	(%rdi), %eax
+       7:      	movl	%eax, %ecx
+       9:      	shll	$0x5, %ecx
+       c:      	subq	%rax, %rcx
+       f:      	movzbl	0x1(%rdi), %eax
+      13:      	addq	%rcx, %rax
+      16:      	movl	%eax, %ecx
+      18:      	shll	$0x5, %ecx
+      1b:      	subq	%rax, %rcx
+      1e:      	movzbl	0x2(%rdi), %eax
+      22:      	addq	%rcx, %rax
+      25:      	movl	%eax, %ecx
+      27:      	shll	$0x5, %ecx
+      2a:      	subq	%rax, %rcx
+      2d:      	movzbl	0x3(%rdi), %eax
+      31:      	addq	%rcx, %rax
+      34:      	movq	%rax, %rcx
+      37:      	shlq	$0x5, %rcx
+      3b:      	subq	%rax, %rcx
+      3e:      	movzbl	0x4(%rdi), %eax
+      42:      	addq	%rcx, %rax
+      45:      	movq	%rax, %rcx
+      48:      	shlq	$0x5, %rcx
+      4c:      	subq	%rax, %rcx
+      4f:      	movzbl	0x5(%rdi), %eax
+      53:      	addq	%rcx, %rax
+      56:      	movq	%rax, %rcx
+      59:      	shlq	$0x5, %rcx
+      5d:      	subq	%rax, %rcx
+      60:      	movzbl	0x6(%rdi), %eax
+      64:      	addq	%rcx, %rax
+      67:      	movq	%rax, %rcx
+      6a:      	shlq	$0x5, %rcx
+      6e:      	subq	%rax, %rcx
+      71:      	movzbl	0x7(%rdi), %eax
+      75:      	addq	%rcx, %rax
+      78:      	movq	%rax, %rcx
+      7b:      	shlq	$0x5, %rcx
+      7f:      	subq	%rax, %rcx
+      82:      	movq	%rcx, (%rsi)
+      85:      	popq	%rbp
+      86:      	retq
+      87:      	nopw	(%rax,%rax)
+
+0000000000000090 <_bench_entry>:
+      90:      	cmpq	$0x8, %rdx
+      94:      	jne	0xa0 <_bench_entry+0x10>
+      96:      	pushq	%rbp
+      97:      	movq	%rsp, %rbp
+      9a:      	callq	0x9f <_bench_entry+0xf>
+      9f:      	popq	%rbp
+      a0:      	xorl	%eax, %eax
+      a2:      	retq

@@ -1,0 +1,59 @@
+
+variant_unrolled_x4.o:     file format pe-x86-64
+
+
+Disassembly of section .text:
+
+0000000000000000 <_RNvCs4H3057i2QET_19variant_unrolled_x47do_work>:
+   0:	movzbl (%rcx),%eax
+   3:	mov    %eax,%r8d
+   6:	shl    $0x5,%r8d
+   a:	sub    %rax,%r8
+   d:	movzbl 0x1(%rcx),%eax
+  11:	add    %r8,%rax
+  14:	mov    %eax,%r8d
+  17:	shl    $0x5,%r8d
+  1b:	sub    %rax,%r8
+  1e:	movzbl 0x2(%rcx),%eax
+  22:	add    %r8,%rax
+  25:	mov    %eax,%r8d
+  28:	shl    $0x5,%r8d
+  2c:	sub    %rax,%r8
+  2f:	movzbl 0x3(%rcx),%eax
+  33:	add    %r8,%rax
+  36:	mov    %rax,%r8
+  39:	shl    $0x5,%r8
+  3d:	sub    %rax,%r8
+  40:	movzbl 0x4(%rcx),%eax
+  44:	add    %r8,%rax
+  47:	mov    %rax,%r8
+  4a:	shl    $0x5,%r8
+  4e:	sub    %rax,%r8
+  51:	movzbl 0x5(%rcx),%eax
+  55:	add    %r8,%rax
+  58:	mov    %rax,%r8
+  5b:	shl    $0x5,%r8
+  5f:	sub    %rax,%r8
+  62:	movzbl 0x6(%rcx),%eax
+  66:	add    %r8,%rax
+  69:	mov    %rax,%r8
+  6c:	shl    $0x5,%r8
+  70:	sub    %rax,%r8
+  73:	movzbl 0x7(%rcx),%eax
+  77:	add    %r8,%rax
+  7a:	mov    %rax,%rcx
+  7d:	shl    $0x5,%rcx
+  81:	sub    %rax,%rcx
+  84:	mov    %rcx,(%rdx)
+  87:	ret
+
+Disassembly of section .text:
+
+0000000000000000 <bench_entry>:
+   0:	sub    $0x28,%rsp
+   4:	cmp    $0x8,%r8
+   8:	jne    f <bench_entry+0xf>
+   a:	call   f <bench_entry+0xf>
+   f:	xor    %eax,%eax
+  11:	add    $0x28,%rsp
+  15:	ret

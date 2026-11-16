@@ -1,0 +1,43 @@
+
+variant_other.o:	file format coff-x86-64
+
+Disassembly of section .text:
+
+0000000000000000 <_RNvCsiFkcPgBsqU6_13variant_other7do_work>:
+       0:      	movzbl	(%rcx), %r8d
+       4:      	movabsq	$0x100000001b3, %rax    # imm = 0x100000001B3
+       e:      	imulq	%rax, %r8
+      12:      	movzbl	0x1(%rcx), %r9d
+      17:      	xorq	%r8, %r9
+      1a:      	imulq	%rax, %r9
+      1e:      	movzbl	0x2(%rcx), %r8d
+      23:      	xorq	%r9, %r8
+      26:      	imulq	%rax, %r8
+      2a:      	movzbl	0x3(%rcx), %r9d
+      2f:      	xorq	%r8, %r9
+      32:      	imulq	%rax, %r9
+      36:      	movzbl	0x4(%rcx), %r8d
+      3b:      	xorq	%r9, %r8
+      3e:      	imulq	%rax, %r8
+      42:      	movzbl	0x5(%rcx), %r9d
+      47:      	xorq	%r8, %r9
+      4a:      	imulq	%rax, %r9
+      4e:      	movzbl	0x6(%rcx), %r8d
+      53:      	xorq	%r9, %r8
+      56:      	imulq	%rax, %r8
+      5a:      	movzbl	0x7(%rcx), %ecx
+      5e:      	xorq	%r8, %rcx
+      61:      	imulq	%rax, %rcx
+      65:      	movq	%rcx, (%rdx)
+      68:      	retq
+
+Disassembly of section .text:
+
+0000000000000000 <bench_entry>:
+       0:      	subq	$0x28, %rsp
+       4:      	cmpq	$0x8, %r8
+       8:      	jne	0xf <bench_entry+0xf>
+       a:      	callq	0xf <bench_entry+0xf>
+       f:      	xorl	%eax, %eax
+      11:      	addq	$0x28, %rsp
+      15:      	retq

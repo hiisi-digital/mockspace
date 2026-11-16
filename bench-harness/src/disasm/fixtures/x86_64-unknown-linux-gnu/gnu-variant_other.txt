@@ -1,0 +1,44 @@
+
+variant_other.o:     file format elf64-x86-64
+
+
+Disassembly of section .text._RNvCsiFkcPgBsqU6_13variant_other7do_work:
+
+0000000000000000 <_RNvCsiFkcPgBsqU6_13variant_other7do_work>:
+   0:	movzbl (%rdi),%ecx
+   3:	movabs $0x100000001b3,%rax
+   d:	imul   %rax,%rcx
+  11:	movzbl 0x1(%rdi),%edx
+  15:	xor    %rcx,%rdx
+  18:	imul   %rax,%rdx
+  1c:	movzbl 0x2(%rdi),%ecx
+  20:	xor    %rdx,%rcx
+  23:	imul   %rax,%rcx
+  27:	movzbl 0x3(%rdi),%edx
+  2b:	xor    %rcx,%rdx
+  2e:	imul   %rax,%rdx
+  32:	movzbl 0x4(%rdi),%ecx
+  36:	xor    %rdx,%rcx
+  39:	imul   %rax,%rcx
+  3d:	movzbl 0x5(%rdi),%edx
+  41:	xor    %rcx,%rdx
+  44:	imul   %rax,%rdx
+  48:	movzbl 0x6(%rdi),%ecx
+  4c:	xor    %rdx,%rcx
+  4f:	imul   %rax,%rcx
+  53:	movzbl 0x7(%rdi),%edx
+  57:	xor    %rcx,%rdx
+  5a:	imul   %rax,%rdx
+  5e:	mov    %rdx,(%rsi)
+  61:	ret
+
+Disassembly of section .text.bench_entry:
+
+0000000000000000 <bench_entry>:
+   0:	cmp    $0x8,%rdx
+   4:	jne    10 <bench_entry+0x10>
+   6:	push   %rax
+   7:	call   c <bench_entry+0xc>
+   c:	add    $0x8,%rsp
+  10:	xor    %eax,%eax
+  12:	ret

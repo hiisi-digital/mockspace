@@ -1,0 +1,44 @@
+
+variant_other.o:     file format pe-x86-64
+
+
+Disassembly of section .text:
+
+0000000000000000 <_RNvCsiFkcPgBsqU6_13variant_other7do_work>:
+   0:	movzbl (%rcx),%r8d
+   4:	movabs $0x100000001b3,%rax
+   e:	imul   %rax,%r8
+  12:	movzbl 0x1(%rcx),%r9d
+  17:	xor    %r8,%r9
+  1a:	imul   %rax,%r9
+  1e:	movzbl 0x2(%rcx),%r8d
+  23:	xor    %r9,%r8
+  26:	imul   %rax,%r8
+  2a:	movzbl 0x3(%rcx),%r9d
+  2f:	xor    %r8,%r9
+  32:	imul   %rax,%r9
+  36:	movzbl 0x4(%rcx),%r8d
+  3b:	xor    %r9,%r8
+  3e:	imul   %rax,%r8
+  42:	movzbl 0x5(%rcx),%r9d
+  47:	xor    %r8,%r9
+  4a:	imul   %rax,%r9
+  4e:	movzbl 0x6(%rcx),%r8d
+  53:	xor    %r9,%r8
+  56:	imul   %rax,%r8
+  5a:	movzbl 0x7(%rcx),%ecx
+  5e:	xor    %r8,%rcx
+  61:	imul   %rax,%rcx
+  65:	mov    %rcx,(%rdx)
+  68:	ret
+
+Disassembly of section .text:
+
+0000000000000000 <bench_entry>:
+   0:	sub    $0x28,%rsp
+   4:	cmp    $0x8,%r8
+   8:	jne    f <bench_entry+0xf>
+   a:	call   f <bench_entry+0xf>
+   f:	xor    %eax,%eax
+  11:	add    $0x28,%rsp
+  15:	ret

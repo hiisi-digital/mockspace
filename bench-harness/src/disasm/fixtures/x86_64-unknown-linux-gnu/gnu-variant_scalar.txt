@@ -1,0 +1,59 @@
+
+variant_scalar.o:     file format elf64-x86-64
+
+
+Disassembly of section .text._RNvCsdlSolg5Okjs_14variant_scalar7do_work:
+
+0000000000000000 <_RNvCsdlSolg5Okjs_14variant_scalar7do_work>:
+   0:	movzbl (%rdi),%eax
+   3:	mov    %eax,%ecx
+   5:	shl    $0x5,%ecx
+   8:	sub    %rax,%rcx
+   b:	movzbl 0x1(%rdi),%eax
+   f:	add    %rcx,%rax
+  12:	mov    %eax,%ecx
+  14:	shl    $0x5,%ecx
+  17:	sub    %rax,%rcx
+  1a:	movzbl 0x2(%rdi),%eax
+  1e:	add    %rcx,%rax
+  21:	mov    %eax,%ecx
+  23:	shl    $0x5,%ecx
+  26:	sub    %rax,%rcx
+  29:	movzbl 0x3(%rdi),%eax
+  2d:	add    %rcx,%rax
+  30:	mov    %rax,%rcx
+  33:	shl    $0x5,%rcx
+  37:	sub    %rax,%rcx
+  3a:	movzbl 0x4(%rdi),%eax
+  3e:	add    %rcx,%rax
+  41:	mov    %rax,%rcx
+  44:	shl    $0x5,%rcx
+  48:	sub    %rax,%rcx
+  4b:	movzbl 0x5(%rdi),%eax
+  4f:	add    %rcx,%rax
+  52:	mov    %rax,%rcx
+  55:	shl    $0x5,%rcx
+  59:	sub    %rax,%rcx
+  5c:	movzbl 0x6(%rdi),%eax
+  60:	add    %rcx,%rax
+  63:	mov    %rax,%rcx
+  66:	shl    $0x5,%rcx
+  6a:	sub    %rax,%rcx
+  6d:	movzbl 0x7(%rdi),%eax
+  71:	add    %rcx,%rax
+  74:	mov    %rax,%rcx
+  77:	shl    $0x5,%rcx
+  7b:	sub    %rax,%rcx
+  7e:	mov    %rcx,(%rsi)
+  81:	ret
+
+Disassembly of section .text.bench_entry:
+
+0000000000000000 <bench_entry>:
+   0:	cmp    $0x8,%rdx
+   4:	jne    10 <bench_entry+0x10>
+   6:	push   %rax
+   7:	call   c <bench_entry+0xc>
+   c:	add    $0x8,%rsp
+  10:	xor    %eax,%eax
+  12:	ret

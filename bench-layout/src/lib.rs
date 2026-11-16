@@ -26,7 +26,8 @@
 //! across them; there is no separate ledger.
 //!
 //! Beside the runs the harness owns `results/INDEX.md` (derived from the runs,
-//! regenerated), `results/void/` (crash-borne runs, kept as evidence) and
+//! regenerated), `results/<bench>/disasm/` (one named function's disassembly
+//! per file, see [`disasm_rel`]), `results/void/` (crash-borne runs, kept as evidence) and
 //! `results/.inflight/` (a run in progress). Nothing else under the bench tree
 //! is a bench output, and [`place`] says which of the older layouts a stray one
 //! came from and whether it translates.
@@ -54,6 +55,11 @@ pub const INDEX_FILE: &str = "INDEX.md";
 pub const VOID_DIR: &str = "void";
 /// A run in progress, staged until it completes.
 pub const INFLIGHT_DIR: &str = ".inflight";
+/// The directory under a bench's results that holds disassembly artifacts,
+/// `results/<bench>/disasm/<machine class>/<run>/<arm>.<symbol>.txt`: one
+/// named function of one arm, as the host's disassembler printed it. Not a
+/// cell, so no run reader takes it for one.
+pub const DISASM_DIR: &str = "disasm";
 /// The header line of a [`SUMMARY_FILE`], the schema the old ledger used.
 pub const SUMMARY_HEADER: &str =
     "# schema_v1\ttimestamp\tgit_commit\tbenchmark\tvariant\tn\tmode\tmedian_ns\tci_lo_ns\tci_hi_ns";
@@ -182,6 +188,18 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 #[must_use]
 pub fn run_rel(bench: &str, cell: &Cell, machine: &str, run: &str) -> PathBuf {
     Path::new(bench).join(cell.name()).join(machine).join(run)
+}
+
+/// The file a disassembly artifact of `symbol` in `arm` takes, relative to the
+/// results root: `<bench>/disasm/<machine>/<run>/<arm>.<symbol>.txt`. Written
+/// once, like a run, and never replaced.
+#[must_use]
+pub fn disasm_rel(bench: &str, machine: &str, run: &str, arm: &str, symbol: &str) -> PathBuf {
+    Path::new(bench)
+        .join(DISASM_DIR)
+        .join(machine)
+        .join(run)
+        .join(format!("{arm}.{symbol}.txt"))
 }
 
 /// Which part of a run an old-layout file holds.
@@ -352,6 +370,15 @@ fn place_in_results(parts: &[&str]) -> Placement {
     match parts {
         [_, file] if *file == INDEX_FILE => Placement::InLayout,
         [_, dir, ..] if *dir == VOID_DIR || *dir == INFLIGHT_DIR => Placement::InLayout,
+        [_, bench, dir, machine, run, file]
+            if *dir == DISASM_DIR
+                && is_name(bench)
+                && is_machine_class(machine)
+                && is_run_id(run)
+                && file.ends_with(".txt") =>
+        {
+            Placement::InLayout
+        },
         [_, bench, cell, machine, run, _]
             if is_name(bench)
                 && Cell::parse(cell).is_some()

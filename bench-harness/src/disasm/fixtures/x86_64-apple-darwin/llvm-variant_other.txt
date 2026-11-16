@@ -1,0 +1,46 @@
+
+variant_other.o:	file format mach-o 64-bit x86-64
+
+Disassembly of section __TEXT,__text:
+
+0000000000000000 <__RNvCsiFkcPgBsqU6_13variant_other7do_work>:
+       0:      	pushq	%rbp
+       1:      	movq	%rsp, %rbp
+       4:      	movzbl	(%rdi), %ecx
+       7:      	movabsq	$0x100000001b3, %rax    ## imm = 0x100000001B3
+      11:      	imulq	%rax, %rcx
+      15:      	movzbl	0x1(%rdi), %edx
+      19:      	xorq	%rcx, %rdx
+      1c:      	imulq	%rax, %rdx
+      20:      	movzbl	0x2(%rdi), %ecx
+      24:      	xorq	%rdx, %rcx
+      27:      	imulq	%rax, %rcx
+      2b:      	movzbl	0x3(%rdi), %edx
+      2f:      	xorq	%rcx, %rdx
+      32:      	imulq	%rax, %rdx
+      36:      	movzbl	0x4(%rdi), %ecx
+      3a:      	xorq	%rdx, %rcx
+      3d:      	imulq	%rax, %rcx
+      41:      	movzbl	0x5(%rdi), %edx
+      45:      	xorq	%rcx, %rdx
+      48:      	imulq	%rax, %rdx
+      4c:      	movzbl	0x6(%rdi), %ecx
+      50:      	xorq	%rdx, %rcx
+      53:      	imulq	%rax, %rcx
+      57:      	movzbl	0x7(%rdi), %edx
+      5b:      	xorq	%rcx, %rdx
+      5e:      	imulq	%rax, %rdx
+      62:      	movq	%rdx, (%rsi)
+      65:      	popq	%rbp
+      66:      	retq
+      67:      	nopw	(%rax,%rax)
+
+0000000000000070 <_bench_entry>:
+      70:      	cmpq	$0x8, %rdx
+      74:      	jne	0x80 <_bench_entry+0x10>
+      76:      	pushq	%rbp
+      77:      	movq	%rsp, %rbp
+      7a:      	callq	0x7f <_bench_entry+0xf>
+      7f:      	popq	%rbp
+      80:      	xorl	%eax, %eax
+      82:      	retq

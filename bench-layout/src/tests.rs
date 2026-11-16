@@ -91,6 +91,41 @@ fn a_run_path_wrong_in_any_part_is_not_in_the_layout() {
 }
 
 #[test]
+fn a_disassembly_artifact_is_in_the_layout_and_no_run_reader_takes_it_for_a_run() {
+    let rel = disasm_rel(
+        "hash",
+        "linux-x86_64-c4-container-intel",
+        "20261115T093000Z-1a2b3c4",
+        "scalar",
+        "bench_entry",
+    );
+    let path = Path::new(RESULTS_DIR).join(&rel);
+    assert_eq!(
+        path,
+        Path::new(
+            "results/hash/disasm/linux-x86_64-c4-container-intel/20261115T093000Z-1a2b3c4/scalar.bench_entry.txt"
+        )
+    );
+    assert_eq!(at(path.to_str().unwrap()), Placement::InLayout);
+    for bad in [
+        "results/hash/disasm/my-laptop/20261115T093000Z-1a2b3c4/scalar.bench_entry.txt",
+        "results/hash/disasm/linux-x86_64-c4-container-intel/latest/scalar.bench_entry.txt",
+        "results/hash/disasm/linux-x86_64-c4-container-intel/20261115T093000Z-1a2b3c4/scalar.bench_entry.s",
+        "results/hash/disasm/scalar.bench_entry.txt",
+    ] {
+        assert_eq!(at(bad), Placement::Stray(Stray::InResults), "{bad}");
+    }
+    let root = mockspace_manifest::scratch::tempdir().unwrap();
+    let file = root.path().join(&rel);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "x").unwrap();
+    assert!(
+        runs(root.path()).is_empty(),
+        "a disasm directory is not a cell"
+    );
+}
+
+#[test]
 fn the_harness_flat_results_translate() {
     assert_eq!(at("results/hash/hash_n64.csv"), legacy("hash", "hash", 64, Part::Samples));
     assert_eq!(at("results/hash/hash_n64.meta.json"), legacy("hash", "hash", 64, Part::Meta));

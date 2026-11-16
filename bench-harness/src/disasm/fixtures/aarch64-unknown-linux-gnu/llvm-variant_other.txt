@@ -1,0 +1,45 @@
+
+variant_other.o:	file format elf64-littleaarch64
+
+Disassembly of section .text._RNvCsiFkcPgBsqU6_13variant_other7do_work:
+
+0000000000000000 <_RNvCsiFkcPgBsqU6_13variant_other7do_work>:
+       0:      	ldrb	w8, [x0]
+       4:      	mov	x9, #0x1b3              // =435
+       8:      	ldrb	w10, [x0, #0x1]
+       c:      	movk	x9, #0x100, lsl #32
+      10:      	mul	x8, x8, x9
+      14:      	eor	x8, x8, x10
+      18:      	ldrb	w10, [x0, #0x2]
+      1c:      	mul	x8, x8, x9
+      20:      	eor	x8, x8, x10
+      24:      	ldrb	w10, [x0, #0x3]
+      28:      	mul	x8, x8, x9
+      2c:      	eor	x8, x8, x10
+      30:      	ldrb	w10, [x0, #0x4]
+      34:      	mul	x8, x8, x9
+      38:      	eor	x8, x8, x10
+      3c:      	ldrb	w10, [x0, #0x5]
+      40:      	mul	x8, x8, x9
+      44:      	eor	x8, x8, x10
+      48:      	ldrb	w10, [x0, #0x6]
+      4c:      	mul	x8, x8, x9
+      50:      	eor	x8, x8, x10
+      54:      	ldrb	w10, [x0, #0x7]
+      58:      	mul	x8, x8, x9
+      5c:      	eor	x8, x8, x10
+      60:      	mul	x8, x8, x9
+      64:      	str	x8, [x1]
+      68:      	ret
+
+Disassembly of section .text.bench_entry:
+
+0000000000000000 <bench_entry>:
+       0:      	cmp	x2, #0x8
+       4:      	b.ne	0x18 <bench_entry+0x18>
+       8:      	stp	x29, x30, [sp, #-0x10]!
+       c:      	mov	x29, sp
+      10:      	bl	0x10 <bench_entry+0x10>
+      14:      	ldp	x29, x30, [sp], #0x10
+      18:      	mov	x0, xzr
+      1c:      	ret
