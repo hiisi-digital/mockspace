@@ -54,7 +54,7 @@ use crate::bootstrap::{
     parse_lint_crates,
 };
 use crate::config::Config;
-pub(crate) use store::ScopedPlan;
+use store::ScopedPlan;
 
 pub(crate) mod store;
 mod build;
@@ -109,48 +109,68 @@ fn discover(cfg: &Config, config_path: &Path) -> Option<Content> {
     })
 }
 
-/// What a run of the one tool `tool` does: refuse it, take the whole build, or build the tool alone, from the
-/// record the last whole build left.
-pub(crate) fn scoped_plan(cfg: &Config, tool: &str) -> store::ScopedPlan {
-    store::plan_scoped(store::duplicates_for_run(&cfg.repo_root, &cfg.mock_dir), tool)
-}
-
 /// The content of a build cut to the one tool in `<mock>/tools/<tool>`: that
-/// crate and its own path dependencies, no lint file and no pack. `None` when
-/// `tool` is no tool directory, so the caller falls back to the whole build.
+/// crate and its own path dependencies, no lint file, and the packs only where
+/// `packs` asks for them. `None` when `tool` is no tool directory, so the caller
+/// falls back to the whole build.
 ///
 /// A tool is handed the repo's paths and its arguments and nothing of the lint
-/// pack (`ToolContext`), so the lints and the packs add nothing to a run of
-/// one, and compiling them is what a run of it waits on.
+/// pack (`ToolContext`), so the lints and the other tools add nothing to a run
+/// of one, and compiling them is what a run of it waits on.
 ///
 /// Leaving the packs out means a name a pack also registers is not met here. The
 /// last whole build recorded such names (`store::record_duplicates`), and
-/// `scoped_plan` refuses a run of one of them with exit 2 before this is called,
-/// or takes the whole build once when nothing is recorded yet.
-fn discover_scoped(cfg: &Config, config_path: &Path, tool: &str) -> Option<Content> {
+/// [`load_tool`] refuses a run of one of them with exit 2 before this is called.
+/// Where nothing is recorded yet the packs are kept, so the loaded pack can say
+/// it instead.
+fn discover_scoped(cfg: &Config, config_path: &Path, tool: &str, packs: bool) -> Option<Content> {
     let mut content = discover(cfg, config_path)?;
     content.tools.retain(|t| t.dir == tool);
     if content.tools.is_empty() {
         return None;
     }
     content.lint_files.clear();
-    content.packs.clear();
+    if !packs {
+        content.packs.clear();
+    }
     Some(content)
 }
 
+/// What a run of one tool loaded.
+pub enum ToolLoad {
+    /// The tool's name is registered more than once, and these are the names.
+    Refused(Vec<String>),
+    /// What [`load`] would give, cut to the one tool where it is a tool directory.
+    Loaded(Option<LoadedLints>),
+}
+
 /// [`load`] cut to the one tool `tool`, falling back to the whole build where
-/// `tool` names no tool directory.
+/// `tool` names no tool directory. None of the repo's lints is built for it, with
+/// or without a record of the last whole build (`store::plan_scoped`).
 pub fn load_tool(
     cfg: &Config,
     config_path: &Path,
     lint_rules_dep: &str,
     tool: &str,
-) -> Result<Option<LoadedLints>, String> {
-    let Some(content) = discover_scoped(cfg, config_path, tool) else {
-        return load(cfg, config_path, lint_rules_dep);
+) -> Result<ToolLoad, String> {
+    let packs = match store::plan_scoped(store::duplicates_for_run(&cfg.repo_root, &cfg.mock_dir), tool) {
+        ScopedPlan::Refuse(names) => return Ok(ToolLoad::Refused(names)),
+        ScopedPlan::OneTool => false,
+        ScopedPlan::OneToolAndPacks => true,
+    };
+    let Some(content) = discover_scoped(cfg, config_path, tool, packs) else {
+        return load(cfg, config_path, lint_rules_dep).map(ToolLoad::Loaded);
     };
     let base = store::shared_base(&cfg.repo_root)?;
-    build_and_load(&base, cfg, &content, lint_rules_dep, Some(tool))
+    let loaded = build_and_load(&base, cfg, &content, lint_rules_dep, Some(tool))?;
+    // With no record, the packs were built so that their tools say whether the name is taken.
+    if packs
+        && let Some(l) = &loaded
+        && let ScopedPlan::Refuse(names) = store::plan_scoped(Some(duplicate_tool_names(&l.pack.tools)), tool)
+    {
+        return Ok(ToolLoad::Refused(names));
+    }
+    Ok(ToolLoad::Loaded(loaded))
 }
 
 /// Build and load this repo's custom lints, if it has any. Returns `None` when
@@ -195,10 +215,11 @@ fn build_and_load(
     scope: Option<&str>,
 ) -> Result<Option<LoadedLints>, String> {
     // The generated crate lives outside the worktree, at a path keyed by the
-    // repo's identity and the revs it builds against, so every worktree of one
-    // repo at the same revs resolves to the same cargo package and shares one
-    // build. See `store::lints_manifest_path`. A branch pack is resolved to its
-    // tip once, here, and both the key and the manifest are made from that.
+    // repo's identity, so every worktree of one repo at any revs resolves to the
+    // same cargo package, and a moved rev builds over the library rather than
+    // beside it. See `store::lints_manifest_path`. A branch pack is resolved to
+    // its tip once, here, and both the revision and the manifest are made from
+    // that.
     std::fs::create_dir_all(base)
         .map_err(|e| format!("could not create {}: {e}", base.display()))?;
     let packs = store::resolve_packs(
@@ -206,7 +227,8 @@ fn build_and_load(
         &base.join(".pack-pins"),
         &crate::pack_pin::ls_remote_head,
     );
-    let manifest = store::lints_manifest_path(base, cfg, lint_rules_dep, &packs, scope);
+    let manifest = store::lints_manifest_path(base, cfg, scope);
+    let revision = store::revision(lint_rules_dep, &packs);
     let gen_dir = manifest
         .parent()
         .map(Path::to_path_buf)
@@ -243,6 +265,7 @@ fn build_and_load(
         Some(id) => built::dylib_for(
             base,
             &id.key,
+            &revision,
             &id.roots,
             &gen_dir,
             depinfo::TRUST_MARGIN,
@@ -409,9 +432,10 @@ fn pack_identity(gen_dir: &Path, content: &Content, cfg: &Config) -> Option<iden
 }
 
 /// Name of the generated crate: the name of the directory it sits in, which is
-/// the key `lints_manifest_path` derived from the repo's identity and its revs.
+/// the key `lints_manifest_path` derived from the repo's identity and the scope.
 /// Distinct keys are distinct packages, so several of them share one target dir
-/// without colliding; the same key from any worktree is the same package.
+/// without colliding; the same key from any worktree and at any revs is the same
+/// package, whose one library cargo replaces in place.
 fn gen_crate_name(gen_dir: &Path) -> String {
     let key: String = gen_dir
         .file_name()

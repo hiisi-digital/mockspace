@@ -84,15 +84,17 @@ pub(crate) fn duplicates_for_run(repo_root: &Path, mock_dir: &Path) -> Option<Ve
 pub(crate) enum ScopedPlan {
     /// The tool's name is registered twice: refused, as every whole run refuses it.
     Refuse(Vec<String>),
-    /// Nothing recorded yet: one whole build, which writes the record.
-    Whole,
+    /// Nothing recorded yet: the tool with the packs, whose tools are what a name can collide with,
+    /// and none of the repo's lints and other tools. The run asks the loaded pack for duplicates
+    /// itself.
+    OneToolAndPacks,
     /// Recorded and clean for this tool: build that tool alone.
     OneTool,
 }
 
 pub(crate) fn plan_scoped(recorded: Option<Vec<String>>, tool: &str) -> ScopedPlan {
     match recorded {
-        None => ScopedPlan::Whole,
+        None => ScopedPlan::OneToolAndPacks,
         Some(d) if d.iter().any(|n| n == tool) => ScopedPlan::Refuse(d),
         Some(_) => ScopedPlan::OneTool,
     }
