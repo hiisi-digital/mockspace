@@ -83,8 +83,8 @@ pub(crate) struct Request<'a> {
 pub(crate) fn run(cfg: &Config, pack: &LintPack, mode: LintMode, req: &Request) -> ExitCode {
     // An unknown preset name would quietly weaken the predicate, so it is an
     // error rather than something to route around, and it is checked before
-    // the empty-lints early return below: a typo'd preset in a repo that
-    // happens to ship no message lints is still a typo'd preset.
+    // any lint runs: a typo'd preset in a repo that ships no message lints beyond
+    // the builtin is still a typo'd preset.
     let unknown = agent_mode::unknown_presets(&cfg.agent.attribution.mode_signals);
     if !unknown.is_empty() {
         eprintln!(

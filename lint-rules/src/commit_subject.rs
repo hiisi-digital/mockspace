@@ -10,11 +10,12 @@
 //! subject, which is what happened: a `type: message` convention was written down
 //! in a skill and nothing enforced the list in it. A project that wants a
 //! different convention sets the keys below under `[lints.commit-subject]` in
-//! `mockspace.toml`, and one that wants none sets `commit = "off"` there.
+//! `mockspace.toml`, and one that wants none sets `commit = "off"` there, which
+//! alone turns all three gates off.
 //!
 //! # What it checks
 //!
-//! The subject is the first authored line of the message. It must start with a
+//! The subject is the first authored line of the message that is not blank. It must start with a
 //! type from the configured set, then the separator, then a message. By default
 //! the shape is `type: lowercase message`, no parenthesised scope, no trailing
 //! period, under 72 characters. Those are the rules the workspace's commit-style
@@ -35,151 +36,36 @@
 //! | `forbid_trailing_period` | `true` | whether a final `.` is refused |
 //! | `require_blank_line` | `false` | whether the subject must be followed by a blank line |
 //!
+//! A key that is not in the table, and a value that cannot be read (a boolean that is not one,
+//! a number that is not, a list naming no type), stop the load with the line that is wrong:
+//! [`CommitSubject::problems`] names each, and the config loader refuses on them. The lint
+//! never runs on a default the project believes it replaced.
+//!
 //! The effective set is read by the generated commit-style skill through
 //! [`CommitSubject::from_params`], so the documentation an agent reads and the gate
 //! it meets are the same configuration.
 //!
 //! # What it leaves to others
 //!
-//! A subject git wrote itself (a merge, a revert, a fixup) is not authored and is
-//! not held to the convention. Authorship trailers belong to an attribution lint,
-//! which also covers forge bodies; this lint reads commits only. An agent hook
-//! hands the lint a shell command rather than a message, and a subject cannot be
-//! read out of a command line reliably, so the lint declines there and the
+//! A subject git wrote itself, in the shapes it writes (`Merge branch '...'`, `Merge pull request
+//! #...`, `Revert "..."`, `Reapply "..."`), is not authored and is not held to the convention.
+//! `fixup!`, `squash!` and `amend!` subjects are passed at the commit gate, where they are
+//! wanted, and refused at the build and push gates, where they would reach the trunk unfolded.
+//! Authorship trailers belong to an attribution lint, which also covers forge bodies; this lint
+//! reads commits only. An agent hook hands the lint a shell command rather than a message, and a
+//! subject cannot be read out of a command line reliably, so the lint declines there and the
 //! `commit-msg` hook, which always follows, reads the real message file.
 
 use std::collections::HashMap;
 
-use crate::{Lint, LintError, MessageContext, MessageDomain, MessageLint, Severity};
+mod check;
+mod policy;
+
+pub use policy::{CommitSubject, DEFAULT_TYPES, SubjectCase};
+
+use crate::{Level, Lint, LintError, MessageContext, MessageDomain, MessageLint, Severity};
 
 const LINT_NAME: &str = "commit-subject";
-
-/// The types a project gets when it names none: the workspace's commit-style set,
-/// and `bench` for a commit that lands a measurement.
-pub const DEFAULT_TYPES: &[&str] = &["feat", "fix", "refactor", "docs", "test", "chore", "bench"];
-
-/// How the first letter of the message after the type is constrained.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SubjectCase {
-    /// Must begin lowercase.
-    Lower,
-    /// Must begin uppercase.
-    Sentence,
-    /// Unconstrained.
-    Any,
-}
-
-impl SubjectCase {
-    fn parse(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "lower" | "lowercase" => Some(Self::Lower),
-            "sentence" | "upper" | "capital" => Some(Self::Sentence),
-            "any" | "off" | "" => Some(Self::Any),
-            _ => None,
-        }
-    }
-}
-
-/// The commit subject lint, holding the convention it enforces.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommitSubject {
-    types:                  Vec<String>,
-    separator:              String,
-    breaking_marker:        String,
-    require_type:           bool,
-    max_subject:            usize,
-    subject_case:           SubjectCase,
-    allow_scope:            bool,
-    forbid_trailing_period: bool,
-    require_blank_line:     bool,
-}
-
-impl Default for CommitSubject {
-    fn default() -> Self {
-        Self {
-            types:                  DEFAULT_TYPES.iter().map(|t| (*t).to_string()).collect(),
-            separator:              ": ".to_string(),
-            breaking_marker:        "!".to_string(),
-            require_type:           true,
-            max_subject:            71,
-            subject_case:           SubjectCase::Lower,
-            allow_scope:            false,
-            forbid_trailing_period: true,
-            require_blank_line:     false,
-        }
-    }
-}
-
-impl CommitSubject {
-    /// The convention a project's `[lints.commit-subject]` parameters declare,
-    /// defaults where it names nothing. `None` is a project with no such table.
-    #[must_use]
-    pub fn from_params(params: Option<&HashMap<String, String>>) -> Self {
-        let mut lint = Self::default();
-        if let Some(params) = params {
-            lint.configure(params);
-        }
-        lint
-    }
-
-    /// The permitted types, in the order they were declared.
-    #[must_use]
-    pub fn types(&self) -> &[String] {
-        &self.types
-    }
-
-    /// What follows the type.
-    #[must_use]
-    pub fn separator(&self) -> &str {
-        &self.separator
-    }
-
-    /// The suffix of a type that marks a breaking change, empty for none.
-    #[must_use]
-    pub fn breaking_marker(&self) -> &str {
-        &self.breaking_marker
-    }
-
-    /// Whether a subject with no type is refused.
-    #[must_use]
-    pub fn requires_type(&self) -> bool {
-        self.require_type
-    }
-
-    /// The longest subject allowed, in characters. Zero means unlimited.
-    #[must_use]
-    pub fn max_subject(&self) -> usize {
-        self.max_subject
-    }
-
-    /// How the first letter after the type is constrained.
-    #[must_use]
-    pub fn subject_case(&self) -> SubjectCase {
-        self.subject_case
-    }
-
-    /// Whether `type(scope):` is permitted.
-    #[must_use]
-    pub fn allows_scope(&self) -> bool {
-        self.allow_scope
-    }
-
-    /// Whether a trailing period is refused.
-    #[must_use]
-    pub fn forbids_trailing_period(&self) -> bool {
-        self.forbid_trailing_period
-    }
-
-    /// Whether the subject must be followed by a blank line.
-    #[must_use]
-    pub fn requires_blank_line(&self) -> bool {
-        self.require_blank_line
-    }
-
-    fn how_to_add_a_type() -> &'static str {
-        "to allow another type, add it to `extra_types` under `[lints.commit-subject]` in mockspace.toml"
-    }
-}
 
 impl Lint for CommitSubject {
     fn name(&self) -> &'static str {
@@ -203,75 +89,26 @@ impl Lint for CommitSubject {
             "missing-type",
             "unknown-type",
             "scope-forbidden",
+            "malformed-scope",
             "subject-case",
             "subject-length",
             "trailing-period",
             "missing-blank-line",
             "empty-subject",
+            "autosquash-leftover",
         ]
     }
 
     fn config_keys(&self) -> &[&str] {
-        &[
-            "types",
-            "extra_types",
-            "separator",
-            "breaking_marker",
-            "require_type",
-            "max_subject",
-            "subject_case",
-            "allow_scope",
-            "forbid_trailing_period",
-            "require_blank_line",
-        ]
+        policy::KEYS
     }
 
     fn configure(&mut self, params: &HashMap<String, String>) {
-        if let Some(v) = params.get("types") {
-            let listed = split_list(v);
-            // An empty list would turn the type check off by accident, and
-            // "no types" is not a convention anyone means to declare.
-            if !listed.is_empty() {
-                self.types = listed;
-            }
-        }
-        if let Some(v) = params.get("extra_types") {
-            for t in split_list(v) {
-                if !self.types.contains(&t) {
-                    self.types.push(t);
-                }
-            }
-        }
-        if let Some(v) = params.get("separator")
-            && !v.is_empty()
-        {
-            self.separator = v.clone();
-        }
-        if let Some(v) = params.get("breaking_marker") {
-            self.breaking_marker = v.clone();
-        }
-        if let Some(v) = params.get("require_type") {
-            self.require_type = truthy(v);
-        }
-        if let Some(v) = params.get("max_subject")
-            && let Ok(n) = v.trim().parse::<usize>()
-        {
-            self.max_subject = n;
-        }
-        if let Some(v) = params.get("subject_case")
-            && let Some(c) = SubjectCase::parse(v)
-        {
-            self.subject_case = c;
-        }
-        if let Some(v) = params.get("allow_scope") {
-            self.allow_scope = truthy(v);
-        }
-        if let Some(v) = params.get("forbid_trailing_period") {
-            self.forbid_trailing_period = truthy(v);
-        }
-        if let Some(v) = params.get("require_blank_line") {
-            self.require_blank_line = truthy(v);
-        }
+        self.apply(params);
+    }
+
+    fn check_params(&self, params: &HashMap<String, String>) -> Vec<String> {
+        Self::problems(params)
     }
 }
 
@@ -287,21 +124,26 @@ impl MessageLint for CommitSubject {
         if ctx.invocation.is_some() {
             return out;
         }
-        let body = authored_body(ctx.message);
-        let Some(subject) = body.lines().next() else {
+        let lines = check::authored_lines(ctx.message);
+        let Some(at) = check::subject_at(&lines) else {
             return out;
         };
-        let subject = subject.trim_end();
-        if is_generated_subject(subject) {
-            return out;
-        }
-        if subject.trim().is_empty() {
-            out.push(finding(
-                ctx,
-                "empty-subject",
-                "the commit subject is empty".to_string(),
-            ));
-            return out;
+        let subject = lines[at].trim_end();
+        match check::exemption(subject) {
+            check::Exempt::Generated => return out,
+            check::Exempt::Autosquash => {
+                out.push(LintError::with_finding_kind(
+                    ctx.origin.to_string(),
+                    1,
+                    LINT_NAME,
+                    "an autosquash commit must be folded into its target before it is pushed: run `git rebase -i --autosquash`"
+                        .to_string(),
+                    Severity::new(Level::Pass, Level::Error, Level::Error),
+                    "autosquash-leftover",
+                ));
+                return out;
+            },
+            check::Exempt::No => {},
         }
 
         let rest = self.check_type(ctx, subject, &mut out);
@@ -347,7 +189,7 @@ impl MessageLint for CommitSubject {
         }
 
         if self.require_blank_line
-            && let Some(second) = body.lines().nth(1)
+            && let Some(second) = lines.get(at + 1)
             && !second.trim().is_empty()
         {
             out.push(finding(
@@ -359,130 +201,6 @@ impl MessageLint for CommitSubject {
 
         out
     }
-}
-
-impl CommitSubject {
-    /// Check the type prefix and return the message after it.
-    fn check_type<'m>(
-        &self,
-        ctx: &MessageContext,
-        subject: &'m str,
-        out: &mut Vec<LintError>,
-    ) -> &'m str {
-        let listed = self.types.join(", ");
-        let shape = format!(
-            "start the subject with a type and `{}`; types: {listed}",
-            self.separator
-        );
-
-        // The head is what precedes the first separator, and it is a type only if
-        // it is one word. `fix the loop: again` has a separator in its message,
-        // not after a type, and reading `fix the loop` as an unknown type would
-        // send the author hunting for a type they did write.
-        //
-        // A subject cut off right after the type (`fix:`, the trailing space trimmed
-        // away) is a type with nothing after it, and says so rather than missing one.
-        let bare = self.separator.trim_end();
-        let split = subject
-            .find(&self.separator)
-            .map(|at| (&subject[.. at], &subject[at + self.separator.len() ..]))
-            .or_else(|| {
-                (!bare.is_empty())
-                    .then(|| subject.strip_suffix(bare))
-                    .flatten()
-                    .map(|head| (head, ""))
-            });
-        let head_and_rest =
-            split.filter(|(head, _)| !head.is_empty() && !head.chars().any(char::is_whitespace));
-        let Some((head, rest)) = head_and_rest else {
-            if self.require_type {
-                out.push(finding(ctx, "missing-type", shape));
-            }
-            return subject;
-        };
-
-        // Strip the breaking marker first so `feat!` is the `feat` type.
-        let mut ty = head;
-        if !self.breaking_marker.is_empty() {
-            ty = ty.strip_suffix(self.breaking_marker.as_str()).unwrap_or(ty);
-        }
-
-        let base = match ty.split_once('(') {
-            Some((base, tail)) => {
-                if !self.allow_scope {
-                    out.push(finding(
-                        ctx,
-                        "scope-forbidden",
-                        "drop the parenthesised scope: write `type: message`, not `type(scope): message`"
-                            .to_string(),
-                    ));
-                } else if !tail.ends_with(')') {
-                    out.push(finding(
-                        ctx,
-                        "unknown-type",
-                        "the scope parenthesis is not closed".to_string(),
-                    ));
-                }
-                base
-            },
-            None => ty,
-        };
-
-        if !self.types.iter().any(|t| t == base) {
-            out.push(finding(
-                ctx,
-                "unknown-type",
-                format!(
-                    "unknown type `{base}`; types: {listed}; {}",
-                    Self::how_to_add_a_type()
-                ),
-            ));
-        }
-
-        if rest.trim().is_empty() {
-            out.push(finding(
-                ctx,
-                "empty-subject",
-                "nothing follows the type".to_string(),
-            ));
-        }
-        rest
-    }
-}
-
-/// The authored part of a commit message: comment lines dropped, and everything
-/// from git's verbose-diff scissors marker, so text git added cannot trip the lint.
-fn authored_body(message: &str) -> String {
-    message
-        .split("# ------------------------ >8")
-        .next()
-        .unwrap_or(message)
-        .lines()
-        .filter(|l| !l.starts_with('#'))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// Whether git wrote this subject rather than a person. These are git's own
-/// spellings, capital `Merge` and `Revert "` included, so an authored `merge: x`
-/// is still judged.
-fn is_generated_subject(subject: &str) -> bool {
-    const GENERATED: &[&str] = &["Merge ", "Revert \"", "fixup! ", "squash! ", "amend! "];
-    GENERATED.iter().any(|p| subject.starts_with(p))
-}
-
-fn split_list(v: &str) -> Vec<String> {
-    v.split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect()
-}
-
-fn truthy(v: &str) -> bool {
-    matches!(
-        v.trim().to_ascii_lowercase().as_str(),
-        "true" | "yes" | "on" | "1"
-    )
 }
 
 fn finding(ctx: &MessageContext, kind: &'static str, message: String) -> LintError {
@@ -497,5 +215,8 @@ fn finding(ctx: &MessageContext, kind: &'static str, message: String) -> LintErr
 }
 
 #[cfg(test)]
+#[path = "commit_subject_knob_tests.rs"]
+mod knob_tests;
+#[cfg(test)]
 #[path = "commit_subject_tests.rs"]
-mod tests;
+pub(self) mod tests;

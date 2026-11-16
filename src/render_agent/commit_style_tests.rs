@@ -17,7 +17,6 @@ use mockspace_lint_rules::{AgentMode, LintPack, MessageContext, MessageDomain};
 
 use crate::model::CrateMap;
 use crate::render_agent::{
-    BUILTIN_SKILL_DIRS,
     commit_style,
     compute_template_vars,
     generate_builtin_templates,
@@ -175,10 +174,4 @@ fn a_consumer_template_can_read_the_same_set() {
         substitute_vars("Types: {{commit_types}}", &vars),
         format!("Types: {}", get("commit_types"))
     );
-}
-
-#[test]
-fn a_disabled_skill_is_still_a_name_the_sweep_knows() {
-    // Mutant: `commit-style` is missing from the sweep list, so turning the knob off leaves it.
-    assert!(BUILTIN_SKILL_DIRS.contains(&"commit-style"));
 }

@@ -1316,6 +1316,16 @@ pub trait Lint: Send + Sync {
     /// Apply configuration parameters to this lint.
     fn configure(&mut self, _params: &HashMap<String, String>) {}
 
+    /// What is wrong with the parameters configured for this lint, one line each, empty when
+    /// they are all readable.
+    ///
+    /// [`Lint::configure`] cannot refuse, so a key it does not know or a value it cannot read
+    /// would change the lint's behaviour without a word. A lint that blocks by default asks the
+    /// loader to call this and stop on a non-empty answer.
+    fn check_params(&self, _params: &HashMap<String, String>) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Whether this lint wants the invocation that triggered the run.
     ///
     /// Opt-in because most lints do not care, and because the engine only has

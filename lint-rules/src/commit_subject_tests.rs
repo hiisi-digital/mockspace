@@ -2,13 +2,13 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::*;
-use crate::{AgentMode, LintConfig, check_message_with_extra};
+use crate::{AgentMode, LintConfig, LintMode, check_message_with_extra};
 
 // Every refusal is asked through `check_message_with_extra`, the entry the gate calls, with no
 // pack at all: a project that imported nothing must still be refused. Each test names the mutant
 // that turns it red.
 
-fn message<'a>(text: &'a str, root: &'a Path) -> MessageContext<'a> {
+pub(super) fn message<'a>(text: &'a str, root: &'a Path) -> MessageContext<'a> {
     MessageContext::new(
         MessageDomain::CommitMessage,
         AgentMode::Assistant,
@@ -18,7 +18,7 @@ fn message<'a>(text: &'a str, root: &'a Path) -> MessageContext<'a> {
     )
 }
 
-fn kinds(text: &str, overrides: Option<&LintConfig>) -> Vec<&'static str> {
+pub(super) fn kinds(text: &str, overrides: Option<&LintConfig>) -> Vec<&'static str> {
     let root = Path::new("/tmp");
     check_message_with_extra(&message(text, root), overrides, &[])
         .into_iter()
@@ -26,7 +26,7 @@ fn kinds(text: &str, overrides: Option<&LintConfig>) -> Vec<&'static str> {
         .collect()
 }
 
-fn configured(pairs: &[(&str, &str)]) -> LintConfig {
+pub(super) fn configured(pairs: &[(&str, &str)]) -> LintConfig {
     let mut cfg = LintConfig::empty();
     let params: HashMap<String, String> = pairs
         .iter()
@@ -34,6 +34,14 @@ fn configured(pairs: &[(&str, &str)]) -> LintConfig {
         .collect();
     cfg.params.insert(LINT_NAME.to_string(), params);
     cfg
+}
+
+/// The gates a finding blocks at, for the autosquash arm.
+fn blocks_at(text: &str, gate: LintMode) -> bool {
+    let root = Path::new("/tmp");
+    check_message_with_extra(&message(text, root), None, &[])
+        .iter()
+        .any(|e| e.severity.effective(gate) == crate::Level::Error)
 }
 
 #[test]
@@ -99,42 +107,9 @@ fn a_capitalised_type_is_refused_as_unknown() {
 }
 
 #[test]
-fn a_parenthesised_scope_is_refused_by_default() {
-    // Mutant: `allow_scope` defaults to true.
-    assert_eq!(kinds("feat(gate): add the thing", None), vec![
-        "scope-forbidden"
-    ]);
-}
-
-#[test]
 fn a_breaking_marker_is_the_type_and_not_an_unknown_one() {
     // Mutant: the marker is not stripped before the lookup.
     assert!(kinds("feat!: change the trait", None).is_empty());
-}
-
-#[test]
-fn an_uppercase_message_is_refused() {
-    // Mutant: `subject_case` defaults to any.
-    assert_eq!(kinds("fix: Handle the empty case", None), vec![
-        "subject-case"
-    ]);
-}
-
-#[test]
-fn a_trailing_period_is_refused() {
-    // Mutant: `forbid_trailing_period` defaults to false.
-    assert_eq!(kinds("fix: handle the empty case.", None), vec![
-        "trailing-period"
-    ]);
-}
-
-#[test]
-fn a_subject_of_seventy_two_characters_is_refused_and_seventy_one_passes() {
-    // Mutant: the limit is read as inclusive of 72, or is off by default.
-    let body = |n: usize| format!("fix: {}", "a".repeat(n - 5));
-    assert_eq!(body(71).chars().count(), 71);
-    assert!(kinds(&body(71), None).is_empty());
-    assert_eq!(kinds(&body(72), None), vec!["subject-length"]);
 }
 
 #[test]
@@ -144,9 +119,19 @@ fn nothing_after_the_type_is_refused() {
 }
 
 #[test]
-fn an_empty_subject_line_is_refused() {
-    // Mutant: a blank first line is skipped instead of reported.
-    assert_eq!(kinds("   \n\nbody", None), vec!["empty-subject"]);
+fn leading_blank_lines_are_skipped_before_the_subject_is_taken() {
+    // Mutant: the first line is the subject, so a message git would record as `fix: x` is refused.
+    assert!(kinds("\nfix: x", None).is_empty());
+    assert!(kinds("  \n\t\n\nfix: x\n\nbody", None).is_empty());
+    assert_eq!(kinds("\n\nWip", None), vec!["missing-type"]);
+}
+
+#[test]
+fn a_message_with_no_subject_at_all_is_left_to_git_to_abort() {
+    // Mutant: an all-blank message is reported as a subject fault; git refuses an empty message
+    // before any hook speaks.
+    assert!(kinds("   \n\n  \n", None).is_empty());
+    assert!(kinds("# only a comment\n", None).is_empty());
 }
 
 #[test]
@@ -164,23 +149,59 @@ fn only_the_authored_lines_are_judged_and_git_comments_are_not() {
 
 #[test]
 fn a_subject_git_wrote_is_not_held_to_the_convention() {
-    // Mutant: merge, revert and fixup subjects are judged as authored text.
+    // Mutant: a merge, revert or reapply subject is judged as authored text.
     for s in [
+        "Merge branch 'dev' into work/x",
+        "Merge branches 'a' and 'b'",
+        "Merge remote-tracking branch 'origin/dev' into work/x",
+        "Merge tag 'v1.0'",
+        "Merge commit 'abc123'",
         "Merge pull request #251 from a/b",
         "Revert \"feat: x\"",
-        "fixup! fix: x",
-        "squash! fix: x",
+        "Reapply \"feat: x\"",
     ] {
         assert!(kinds(s, None).is_empty(), "{s}");
     }
 }
 
 #[test]
-fn an_authored_lowercase_merge_is_still_judged() {
-    // Mutant: the generated-subject skip is case-insensitive, so `merge:` slips through.
+fn an_authored_subject_that_only_starts_like_a_merge_is_still_judged() {
+    // Mutant: any subject starting `Merge ` skips the gate, as the first version did.
+    assert_eq!(kinds("Merge the two lists", None), vec!["missing-type"]);
     assert_eq!(kinds("merge: join the branches", None), vec![
         "unknown-type"
     ]);
+    assert_eq!(kinds("Revert the change", None), vec!["missing-type"]);
+}
+
+#[test]
+fn an_autosquash_commit_passes_the_commit_gate_and_is_refused_at_build_and_push() {
+    // Mutant: `fixup!`, `squash!` and `amend!` pass every gate, so they reach the trunk unfolded.
+    for s in ["fixup! fix: x", "squash! fix: x", "amend! fix: x"] {
+        assert!(!blocks_at(s, LintMode::Commit), "{s} at commit");
+        assert!(blocks_at(s, LintMode::Build), "{s} at build");
+        assert!(blocks_at(s, LintMode::Push), "{s} at push");
+        assert_eq!(kinds(s, None), vec!["autosquash-leftover"], "{s}");
+    }
+    assert!(!blocks_at("fix: x", LintMode::Push));
+}
+
+#[test]
+fn a_scope_with_a_space_is_a_scope_and_not_a_missing_type() {
+    // Mutant: the one-word test runs over the whole head, so `feat(a b)` reads as no type.
+    assert_eq!(kinds("feat(a b): x", None), vec!["scope-forbidden"]);
+    let cfg = configured(&[("allow_scope", "true")]);
+    assert!(kinds("feat(a b): x", Some(&cfg)).is_empty());
+}
+
+#[test]
+fn an_unclosed_or_empty_scope_is_a_malformed_scope_when_scopes_are_allowed() {
+    // Mutant: the unclosed scope is reported as an unknown type.
+    let cfg = configured(&[("allow_scope", "true")]);
+    assert_eq!(kinds("feat(a: x", Some(&cfg)), vec!["malformed-scope"]);
+    assert_eq!(kinds("feat(): x", Some(&cfg)), vec!["malformed-scope"]);
+    assert_eq!(kinds("feat(a)(b): x", Some(&cfg)), vec!["malformed-scope"]);
+    assert_eq!(kinds("nope(a): x", Some(&cfg)), vec!["unknown-type"]);
 }
 
 #[test]
@@ -211,54 +232,6 @@ fn a_forge_body_is_never_judged_as_a_commit() {
 }
 
 #[test]
-fn extra_types_add_to_the_set_without_restating_it() {
-    // Mutant: `extra_types` replaces the set, or is not read.
-    let cfg = configured(&[("extra_types", "research, deploy")]);
-    assert!(kinds("research: sketch a lint", Some(&cfg)).is_empty());
-    assert!(kinds("deploy: ship it", Some(&cfg)).is_empty());
-    assert!(kinds("feat: still here", Some(&cfg)).is_empty());
-    assert_eq!(kinds("perf: not listed", Some(&cfg)), vec!["unknown-type"]);
-}
-
-#[test]
-fn types_replace_the_default_set() {
-    // Mutant: `types` appends to the default instead of replacing it.
-    let cfg = configured(&[("types", "feat,fix")]);
-    assert!(kinds("fix: a thing", Some(&cfg)).is_empty());
-    assert_eq!(kinds("bench: a thing", Some(&cfg)), vec!["unknown-type"]);
-}
-
-#[test]
-fn an_empty_types_list_does_not_turn_the_check_off() {
-    // Mutant: an empty `types` clears the set, and an empty set accepts anything.
-    let cfg = configured(&[("types", " , ")]);
-    assert_eq!(kinds("research: a thing", Some(&cfg)), vec!["unknown-type"]);
-}
-
-#[test]
-fn every_knob_can_loosen_what_it_tightens() {
-    // Mutant: a knob is declared and not read.
-    let cfg = configured(&[
-        ("allow_scope", "true"),
-        ("subject_case", "any"),
-        ("forbid_trailing_period", "false"),
-        ("max_subject", "0"),
-    ]);
-    let long = format!("feat(gate): Add {}.", "a".repeat(100));
-    assert!(kinds(&long, Some(&cfg)).is_empty());
-}
-
-#[test]
-fn require_blank_line_is_off_until_asked_for() {
-    // Mutant: the blank-line rule is on by default, which no skill states.
-    assert!(kinds("fix: a thing\nbody right away", None).is_empty());
-    let cfg = configured(&[("require_blank_line", "true")]);
-    assert_eq!(kinds("fix: a thing\nbody right away", Some(&cfg)), vec![
-        "missing-blank-line"
-    ]);
-}
-
-#[test]
 fn the_severity_knob_turns_the_lint_off_for_a_project_that_wants_no_convention() {
     // Mutant: the builtin ignores `commit = "off"`.
     let mut cfg = LintConfig::empty();
@@ -275,7 +248,6 @@ fn from_params_reads_what_the_gate_reads() {
     let policy = CommitSubject::from_params(cfg.params.get(LINT_NAME));
     assert!(policy.types().iter().any(|t| t == "research"));
     assert!(policy.types().iter().any(|t| t == "bench"));
-    assert_eq!(CommitSubject::from_params(None), CommitSubject::default());
 }
 
 #[test]

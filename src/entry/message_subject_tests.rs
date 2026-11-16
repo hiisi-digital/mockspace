@@ -116,3 +116,55 @@ fn the_push_gate_judges_every_commit_in_the_batch() {
     );
     assert_eq!((checked, failed), (3, 1));
 }
+
+#[test]
+fn commit_off_alone_turns_every_gate_off_the_push_gate_included() {
+    // Mutant: `commit = "off"` leaves build and push on, so the form the docs describe still
+    // refuses at the push. The other off-test sets all three keys and cannot see this.
+    let (_tmp, cfg) = project("[lints.commit-subject]\ncommit = \"off\"\n");
+    for gate in [LintMode::Commit, LintMode::Build, LintMode::Push] {
+        assert_eq!(
+            commit(&cfg, gate, "anything goes"),
+            ExitCode::SUCCESS,
+            "{gate:?}"
+        );
+    }
+    let batch = "A <a@x>\x1eA <a@x>\x1eaaa1111 Wip\x1fWip\n\0";
+    let (checked, failed) = run_batch(
+        &cfg,
+        &LintPack::default(),
+        LintMode::Push,
+        MessageDomain::CommitMessage,
+        batch,
+        "<stdin>",
+        None,
+        None,
+    );
+    assert_eq!((checked, failed), (1, 0));
+}
+
+#[test]
+fn an_autosquash_commit_passes_the_commit_gate_and_is_refused_by_the_push_gate() {
+    // Mutant: `fixup!` is exempt at every gate, so it reaches the trunk unfolded.
+    let (_tmp, cfg) = project("");
+    assert_eq!(
+        commit(&cfg, LintMode::Commit, "fixup! fix: handle it"),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(
+        commit(&cfg, LintMode::Push, "fixup! fix: handle it"),
+        ExitCode::FAILURE
+    );
+    let batch = "A <a@x>\x1eA <a@x>\x1eaaa1111 fixup! fix: x\x1ffixup! fix: x\n\0";
+    let (_, failed) = run_batch(
+        &cfg,
+        &LintPack::default(),
+        LintMode::Push,
+        MessageDomain::CommitMessage,
+        batch,
+        "<stdin>",
+        None,
+        None,
+    );
+    assert_eq!(failed, 1);
+}

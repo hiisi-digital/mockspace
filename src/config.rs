@@ -1525,6 +1525,18 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str, source: &Pa
         }
     }
 
+    // A builtin that blocks by default is refused a parameter it cannot read, as it is refused
+    // a value of the wrong TOML type above: the lint would otherwise run on a default the
+    // project believes it replaced.
+    for lint in mockspace_lint_rules::all_message_lints() {
+        if let Some(given) = params.get(lint.name()) {
+            let problems = lint.check_params(given);
+            if !problems.is_empty() {
+                refuse_lint_entry(source, lint.name(), &problems.join("\n  "));
+            }
+        }
+    }
+
     LintConfig {
         base,
         findings,
@@ -2038,6 +2050,37 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
     #[test]
     fn a_table_for_a_param_is_refused_and_names_the_param() {
         assert_refused_at_key("[lints.file-size]\nmax_lines = { a = 1 }\n", "max_lines");
+    }
+
+    #[test]
+    fn a_misspelled_commit_subject_key_is_refused_and_names_both_keys() {
+        // Mutant: the loader never asks the lint what it cannot read, so `extra_type` is ignored.
+        assert_refused_naming(
+            "[lints.commit-subject]\nextra_type = \"research\"\n",
+            "commit-subject",
+            &["extra_type", "extra_types"],
+        );
+    }
+
+    #[test]
+    fn an_unreadable_commit_subject_value_is_refused_and_names_it() {
+        // Mutant: `ture` reads as false and the type requirement goes quietly off.
+        assert_refused_naming(
+            "[lints.commit-subject]\nrequire_type = \"ture\"\n",
+            "commit-subject",
+            &["require_type", "ture"],
+        );
+    }
+
+    #[test]
+    fn a_valid_commit_subject_table_loads() {
+        // Mutant: the check refuses what it should read.
+        let cfg = parse_lints_from_document(
+            "[lints.commit-subject]\nextra_types = \"research,plan\"\nmax_subject = \"72\"\n",
+            "widget",
+            Path::new("mockspace.toml"),
+        );
+        assert_eq!(cfg.params["commit-subject"]["extra_types"], "research,plan");
     }
 
     #[test]
