@@ -18,7 +18,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 use super::format::{ObjectFormat, symbol_spellings};
-use super::pe_exports::export_block;
+use super::pe_exports::Exports;
 
 /// The output dialects the duplicate check reads. A fixed vocabulary of tools,
 /// not content: each is a different program with its own flags and its own
@@ -98,6 +98,30 @@ impl Disassembler {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
+    /// The export table of `file` where it is a PE image and this tool labels
+    /// no export in one (GNU `objdump`, and `dumpbin` without a PDB), else
+    /// `None`.
+    fn exports(&self, file: &Path) -> Result<Option<Exports>, String> {
+        let image = matches!(
+            ObjectFormat::of_file(file),
+            Some(ObjectFormat::Coff {
+                image: true,
+                ..
+            })
+        );
+        let file_arg = file.display().to_string();
+        Ok(match self.flavour {
+            Flavour::Gnu if image => Exports::from_gnu(&self.run(&["-p".to_string(), file_arg])?),
+            Flavour::Dumpbin if image => {
+                let args = ["/NOLOGO", "/HEADERS", "/EXPORTS"].map(String::from);
+                let mut args = args.to_vec();
+                args.push(file_arg);
+                Exports::from_dumpbin(&self.run(&args)?)
+            },
+            _ => None,
+        })
+    }
+
     /// The raw disassembly of every executable section of `file`.
     pub fn whole(&self, file: &Path) -> Result<String, String> {
         self.run(&self.whole_args(file))
@@ -123,19 +147,10 @@ impl Disassembler {
                 return Ok(block);
             }
         }
-        if self.flavour == Flavour::Gnu
-            && matches!(
-                ObjectFormat::of_file(file),
-                Some(ObjectFormat::Coff {
-                    image: true,
-                    ..
-                })
-            )
-        {
-            let p = self.run(&["-p".to_string(), file.display().to_string()])?;
+        if let Some(exports) = self.exports(file)? {
             let whole = self.whole(file)?;
             for spelling in &spellings {
-                if let Some(block) = export_block(&whole, &p, spelling) {
+                if let Some(block) = exports.block(&whole, spelling) {
                     return Ok(block);
                 }
             }

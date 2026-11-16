@@ -16,7 +16,7 @@
 //! other branch, call and data targets.
 
 use super::normalize::instruction_text;
-use super::pe_exports::export_block;
+use super::pe_exports::Exports;
 use super::tool::symbol_block;
 use super::*;
 
@@ -147,7 +147,7 @@ fn cases() -> [Recorded; 7] {
 /// The raw `bench_entry` of a library, as `Disassembler::symbol` cuts it.
 fn raw_entry(c: &Recorded, lib: &Library) -> Option<String> {
     match lib.exports {
-        Some(p) => export_block(lib.whole, p, c.entry),
+        Some(p) => Exports::from_gnu(p)?.block(lib.whole, c.entry),
         None => symbol_block(lib.whole, c.entry),
     }
 }
@@ -250,7 +250,7 @@ fn bench_entry_is_found_under_the_formats_own_spelling_and_no_other() {
         };
         let lib = &c.scalar;
         let found = match lib.exports {
-            Some(p) => export_block(lib.whole, p, &wrong),
+            Some(p) => Exports::from_gnu(p).and_then(|e| e.block(lib.whole, &wrong)),
             None => symbol_block(lib.whole, &wrong),
         };
         assert_eq!(found, None, "{}: {wrong} matched", c.what);

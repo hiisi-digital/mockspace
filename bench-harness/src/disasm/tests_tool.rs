@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-
 //! Tests of what the disassembler is asked and how its answer is cut: the
 //! object format and symbol spelling read off a file's bytes, one symbol's
 //! block out of a whole dump, and the flavour a `--version` text names.
@@ -107,4 +106,93 @@ fn a_version_text_names_its_flavour() {
         Some(Flavour::Llvm)
     );
     assert_eq!(classify_version("objdump: unknown option"), None);
+}
+
+// ── a PE image's function by its export, for GNU objdump and dumpbin ──
+
+/// `dumpbin /HEADERS /EXPORTS` of the recorded
+/// `x86_64-pc-windows-msvc/variant_scalar.dll`, written by hand in dumpbin's
+/// documented layout from that DLL's export table: no real dumpbin output has
+/// been read here (ticket
+/// `prove_the_otool_and_dumpbin_disassembly_paths_on_real_hosts`).
+const DUMPBIN_EXPORTS: &str = "
+Dump of file variant_scalar.dll
+
+PE signature found
+
+File Type: DLL
+
+OPTIONAL HEADER VALUES
+             20B magic # (PE32+)
+            1000 entry point (0000000180001000)
+       180000000 image base (0000000180000000 to 0000000180004FFF)
+
+  Section contains the following exports for variant_scalar.dll
+
+    00000000 characteristics
+           0 time date stamp
+        0.00 version
+           1 ordinal base
+           2 number of functions
+           2 number of names
+
+    ordinal hint RVA      name
+
+          1    0 00001090 bench_entry
+          2    1 000010C0 bench_name
+
+  Summary
+
+        1000 .rdata
+        1000 .text
+";
+
+#[test]
+fn dumpbin_and_gnu_read_one_export_table_and_cut_the_same_function() {
+    use super::pe_exports::Exports;
+    let fixtures = "fixtures/x86_64-pc-windows-msvc";
+    let gnu_p = include_str!("fixtures/x86_64-pc-windows-msvc/gnu-variant_scalar.exports.txt");
+    let whole = include_str!("fixtures/x86_64-pc-windows-msvc/llvm-variant_scalar.txt");
+    let from_gnu = Exports::from_gnu(gnu_p).expect("objdump -p reads");
+    let from_dumpbin = Exports::from_dumpbin(DUMPBIN_EXPORTS).expect("dumpbin reads");
+    assert_eq!(
+        from_dumpbin, from_gnu,
+        "{fixtures}: two readers of one table"
+    );
+    let block = from_dumpbin
+        .block(whole, "bench_entry")
+        .expect("bench_entry");
+    assert_eq!(block, from_gnu.block(whole, "bench_entry").unwrap());
+    // From the export to the next one: `bench_entry` and its padding, and no
+    // line of `bench_name`.
+    assert!(
+        block
+            .lines()
+            .next()
+            .unwrap()
+            .trim_start()
+            .starts_with("180001090:"),
+        "{block}"
+    );
+    assert!(
+        block
+            .lines()
+            .all(|l| !l.trim_start().starts_with("1800010c0:")),
+        "{block}"
+    );
+    assert!(block.contains("retq"), "{block}");
+    assert_eq!(from_dumpbin.block(whole, "_bench_entry"), None);
+
+    // dumpbin's own disassembly lines, `<address>: <instruction>`, cut the same.
+    let dumpbin_whole = "  0000000180001000: movzx       eax,byte ptr [rcx]\n\
+                         \x20 0000000180001090: sub         rsp,28h\n\
+                         \x20 0000000180001094: cmp         r8,8\n\
+                         \x20 00000001800010BF: int         3\n\
+                         \x20 00000001800010C0: lea         rax,[00000001800020A0h]\n";
+    let cut = from_dumpbin.block(dumpbin_whole, "bench_entry").unwrap();
+    assert_eq!(cut.lines().count(), 3, "{cut}");
+    assert_eq!(
+        normalize_disasm(&cut, Flavour::Dumpbin),
+        "sub rsp,28h\ncmp r8,8\nint 3"
+    );
 }
