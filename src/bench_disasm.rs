@@ -21,12 +21,18 @@ use crate::{bench_builds, bench_gen, bench_rev};
 
 const USAGE: &str = "usage: mock bench disasm <bench> <arm> <symbol>";
 
-/// The three names the command takes, or the usage line.
+/// The three names the command takes, or the usage line, or which of them
+/// cannot name a results file: refused here, before the arm is built.
 fn parse<'a>(args: &[&'a str]) -> Result<(&'a str, &'a str, &'a str), String> {
     match args {
         [bench, arm, symbol]
             if !bench.starts_with('-') && !arm.starts_with('-') && !symbol.starts_with('-') =>
         {
+            for (what, name) in [("bench", bench), ("arm", arm), ("symbol", symbol)] {
+                if !layout::is_name(name) {
+                    return Err(format!("{what} `{name}` cannot name a results file"));
+                }
+            }
             Ok((bench, arm, symbol))
         },
         _ => Err(USAGE.to_string()),
@@ -142,6 +148,17 @@ mod tests {
             &[],
         ] {
             assert_eq!(parse(bad), Err(USAGE.to_string()), "{bad:?}");
+        }
+        for (bad, what) in [
+            (["group/hash", "scalar", "f"], "bench"),
+            (["hash", "../scalar", "f"], "arm"),
+            (["hash", "scalar", ".f"], "symbol"),
+        ] {
+            let err = parse(&bad).unwrap_err();
+            assert!(
+                err.starts_with(what) && err.contains("cannot name a results file"),
+                "{err}"
+            );
         }
     }
 
