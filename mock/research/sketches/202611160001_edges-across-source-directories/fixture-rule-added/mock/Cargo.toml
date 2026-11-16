@@ -1,0 +1,9 @@
+[workspace]
+resolver = "3"
+members = ["base/*", "sim/*", "render/*"]
+
+[workspace.dependencies]
+fx-units = { path = "base/fx-units" }
+fx-ids = { path = "base/fx-ids" }
+fx-ground = { path = "sim/fx-ground" }
+fx-draw = { path = "render/fx-draw" }

@@ -1,0 +1,12 @@
+project_name = "fx"
+crate_prefix = "fx"
+src_dirs = ["base", "sim", "render"]
+
+# The rules of fixture-red over three directories that hold no package.
+[lints.an-edge-goes-where-its-directories-allow.rule.sim-takes-base]
+from = "sim"
+to = "base"
+
+[lints.an-edge-goes-where-its-directories-allow.rule.render-takes-base]
+from = "render"
+to = "base"

@@ -1,0 +1,30 @@
+$ <target>/debug/sketch-edges-across-source-directories <sketch>/fixture-red/mock
+== config, as Config::from_dir read it
+mock_dir     mock/research/sketches/202611160001_edges-across-source-directories/fixture-red/mock
+src_dirs     ["base", "sim", "render"]
+crate_prefix fx
+param        [lints.an-edge-goes-where-its-directories-allow] rule.render-takes-base.from = render
+param        [lints.an-edge-goes-where-its-directories-allow] rule.render-takes-base.to = base
+param        [lints.an-edge-goes-where-its-directories-allow] rule.sim-takes-base.from = sim
+param        [lints.an-edge-goes-where-its-directories-allow] rule.sim-takes-base.to = base
+
+== crates the engine's discovery found (name, directory, deps it extracted)
+fx-draw      render   ["fx-ids", "fx-ground"]
+fx-ground    sim      ["fx-ids"]
+fx-ids       base     ["fx-units"]
+fx-units     base     []
+
+== edges arm A read from the manifests, each with its verdict
+fx-ids (base) -> fx-units (base)  [dependencies]  mock/research/sketches/202611160001_edges-across-source-directories/fixture-red/mock/base/fx-ids/Cargo.toml:8  allowed, one directory
+fx-ground (sim) -> fx-ids (base)  [dependencies]  mock/research/sketches/202611160001_edges-across-source-directories/fixture-red/mock/sim/fx-ground/Cargo.toml:8  allowed by rule `sim-takes-base`
+fx-draw (render) -> fx-ground (sim)  [dependencies]  mock/research/sketches/202611160001_edges-across-source-directories/fixture-red/mock/render/fx-draw/Cargo.toml:9  REFUSED
+fx-draw (render) -> fx-ids (base)  [dependencies]  mock/research/sketches/202611160001_edges-across-source-directories/fixture-red/mock/render/fx-draw/Cargo.toml:8  allowed by rule `render-takes-base`
+
+== an-edge-goes-where-its-directories-allow: 1 finding(s)
+mock/research/sketches/202611160001_edges-across-source-directories/fixture-red/mock/render/fx-draw/Cargo.toml:9  `fx-draw` in `render` takes `fx-ground` in `sim` (dependencies), and no rule allows an edge from `render` onto `sim`
+
+== an-edge-goes-where-its-directories-allow-by-engine-deps: 1 finding(s)
+fx-draw:1  `fx-draw` in `render` takes `fx-ground` in `sim` (the engine's deps, section not kept), and no rule allows an edge from `render` onto `sim`
+
+== RED
+exit: 1

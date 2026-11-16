@@ -1,0 +1,3 @@
+$ cargo +nightly-2026-05-28 build --manifest-path <sketch>/fixture-green/mock/Cargo.toml
+    Finished `dev` profile [unoptimized] target(s) in 0.00s
+exit: 0

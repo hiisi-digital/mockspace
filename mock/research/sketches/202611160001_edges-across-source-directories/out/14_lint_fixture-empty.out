@@ -1,0 +1,24 @@
+$ <target>/debug/sketch-edges-across-source-directories <sketch>/fixture-empty/mock
+== config, as Config::from_dir read it
+mock_dir     mock/research/sketches/202611160001_edges-across-source-directories/fixture-empty/mock
+src_dirs     ["base", "sim", "render"]
+crate_prefix fx
+param        [lints.an-edge-goes-where-its-directories-allow] rule.render-takes-base.from = render
+param        [lints.an-edge-goes-where-its-directories-allow] rule.render-takes-base.to = base
+param        [lints.an-edge-goes-where-its-directories-allow] rule.sim-takes-base.from = sim
+param        [lints.an-edge-goes-where-its-directories-allow] rule.sim-takes-base.to = base
+
+== crates the engine's discovery found (name, directory, deps it extracted)
+none
+
+== edges arm A read from the manifests, each with its verdict
+none (0 packages read)
+
+== an-edge-goes-where-its-directories-allow: 1 finding(s)
+config:1  read no crate under the declared source directories, so no edge was judged: a pass here would be a pass over nothing
+
+== an-edge-goes-where-its-directories-allow-by-engine-deps: 1 finding(s)
+config:1  read no crate under the declared source directories, so no edge was judged: a pass here would be a pass over nothing
+
+== RED
+exit: 1

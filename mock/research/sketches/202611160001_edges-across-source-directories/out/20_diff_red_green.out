@@ -1,0 +1,15 @@
+$ diff -r <sketch>/fixture-red <sketch>/fixture-green
+diff -r <sketch>/fixture-red/mock/Cargo.lock <sketch>/fixture-green/mock/Cargo.lock
+9d8
+<  "fx-ground",
+diff -r <sketch>/fixture-red/mock/render/fx-draw/Cargo.toml <sketch>/fixture-green/mock/render/fx-draw/Cargo.toml
+9d8
+< fx-ground.workspace = true
+diff -r <sketch>/fixture-red/mock/render/fx-draw/src/lib.rs <sketch>/fixture-green/mock/render/fx-draw/src/lib.rs
+1,2c1,2
+< pub const fn draw(g: &fx_ground::Ground) -> u32 {
+<     fx_ground::tile(g) + fx_ids::tile_of(&g.at)
+---
+> pub const fn draw(at: &fx_ids::Id) -> u32 {
+>     fx_ids::tile_of(at)
+exit: 1
