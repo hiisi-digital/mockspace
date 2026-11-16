@@ -1,0 +1,67 @@
+
+libvariant_shifted.so:	file format elf64-littleaarch64
+
+Disassembly of section .text:
+
+0000000000010390 <_RNvCs5LmqaUxnnpo_15variant_shifted7do_work>:
+   10390:      	ldrb	w8, [x0]
+   10394:      	ldrb	w9, [x0, #0x1]
+   10398:      	sub	x9, x9, x8
+   1039c:      	add	x8, x9, x8, lsl #5
+   103a0:      	ldrb	w9, [x0, #0x2]
+   103a4:      	sub	x9, x9, x8
+   103a8:      	add	x8, x9, x8, lsl #5
+   103ac:      	ldrb	w9, [x0, #0x3]
+   103b0:      	sub	x9, x9, x8
+   103b4:      	add	x8, x9, x8, lsl #5
+   103b8:      	ldrb	w9, [x0, #0x4]
+   103bc:      	sub	x9, x9, x8
+   103c0:      	add	x8, x9, x8, lsl #5
+   103c4:      	ldrb	w9, [x0, #0x5]
+   103c8:      	sub	x9, x9, x8
+   103cc:      	add	x8, x9, x8, lsl #5
+   103d0:      	ldrb	w9, [x0, #0x6]
+   103d4:      	sub	x9, x9, x8
+   103d8:      	add	x8, x9, x8, lsl #5
+   103dc:      	ldrb	w9, [x0, #0x7]
+   103e0:      	sub	x9, x9, x8
+   103e4:      	add	x8, x9, x8, lsl #5
+   103e8:      	lsl	x9, x8, #5
+   103ec:      	sub	x8, x9, x8
+   103f0:      	str	x8, [x1]
+   103f4:      	ret
+
+00000000000103f8 <bench_align>:
+   103f8:      	ands	x8, x1, #0xf
+   103fc:      	b.eq	0x10430 <bench_align+0x38>
+   10400:      	mov	x10, #0x7c15            // =31765
+   10404:      	mov	x9, xzr
+   10408:      	movk	x10, #0x7f4a, lsl #16
+   1040c:      	movk	x10, #0x79b9, lsl #32
+   10410:      	movk	x10, #0x9e37, lsl #48
+   10414:      	ror	x11, x0, #0x2f
+   10418:      	mov	x12, x9
+   1041c:      	add	x9, x9, #0x1
+   10420:      	cmp	x8, x9
+   10424:      	mul	x11, x11, x10
+   10428:      	eor	x0, x11, x12
+   1042c:      	b.ne	0x10414 <bench_align+0x1c>
+   10430:      	ret
+
+0000000000010434 <bench_entry>:
+   10434:      	cmp	x2, #0x8
+   10438:      	b.ne	0x10454 <bench_entry+0x20>
+   1043c:      	stp	x29, x30, [sp, #-0x10]!
+   10440:      	mov	x29, sp
+   10444:      	bl	0x10390 <_RNvCs5LmqaUxnnpo_15variant_shifted7do_work>
+   10448:      	mov	x0, xzr
+   1044c:      	ldp	x29, x30, [sp], #0x10
+   10450:      	ret
+   10454:      	adrp	x0, 0x0
+   10458:      	add	x0, x0, #0x2d4
+   1045c:      	ret
+
+0000000000010460 <bench_name>:
+   10460:      	adrp	x0, 0x0
+   10464:      	add	x0, x0, #0x2d4
+   10468:      	ret

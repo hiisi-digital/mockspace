@@ -1,44 +1,159 @@
 
-variant_other.o:     file format elf64-x86-64
+libvariant_other.so:     file format elf64-x86-64
 
 
-Disassembly of section .text._RNvCsiFkcPgBsqU6_13variant_other7do_work:
+Disassembly of section .init:
 
-0000000000000000 <_RNvCsiFkcPgBsqU6_13variant_other7do_work>:
-   0:	movzbl (%rdi),%ecx
-   3:	movabs $0x100000001b3,%rax
-   d:	imul   %rax,%rcx
-  11:	movzbl 0x1(%rdi),%edx
-  15:	xor    %rcx,%rdx
-  18:	imul   %rax,%rdx
-  1c:	movzbl 0x2(%rdi),%ecx
-  20:	xor    %rdx,%rcx
-  23:	imul   %rax,%rcx
-  27:	movzbl 0x3(%rdi),%edx
-  2b:	xor    %rcx,%rdx
-  2e:	imul   %rax,%rdx
-  32:	movzbl 0x4(%rdi),%ecx
-  36:	xor    %rdx,%rcx
-  39:	imul   %rax,%rcx
-  3d:	movzbl 0x5(%rdi),%edx
-  41:	xor    %rcx,%rdx
-  44:	imul   %rax,%rdx
-  48:	movzbl 0x6(%rdi),%ecx
-  4c:	xor    %rdx,%rcx
-  4f:	imul   %rax,%rcx
-  53:	movzbl 0x7(%rdi),%edx
-  57:	xor    %rcx,%rdx
-  5a:	imul   %rax,%rdx
-  5e:	mov    %rdx,(%rsi)
-  61:	ret
+0000000000001528 <_init>:
+    1528:	endbr64
+    152c:	sub    $0x8,%rsp
+    1530:	mov    0x1319(%rip),%rax        # 2850 <__gmon_start__>
+    1537:	test   %rax,%rax
+    153a:	je     153e <_init+0x16>
+    153c:	call   *%rax
+    153e:	add    $0x8,%rsp
+    1542:	ret
 
-Disassembly of section .text.bench_entry:
+Disassembly of section .fini:
 
-0000000000000000 <bench_entry>:
-   0:	cmp    $0x8,%rdx
-   4:	jne    10 <bench_entry+0x10>
-   6:	push   %rax
-   7:	call   c <bench_entry+0xc>
-   c:	add    $0x8,%rsp
-  10:	xor    %eax,%eax
-  12:	ret
+0000000000001544 <_fini>:
+    1544:	endbr64
+    1548:	sub    $0x8,%rsp
+    154c:	add    $0x8,%rsp
+    1550:	ret
+
+Disassembly of section .text:
+
+0000000000001560 <deregister_tm_clones>:
+    1560:	lea    0x2329(%rip),%rdi        # 3890 <__TMC_END__>
+    1567:	lea    0x2322(%rip),%rax        # 3890 <__TMC_END__>
+    156e:	cmp    %rdi,%rax
+    1571:	je     1588 <deregister_tm_clones+0x28>
+    1573:	mov    0x12de(%rip),%rax        # 2858 <_ITM_deregisterTMCloneTable>
+    157a:	test   %rax,%rax
+    157d:	je     1588 <deregister_tm_clones+0x28>
+    157f:	jmp    *%rax
+    1581:	nopl   0x0(%rax)
+    1588:	ret
+    1589:	nopl   0x0(%rax)
+
+0000000000001590 <register_tm_clones>:
+    1590:	lea    0x22f9(%rip),%rdi        # 3890 <__TMC_END__>
+    1597:	lea    0x22f2(%rip),%rsi        # 3890 <__TMC_END__>
+    159e:	sub    %rdi,%rsi
+    15a1:	mov    %rsi,%rax
+    15a4:	shr    $0x3f,%rsi
+    15a8:	sar    $0x3,%rax
+    15ac:	add    %rax,%rsi
+    15af:	sar    $1,%rsi
+    15b2:	je     15c8 <register_tm_clones+0x38>
+    15b4:	mov    0x12a5(%rip),%rax        # 2860 <_ITM_registerTMCloneTable>
+    15bb:	test   %rax,%rax
+    15be:	je     15c8 <register_tm_clones+0x38>
+    15c0:	jmp    *%rax
+    15c2:	nopw   0x0(%rax,%rax,1)
+    15c8:	ret
+    15c9:	nopl   0x0(%rax)
+
+00000000000015d0 <__do_global_dtors_aux>:
+    15d0:	endbr64
+    15d4:	cmpb   $0x0,0x22bd(%rip)        # 3898 <completed.0>
+    15db:	jne    1608 <__do_global_dtors_aux+0x38>
+    15dd:	push   %rbp
+    15de:	cmpq   $0x0,0x1282(%rip)        # 2868 <__cxa_finalize>
+    15e6:	mov    %rsp,%rbp
+    15e9:	je     15f7 <__do_global_dtors_aux+0x27>
+    15eb:	mov    0x229e(%rip),%rdi        # 3890 <__TMC_END__>
+    15f2:	call   16d0 <__cxa_finalize@plt>
+    15f7:	call   1560 <deregister_tm_clones>
+    15fc:	movb   $0x1,0x2295(%rip)        # 3898 <completed.0>
+    1603:	pop    %rbp
+    1604:	ret
+    1605:	nopl   (%rax)
+    1608:	ret
+    1609:	nopl   0x0(%rax)
+
+0000000000001610 <frame_dummy>:
+    1610:	endbr64
+    1614:	jmp    1590 <register_tm_clones>
+    1619:	int3
+    161a:	int3
+    161b:	int3
+    161c:	int3
+    161d:	int3
+    161e:	int3
+    161f:	int3
+
+0000000000001620 <_RNvCsiFkcPgBsqU6_13variant_other7do_work>:
+    1620:	movzbl (%rdi),%ecx
+    1623:	movabs $0x100000001b3,%rax
+    162d:	imul   %rax,%rcx
+    1631:	movzbl 0x1(%rdi),%edx
+    1635:	xor    %rcx,%rdx
+    1638:	imul   %rax,%rdx
+    163c:	movzbl 0x2(%rdi),%ecx
+    1640:	xor    %rdx,%rcx
+    1643:	imul   %rax,%rcx
+    1647:	movzbl 0x3(%rdi),%edx
+    164b:	xor    %rcx,%rdx
+    164e:	imul   %rax,%rdx
+    1652:	movzbl 0x4(%rdi),%ecx
+    1656:	xor    %rdx,%rcx
+    1659:	imul   %rax,%rcx
+    165d:	movzbl 0x5(%rdi),%edx
+    1661:	xor    %rcx,%rdx
+    1664:	imul   %rax,%rdx
+    1668:	movzbl 0x6(%rdi),%ecx
+    166c:	xor    %rdx,%rcx
+    166f:	imul   %rax,%rcx
+    1673:	movzbl 0x7(%rdi),%edx
+    1677:	xor    %rcx,%rdx
+    167a:	imul   %rax,%rdx
+    167e:	mov    %rdx,(%rsi)
+    1681:	ret
+    1682:	int3
+    1683:	int3
+    1684:	int3
+    1685:	int3
+    1686:	int3
+    1687:	int3
+    1688:	int3
+    1689:	int3
+    168a:	int3
+    168b:	int3
+    168c:	int3
+    168d:	int3
+    168e:	int3
+    168f:	int3
+
+0000000000001690 <bench_entry>:
+    1690:	cmp    $0x8,%rdx
+    1694:	jne    16a3 <bench_entry+0x13>
+    1696:	push   %rax
+    1697:	call   1620 <_RNvCsiFkcPgBsqU6_13variant_other7do_work>
+    169c:	xor    %eax,%eax
+    169e:	add    $0x8,%rsp
+    16a2:	ret
+    16a3:	lea    -0x121a(%rip),%rax        # 490 <__FRAME_END__-0x38>
+    16aa:	ret
+    16ab:	int3
+    16ac:	int3
+    16ad:	int3
+    16ae:	int3
+    16af:	int3
+
+00000000000016b0 <bench_name>:
+    16b0:	lea    -0x1227(%rip),%rax        # 490 <__FRAME_END__-0x38>
+    16b7:	ret
+
+Disassembly of section .plt:
+
+00000000000016c0 <__cxa_finalize@plt-0x10>:
+    16c0:	push   0x11b2(%rip)        # 2878 <_GLOBAL_OFFSET_TABLE_+0x8>
+    16c6:	jmp    *0x11b4(%rip)        # 2880 <_GLOBAL_OFFSET_TABLE_+0x10>
+    16cc:	nopl   0x0(%rax)
+
+00000000000016d0 <__cxa_finalize@plt>:
+    16d0:	jmp    *0x11b2(%rip)        # 2888 <__cxa_finalize>
+    16d6:	push   $0x0
+    16db:	jmp    16c0 <bench_name+0x10>

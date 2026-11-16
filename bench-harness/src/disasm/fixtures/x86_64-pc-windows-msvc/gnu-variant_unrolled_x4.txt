@@ -1,59 +1,82 @@
 
-variant_unrolled_x4.o:     file format pe-x86-64
+variant_unrolled_x4.dll:     file format pei-x86-64
 
 
 Disassembly of section .text:
 
-0000000000000000 <_RNvCs4H3057i2QET_19variant_unrolled_x47do_work>:
-   0:	movzbl (%rcx),%eax
-   3:	mov    %eax,%r8d
-   6:	shl    $0x5,%r8d
-   a:	sub    %rax,%r8
-   d:	movzbl 0x1(%rcx),%eax
-  11:	add    %r8,%rax
-  14:	mov    %eax,%r8d
-  17:	shl    $0x5,%r8d
-  1b:	sub    %rax,%r8
-  1e:	movzbl 0x2(%rcx),%eax
-  22:	add    %r8,%rax
-  25:	mov    %eax,%r8d
-  28:	shl    $0x5,%r8d
-  2c:	sub    %rax,%r8
-  2f:	movzbl 0x3(%rcx),%eax
-  33:	add    %r8,%rax
-  36:	mov    %rax,%r8
-  39:	shl    $0x5,%r8
-  3d:	sub    %rax,%r8
-  40:	movzbl 0x4(%rcx),%eax
-  44:	add    %r8,%rax
-  47:	mov    %rax,%r8
-  4a:	shl    $0x5,%r8
-  4e:	sub    %rax,%r8
-  51:	movzbl 0x5(%rcx),%eax
-  55:	add    %r8,%rax
-  58:	mov    %rax,%r8
-  5b:	shl    $0x5,%r8
-  5f:	sub    %rax,%r8
-  62:	movzbl 0x6(%rcx),%eax
-  66:	add    %r8,%rax
-  69:	mov    %rax,%r8
-  6c:	shl    $0x5,%r8
-  70:	sub    %rax,%r8
-  73:	movzbl 0x7(%rcx),%eax
-  77:	add    %r8,%rax
-  7a:	mov    %rax,%rcx
-  7d:	shl    $0x5,%rcx
-  81:	sub    %rax,%rcx
-  84:	mov    %rcx,(%rdx)
-  87:	ret
-
-Disassembly of section .text:
-
-0000000000000000 <bench_entry>:
-   0:	sub    $0x28,%rsp
-   4:	cmp    $0x8,%r8
-   8:	jne    f <bench_entry+0xf>
-   a:	call   f <bench_entry+0xf>
-   f:	xor    %eax,%eax
-  11:	add    $0x28,%rsp
-  15:	ret
+0000000190001000 <.text>:
+   190001000:	movzbl (%rcx),%eax
+   190001003:	mov    %eax,%r8d
+   190001006:	shl    $0x5,%r8d
+   19000100a:	sub    %rax,%r8
+   19000100d:	movzbl 0x1(%rcx),%eax
+   190001011:	add    %r8,%rax
+   190001014:	mov    %eax,%r8d
+   190001017:	shl    $0x5,%r8d
+   19000101b:	sub    %rax,%r8
+   19000101e:	movzbl 0x2(%rcx),%eax
+   190001022:	add    %r8,%rax
+   190001025:	mov    %eax,%r8d
+   190001028:	shl    $0x5,%r8d
+   19000102c:	sub    %rax,%r8
+   19000102f:	movzbl 0x3(%rcx),%eax
+   190001033:	add    %r8,%rax
+   190001036:	mov    %rax,%r8
+   190001039:	shl    $0x5,%r8
+   19000103d:	sub    %rax,%r8
+   190001040:	movzbl 0x4(%rcx),%eax
+   190001044:	add    %r8,%rax
+   190001047:	mov    %rax,%r8
+   19000104a:	shl    $0x5,%r8
+   19000104e:	sub    %rax,%r8
+   190001051:	movzbl 0x5(%rcx),%eax
+   190001055:	add    %r8,%rax
+   190001058:	mov    %rax,%r8
+   19000105b:	shl    $0x5,%r8
+   19000105f:	sub    %rax,%r8
+   190001062:	movzbl 0x6(%rcx),%eax
+   190001066:	add    %r8,%rax
+   190001069:	mov    %rax,%r8
+   19000106c:	shl    $0x5,%r8
+   190001070:	sub    %rax,%r8
+   190001073:	movzbl 0x7(%rcx),%eax
+   190001077:	add    %r8,%rax
+   19000107a:	mov    %rax,%rcx
+   19000107d:	shl    $0x5,%rcx
+   190001081:	sub    %rax,%rcx
+   190001084:	mov    %rcx,(%rdx)
+   190001087:	ret
+   190001088:	int3
+   190001089:	int3
+   19000108a:	int3
+   19000108b:	int3
+   19000108c:	int3
+   19000108d:	int3
+   19000108e:	int3
+   19000108f:	int3
+   190001090:	sub    $0x28,%rsp
+   190001094:	cmp    $0x8,%r8
+   190001098:	jne    0x1900010a6
+   19000109a:	call   0x190001000
+   19000109f:	xor    %eax,%eax
+   1900010a1:	add    $0x28,%rsp
+   1900010a5:	ret
+   1900010a6:	lea    0xf53(%rip),%rax        # 0x190002000
+   1900010ad:	add    $0x28,%rsp
+   1900010b1:	ret
+   1900010b2:	int3
+   1900010b3:	int3
+   1900010b4:	int3
+   1900010b5:	int3
+   1900010b6:	int3
+   1900010b7:	int3
+   1900010b8:	int3
+   1900010b9:	int3
+   1900010ba:	int3
+   1900010bb:	int3
+   1900010bc:	int3
+   1900010bd:	int3
+   1900010be:	int3
+   1900010bf:	int3
+   1900010c0:	lea    0xf39(%rip),%rax        # 0x190002000
+   1900010c7:	ret

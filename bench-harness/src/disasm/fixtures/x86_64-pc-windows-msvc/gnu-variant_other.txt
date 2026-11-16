@@ -1,44 +1,66 @@
 
-variant_other.o:     file format pe-x86-64
+variant_other.dll:     file format pei-x86-64
 
 
 Disassembly of section .text:
 
-0000000000000000 <_RNvCsiFkcPgBsqU6_13variant_other7do_work>:
-   0:	movzbl (%rcx),%r8d
-   4:	movabs $0x100000001b3,%rax
-   e:	imul   %rax,%r8
-  12:	movzbl 0x1(%rcx),%r9d
-  17:	xor    %r8,%r9
-  1a:	imul   %rax,%r9
-  1e:	movzbl 0x2(%rcx),%r8d
-  23:	xor    %r9,%r8
-  26:	imul   %rax,%r8
-  2a:	movzbl 0x3(%rcx),%r9d
-  2f:	xor    %r8,%r9
-  32:	imul   %rax,%r9
-  36:	movzbl 0x4(%rcx),%r8d
-  3b:	xor    %r9,%r8
-  3e:	imul   %rax,%r8
-  42:	movzbl 0x5(%rcx),%r9d
-  47:	xor    %r8,%r9
-  4a:	imul   %rax,%r9
-  4e:	movzbl 0x6(%rcx),%r8d
-  53:	xor    %r9,%r8
-  56:	imul   %rax,%r8
-  5a:	movzbl 0x7(%rcx),%ecx
-  5e:	xor    %r8,%rcx
-  61:	imul   %rax,%rcx
-  65:	mov    %rcx,(%rdx)
-  68:	ret
-
-Disassembly of section .text:
-
-0000000000000000 <bench_entry>:
-   0:	sub    $0x28,%rsp
-   4:	cmp    $0x8,%r8
-   8:	jne    f <bench_entry+0xf>
-   a:	call   f <bench_entry+0xf>
-   f:	xor    %eax,%eax
-  11:	add    $0x28,%rsp
-  15:	ret
+0000000180001000 <.text>:
+   180001000:	movzbl (%rcx),%r8d
+   180001004:	movabs $0x100000001b3,%rax
+   18000100e:	imul   %rax,%r8
+   180001012:	movzbl 0x1(%rcx),%r9d
+   180001017:	xor    %r8,%r9
+   18000101a:	imul   %rax,%r9
+   18000101e:	movzbl 0x2(%rcx),%r8d
+   180001023:	xor    %r9,%r8
+   180001026:	imul   %rax,%r8
+   18000102a:	movzbl 0x3(%rcx),%r9d
+   18000102f:	xor    %r8,%r9
+   180001032:	imul   %rax,%r9
+   180001036:	movzbl 0x4(%rcx),%r8d
+   18000103b:	xor    %r9,%r8
+   18000103e:	imul   %rax,%r8
+   180001042:	movzbl 0x5(%rcx),%r9d
+   180001047:	xor    %r8,%r9
+   18000104a:	imul   %rax,%r9
+   18000104e:	movzbl 0x6(%rcx),%r8d
+   180001053:	xor    %r9,%r8
+   180001056:	imul   %rax,%r8
+   18000105a:	movzbl 0x7(%rcx),%ecx
+   18000105e:	xor    %r8,%rcx
+   180001061:	imul   %rax,%rcx
+   180001065:	mov    %rcx,(%rdx)
+   180001068:	ret
+   180001069:	int3
+   18000106a:	int3
+   18000106b:	int3
+   18000106c:	int3
+   18000106d:	int3
+   18000106e:	int3
+   18000106f:	int3
+   180001070:	sub    $0x28,%rsp
+   180001074:	cmp    $0x8,%r8
+   180001078:	jne    0x180001086
+   18000107a:	call   0x180001000
+   18000107f:	xor    %eax,%eax
+   180001081:	add    $0x28,%rsp
+   180001085:	ret
+   180001086:	lea    0xf73(%rip),%rax        # 0x180002000
+   18000108d:	add    $0x28,%rsp
+   180001091:	ret
+   180001092:	int3
+   180001093:	int3
+   180001094:	int3
+   180001095:	int3
+   180001096:	int3
+   180001097:	int3
+   180001098:	int3
+   180001099:	int3
+   18000109a:	int3
+   18000109b:	int3
+   18000109c:	int3
+   18000109d:	int3
+   18000109e:	int3
+   18000109f:	int3
+   1800010a0:	lea    0xf59(%rip),%rax        # 0x180002000
+   1800010a7:	ret

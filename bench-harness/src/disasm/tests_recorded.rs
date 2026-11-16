@@ -4,54 +4,88 @@
 //--------------------------------------------------------------------------------------------------
 
 //! The duplicate decision and the symbol lookup over real recorded output of
-//! each object format and tool flavour (`disasm/fixtures/`, see its README),
-//! so every platform's shape is held on every host.
+//! linked libraries of each object format and tool flavour
+//! (`disasm/fixtures/`, see its README), so every format's shape is held on
+//! every host.
 //!
-//! Each case is three files: `variant_scalar` and `variant_unrolled_x4`
-//! compiled from one source (a duplicate pair whose crate names differ in
-//! length and whose salted symbol names differ), and `variant_other` from a
-//! source computing different work.
+//! Each case is four libraries: `variant_scalar` and `variant_unrolled_x4`
+//! linked from one source (identical work under two crate names; the PE pair
+//! also at two image bases), `variant_other` computing different work, and
+//! `variant_shifted`, the first with one more exported function placed before
+//! the rest, so its `bench_entry` is the same code at other addresses, with
+//! other branch, call and data targets.
 
+use super::normalize::instruction_text;
+use super::pe_exports::export_block;
 use super::tool::symbol_block;
 use super::*;
+
+struct Library {
+    whole:   &'static str,
+    /// GNU `objdump -p` of a PE image, where the entry is found by export.
+    exports: Option<&'static str>,
+}
 
 struct Recorded {
     what:     &'static str,
     flavour:  Flavour,
-    /// `bench_entry` as this target's object format spells it.
+    /// `bench_entry` as the disassembler labels it in this format.
     entry:    &'static str,
-    scalar:   &'static str,
-    unrolled: &'static str,
-    other:    &'static str,
+    scalar:   Library,
+    unrolled: Library,
+    other:    Library,
+    shifted:  Library,
+}
+
+macro_rules! library {
+    ($target:literal, $tool:literal, $crate_name:literal, none) => {
+        Library {
+            whole:   include_str!(concat!(
+                "fixtures/",
+                $target,
+                "/",
+                $tool,
+                "-",
+                $crate_name,
+                ".txt"
+            )),
+            exports: None,
+        }
+    };
+    ($target:literal, $tool:literal, $crate_name:literal, exports) => {
+        Library {
+            whole:   include_str!(concat!(
+                "fixtures/",
+                $target,
+                "/",
+                $tool,
+                "-",
+                $crate_name,
+                ".txt"
+            )),
+            exports: Some(include_str!(concat!(
+                "fixtures/",
+                $target,
+                "/",
+                $tool,
+                "-",
+                $crate_name,
+                ".exports.txt"
+            ))),
+        }
+    };
 }
 
 macro_rules! recorded {
-    ($target:literal, $tool:literal, $flavour:expr, $entry:literal) => {
+    ($target:literal, $tool:literal, $flavour:expr, $entry:literal, $exports:ident) => {
         Recorded {
             what:     concat!($target, " / ", $tool),
             flavour:  $flavour,
             entry:    $entry,
-            scalar:   include_str!(concat!(
-                "fixtures/",
-                $target,
-                "/",
-                $tool,
-                "-variant_scalar.txt"
-            )),
-            unrolled: include_str!(concat!(
-                "fixtures/",
-                $target,
-                "/",
-                $tool,
-                "-variant_unrolled_x4.txt"
-            )),
-            other:    include_str!(concat!(
-                "fixtures/",
-                $target,
-                "/",
-                $tool,
-                "-variant_other.txt"
-            )),
+            scalar:   library!($target, $tool, "variant_scalar", $exports),
+            unrolled: library!($target, $tool, "variant_unrolled_x4", $exports),
+            other:    library!($target, $tool, "variant_other", $exports),
+            shifted:  library!($target, $tool, "variant_shifted", $exports),
         }
     };
 }
@@ -62,104 +96,169 @@ fn cases() -> [Recorded; 7] {
             "x86_64-unknown-linux-gnu",
             "llvm",
             Flavour::Llvm,
-            "bench_entry"
+            "bench_entry",
+            none
         ),
         recorded!(
             "x86_64-unknown-linux-gnu",
             "gnu",
             Flavour::Gnu,
-            "bench_entry"
+            "bench_entry",
+            none
         ),
         recorded!(
             "aarch64-unknown-linux-gnu",
             "llvm",
             Flavour::Llvm,
-            "bench_entry"
+            "bench_entry",
+            none
         ),
-        recorded!("x86_64-apple-darwin", "llvm", Flavour::Llvm, "_bench_entry"),
+        recorded!(
+            "x86_64-apple-darwin",
+            "llvm",
+            Flavour::Llvm,
+            "_bench_entry",
+            none
+        ),
         recorded!(
             "aarch64-apple-darwin",
             "llvm",
             Flavour::Llvm,
-            "_bench_entry"
+            "_bench_entry",
+            none
         ),
         recorded!(
             "x86_64-pc-windows-msvc",
             "llvm",
             Flavour::Llvm,
-            "bench_entry"
+            "bench_entry",
+            none
         ),
-        recorded!("x86_64-pc-windows-msvc", "gnu", Flavour::Gnu, "bench_entry"),
+        recorded!(
+            "x86_64-pc-windows-msvc",
+            "gnu",
+            Flavour::Gnu,
+            "bench_entry",
+            exports
+        ),
     ]
 }
 
+/// The raw `bench_entry` of a library, as `Disassembler::symbol` cuts it.
+fn raw_entry(c: &Recorded, lib: &Library) -> Option<String> {
+    match lib.exports {
+        Some(p) => export_block(lib.whole, p, c.entry),
+        None => symbol_block(lib.whole, c.entry),
+    }
+}
+
+fn entry(c: &Recorded, lib: &Library) -> Option<String> {
+    non_empty(normalize_disasm(&raw_entry(c, lib)?, c.flavour))
+}
+
+fn text(c: &Recorded, lib: &Library) -> Option<String> {
+    non_empty(normalize_disasm(lib.whole, c.flavour))
+}
+
+/// The instruction lines of a dump, addresses included: everything but its
+/// header, section titles and labels.
+fn instruction_lines(whole: &str) -> Vec<&str> {
+    whole
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            !t.is_empty()
+                && !t.contains("file format")
+                && !t.starts_with("Disassembly of section")
+                && !t.ends_with(':')
+        })
+        .collect()
+}
+
 #[test]
-fn the_recorded_pair_differs_before_normalisation() {
-    // Without this the duplicate test below could pass on two identical files
-    // and prove nothing about the normaliser.
+fn every_recorded_pair_differs_in_its_instruction_lines_before_normalisation() {
+    // Without this the tests below could pass on pairs identical in every
+    // line the normaliser folds, and prove nothing about it.
     for c in cases() {
         assert_ne!(
-            c.scalar, c.unrolled,
-            "{}: the recorded pair is byte-identical",
+            instruction_lines(c.scalar.whole),
+            instruction_lines(c.unrolled.whole),
+            "{}: the identical-work pair has the same instruction lines",
+            c.what
+        );
+        let (a, b) = (
+            raw_entry(&c, &c.scalar).unwrap(),
+            raw_entry(&c, &c.shifted).unwrap(),
+        );
+        let strip = |s: &str| -> Vec<String> {
+            s.lines()
+                .filter_map(instruction_text)
+                .map(str::to_string)
+                .collect()
+        };
+        assert_ne!(
+            strip(&a),
+            strip(&b),
+            "{}: the shifted entry has the same instructions with the address column off",
             c.what
         );
     }
 }
 
 #[test]
-fn identical_work_in_two_crates_is_one_duplicate_on_every_format_and_tool() {
+fn identical_work_in_two_libraries_is_one_duplicate_on_every_format_and_tool() {
     for c in cases() {
         let paths = vec!["scalar".to_string(), "unrolled".to_string(), "other".to_string()];
-        let text: Vec<Option<String>> = [c.scalar, c.unrolled, c.other]
-            .iter()
-            .map(|raw| non_empty(normalize_disasm(raw, c.flavour)))
-            .collect();
-        let entry: Vec<Option<String>> = [c.scalar, c.unrolled, c.other]
-            .iter()
-            .map(|raw| symbol_block(raw, c.entry).map(|b| normalize_disasm(&b, c.flavour)))
-            .collect();
-        assert!(text.iter().all(Option::is_some), "{}: nothing read", c.what);
-        let report = build_report(&paths, &entry, &text);
+        let libs = [&c.scalar, &c.unrolled, &c.other];
+        let texts: Vec<Option<String>> = libs.iter().map(|l| text(&c, l)).collect();
+        let entries: Vec<Option<String>> = libs.iter().map(|l| entry(&c, l)).collect();
+        assert!(
+            texts.iter().chain(&entries).all(Option::is_some),
+            "{}: not read",
+            c.what
+        );
+        let report = build_report(&paths, &entries, &texts);
         assert_eq!(
             report.dupes,
             vec![("scalar".to_string(), "unrolled".to_string())],
             "{}: expected exactly the identical pair\n--- scalar\n{}\n--- unrolled\n{}",
             c.what,
-            text[0].as_deref().unwrap_or(""),
-            text[1].as_deref().unwrap_or("")
+            texts[0].as_deref().unwrap_or(""),
+            texts[1].as_deref().unwrap_or("")
         );
-        assert!(report.unreadable.is_empty(), "{}", c.what);
     }
 }
 
 #[test]
-fn bench_entry_is_found_under_the_formats_own_spelling() {
+fn the_same_entry_at_other_addresses_normalises_to_the_same_text() {
     for c in cases() {
-        let block = symbol_block(c.scalar, c.entry)
-            .unwrap_or_else(|| panic!("{}: no {} label", c.what, c.entry));
-        assert!(block.lines().count() > 2, "{}: {block}", c.what);
-        // The wrong spelling for the format finds nothing.
+        let (a, b) = (entry(&c, &c.scalar), entry(&c, &c.shifted));
+        assert!(a.is_some(), "{}: no entry", c.what);
+        assert_eq!(a, b, "{}: one entry, shifted, compares different", c.what);
+        // The library with the extra function is no duplicate of the other.
+        assert_ne!(text(&c, &c.scalar), text(&c, &c.shifted), "{}", c.what);
+    }
+}
+
+#[test]
+fn bench_entry_is_found_under_the_formats_own_spelling_and_no_other() {
+    for c in cases() {
+        let block = raw_entry(&c, &c.scalar).unwrap_or_else(|| panic!("{}: no entry", c.what));
         let wrong = match c.entry.strip_prefix('_') {
             Some(bare) => bare.to_string(),
             None => format!("_{}", c.entry),
         };
-        assert_eq!(
-            symbol_block(c.scalar, &wrong),
-            None,
-            "{}: {wrong} matched",
-            c.what
-        );
+        let lib = &c.scalar;
+        let found = match lib.exports {
+            Some(p) => export_block(lib.whole, p, &wrong),
+            None => symbol_block(lib.whole, &wrong),
+        };
+        assert_eq!(found, None, "{}: {wrong} matched", c.what);
         // The entry's block ends at the entry: `do_work`'s body is not in it.
-        let normalized = normalize_disasm(&block, c.flavour);
+        let lines = normalize_disasm(&block, c.flavour).lines().count();
         assert!(
-            normalized.lines().count() < normalize_disasm(c.scalar, c.flavour).lines().count(),
-            "{}: the block ran past bench_entry",
-            c.what
-        );
-        assert_eq!(
-            normalized,
-            normalize_disasm(&symbol_block(c.unrolled, c.entry).unwrap(), c.flavour),
-            "{}: one source, two crates, two different entries",
+            (2 .. 30).contains(&lines),
+            "{}: {lines} lines is not one small function:\n{block}",
             c.what
         );
     }

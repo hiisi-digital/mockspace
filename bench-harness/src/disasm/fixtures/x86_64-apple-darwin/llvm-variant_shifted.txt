@@ -1,0 +1,123 @@
+
+libvariant_shifted.dylib:	file format mach-o 64-bit x86-64
+
+Disassembly of section __TEXT,__text:
+
+0000000000000340 <__RNvCs5LmqaUxnnpo_15variant_shifted7do_work>:
+     340:      	pushq	%rbp
+     341:      	movq	%rsp, %rbp
+     344:      	movzbl	(%rdi), %eax
+     347:      	movl	%eax, %ecx
+     349:      	shll	$0x5, %ecx
+     34c:      	subq	%rax, %rcx
+     34f:      	movzbl	0x1(%rdi), %eax
+     353:      	addq	%rcx, %rax
+     356:      	movl	%eax, %ecx
+     358:      	shll	$0x5, %ecx
+     35b:      	subq	%rax, %rcx
+     35e:      	movzbl	0x2(%rdi), %eax
+     362:      	addq	%rcx, %rax
+     365:      	movl	%eax, %ecx
+     367:      	shll	$0x5, %ecx
+     36a:      	subq	%rax, %rcx
+     36d:      	movzbl	0x3(%rdi), %eax
+     371:      	addq	%rcx, %rax
+     374:      	movq	%rax, %rcx
+     377:      	shlq	$0x5, %rcx
+     37b:      	subq	%rax, %rcx
+     37e:      	movzbl	0x4(%rdi), %eax
+     382:      	addq	%rcx, %rax
+     385:      	movq	%rax, %rcx
+     388:      	shlq	$0x5, %rcx
+     38c:      	subq	%rax, %rcx
+     38f:      	movzbl	0x5(%rdi), %eax
+     393:      	addq	%rcx, %rax
+     396:      	movq	%rax, %rcx
+     399:      	shlq	$0x5, %rcx
+     39d:      	subq	%rax, %rcx
+     3a0:      	movzbl	0x6(%rdi), %eax
+     3a4:      	addq	%rcx, %rax
+     3a7:      	movq	%rax, %rcx
+     3aa:      	shlq	$0x5, %rcx
+     3ae:      	subq	%rax, %rcx
+     3b1:      	movzbl	0x7(%rdi), %eax
+     3b5:      	addq	%rcx, %rax
+     3b8:      	movq	%rax, %rcx
+     3bb:      	shlq	$0x5, %rcx
+     3bf:      	subq	%rax, %rcx
+     3c2:      	movq	%rcx, (%rsi)
+     3c5:      	popq	%rbp
+     3c6:      	retq
+     3c7:      	nopw	(%rax,%rax)
+
+00000000000003d0 <_bench_align>:
+     3d0:      	pushq	%rbp
+     3d1:      	movq	%rsp, %rbp
+     3d4:      	movq	%rdi, %rax
+     3d7:      	movq	%rsi, %rdi
+     3da:      	andq	$0xf, %rdi
+     3de:      	je	0x473 <_bench_align+0xa3>
+     3e4:      	movabsq	$-0x61c8864680b583eb, %rcx ## imm = 0x9E3779B97F4A7C15
+     3ee:      	movl	%esi, %edx
+     3f0:      	andl	$0x3, %edx
+     3f3:      	cmpl	$0x4, %edi
+     3f6:      	jae	0x3fc <_bench_align+0x2c>
+     3f8:      	xorl	%edi, %edi
+     3fa:      	jmp	0x460 <_bench_align+0x90>
+     3fc:      	andl	$0xc, %esi
+     3ff:      	xorl	%edi, %edi
+     401:      	nopw	%cs:(%rax,%rax)
+     40b:      	nopl	(%rax,%rax)
+     410:      	movq	%rdi, %r8
+     413:      	rolq	$0x11, %rax
+     417:      	imulq	%rcx, %rax
+     41b:      	xorq	%rdi, %rax
+     41e:      	rolq	$0x11, %rax
+     422:      	imulq	%rcx, %rax
+     426:      	incq	%rdi
+     429:      	xorq	%rax, %rdi
+     42c:      	rolq	$0x11, %rdi
+     430:      	imulq	%rcx, %rdi
+     434:      	leaq	0x2(%r8), %r9
+     438:      	xorq	%rdi, %r9
+     43b:      	leaq	0x4(%r8), %rdi
+     43f:      	rolq	$0x11, %r9
+     443:      	imulq	%rcx, %r9
+     447:      	addq	$0x3, %r8
+     44b:      	movq	%r8, %rax
+     44e:      	xorq	%r9, %rax
+     451:      	cmpq	%rsi, %rdi
+     454:      	jne	0x410 <_bench_align+0x40>
+     456:      	testq	%rdx, %rdx
+     459:      	je	0x473 <_bench_align+0xa3>
+     45b:      	nopl	(%rax,%rax)
+     460:      	rolq	$0x11, %rax
+     464:      	imulq	%rcx, %rax
+     468:      	xorq	%rdi, %rax
+     46b:      	incq	%rdi
+     46e:      	decq	%rdx
+     471:      	jne	0x460 <_bench_align+0x90>
+     473:      	popq	%rbp
+     474:      	retq
+     475:      	nopw	%cs:(%rax,%rax)
+     47f:      	nop
+
+0000000000000480 <_bench_entry>:
+     480:      	cmpq	$0x8, %rdx
+     484:      	jne	0x493 <_bench_entry+0x13>
+     486:      	pushq	%rbp
+     487:      	movq	%rsp, %rbp
+     48a:      	callq	0x340 <__RNvCs5LmqaUxnnpo_15variant_shifted7do_work>
+     48f:      	xorl	%eax, %eax
+     491:      	popq	%rbp
+     492:      	retq
+     493:      	leaq	0x13(%rip), %rax        ## 0x4ad
+     49a:      	retq
+     49b:      	nopl	(%rax,%rax)
+
+00000000000004a0 <_bench_name>:
+     4a0:      	pushq	%rbp
+     4a1:      	movq	%rsp, %rbp
+     4a4:      	leaq	0x2(%rip), %rax         ## 0x4ad
+     4ab:      	popq	%rbp
+     4ac:      	retq
