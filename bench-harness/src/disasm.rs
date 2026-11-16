@@ -3,193 +3,118 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-//! Automatic disassembly diffing for variant dylibs.
+//! Automatic disassembly diffing for variant libraries, and the disassembly
+//! of one named function as an artifact.
 //!
-//! Before timing, compare each variant dylib's compiled machine code.
-//! If two variants produce identical code, [`check_duplicates`] warns:
-//! they will benchmark identically, wasting time.
+//! Before timing, compare each variant library's compiled machine code. If
+//! two variants produce identical code, [`check_duplicates`] warns: they will
+//! benchmark identically, wasting time.
 //!
-//! Uses `objdump` (works on Linux + macOS with `llvm-objdump`) with a
-//! fallback to `otool -tv` on macOS for older toolchains.
+//! The disassembler is found once per process ([`Disassembler::detected`]):
+//! `llvm-objdump` first, then the toolchain's `llvm-tools` one, then
+//! `objdump` read as LLVM's or GNU's by its own `--version`, then `otool` on
+//! macOS and `dumpbin` on Windows. A symbol is spelled as the library's own
+//! object format spells it (a leading underscore on Mach-O and 32-bit COFF,
+//! none on ELF and 64-bit COFF), and a variant's name comes off its file's
+//! own suffix ([`crate::library::arm_name`]), so an arm built for another
+//! target reads correctly on any host.
 //!
-//! The comparison itself has two layers. `bench_entry` (the FFI
-//! dispatcher `#[bench_variant]` generates) is cheap to disassemble in
-//! isolation and a *different* `bench_entry` proves the variants
-//! differ, since the entry is part of the whole `.text` section. It
-//! does not prove the converse: the user's per-size function is
-//! called through `bench_entry` rather than always inlined into it
-//! (a large function, multiple codegen units, or a non-LTO profile
-//! can all leave it as a separate symbol), so two variants computing
-//! entirely different work can still export a byte-identical
-//! dispatcher shell. The authoritative check disassembles the whole
-//! `.text` section, which sees the user's function wherever the
-//! optimizer put it.
+//! The comparison has two layers. `bench_entry` (the FFI dispatcher
+//! `#[bench_variant]` generates) is cheap to disassemble in isolation and a
+//! *different* `bench_entry` proves the variants differ, since the entry is
+//! part of the code. It does not prove the converse: the user's per-size
+//! function is called through `bench_entry` rather than always inlined into
+//! it, so two variants computing entirely different work can still export a
+//! byte-identical dispatcher shell. The authoritative check disassembles
+//! every executable section (`otool`: `__TEXT,__text`), which sees the user's
+//! function wherever the optimizer put it. One tool reads every variant of a
+//! run, so the two are never compared across different byte ranges.
 //!
-//! When extraction itself fails, silence would look identical to a
-//! clean pass: an empty duplicate list either way. [`check_duplicates`]
-//! reports that case explicitly (see [`CheckReport`]) rather than
-//! letting a variant it could not read vanish into "no duplicates
-//! found".
+//! When extraction itself fails, silence would look identical to a clean
+//! pass: an empty duplicate list either way. [`check_duplicates`] reports that
+//! case explicitly (see [`CheckReport`]) rather than letting a variant it
+//! could not read vanish into "no duplicates found".
 
-use std::process::Command;
+use std::path::Path;
 
+mod artifact;
+mod format;
 mod normalize;
-#[cfg(test)]
-use normalize::normalize_addresses;
+mod pe_exports;
+mod tool;
+
+pub use artifact::{ArtifactPlace, write_symbol_artifact};
 use normalize::normalize_disasm;
+pub use tool::{Disassembler, Flavour};
 
-/// The spellings a symbol's C name might carry across platforms.
-/// Mach-O prefixes every exported symbol with an underscore
-/// (`bench_entry` becomes `_bench_entry`); ELF does not. Try the bare
-/// name first (correct on ELF, and objdump accepts it unprefixed
-/// there), then the underscore-prefixed form, rather than assuming
-/// either spelling.
-fn symbol_candidates(symbol: &str) -> [String; 2] {
-    [symbol.to_string(), format!("_{symbol}")]
+/// The normalised disassembly of `bench_entry` in `library`, or `None` where
+/// it could not be read or came out empty.
+fn extract_bench_entry(tool: &Disassembler, library: &str) -> Option<String> {
+    let raw = tool.symbol(Path::new(library), "bench_entry").ok()?;
+    non_empty(normalize_disasm(&raw, tool.flavour))
 }
 
-/// Disassemble one named symbol from a dylib via `objdump
-/// --disassemble-symbols`.
+/// The normalised disassembly of every executable section of `library`, or
+/// `None` where it could not be read or came out empty. An empty result is
+/// never evidence: two empties would otherwise compare equal and report a
+/// duplicate neither side was seen to be.
+fn extract_text_section(tool: &Disassembler, library: &str) -> Option<String> {
+    let raw = tool.whole(Path::new(library)).ok()?;
+    non_empty(normalize_disasm(&raw, tool.flavour))
+}
+
+fn non_empty(text: String) -> Option<String> {
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// The disassembly of one function of a library, as the tool printed it, and
+/// the tool that printed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SymbolDisassembly {
+    /// The disassembler that read the library.
+    pub tool:       Disassembler,
+    /// From the function's label to the end of its body, addresses kept and
+    /// raw instruction bytes left out where the tool can.
+    pub text:       String,
+    /// The same, normalised as the duplicate check compares it: no
+    /// addresses, labels, comments or salted names.
+    pub normalized: String,
+}
+
+/// Disassemble the function `symbol` (its name in C, as `#[no_mangle]` or
+/// `#[export_name]` gives it) of `library`, with this host's disassembler.
 ///
-/// A candidate that objdump does not find still exits `0`; it only
-/// warns on stderr, which this function does not read. So a candidate
-/// only counts as found when its own label (`<candidate>:`) actually
-/// appears in stdout, not merely when the process exits successfully.
-fn objdump_symbol(dylib_path: &str, symbol: &str) -> Option<String> {
-    for candidate in symbol_candidates(symbol) {
-        let Ok(result) = Command::new("objdump")
-            .args(["-d", &format!("--disassemble-symbols={candidate}"), dylib_path])
-            .output()
-        else {
-            return None;
-        };
-        if !result.status.success() {
-            continue;
-        }
-        let text = String::from_utf8_lossy(&result.stdout).to_string();
-        if text.contains(&format!("<{candidate}>")) {
-            return Some(normalize_disasm(&text));
-        }
-    }
-    None
-}
-
-/// Disassemble the whole file via `objdump -d`, no symbol filter.
-fn objdump_all(dylib_path: &str) -> Option<String> {
-    let result = Command::new("objdump")
-        .args(["-d", dylib_path])
-        .output()
-        .ok()?;
-    if !result.status.success() {
-        return None;
-    }
-    Some(normalize_disasm(&String::from_utf8_lossy(&result.stdout)))
-}
-
-/// Disassemble the whole file via `otool -tv` (macOS fallback).
-#[cfg(target_os = "macos")]
-fn otool_all(dylib_path: &str) -> Option<String> {
-    let result = Command::new("otool")
-        .args(["-tv", dylib_path])
-        .output()
-        .ok()?;
-    if !result.status.success() {
-        return None;
-    }
-    Some(normalize_disasm(&String::from_utf8_lossy(&result.stdout)))
-}
-
-/// Extract machine code for the `bench_entry` symbol from a dylib.
-fn extract_bench_entry(dylib_path: &str) -> Option<String> {
-    if let Some(asm) = objdump_symbol(dylib_path, "bench_entry") {
-        return Some(asm);
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let result = Command::new("otool")
-            .args(["-tv", dylib_path])
-            .output()
-            .ok()?;
-
-        if result.status.success() {
-            let text = String::from_utf8_lossy(&result.stdout).to_string();
-            return extract_symbol_range(&text, "_bench_entry");
-        }
-    }
-
-    None
-}
-
-/// Extract lines between a symbol label and the next symbol.
-#[cfg(target_os = "macos")]
-fn extract_symbol_range(text: &str, symbol: &str) -> Option<String> {
-    let mut capture = false;
-    let mut lines = Vec::new();
-    for line in text.lines() {
-        if line.contains(symbol) && line.contains(':') {
-            capture = true;
-            continue;
-        }
-        if capture {
-            // Stop at next symbol (line ending with ':' that isn't an address)
-            if line.contains(':') && !line.starts_with(|c: char| c.is_ascii_hexdigit()) {
-                break;
-            }
-            lines.push(line.to_string());
-        }
-    }
-    if lines.is_empty() { None } else { Some(lines.join("\n")) }
-}
-
-/// Disassemble the whole `.text` section of a dylib: every function,
-/// not just `bench_entry`. See the module docs for why this, rather
-/// than `bench_entry` alone, is the authoritative comparison basis.
+/// # Errors
 ///
-/// Known gap, not fixed here: `objdump_all` runs `objdump -d`, which
-/// disassembles every executable section in the file, while
-/// `otool_all` runs `otool -tv`, which covers only `__TEXT,__text`.
-/// If `objdump` serves one variant of a pair and the `otool` fallback
-/// serves the other (only possible when `objdump` itself is present
-/// but fails on exactly one dylib), the two are compared across
-/// different byte ranges and can never match. Both binaries reaching
-/// for the same tool inside one run is the overwhelmingly common case,
-/// so this stays a known gap rather than a fix in this pass.
-fn extract_text_section(dylib_path: &str) -> Option<String> {
-    if let Some(asm) = objdump_all(dylib_path) {
-        return Some(asm);
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        otool_all(dylib_path)
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
+/// When this host has no disassembler, when the tool fails on the file, or
+/// when the library has no such function.
+pub fn disassemble_symbol(library: &Path, symbol: &str) -> Result<SymbolDisassembly, String> {
+    let tool = Disassembler::detected().ok_or_else(no_tool)?;
+    let text = tool.symbol(library, symbol)?;
+    let normalized = normalize_disasm(&text, tool.flavour);
+    Ok(SymbolDisassembly {
+        tool: tool.clone(),
+        text,
+        normalized,
+    })
 }
 
-/// Whether two variants' disassembly describes the same compiled
-/// work.
+fn no_tool() -> String {
+    "no disassembler found: install llvm-objdump (or the rustup component llvm-tools), \
+     binutils objdump, otool, or dumpbin"
+        .to_string()
+}
+
+/// Whether two variants' disassembly describes the same compiled work.
 ///
-/// Both `entry_asm` and `text_section` are already-extracted, precomputed
-/// disassembly; this function does no extraction of its own, so it decides
-/// nothing about which subprocess calls happen. `entry_a` / `entry_b` are
-/// `bench_entry`'s own disassembly: a cheap negative when both are
-/// available. Differing entries prove differing `.text` (the entry is
-/// part of it), so the pair is not a duplicate regardless of `text_a` /
-/// `text_b`, and the decision does not depend on those having been
-/// extractable at all.
+/// `entry_a` / `entry_b` are `bench_entry`'s own disassembly: a cheap negative
+/// when both are available. Differing entries prove differing code (the entry
+/// is part of it), so the pair is not a duplicate regardless of `text_a` /
+/// `text_b`.
 ///
-/// When the entries match, or either is unavailable, the whole `.text`
-/// section is the authoritative comparison: it sees the user's
-/// per-size function wherever the optimizer placed it, inlined into
-/// the dispatcher or standing alone as its own symbol, so two variants
-/// computing different work cannot compare equal here even when their
-/// dispatcher shells are byte-identical. `None` on either side (the
-/// dylib could not be disassembled at all) never counts as a match:
+/// When the entries match, or either is unavailable, the whole disassembly is
+/// the authoritative comparison: it sees the user's per-size function wherever
+/// the optimizer placed it. `None` on either side never counts as a match:
 /// absence of evidence is not evidence of duplication.
 fn same_work(
     entry_a: &Option<String>,
@@ -205,9 +130,9 @@ fn same_work(
     matches!((text_a, text_b), (Some(a), Some(b)) if a == b)
 }
 
-/// Pairwise duplicate decision over precomputed disassembly, factored
-/// out of [`check_duplicates`] so it is testable without a dylib on
-/// disk. Returns the paths of every duplicate pair.
+/// Pairwise duplicate decision over precomputed disassembly, factored out of
+/// [`check_duplicates`] so it is testable without a library on disk. Returns
+/// the paths of every duplicate pair.
 fn duplicate_pairs(
     variant_paths: &[String],
     entry_asm: &[Option<String>],
@@ -229,31 +154,24 @@ fn duplicate_pairs(
     dupes
 }
 
-/// The outcome of a duplicate-check pass, kept distinct from printing
-/// it so "answered, no duplicates" and "could not answer" are two
-/// different values rather than the same empty `dupes` list.
+/// The outcome of a duplicate-check pass, kept distinct from printing it so
+/// "answered, no duplicates" and "could not answer" are two different values
+/// rather than the same empty `dupes` list.
 ///
-/// An empty `dupes` with an empty `unreadable` is a genuine clean
-/// pass. An empty `dupes` with a non-empty `unreadable` means the
-/// check could not examine every variant and must not be read as
-/// "no duplicates": the variants named in `unreadable` were excluded
-/// from the comparison entirely, because their `.text` section could
-/// not be extracted (`objdump` and, on macOS, `otool` both failed, or
-/// neither is installed). An extraction that silently does nothing
-/// must not look like an extraction that ran and found nothing wrong.
+/// An empty `dupes` with an empty `unreadable` is a genuine clean pass. A
+/// non-empty `unreadable` means the variants named there were excluded from
+/// the comparison entirely, because their code could not be disassembled (no
+/// disassembler on the host, or it failed on the file).
 #[derive(Debug, PartialEq, Eq)]
 struct CheckReport {
-    /// Duplicate pairs found among variants whose `.text` section was
-    /// extracted successfully.
+    /// Duplicate pairs found among variants whose code was read.
     dupes:      Vec<(String, String)>,
-    /// Paths whose `.text` section could not be extracted at all, and
-    /// were therefore excluded from `dupes` regardless of whether they
-    /// are, in truth, duplicates of something else in the run.
+    /// Paths whose code could not be read, excluded from `dupes`.
     unreadable: Vec<String>,
 }
 
-/// Build a [`CheckReport`] from precomputed disassembly. Pure and
-/// testable without a dylib on disk, same as [`duplicate_pairs`].
+/// Build a [`CheckReport`] from precomputed disassembly. Pure and testable
+/// without a library on disk, same as [`duplicate_pairs`].
 fn build_report(
     variant_paths: &[String],
     entry_asm: &[Option<String>],
@@ -271,38 +189,22 @@ fn build_report(
     }
 }
 
-/// The name to print a variant under: its dylib's file name with the platform's
-/// library prefix and extension taken off.
-///
-/// The previous form was `path.rsplit('/').nth(1)`, the second component from
-/// the right, which on the path shape [`crate::config::resolve_variant_path`]
-/// builds is `release` for every variant, so both warnings below named every
-/// variant `release` and the duplicate line read `release == release`.
+/// The name to print a variant under: its arm name, read off its library's
+/// own file name ([`crate::library::arm_name`]).
 fn short_name(path: &str) -> &str {
-    let file = path.rsplit('/').next().unwrap_or(path);
-    let file = file
-        .strip_suffix(std::env::consts::DLL_SUFFIX)
-        .unwrap_or(file);
-    // Not `strip_prefix(DLL_PREFIX)`: that is empty on Windows, where stripping
-    // it is a no-op, and `lib` on the platforms where it is not.
-    if std::env::consts::DLL_PREFIX.is_empty() {
-        file
-    } else {
-        file.strip_prefix(std::env::consts::DLL_PREFIX)
-            .unwrap_or(file)
-    }
+    crate::library::arm_name(path)
 }
 
-/// Print a [`CheckReport`] to stderr. Total or partial extraction
-/// failure is reported before (and regardless of) any duplicate
-/// pairs, so a run that could not fully answer never reads the same
-/// as a run that answered "no duplicates".
+/// Print a [`CheckReport`] to stderr. Total or partial extraction failure is
+/// reported before (and regardless of) any duplicate pairs, so a run that
+/// could not fully answer never reads the same as a run that answered "no
+/// duplicates".
 fn print_report(variant_paths: &[String], report: &CheckReport) {
     if !report.unreadable.is_empty() {
         if report.unreadable.len() == variant_paths.len() {
             eprintln!(
-                "  WARNING: could not disassemble any of the {} variant(s) (objdump/otool \
-                 unavailable or failed); the duplicate check did not run.",
+                "  WARNING: could not disassemble any of the {} variant(s) (no disassembler, \
+                 or it failed); the duplicate check did not run.",
                 variant_paths.len()
             );
         } else {
@@ -313,8 +215,7 @@ fn print_report(variant_paths: &[String], report: &CheckReport) {
                 variant_paths.len()
             );
             for path in &report.unreadable {
-                let short = short_name(path);
-                eprintln!("    {}", short);
+                eprintln!("    {}", short_name(path));
             }
         }
     }
@@ -325,38 +226,39 @@ fn print_report(variant_paths: &[String], report: &CheckReport) {
             report.dupes.len()
         );
         for (a, b) in &report.dupes {
-            let a_short = short_name(a);
-            let b_short = short_name(b);
-            eprintln!("    {} == {}", a_short, b_short);
+            eprintln!("    {} == {}", short_name(a), short_name(b));
         }
     }
 }
 
-/// Compare `bench_entry` disassembly and the whole `.text` section
-/// across all variant dylibs. Reports duplicates to stderr, and
-/// reports separately (see [`CheckReport`]) when the check could not
-/// disassemble some or all of the variants, so that case is never
-/// silently indistinguishable from a clean pass.
-///
-/// Extraction runs eagerly for every variant path before any
-/// comparison: the cheap `bench_entry`-only negative in [`same_work`]
-/// short-circuits a string comparison once both sides are in memory,
-/// not the disassembly itself, which has already happened for every
-/// variant by the time this function compares anything.
+/// Compare `bench_entry` disassembly and the whole code across all variant
+/// libraries with one disassembler, [`Disassembler::detected`]. Reports
+/// duplicates to stderr, and reports separately (see [`CheckReport`]) when the
+/// check could not disassemble some or all of the variants, so that case is
+/// never silently indistinguishable from a clean pass.
 pub fn check_duplicates(variant_paths: &[String]) {
     if variant_paths.len() < 2 {
         return;
     }
-
-    let entry_asm: Vec<Option<String>> = variant_paths
-        .iter()
-        .map(|p| extract_bench_entry(p))
-        .collect();
-    let text_section: Vec<Option<String>> = variant_paths
-        .iter()
-        .map(|p| extract_text_section(p))
-        .collect();
-
+    let none = vec![None; variant_paths.len()];
+    let (entry_asm, text_section) = match Disassembler::detected() {
+        Some(tool) => {
+            (
+                variant_paths
+                    .iter()
+                    .map(|p| extract_bench_entry(tool, p))
+                    .collect(),
+                variant_paths
+                    .iter()
+                    .map(|p| extract_text_section(tool, p))
+                    .collect(),
+            )
+        },
+        None => {
+            eprintln!("  WARNING: {}", no_tool());
+            (none.clone(), none)
+        },
+    };
     let report = build_report(variant_paths, &entry_asm, &text_section);
     print_report(variant_paths, &report);
 }
@@ -364,3 +266,15 @@ pub fn check_duplicates(variant_paths: &[String]) {
 #[cfg(test)]
 #[path = "disasm/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "disasm/tests_live.rs"]
+mod tests_live;
+
+#[cfg(test)]
+#[path = "disasm/tests_recorded.rs"]
+mod tests_recorded;
+
+#[cfg(test)]
+#[path = "disasm/tests_tool.rs"]
+mod tests_tool;

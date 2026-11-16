@@ -1,0 +1,137 @@
+
+variant_shifted.dll:     file format pei-x86-64
+
+
+Disassembly of section .text:
+
+0000000180001000 <.text>:
+   180001000:	movzbl (%rcx),%eax
+   180001003:	mov    %eax,%r8d
+   180001006:	shl    $0x5,%r8d
+   18000100a:	sub    %rax,%r8
+   18000100d:	movzbl 0x1(%rcx),%eax
+   180001011:	add    %r8,%rax
+   180001014:	mov    %eax,%r8d
+   180001017:	shl    $0x5,%r8d
+   18000101b:	sub    %rax,%r8
+   18000101e:	movzbl 0x2(%rcx),%eax
+   180001022:	add    %r8,%rax
+   180001025:	mov    %eax,%r8d
+   180001028:	shl    $0x5,%r8d
+   18000102c:	sub    %rax,%r8
+   18000102f:	movzbl 0x3(%rcx),%eax
+   180001033:	add    %r8,%rax
+   180001036:	mov    %rax,%r8
+   180001039:	shl    $0x5,%r8
+   18000103d:	sub    %rax,%r8
+   180001040:	movzbl 0x4(%rcx),%eax
+   180001044:	add    %r8,%rax
+   180001047:	mov    %rax,%r8
+   18000104a:	shl    $0x5,%r8
+   18000104e:	sub    %rax,%r8
+   180001051:	movzbl 0x5(%rcx),%eax
+   180001055:	add    %r8,%rax
+   180001058:	mov    %rax,%r8
+   18000105b:	shl    $0x5,%r8
+   18000105f:	sub    %rax,%r8
+   180001062:	movzbl 0x6(%rcx),%eax
+   180001066:	add    %r8,%rax
+   180001069:	mov    %rax,%r8
+   18000106c:	shl    $0x5,%r8
+   180001070:	sub    %rax,%r8
+   180001073:	movzbl 0x7(%rcx),%eax
+   180001077:	add    %r8,%rax
+   18000107a:	mov    %rax,%rcx
+   18000107d:	shl    $0x5,%rcx
+   180001081:	sub    %rax,%rcx
+   180001084:	mov    %rcx,(%rdx)
+   180001087:	ret
+   180001088:	int3
+   180001089:	int3
+   18000108a:	int3
+   18000108b:	int3
+   18000108c:	int3
+   18000108d:	int3
+   18000108e:	int3
+   18000108f:	int3
+   180001090:	mov    %rcx,%rax
+   180001093:	mov    %rdx,%r9
+   180001096:	and    $0xf,%r9
+   18000109a:	je     0x180001123
+   1800010a0:	mov    %edx,%ecx
+   1800010a2:	and    $0x3,%ecx
+   1800010a5:	movabs $0x9e3779b97f4a7c15,%r8
+   1800010af:	cmp    $0x4,%r9d
+   1800010b3:	jae    0x1800010ba
+   1800010b5:	xor    %r9d,%r9d
+   1800010b8:	jmp    0x180001110
+   1800010ba:	and    $0xc,%edx
+   1800010bd:	xor    %r9d,%r9d
+   1800010c0:	mov    %r9,%r10
+   1800010c3:	rol    $0x11,%rax
+   1800010c7:	imul   %r8,%rax
+   1800010cb:	xor    %r9,%rax
+   1800010ce:	rol    $0x11,%rax
+   1800010d2:	imul   %r8,%rax
+   1800010d6:	inc    %r9
+   1800010d9:	xor    %rax,%r9
+   1800010dc:	rol    $0x11,%r9
+   1800010e0:	imul   %r8,%r9
+   1800010e4:	lea    0x2(%r10),%r11
+   1800010e8:	xor    %r9,%r11
+   1800010eb:	lea    0x4(%r10),%r9
+   1800010ef:	rol    $0x11,%r11
+   1800010f3:	imul   %r8,%r11
+   1800010f7:	add    $0x3,%r10
+   1800010fb:	mov    %r10,%rax
+   1800010fe:	xor    %r11,%rax
+   180001101:	cmp    %rdx,%r9
+   180001104:	jne    0x1800010c0
+   180001106:	test   %rcx,%rcx
+   180001109:	je     0x180001123
+   18000110b:	nopl   0x0(%rax,%rax,1)
+   180001110:	rol    $0x11,%rax
+   180001114:	imul   %r8,%rax
+   180001118:	xor    %r9,%rax
+   18000111b:	inc    %r9
+   18000111e:	dec    %rcx
+   180001121:	jne    0x180001110
+   180001123:	ret
+   180001124:	int3
+   180001125:	int3
+   180001126:	int3
+   180001127:	int3
+   180001128:	int3
+   180001129:	int3
+   18000112a:	int3
+   18000112b:	int3
+   18000112c:	int3
+   18000112d:	int3
+   18000112e:	int3
+   18000112f:	int3
+   180001130:	sub    $0x28,%rsp
+   180001134:	cmp    $0x8,%r8
+   180001138:	jne    0x180001146
+   18000113a:	call   0x180001000
+   18000113f:	xor    %eax,%eax
+   180001141:	add    $0x28,%rsp
+   180001145:	ret
+   180001146:	lea    0xeb3(%rip),%rax        # 0x180002000
+   18000114d:	add    $0x28,%rsp
+   180001151:	ret
+   180001152:	int3
+   180001153:	int3
+   180001154:	int3
+   180001155:	int3
+   180001156:	int3
+   180001157:	int3
+   180001158:	int3
+   180001159:	int3
+   18000115a:	int3
+   18000115b:	int3
+   18000115c:	int3
+   18000115d:	int3
+   18000115e:	int3
+   18000115f:	int3
+   180001160:	lea    0xe99(%rip),%rax        # 0x180002000
+   180001167:	ret

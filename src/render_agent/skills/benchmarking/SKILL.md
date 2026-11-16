@@ -38,6 +38,7 @@ pub fn hooks() -> Hooks {
 - `report`: renders a report for a run that has none; never touches one the run wrote.
 - `test`: `cargo test` in every crate under the bench tree (a bare `cargo test` at the root sees only the driver). A name narrows by path; flags after it go to cargo. Counts print with their profile.
 - `cargo mock bench migrate [--machine-class <class>] [--dry-run]`: moves an older results layout into run directories.
+- `cargo mock bench disasm <bench> <arm> <symbol>`: builds the arm as a run does and writes one exported function's disassembly to `results/<bench>/disasm/<machine class>/<run>/<arm>/<symbol>.txt`, tracked, never replaced. The evidence that a function compiles to what its design claims; name the symbol as `#[no_mangle]` or `#[export_name]` gives it.
 
 ## The layers
 
@@ -45,7 +46,7 @@ pub fn hooks() -> Hooks {
 - `mockspace-bench-harness`, transport: cdylib-per-arm isolation, subprocess driver, workloads, validation, analysis, history, codegen (`MatrixSpec` / `expand` / `render` / `generate`). It does not judge honesty. A driver timing arms from a shared target dir runs from a staged build: `<dir>/release/`, `binaries.sha256`, `build.txt`; `staging::StagedBuild::of_current_exe` refuses an unstaged driver, `verify` checks digests, `link_into` (feature `stage-link`) returns a `StageLink` removed on drop.
 - `mockspace-bench-matrix`: any comparison over more than one axis.
 
-What the framework already does, never re-rolled: per-arm release, fat LTO, one codegen unit, own subprocess; a realistic workload around the call; validation over deterministic seeds before timing (a mismatch is the finding); disassembly dedup; quintiles, autocorrelation, bootstrap CIs, sign test, Benjamini-Hochberg; per-run `summary.tsv` compared only within one machine class.
+What the framework already does, never re-rolled: per-arm release, fat LTO, one codegen unit, own subprocess; a realistic workload around the call; validation over deterministic seeds before timing (a mismatch is the finding); disassembly dedup before timing, with one disassembler per run (`llvm-objdump`, the `llvm-tools` one, GNU or Apple `objdump`, `otool`, `dumpbin`, in that order), symbols spelled as the library's own object format spells them; quintiles, autocorrelation, bootstrap CIs, sign test, Benjamini-Hochberg; per-run `summary.tsv` compared only within one machine class.
 
 ## Hardware counters
 

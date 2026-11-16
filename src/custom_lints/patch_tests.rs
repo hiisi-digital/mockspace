@@ -11,8 +11,8 @@ fn patch_section_points_at_the_checkout_path() {
     let patch = patch_section(dep, home).unwrap();
     assert!(patch.contains("[patch.\"ssh://x/mockspace.git\"]"));
     assert!(patch.contains(&format!(
-        "mockspace-lint-rules = {{ path = \"{}\" }}",
-        lr.display()
+        "mockspace-lint-rules = {{ path = {} }}",
+        mockspace_manifest::toml_text::basic_string(&lr.display().to_string())
     )));
 }
 

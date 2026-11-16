@@ -105,13 +105,16 @@ fn fixture() -> Fixture {
     // the real launcher would add. `MOCKSPACE_NO_AUTO_ACTIVATE` keeps the engine
     // from pointing `core.hooksPath` at a durable directory in a home that is
     // not this fixture's.
-    let lint_rules = concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules");
+    let lint_rules = mockspace_manifest::toml_text::basic_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/lint-rules"
+    ));
     let launcher = bin.join("mock");
     exec::write_executable(
         &launcher,
         format!(
             "#!/bin/sh\nexport MOCKSPACE_NO_AUTO_ACTIVATE=1\nexport XDG_CACHE_HOME='{}'\nunset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR\nexec '{}' --dir '{}' \
-             --mockspace-lint-rules-dep '{{ package = \"mockspace-lint-rules\", path = \"{}\" }}' \"$@\"\n",
+             --mockspace-lint-rules-dep '{{ package = \"mockspace-lint-rules\", path = {} }}' \"$@\"\n",
             lint_cache::cache_in(&root).display(),
             env!("CARGO_BIN_EXE_mockspace"),
             mock.display(),

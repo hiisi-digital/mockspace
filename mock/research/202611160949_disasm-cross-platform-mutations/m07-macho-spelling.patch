@@ -1,0 +1,23 @@
+diff --git a/bench-harness/src/disasm/format.rs b/bench-harness/src/disasm/format.rs
+index a2fc78e..9f3110d 100644
+--- a/bench-harness/src/disasm/format.rs
++++ b/bench-harness/src/disasm/format.rs
+@@ -98,8 +98,7 @@ impl ObjectFormat {
+         let bare = symbol.to_string();
+         let underscored = format!("_{symbol}");
+         match self {
+-            Self::MachO
+-            | Self::Coff {
++            Self::Coff {
+                 i386: true,
+                 image: false,
+             } => vec![underscored],
+@@ -107,7 +106,7 @@ impl ObjectFormat {
+                 i386: true,
+                 image: true,
+             } => vec![bare, underscored],
+-            Self::Elf
++            Self::Elf | Self::MachO
+             | Self::Coff {
+                 i386: false,
+                 ..

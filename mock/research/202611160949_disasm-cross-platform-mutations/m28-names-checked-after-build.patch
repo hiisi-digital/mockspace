@@ -1,0 +1,13 @@
+diff --git a/src/bench_disasm.rs b/src/bench_disasm.rs
+index 8b0afad..c6dd59a 100644
+--- a/src/bench_disasm.rs
++++ b/src/bench_disasm.rs
+@@ -29,7 +29,7 @@ fn parse<'a>(args: &[&'a str]) -> Result<(&'a str, &'a str, &'a str), String> {
+             if !bench.starts_with('-') && !arm.starts_with('-') && !symbol.starts_with('-') =>
+         {
+             for (what, name) in [("bench", bench), ("arm", arm), ("symbol", symbol)] {
+-                if !layout::is_name(name) {
++                if what.is_empty() && !layout::is_name(name) {
+                     return Err(format!("{what} `{name}` cannot name a results file"));
+                 }
+             }

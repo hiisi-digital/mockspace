@@ -30,6 +30,7 @@ use std::process::{Command, ExitCode};
 use mockspace_bench_harness::config::BuildSection;
 use mockspace_bench_harness::tree as bench_tree;
 
+use crate::bench_arms::{aligned, build_arm, run_rev_of};
 use crate::config::Config;
 use crate::{bench_builds, bench_gen, bench_migrate, bench_rev, bench_variants};
 
@@ -96,17 +97,31 @@ fn split_positional_and_flags<'a>(
     (positional, flags)
 }
 
+/// One `mock bench` subcommand: its name and what runs it with the arguments
+/// after the name.
+type Subcommand = (&'static str, fn(&Config, &[&str]) -> ExitCode);
+
+/// Every subcommand `mock bench` takes, and the one place each is dispatched
+/// from: a name is a subcommand exactly when it is here, and `mock help bench`
+/// and the usage guide are held to name each one.
+pub(crate) const SUBCOMMANDS: [Subcommand; 8] = [
+    ("init", |cfg, _| cmd_init(cfg)),
+    ("run", cmd_run),
+    ("report", cmd_report),
+    ("test", cmd_test),
+    ("list", |cfg, _| cmd_list(cfg)),
+    ("add", cmd_add),
+    ("disasm", crate::bench_disasm::cmd),
+    ("migrate", bench_migrate::cmd),
+];
+
 pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
     let sub = args.first().copied().unwrap_or("");
     let rest: Vec<&str> = args.iter().skip(1).copied().collect();
+    if let Some((_, run)) = SUBCOMMANDS.iter().find(|(name, _)| *name == sub) {
+        return run(cfg, &rest);
+    }
     match sub {
-        "init" => cmd_init(cfg),
-        "run" => cmd_run(cfg, &rest),
-        "report" => cmd_report(cfg, &rest),
-        "test" => cmd_test(cfg, &rest),
-        "list" => cmd_list(cfg),
-        "add" => cmd_add(cfg, &rest),
-        "migrate" => bench_migrate::cmd(cfg, &rest),
         "" => {
             print_help();
             ExitCode::SUCCESS
@@ -119,39 +134,46 @@ pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
     }
 }
 
+/// What `mock bench` with no subcommand, or an unknown one, prints.
+pub(crate) const HELP: &str = concat!(
+    "mock bench. canonical bench framework commands\n",
+    "\n",
+    "subcommands:\n",
+    "  init     scaffold mock/benches/ in this consumer\n",
+    "  run      build the arms and the generated driver, run the harness\n",
+    "  report   render report.md for any run that has none\n",
+    "  test     run cargo test in every crate under the bench tree\n",
+    "  list     list benches, sizes, and variants from bench.toml\n",
+    "  add      scaffold a new variant crate: mock bench add <name>\n",
+    "  disasm   write one function of one arm as a results artifact:\n",
+    "           mock bench disasm <bench> <arm> <symbol>\n",
+    "  migrate  move results and history in an older layout into runs:\n",
+    "           mock bench migrate [--machine-class <class>] [--dry-run]\n",
+    "\n",
+    "`run` and `report` accept bench names to restrict the pass:\n",
+    "  mock bench run <name> [<name> ...]   run only the named benches\n",
+    "with no names, every bench in bench.toml runs\n",
+    "`run` removes the arm and driver builds it made once the results are written;\n",
+    "  mock bench run --keep-builds         keeps them for a second run\n",
+    "\n",
+    "`mock/benches/` layout (created by `init`):\n",
+    "  bench.toml            globals: [timing] [dispatch] [build] [workload.*]\n",
+    "  <bench>/bench.toml    the bench: top-level fields + optional [sweep.<name>]\n",
+    "  <bench>/arms/<arm>/   one measured cdylib per arm (manifest generated)\n",
+    "  <bench>/support/      this bench's library crates\n",
+    "  support/              library crates several benches share\n",
+    "  src/lib.rs            optional hooks() library\n",
+    "  results/<bench>/<sweep>_n<point>/<machine class>/<run>/\n",
+    "                        one run: samples.csv meta.json report.md summary.tsv\n",
+    "\n",
+    "a run is written once and never replaced; runs on other machines sit\n",
+    "beside it, and a cell's history is its runs on the same machine class.\n",
+    "the driver is generated from bench.toml and is the only runner: a\n",
+    "Cargo.toml or a binary of your own in the tree is refused\n",
+);
+
 fn print_help() {
-    eprintln!("mock bench. canonical bench framework commands");
-    eprintln!();
-    eprintln!("subcommands:");
-    eprintln!("  init     scaffold mock/benches/ in this consumer");
-    eprintln!("  run      build the arms and the generated driver, run the harness");
-    eprintln!("  report   render report.md for any run that has none");
-    eprintln!("  test     run cargo test in every crate under the bench tree");
-    eprintln!("  list     list benches, sizes, and variants from bench.toml");
-    eprintln!("  add      scaffold a new variant crate: mock bench add <name>");
-    eprintln!("  migrate  move results and history in an older layout into runs:");
-    eprintln!("           mock bench migrate [--machine-class <class>] [--dry-run]");
-    eprintln!();
-    eprintln!("`run` and `report` accept bench names to restrict the pass:");
-    eprintln!("  mock bench run <name> [<name> ...]   run only the named benches");
-    eprintln!("with no names, every bench in bench.toml runs");
-    eprintln!("`run` removes the arm and driver builds it made once the results are written;");
-    eprintln!("  mock bench run --keep-builds         keeps them for a second run");
-    eprintln!();
-    eprintln!("`mock/benches/` layout (created by `init`):");
-    eprintln!("  bench.toml            globals: [timing] [dispatch] [build] [workload.*]");
-    eprintln!("  <bench>/bench.toml    the bench: top-level fields + optional [sweep.<name>]");
-    eprintln!("  <bench>/arms/<arm>/   one measured cdylib per arm (manifest generated)");
-    eprintln!("  <bench>/support/      this bench's library crates");
-    eprintln!("  support/              library crates several benches share");
-    eprintln!("  src/lib.rs            optional hooks() library");
-    eprintln!("  results/<bench>/<sweep>_n<point>/<machine class>/<run>/");
-    eprintln!("                        one run: samples.csv meta.json report.md summary.tsv");
-    eprintln!();
-    eprintln!("a run is written once and never replaced; runs on other machines sit");
-    eprintln!("beside it, and a cell's history is its runs on the same machine class.");
-    eprintln!("the driver is generated from bench.toml and is the only runner: a");
-    eprintln!("Cargo.toml or a binary of your own in the tree is refused");
+    eprint!("{HELP}");
 }
 
 // ── run ──
@@ -731,7 +753,7 @@ fn build_variants(bench_dir: &Path, names: &[&str], profile: &[String]) -> Resul
 /// two runs of an unchanged variant can differ in inlining and
 /// layout, which is exactly the contamination per-variant cdylib
 /// isolation exists to prevent.
-fn profile_args_for(build: Option<&BuildSection>) -> Vec<String> {
+pub(crate) fn profile_args_for(build: Option<&BuildSection>) -> Vec<String> {
     let opt = build.and_then(|b| b.opt_level).unwrap_or(3);
     let lto = build
         .and_then(|b| b.lto.clone())
@@ -783,7 +805,7 @@ fn build_argv(manifest: &Path, profile: &[String], target_dir: Option<&Path>) ->
 
 /// One cargo build with explicit profile flags and an optional
 /// tool-owned target directory; returns stdout for artifact parsing.
-fn cargo_build_at(
+pub(crate) fn cargo_build_at(
     manifest: &Path,
     what: &str,
     profile: &[String],
@@ -863,64 +885,28 @@ fn run_generated(
     // Which benches the filter selects; a request may name a sweep
     // (`bench/sweep`), which builds its bench's arms.
     let wanted = bench_rev::wanted(names);
-    // One commit of the framework for every crate the run links, taken from
-    // the locks of the arms it builds. `bench_rev` says why.
-    let arm_locks = bench_rev::arm_locks(&plan.arms, wanted.as_deref());
-    let pins = bench_gen::driver_gen_dir(&cfg.mock_dir).join(".pack-pins");
-    let run_rev =
-        match bench_rev::run_rev(&arm_locks, &dep, &pins, &crate::pack_pin::ls_remote_head) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("error: {e}");
-                return ExitCode::FAILURE;
-            },
-        };
-    let align = |dir: &Path| -> Result<(), String> {
-        match &run_rev {
-            Some(rev) => bench_rev::align(dir, rev, &bench_rev::cargo_update),
-            None => Ok(()),
-        }
+    let run_rev = match run_rev_of(cfg, &plan, &dep, wanted.as_deref()) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
     };
+    let align = |dir: &Path| aligned(dir, run_rev.as_deref());
 
     if !report_only {
         for arm in &plan.arms {
             if !bench_rev::selects(wanted.as_deref(), arm) {
                 continue;
             }
-            let what = format!("arm {}/arms/{}", arm.bench, arm.arm);
-            let manifest_path = if arm.has_manifest {
-                if let Err(e) = check_arm_lib_name(arm) {
-                    eprintln!("error: {e}");
-                    return ExitCode::FAILURE;
-                }
-                arm.dir.join("Cargo.toml")
-            } else {
-                let gen_dir = bench_gen::arm_gen_dir(&cfg.mock_dir, arm);
-                let toml = match bench_gen::arm_cargo_toml(arm, &dep, &plan.support) {
-                    Ok(t) => t,
+            let (manifest_path, built) =
+                match build_arm(cfg, &plan, &dep, arm, &align, &profile, target.as_deref()) {
+                    Ok(b) => b,
                     Err(e) => {
                         eprintln!("error: {e}");
                         return ExitCode::FAILURE;
                     },
                 };
-                if let Err(e) = bench_gen::write_if_changed(&gen_dir.join("Cargo.toml"), &toml) {
-                    eprintln!("error: {e}");
-                    return ExitCode::FAILURE;
-                }
-                gen_dir.join("Cargo.toml")
-            };
-            if let Err(e) = align(manifest_path.parent().unwrap_or(&arm.dir)) {
-                eprintln!("error: {what}: {e}");
-                return ExitCode::FAILURE;
-            }
-            eprintln!("  building {what}...");
-            let built = match cargo_build_at(&manifest_path, &what, &profile, target.as_deref()) {
-                Ok(o) => o,
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    return ExitCode::FAILURE;
-                },
-            };
             if let Err(e) = builds.link_arm(bench_dir, arm, &manifest_path, &built) {
                 eprintln!("error: {e}");
                 return ExitCode::FAILURE;
@@ -1044,7 +1030,7 @@ fn run_generated(
 /// is what short-name resolution builds paths from), so a consumer
 /// manifest declaring a different one would build a dylib nothing
 /// can find. Refuse it with the fix spelled out.
-fn check_arm_lib_name(arm: &bench_tree::ArmSource) -> Result<(), String> {
+pub(crate) fn check_arm_lib_name(arm: &bench_tree::ArmSource) -> Result<(), String> {
     let expected = arm.arm.replace('-', "_");
     let text = fs::read_to_string(arm.dir.join("Cargo.toml"))
         .map_err(|e| format!("reading {}: {e}", arm.dir.join("Cargo.toml").display()))?;
@@ -1132,16 +1118,10 @@ fn cmd_init(cfg: &Config) -> ExitCode {
 // ── list ──
 
 /// Human display for one arm entry: the short name where the entry
-/// is one, the dylib stem where it is a path.
+/// is one, the arm name its library file carries where it is a path,
+/// read off that file's own suffix rather than the host's.
 fn entry_display(entry: &str) -> String {
-    let stem = entry
-        .rsplit('/')
-        .next()
-        .unwrap_or(entry)
-        .trim_end_matches(std::env::consts::DLL_SUFFIX);
-    stem.strip_prefix(std::env::consts::DLL_PREFIX)
-        .unwrap_or(stem)
-        .to_string()
+    mockspace_bench_harness::library::arm_name(entry).to_string()
 }
 
 fn cmd_list(cfg: &Config) -> ExitCode {

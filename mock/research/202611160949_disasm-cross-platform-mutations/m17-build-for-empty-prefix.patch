@@ -1,0 +1,13 @@
+diff --git a/src/bench_variants.rs b/src/bench_variants.rs
+index 24b4a16..7260741 100644
+--- a/src/bench_variants.rs
++++ b/src/bench_variants.rs
+@@ -100,7 +100,7 @@ pub(crate) fn build_for(entry: &str, bench_dir: &Path, libs: &[(String, String)]
+     let target_dir = bench_dir.join(profile_dir.parent()?);
+     // The library's own suffix says which prefix its target added, so a
+     // `libX.dylib` entry finds its crate on a Linux or Windows host too.
+-    let stem = mockspace_bench_harness::library::arm_name(path.file_name()?.to_str()?);
++    let stem = { let s = path.file_stem()?.to_str()?; s.strip_prefix("").unwrap_or(s) };
+     let (_, dir) = libs.iter().find(|(lib, _)| lib == stem)?;
+     Some(VariantBuild { dir: dir.clone(), target_dir: Some(target_dir) })
+ }

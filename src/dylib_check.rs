@@ -21,10 +21,7 @@ pub fn check_module_dylibs(cfg: &Config) -> usize {
     let sym_prefix = cfg.crate_prefix.replace('-', "_");
 
     for crate_name in &cfg.module_crates {
-        // Convert crate name to underscore form for dylib name
-        let lib_name = crate_name.replace('-', "_");
-        let dylib_name = format!("lib{lib_name}.dylib");
-        let dylib_path = cfg.mock_dir.join("target/debug").join(&dylib_name);
+        let dylib_path = module_library(&cfg.mock_dir, crate_name);
 
         if !dylib_path.exists() {
             eprintln!(
@@ -45,6 +42,18 @@ pub fn check_module_dylibs(cfg: &Config) -> usize {
     }
 
     failures
+}
+
+/// Where `cargo build` puts the module crate `crate_name` of the workspace at
+/// `mock_dir`: the debug profile, named as this host names a dynamic library,
+/// since the check loads it on this host (`libx.so`, `libx.dylib`, `x.dll`).
+fn module_library(mock_dir: &Path, crate_name: &str) -> std::path::PathBuf {
+    mock_dir.join("target/debug").join(format!(
+        "{}{}{}",
+        std::env::consts::DLL_PREFIX,
+        crate_name.replace('-', "_"),
+        std::env::consts::DLL_SUFFIX
+    ))
 }
 
 fn check_one_dylib(path: &Path, expected_abi: u32, sym_prefix: &str) -> Result<(), String> {
@@ -88,5 +97,27 @@ fn check_one_dylib(path: &Path, expected_abi: u32, sym_prefix: &str) -> Result<(
         shutdown_fn();
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::module_library;
+
+    /// The library is looked for under the name this host gives it; a fixed
+    /// `lib<x>.dylib` found nothing on Linux or Windows.
+    #[test]
+    fn a_module_library_is_named_as_this_host_names_one() {
+        let path = module_library(Path::new("/m"), "my-module");
+        let expected = if cfg!(target_os = "macos") {
+            "/m/target/debug/libmy_module.dylib"
+        } else if cfg!(windows) {
+            "/m/target/debug/my_module.dll"
+        } else {
+            "/m/target/debug/libmy_module.so"
+        };
+        assert_eq!(path, Path::new(expected));
     }
 }

@@ -57,7 +57,7 @@ pub fn tool_config(s: &TestSettings, heavy: &[(String, String)], junit: &Path) -
     let _ = writeln!(
         t,
         "[profile.default.junit]\npath = {}\n# A passing test's stderr carries its work line, and nextest keeps it only on request.\nstore-success-output = true",
-        toml_edit::Value::from(junit.to_string_lossy().as_ref())
+        mockspace_manifest::toml_text::basic_string(&junit.to_string_lossy())
     );
     for filter in heavy_filters(heavy) {
         t.push_str("\n[[profile.default.overrides]]\n");

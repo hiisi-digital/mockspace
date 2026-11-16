@@ -323,6 +323,7 @@ The `mockup-workflow` skill: gate boundaries and the validation pipeline. The `m
 - The generated driver is the only runner; custom behaviour goes in `{mock_dir}/benches/src/lib.rs` (`pub fn hooks() -> Hooks`).
 - Results: `{mock_dir}/benches/results/<bench>/<sweep>_n<point>/<machine class>/<run>/`, committed, never replaced.
 - Quote a number with its run directory and profile.
+- One function's disassembly as evidence: `cargo mock bench disasm <bench> <arm> <symbol>`, written under `results/<bench>/disasm/` and committed.
 - A run builds the arms and the driver in the shared target and removes them once the results are written; `--keep-builds` keeps them for a second run.
 - An arm with no path of its own for a target runs whatever that target has, under its own name; that result is the finding and stays.
 - Before the first bench: the `benchmarking` skill.

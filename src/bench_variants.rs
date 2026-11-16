@@ -98,14 +98,9 @@ pub(crate) fn build_for(entry: &str, bench_dir: &Path, libs: &[(String, String)]
         return None;
     }
     let target_dir = bench_dir.join(profile_dir.parent()?);
-    let file = path.file_name()?.to_str()?;
-    let stem = match path.extension() {
-        Some(_) => {
-            let s = path.file_stem()?.to_str()?;
-            s.strip_prefix(std::env::consts::DLL_PREFIX).unwrap_or(s)
-        },
-        None => file,
-    };
+    // The library's own suffix says which prefix its target added, so a
+    // `libX.dylib` entry finds its crate on a Linux or Windows host too.
+    let stem = mockspace_bench_harness::library::arm_name(path.file_name()?.to_str()?);
     let (_, dir) = libs.iter().find(|(lib, _)| lib == stem)?;
     Some(VariantBuild { dir: dir.clone(), target_dir: Some(target_dir) })
 }

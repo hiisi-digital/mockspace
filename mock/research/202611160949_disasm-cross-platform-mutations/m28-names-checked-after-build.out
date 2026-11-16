@@ -1,0 +1,3 @@
+# recorded on a1d1fd3; replay: git apply m28-names-checked-after-build.patch && cargo test -p mockspace --lib -- bench_disasm
+test bench_disasm::tests::exactly_three_names_are_taken ... FAILED
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 1869 filtered out; finished in 0.09s

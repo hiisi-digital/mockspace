@@ -49,8 +49,8 @@ fn generated_repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
     write(
         &mock.join("benches/bench.toml"),
         &format!(
-            "[build]\nmockspace = '{{ path = \"{}\" }}'\n",
-            root.join("vendor").display()
+            "[build]\nmockspace = '{{ path = {} }}'\n",
+            mockspace_manifest::toml_text::basic_string(&root.join("vendor").display().to_string())
         ),
     );
     write(

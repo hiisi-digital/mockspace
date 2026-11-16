@@ -117,10 +117,11 @@ fn a_run_leaves_no_arm_or_driver_build_and_compiles_the_shared_dependency_once()
     let mock_dir = root.join("mock");
     let bench_dir = mock_dir.join("benches");
     let repo = env!("CARGO_MANIFEST_DIR");
+    let repo_toml = mockspace_manifest::toml_text::basic_string(repo);
     write(
         &bench_dir.join("bench.toml"),
         &format!(
-            "[build]\nmockspace = '{{ path = \"{repo}\" }}'\nopt-level = 0\nlto = \"off\"\n\
+            "[build]\nmockspace = '{{ path = {repo_toml} }}'\nopt-level = 0\nlto = \"off\"\n\
              codegen-units = 16\n\n[timing]\npasses = 1\nruns_per_pass = 20\nbatch_size = 5\n\
              harness_runs = 1\ncooldowns_ms = [0]\n"
         ),
@@ -260,7 +261,12 @@ fn sweep_beside_a_same_named_dependency(make: &dyn Fn(&Path) -> PathBuf) -> (tem
         "user",
         "0.0.0",
         "\"rlib\"",
-        &format!("a = {{ path = {:?} }}\n", dep.parent().unwrap()),
+        &format!(
+            "a = {{ path = {} }}\n",
+            mockspace_manifest::toml_text::basic_string(
+                &dep.parent().unwrap().display().to_string()
+            )
+        ),
     );
     let ours = make(&tmp.join("ours"));
     cargo_build(&user, &target);

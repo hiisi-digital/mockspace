@@ -27,6 +27,8 @@ pub mod gate;
 #[cfg(any(test, feature = "_internal-test-scratch"))]
 #[doc(hidden)]
 pub mod scratch;
+/// A string written into a TOML document, quoted and escaped.
+pub mod toml_text;
 
 pub use exec::write_executable;
 

@@ -1,0 +1,4 @@
+# recorded on a1d1fd3; replay: git apply m17-build-for-empty-prefix.patch && cargo test -p mockspace --lib -- bench_variants
+test bench_variants::tests::an_artifact_path_named_for_any_target_finds_the_same_crate_on_every_host ... FAILED
+test bench_variants::tests::an_artifact_path_with_its_platform_name_finds_the_same_crate ... FAILED
+test result: FAILED. 5 passed; 2 failed; 0 ignored; 0 measured; 1864 filtered out; finished in 0.07s

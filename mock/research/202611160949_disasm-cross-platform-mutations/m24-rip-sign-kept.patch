@@ -1,0 +1,13 @@
+diff --git a/bench-harness/src/disasm/normalize.rs b/bench-harness/src/disasm/normalize.rs
+index 2da28e8..40d226a 100644
+--- a/bench-harness/src/disasm/normalize.rs
++++ b/bench-harness/src/disasm/normalize.rs
+@@ -230,7 +230,7 @@ pub(super) fn fold_rip_relative(insn: &str) -> String {
+             .rfind(|c: char| !(c.is_ascii_hexdigit() || c == 'x'))
+             .map_or(0, |p| p + 1);
+         if head[start ..].starts_with("0x") {
+-            let start = match head[.. start].ends_with(['-', '+']) {
++            let start = match false {
+                 true => start - 1,
+                 false => start,
+             };

@@ -1,0 +1,14 @@
+diff --git a/bench-layout/src/lib.rs b/bench-layout/src/lib.rs
+index d969d09..48b8b60 100644
+--- a/bench-layout/src/lib.rs
++++ b/bench-layout/src/lib.rs
+@@ -199,8 +199,7 @@ pub fn disasm_rel(bench: &str, machine: &str, run: &str, arm: &str, symbol: &str
+         .join(DISASM_DIR)
+         .join(machine)
+         .join(run)
+-        .join(arm)
+-        .join(format!("{symbol}.txt"))
++        .join(format!("{arm}.{symbol}.txt"))
+ }
+ 
+ /// Which part of a run an old-layout file holds.

@@ -1,0 +1,3 @@
+# recorded on a1d1fd3; replay: git apply m22-help-without-disasm.patch && cargo test -p mockspace --lib -- every_surface_listing
+test entry::clean_tests::every_surface_listing_the_bench_subcommands_names_each_one ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1870 filtered out; finished in 0.07s

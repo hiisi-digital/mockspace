@@ -74,11 +74,12 @@ fn fixture(root: &Path) {
     write(&root.join(DEP), DEP_OK);
 
     let repo = env!("CARGO_MANIFEST_DIR");
+    let repo_toml = mockspace_manifest::toml_text::basic_string(repo);
     let benches = root.join("mock/benches");
     write(
         &benches.join("bench.toml"),
         &format!(
-            "[build]\nmockspace = '{{ path = \"{repo}\" }}'\nopt-level = 0\nlto = \"off\"\n\
+            "[build]\nmockspace = '{{ path = {repo_toml} }}'\nopt-level = 0\nlto = \"off\"\n\
              codegen-units = 16\n\n[timing]\npasses = 1\nruns_per_pass = 20\nbatch_size = 5\n\
              harness_runs = 1\ncooldowns_ms = [0]\n"
         ),

@@ -36,8 +36,11 @@ use std::fs;
 use std::path::Path;
 
 fn dep_spec() -> String {
-    let lint_rules = concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules");
-    format!("{{ package = \"mockspace-lint-rules\", path = \"{lint_rules}\" }}")
+    let lint_rules = mockspace_manifest::toml_text::basic_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/lint-rules"
+    ));
+    format!("{{ package = \"mockspace-lint-rules\", path = {lint_rules} }}")
 }
 
 fn fixture(root: &Path) -> std::path::PathBuf {

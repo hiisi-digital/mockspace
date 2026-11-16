@@ -1,0 +1,3 @@
+# recorded on a1d1fd3; replay: git apply m26-dumpbin-exports-reader.patch && cargo test -p mockspace-bench-harness --lib -- disasm library
+test disasm::tests_tool::dumpbin_and_gnu_read_one_export_table_and_cut_the_same_function ... FAILED
+test result: FAILED. 43 passed; 1 failed; 1 ignored; 0 measured; 238 filtered out; finished in 1.99s

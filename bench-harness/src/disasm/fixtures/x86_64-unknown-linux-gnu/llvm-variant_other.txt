@@ -1,0 +1,158 @@
+
+libvariant_other.so:	file format elf64-x86-64
+
+Disassembly of section .init:
+
+0000000000001528 <_init>:
+    1528:      	endbr64
+    152c:      	subq	$0x8, %rsp
+    1530:      	movq	0x1319(%rip), %rax      # 0x2850 <__gmon_start__+0x2850>
+    1537:      	testq	%rax, %rax
+    153a:      	je	0x153e <_init+0x16>
+    153c:      	callq	*%rax
+    153e:      	addq	$0x8, %rsp
+    1542:      	retq
+
+Disassembly of section .fini:
+
+0000000000001544 <_fini>:
+    1544:      	endbr64
+    1548:      	subq	$0x8, %rsp
+    154c:      	addq	$0x8, %rsp
+    1550:      	retq
+
+Disassembly of section .text:
+
+0000000000001560 <deregister_tm_clones>:
+    1560:      	leaq	0x2329(%rip), %rdi      # 0x3890 <__dso_handle>
+    1567:      	leaq	0x2322(%rip), %rax      # 0x3890 <__dso_handle>
+    156e:      	cmpq	%rdi, %rax
+    1571:      	je	0x1588 <deregister_tm_clones+0x28>
+    1573:      	movq	0x12de(%rip), %rax      # 0x2858 <__gmon_start__+0x2858>
+    157a:      	testq	%rax, %rax
+    157d:      	je	0x1588 <deregister_tm_clones+0x28>
+    157f:      	jmpq	*%rax
+    1581:      	nopl	(%rax)
+    1588:      	retq
+    1589:      	nopl	(%rax)
+
+0000000000001590 <register_tm_clones>:
+    1590:      	leaq	0x22f9(%rip), %rdi      # 0x3890 <__dso_handle>
+    1597:      	leaq	0x22f2(%rip), %rsi      # 0x3890 <__dso_handle>
+    159e:      	subq	%rdi, %rsi
+    15a1:      	movq	%rsi, %rax
+    15a4:      	shrq	$0x3f, %rsi
+    15a8:      	sarq	$0x3, %rax
+    15ac:      	addq	%rax, %rsi
+    15af:      	sarq	%rsi
+    15b2:      	je	0x15c8 <register_tm_clones+0x38>
+    15b4:      	movq	0x12a5(%rip), %rax      # 0x2860 <__gmon_start__+0x2860>
+    15bb:      	testq	%rax, %rax
+    15be:      	je	0x15c8 <register_tm_clones+0x38>
+    15c0:      	jmpq	*%rax
+    15c2:      	nopw	(%rax,%rax)
+    15c8:      	retq
+    15c9:      	nopl	(%rax)
+
+00000000000015d0 <__do_global_dtors_aux>:
+    15d0:      	endbr64
+    15d4:      	cmpb	$0x0, 0x22bd(%rip)      # 0x3898 <completed.0>
+    15db:      	jne	0x1608 <__do_global_dtors_aux+0x38>
+    15dd:      	pushq	%rbp
+    15de:      	cmpq	$0x0, 0x1282(%rip)      # 0x2868 <__gmon_start__+0x2868>
+    15e6:      	movq	%rsp, %rbp
+    15e9:      	je	0x15f7 <__do_global_dtors_aux+0x27>
+    15eb:      	movq	0x229e(%rip), %rdi      # 0x3890 <__dso_handle>
+    15f2:      	callq	0x16d0 <__cxa_finalize@plt>
+    15f7:      	callq	0x1560 <deregister_tm_clones>
+    15fc:      	movb	$0x1, 0x2295(%rip)      # 0x3898 <completed.0>
+    1603:      	popq	%rbp
+    1604:      	retq
+    1605:      	nopl	(%rax)
+    1608:      	retq
+    1609:      	nopl	(%rax)
+
+0000000000001610 <frame_dummy>:
+    1610:      	endbr64
+    1614:      	jmp	0x1590 <register_tm_clones>
+    1619:      	int3
+    161a:      	int3
+    161b:      	int3
+    161c:      	int3
+    161d:      	int3
+    161e:      	int3
+    161f:      	int3
+
+0000000000001620 <_RNvCsiFkcPgBsqU6_13variant_other7do_work>:
+    1620:      	movzbl	(%rdi), %ecx
+    1623:      	movabsq	$0x100000001b3, %rax    # imm = 0x100000001B3
+    162d:      	imulq	%rax, %rcx
+    1631:      	movzbl	0x1(%rdi), %edx
+    1635:      	xorq	%rcx, %rdx
+    1638:      	imulq	%rax, %rdx
+    163c:      	movzbl	0x2(%rdi), %ecx
+    1640:      	xorq	%rdx, %rcx
+    1643:      	imulq	%rax, %rcx
+    1647:      	movzbl	0x3(%rdi), %edx
+    164b:      	xorq	%rcx, %rdx
+    164e:      	imulq	%rax, %rdx
+    1652:      	movzbl	0x4(%rdi), %ecx
+    1656:      	xorq	%rdx, %rcx
+    1659:      	imulq	%rax, %rcx
+    165d:      	movzbl	0x5(%rdi), %edx
+    1661:      	xorq	%rcx, %rdx
+    1664:      	imulq	%rax, %rdx
+    1668:      	movzbl	0x6(%rdi), %ecx
+    166c:      	xorq	%rdx, %rcx
+    166f:      	imulq	%rax, %rcx
+    1673:      	movzbl	0x7(%rdi), %edx
+    1677:      	xorq	%rcx, %rdx
+    167a:      	imulq	%rax, %rdx
+    167e:      	movq	%rdx, (%rsi)
+    1681:      	retq
+    1682:      	int3
+    1683:      	int3
+    1684:      	int3
+    1685:      	int3
+    1686:      	int3
+    1687:      	int3
+    1688:      	int3
+    1689:      	int3
+    168a:      	int3
+    168b:      	int3
+    168c:      	int3
+    168d:      	int3
+    168e:      	int3
+    168f:      	int3
+
+0000000000001690 <bench_entry>:
+    1690:      	cmpq	$0x8, %rdx
+    1694:      	jne	0x16a3 <bench_entry+0x13>
+    1696:      	pushq	%rax
+    1697:      	callq	0x1620 <_RNvCsiFkcPgBsqU6_13variant_other7do_work>
+    169c:      	xorl	%eax, %eax
+    169e:      	addq	$0x8, %rsp
+    16a2:      	retq
+    16a3:      	leaq	-0x121a(%rip), %rax     # 0x490 <__gmon_start__+0x490>
+    16aa:      	retq
+    16ab:      	int3
+    16ac:      	int3
+    16ad:      	int3
+    16ae:      	int3
+    16af:      	int3
+
+00000000000016b0 <bench_name>:
+    16b0:      	leaq	-0x1227(%rip), %rax     # 0x490 <__gmon_start__+0x490>
+    16b7:      	retq
+
+Disassembly of section .plt:
+
+00000000000016c0 <.plt>:
+    16c0:      	pushq	0x11b2(%rip)            # 0x2878 <_GLOBAL_OFFSET_TABLE_+0x8>
+    16c6:      	jmpq	*0x11b4(%rip)           # 0x2880 <_GLOBAL_OFFSET_TABLE_+0x10>
+    16cc:      	nopl	(%rax)
+
+00000000000016d0 <__cxa_finalize@plt>:
+    16d0:      	jmpq	*0x11b2(%rip)           # 0x2888 <_GLOBAL_OFFSET_TABLE_+0x18>
+    16d6:      	pushq	$0x0
+    16db:      	jmp	0x16c0 <.plt>

@@ -1,0 +1,4 @@
+# recorded on a1d1fd3; replay: git apply m07-macho-spelling.patch && cargo test -p mockspace-bench-harness --lib -- disasm library
+test disasm::tests_live::every_tool_here_finds_bench_entry_in_a_linked_library_of_every_format_it_reads ... FAILED
+test disasm::tests_tool::every_format_is_read_off_its_own_leading_bytes_and_spells_a_symbol_its_way ... FAILED
+test result: FAILED. 42 passed; 2 failed; 1 ignored; 0 measured; 238 filtered out; finished in 2.25s

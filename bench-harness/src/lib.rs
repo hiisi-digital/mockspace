@@ -53,6 +53,7 @@ pub mod error;
 pub mod harness;
 pub mod history;
 pub mod inline_bench;
+pub mod library;
 pub mod matrix;
 pub mod meta_report;
 pub mod perf;

@@ -20,8 +20,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 fn dep_spec() -> String {
-    let lint_rules = concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules");
-    format!("{{ package = \"mockspace-lint-rules\", path = \"{lint_rules}\" }}")
+    let lint_rules = mockspace_manifest::toml_text::basic_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/lint-rules"
+    ));
+    format!("{{ package = \"mockspace-lint-rules\", path = {lint_rules} }}")
 }
 
 /// The target directory this test binary was built in: the engine binary sits in its profile
