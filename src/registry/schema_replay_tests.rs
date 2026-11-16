@@ -61,7 +61,7 @@ impl Fixture {
 
     fn check(&self, program: &Path) -> SchemaCheck {
         let _serial = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let disk = DiskVerdicts::open_in(self.store.path(), "pack").expect("a store");
+        let disk = DiskVerdicts::open_in(self.store.path(), Path::new("/repo"), "pack").expect("a store");
         let store = &disk;
         let namespaces: Vec<RegistryNamespace> = vec![builtin_vocab()];
         check_schemas_with(&OsString::from(program), self.root.path(), &namespaces, Some(store))
@@ -203,7 +203,7 @@ fn a_registry_file_naming_its_own_schema_is_never_replayed() {
 #[test]
 fn an_environment_that_names_another_config_gives_no_key() {
     let f = Fixture::new();
-    let disk = DiskVerdicts::open_in(f.store.path(), "pack").expect("a store");
+    let disk = DiskVerdicts::open_in(f.store.path(), Path::new("/repo"), "pack").expect("a store");
     let store = &disk;
     assert!(input_key(store, f.root.path(), b"taplo 0.10.0", false).is_some(), "the control: a plain tree has a key");
     assert!(input_key(store, f.root.path(), b"taplo 0.10.0", true).is_none());
@@ -254,7 +254,7 @@ fn taplo_installed() -> bool {
 }
 
 fn real_check(root: &Path, store: &Path) -> bool {
-    let disk = DiskVerdicts::open_in(store, "pack").expect("a store");
+    let disk = DiskVerdicts::open_in(store, Path::new("/repo"), "pack").expect("a store");
     let store = &disk;
     let namespaces: Vec<RegistryNamespace> = vec![builtin_vocab()];
     matches!(

@@ -95,6 +95,10 @@ mockspace-manifest = { path = "mockspace-manifest", features = ["_internal-test-
 # resolve.
 toml_edit = { version = "0.22", features = ["serde"] }
 
+# The cross-process verdict store tests cap a child's file size to cut a write part way.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = "0.2"
+
 # Release profile applies workspace-wide.
 [profile.release]
 opt-level = 3
