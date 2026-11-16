@@ -319,12 +319,13 @@ The `mockup-workflow` skill: gate boundaries and the validation pipeline. The `m
                 r#"## Benches: a number that feeds a decision comes from `{mock_dir}/benches/`
 
 - No timing of your own: no `Instant::now()` loop, criterion, `cargo bench`, or timer in a sketch or test.
-- `cargo mock bench add <bench> <arm>`, code in `<bench>/arms/<arm>/src/lib.rs`, config in `<bench>/bench.toml`, then `cargo mock bench run [<bench>...]`.
+- `cargo mock bench add <bench> <arm> [--kind <kind>]`, code in `<bench>/arms/<arm>/src/lib.rs`, config in `<bench>/bench.toml`, then `cargo mock bench run [<bench>...]`.
 - The generated driver is the only runner; custom behaviour goes in `{mock_dir}/benches/src/lib.rs` (`pub fn hooks() -> Hooks`).
 - Every bench declares `kind = "snapshot"` or `kind = "tracking"` in its `bench.toml`; the lint `a-bench-keeps-the-contract-of-its-kind` and `run` refuse one that does not, or breaks its contract.
-- Snapshot: isolated reference code. Arms build only from crates and files inside `{mock_dir}/benches/`; `cargo mock bench freeze <bench>` writes its `snapshot.lock`, and its files never change after. Its source is the lock's id.
-- Tracking: builds against living code, an arm reaching a crate outside the bench tree; no lock. Each arm's source is the digest of every file it builds from, in the tree and out, and of its resolved dependency versions.
-- Source and system (machine class plus target) are variant axes of every row: rows of one source on one system are one point, every run adds to it, and no system is compared with another. A move at the same point is `DRIFT`; a new point slower or faster than the one before is `REGRESSION` or `FASTER`. Every run is kept; nothing is skipped as already measured.
+- No kind is defaulted: `cargo mock bench init` and `add` of a new bench take `--kind snapshot` or `--kind tracking`.
+- Snapshot: isolated reference code. Arms build only from crates and files inside `{mock_dir}/benches/`; `cargo mock bench freeze <bench>` writes its `snapshot.lock` over those files and the root `bench.toml` values it runs under (`[timing]`, `[build]` profile, its workloads), which never change after. Its source is the lock's id.
+- Tracking: builds against living code, an arm reaching a crate outside the bench tree; no lock. Each arm's source is the digest of every file it builds from, every path package `cargo metadata` resolved for it (workspace-inherited ones and their root manifest included), the same setup values, and its resolved dependency versions.
+- Source and system are variant axes of every row; the system is the machine class plus the target and CPU features cargo says the arms were built for, config files included, `target-cpu=native` named by its CPU. Rows of one source on one system are one point, every run adds to it, and no system is compared with another. An unknown source (`""`, `-`) is never a point. A move at the same point is `DRIFT`; a new point slower or faster than the one before is `REGRESSION` or `FASTER`. Every run is kept; nothing is skipped as already measured.
 - Changed reference code is a new snapshot beside the old one, never an edit under its lock. `cargo mock bench migrate --kinds` declares an older tree's kinds.
 - Results: `{mock_dir}/benches/results/<bench>/<sweep>_n<point>/<machine class>/<run>/`, committed, never replaced.
 - Quote a number with its run directory and profile.
