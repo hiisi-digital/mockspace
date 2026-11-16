@@ -251,6 +251,19 @@ const COMMANDS: &[Cmd] = &[
                   written it. Exit status 0 passes, 1 refuses.",
     },
     Cmd {
+        name:    "rows-gate",
+        summary: "gate a commit of console-direct registry rows by the registry check alone",
+        args:    &[],
+        help:    "Run by the generated pre-commit hook when only registry rows are staged. \
+                  When every staged file is a registry file whose tables all belong to \
+                  namespaces marked `console_direct = true`, it runs the registry check and \
+                  nothing else (no lint pack is loaded, no crate parsed, no lint run) and \
+                  records the staged tree in `mockspace/gated-rows` under the git directory, \
+                  so the pre-push hook passes a range of such commits without linting it \
+                  again. Exit status 0 passes, 1 refuses, 3 says the staged set is more than \
+                  such rows and the hook runs its usual gate.",
+    },
+    Cmd {
         name:    "bench",
         summary: "run the bench harness",
         args:    &[],
