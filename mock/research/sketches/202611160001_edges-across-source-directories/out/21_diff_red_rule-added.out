@@ -1,0 +1,10 @@
+$ diff -r <sketch>/fixture-red <sketch>/fixture-rule-added
+Only in <sketch>/fixture-red/mock: Cargo.lock
+diff -r <sketch>/fixture-red/mock/mockspace.toml <sketch>/fixture-rule-added/mock/mockspace.toml
+12a13,17
+> 
+> # The one rule this fixture adds to fixture-red: the drawing may take the simulation.
+> [lints.an-edge-goes-where-its-directories-allow.rule.render-takes-sim]
+> from = "render"
+> to = "sim"
+exit: 1

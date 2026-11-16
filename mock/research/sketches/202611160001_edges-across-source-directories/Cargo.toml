@@ -1,0 +1,19 @@
+[package]
+name = "sketch-edges-across-source-directories"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MPL-2.0"
+description = "Sketch: a lint that judges a dependency edge by the pair of source directories it joins"
+
+# Its own workspace root, so neither `mock/` nor the repository root claims it.
+[workspace]
+
+[dependencies]
+# The v1 engine as a library: its config reader (`src_dirs`, `[lints.<name>.rule.*]`) and its
+# discovery, so the fixture is read the way a consumer's tree is.
+mockspace = { path = "../../../.." }
+# The view and the lint traits, under the name a project's lints and a pack use for them.
+mockspace-lint-rules = { path = "../../../../lint-rules" }
+# The type `View::toml` hands back, named so the manifest walk can be written as functions.
+toml = { version = "0.8", default-features = false, features = ["parse"] }
