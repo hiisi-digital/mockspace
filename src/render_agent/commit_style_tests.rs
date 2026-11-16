@@ -175,3 +175,76 @@ fn a_consumer_template_can_read_the_same_set() {
         format!("Types: {}", get("commit_types"))
     );
 }
+
+fn examples_under(pairs: &[(&str, &str)]) -> (mockspace_lint_rules::LintConfig, Vec<String>) {
+    let params: std::collections::HashMap<String, String> = pairs
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect();
+    let policy = mockspace_lint_rules::commit_subject::CommitSubject::from_params(Some(&params));
+    let mut cfg = mockspace_lint_rules::LintConfig::empty();
+    cfg.params.insert("commit-subject".to_string(), params);
+    let lines = commit_style::examples_text(&policy)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    (cfg, lines)
+}
+
+#[test]
+fn an_example_never_breaks_the_printed_rules_at_any_length_limit_or_separator() {
+    // Mutant: the examples are fixed text, so `refactor: extract platform detection to shared
+    // crate` (52 characters) is printed under `max_subject = 40` and every limit up to 51.
+    let root = Path::new("/tmp");
+    for separator in [": ", " - ", ":: ", "/"] {
+        for case in ["lower", "sentence", "any"] {
+            for max in (0 ..= 80usize).chain([200]) {
+                let max_text = max.to_string();
+                let pairs = [
+                    ("max_subject", max_text.as_str()),
+                    ("separator", separator),
+                    ("subject_case", case),
+                    ("extra_types", "research,deploy"),
+                ];
+                let (cfg, lines) = examples_under(&pairs);
+                for line in &lines {
+                    let ctx = MessageContext::new(
+                        MessageDomain::CommitMessage,
+                        AgentMode::Assistant,
+                        line,
+                        "COMMIT_EDITMSG",
+                        root,
+                    );
+                    let found: Vec<_> =
+                        mockspace_lint_rules::check_message_with_extra(&ctx, Some(&cfg), &[])
+                            .into_iter()
+                            .filter_map(|e| e.finding_kind)
+                            .collect();
+                    assert!(
+                        found.is_empty(),
+                        "`{line}` under max {max}, separator {separator:?}, case {case}: {found:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn an_example_is_dropped_only_when_no_candidate_fits_the_limit() {
+    // Mutant: a long limit drops examples, or a short one keeps the long text.
+    let (_, all) = examples_under(&[]);
+    assert_eq!(all.len(), 8, "{all:?}");
+    assert!(all.iter().any(|l| l == "release: 0.4.0"), "{all:?}");
+    // 51 is under the 52 the `refactor` text takes: the line is there, shorter
+    let (_, tight) = examples_under(&[("max_subject", "51")]);
+    assert_eq!(tight.len(), 8, "{tight:?}");
+    assert!(!tight.iter().any(|l| l.contains("extract platform")), "{tight:?}");
+    assert!(tight.iter().any(|l| l.starts_with("refactor: ")), "{tight:?}");
+    // a limit shorter than every candidate leaves a type with no example
+    let (_, none) = examples_under(&[("max_subject", "4")]);
+    assert!(none.is_empty(), "{none:?}");
+    // a limit off keeps every fixed text
+    let (_, free) = examples_under(&[("max_subject", "0")]);
+    assert!(free.iter().any(|l| l.contains("extract platform")), "{free:?}");
+}

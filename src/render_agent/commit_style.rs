@@ -11,7 +11,10 @@
 //! built from the same parameters through the lint's own parsing, so a type a project adds is
 //! in the gate and in the documentation by the one edit, and the two cannot list different sets.
 
+use std::path::Path;
+
 use mockspace_lint_rules::commit_subject::{CommitSubject, SubjectCase};
+use mockspace_lint_rules::{AgentMode, MessageContext, MessageDomain, MessageLint};
 
 use crate::config::Config;
 
@@ -89,16 +92,19 @@ pub(crate) fn breaking_text(policy: &CommitSubject) -> String {
 /// One example subject per permitted type, each passing the gate under this policy.
 ///
 /// The messages for the default types are fixed and the rest say what to write, since the skill
-/// cannot know what a project's own type means. Each is built from the policy's separator and
-/// case, so an example never breaks the rules printed above it.
+/// cannot know what a project's own type means. Each candidate is built from the policy's
+/// separator and case and then read by the lint itself, so an example never breaks the rules
+/// printed above it: where the project's length limit is too short for the message, a shorter
+/// candidate stands in, and a type with no candidate that fits has no example.
 pub(crate) fn examples_text(policy: &CommitSubject) -> String {
     let sep = policy.separator();
     let upper = policy.subject_case() == SubjectCase::Sentence;
+    let root = Path::new(".");
     policy
         .types()
         .iter()
-        .map(|ty| {
-            let message = match ty.as_str() {
+        .filter_map(|ty| {
+            let first = match ty.as_str() {
                 "feat" => "add catalogue entry validation",
                 "fix" => "handle missing loadout in project load",
                 "refactor" => "extract platform detection to shared crate",
@@ -106,10 +112,25 @@ pub(crate) fn examples_text(policy: &CommitSubject) -> String {
                 "test" => "add pipeline manifest tests",
                 "chore" => "bump clap to 4.5",
                 "bench" => "land the linux results of the wide matrix",
+                "release" => "0.4.0",
                 _ => "describe the change in one line",
             };
-            let message = if upper { capitalised(message) } else { message.to_string() };
-            format!("{ty}{sep}{message}")
+            [first, "describe the change", "change it", "x"]
+                .into_iter()
+                .map(|message| {
+                    let message = if upper { capitalised(message) } else { message.to_string() };
+                    format!("{ty}{sep}{message}")
+                })
+                .find(|subject| {
+                    let ctx = MessageContext::new(
+                        MessageDomain::CommitMessage,
+                        AgentMode::Assistant,
+                        subject,
+                        "example",
+                        root,
+                    );
+                    policy.check_message(&ctx).is_empty()
+                })
         })
         .collect::<Vec<_>>()
         .join("\n")
