@@ -1,0 +1,10 @@
+$ diff -r <sketch>/fixture-red <sketch>/fixture-header-form
+diff -r <sketch>/fixture-red/mock/render/fx-draw/Cargo.toml <sketch>/fixture-header-form/mock/render/fx-draw/Cargo.toml
+9c9,12
+< fx-ground.workspace = true
+---
+> 
+> # The same forbidden edge as fixture-red, written as a table header instead of a key.
+> [dependencies.fx-ground]
+> path = "../../sim/fx-ground"
+exit: 1
