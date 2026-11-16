@@ -5,11 +5,12 @@
 
 //! The disassembly of one named function of one arm, written as a results
 //! artifact to commit beside the runs:
-//! `results/<bench>/disasm/<machine class>/<run>/<arm>.<symbol>.txt`
+//! `results/<bench>/disasm/<machine class>/<run>/<arm>/<symbol>.txt`
 //! ([`mockspace_bench_layout::disasm_rel`]). Written once and never replaced,
-//! like a run: a second artifact of the same second and commit takes the next
-//! `-<k>` suffix.
+//! like a run: the file is created only where none is, and a second artifact
+//! of the same second and commit takes the next `-<k>` suffix on its run.
 
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use mockspace_bench_layout as layout;
@@ -48,35 +49,49 @@ pub fn write_symbol_artifact(
         }
     }
     let found = disassemble_symbol(library, symbol)?;
-    let path = free_path(place, symbol);
-    let parent = path.parent().unwrap_or(place.results_root);
-    std::fs::create_dir_all(parent).map_err(|e| format!("creating {}: {e}", parent.display()))?;
-    std::fs::write(&path, artifact_text(place, symbol, library, &found))
-        .map_err(|e| format!("writing {}: {e}", path.display()))?;
-    Ok(path)
+    write_new(place, symbol, |run| {
+        artifact_text(place, run, symbol, library, &found)
+    })
 }
 
-/// The first path for `place` and `symbol` no file holds yet.
-fn free_path(place: &ArtifactPlace<'_>, symbol: &str) -> PathBuf {
-    let at = |run: &str| {
-        place.results_root.join(layout::disasm_rel(
-            place.bench,
-            place.machine,
-            run,
-            place.arm,
-            symbol,
-        ))
-    };
-    std::iter::once(place.run.to_string())
-        .chain((2 ..).map(|k| format!("{}-{k}", place.run)))
-        .map(|run| at(&run))
-        .find(|p| !p.exists())
-        .unwrap_or_else(|| at(place.run))
+/// Create the artifact under the first run id (`place.run`, then `-2`, `-3`,
+/// ...) whose file does not exist yet, with `text` of the run id it took.
+/// Creation is exclusive, so a file another writer made in between is never
+/// replaced: that run id is passed over.
+fn write_new(
+    place: &ArtifactPlace<'_>,
+    symbol: &str,
+    text: impl Fn(&str) -> String,
+) -> Result<PathBuf, String> {
+    let runs =
+        std::iter::once(place.run.to_string()).chain((2 ..).map(|k| format!("{}-{k}", place.run)));
+    for run in runs {
+        let rel = layout::disasm_rel(place.bench, place.machine, &run, place.arm, symbol);
+        let path = place.results_root.join(rel);
+        let parent = path.parent().unwrap_or(place.results_root);
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("creating {}: {e}", parent.display()))?;
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                file.write_all(text(&run).as_bytes())
+                    .map_err(|e| format!("writing {}: {e}", path.display()))?;
+                return Ok(path);
+            },
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("creating {}: {e}", path.display())),
+        }
+    }
+    unreachable!("the run ids are endless")
 }
 
 /// The artifact: what was read, with what, on what, then the tool's own text.
 fn artifact_text(
     place: &ArtifactPlace<'_>,
+    run: &str,
     symbol: &str,
     library: &Path,
     found: &SymbolDisassembly,
@@ -97,7 +112,6 @@ fn artifact_text(
         program = found.tool.program.display(),
         flavour = found.tool.flavour,
         machine = place.machine,
-        run = place.run,
         text = found.text,
     )
 }
@@ -117,20 +131,49 @@ mod tests {
     }
 
     #[test]
-    fn a_second_artifact_of_the_same_run_id_takes_the_next_suffix() {
+    fn a_second_artifact_takes_the_next_run_and_says_which() {
         let root = mockspace_manifest::scratch::tempdir().unwrap();
         let p = place(root.path(), "hash", "scalar");
-        let first = free_path(&p, "bench_entry");
-        assert!(first.ends_with("hash/disasm/linux-x86_64-c4-container-intel/20261116T093000Z-1a2b3c4/scalar.bench_entry.txt"));
-        std::fs::create_dir_all(first.parent().unwrap()).unwrap();
-        std::fs::write(&first, "taken").unwrap();
-        let second = free_path(&p, "bench_entry");
+        let text = |run: &str| format!("run: {run}\n");
+        let first = write_new(&p, "bench_entry", text).unwrap();
         assert!(
-            second.ends_with("20261116T093000Z-1a2b3c4-2/scalar.bench_entry.txt"),
+            first.ends_with(
+                "hash/disasm/linux-x86_64-c4-container-intel/20261116T093000Z-1a2b3c4/scalar/bench_entry.txt"
+            ),
+            "{}",
+            first.display()
+        );
+        let second = write_new(&p, "bench_entry", text).unwrap();
+        assert!(
+            second.ends_with("20261116T093000Z-1a2b3c4-2/scalar/bench_entry.txt"),
             "{}",
             second.display()
         );
+        assert_eq!(
+            std::fs::read_to_string(&second).unwrap(),
+            "run: 20261116T093000Z-1a2b3c4-2\n",
+            "the artifact names the run directory it sits in"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&first).unwrap(),
+            "run: 20261116T093000Z-1a2b3c4\n",
+            "the first stands untouched"
+        );
         assert!(layout::is_run_id("20261116T093000Z-1a2b3c4-2"));
+    }
+
+    #[test]
+    fn a_file_already_there_is_never_replaced() {
+        let root = mockspace_manifest::scratch::tempdir().unwrap();
+        let p = place(root.path(), "hash", "scalar");
+        let taken = root
+            .path()
+            .join(layout::disasm_rel(p.bench, p.machine, p.run, p.arm, "f"));
+        std::fs::create_dir_all(taken.parent().unwrap()).unwrap();
+        std::fs::write(&taken, "someone else's").unwrap();
+        let written = write_new(&p, "f", |_| "mine".to_string()).unwrap();
+        assert_ne!(written, taken);
+        assert_eq!(std::fs::read_to_string(&taken).unwrap(), "someone else's");
     }
 
     #[test]

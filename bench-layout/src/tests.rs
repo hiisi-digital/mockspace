@@ -103,15 +103,25 @@ fn a_disassembly_artifact_is_in_the_layout_and_no_run_reader_takes_it_for_a_run(
     assert_eq!(
         path,
         Path::new(
-            "results/hash/disasm/linux-x86_64-c4-container-intel/20261115T093000Z-1a2b3c4/scalar.bench_entry.txt"
+            "results/hash/disasm/linux-x86_64-c4-container-intel/20261115T093000Z-1a2b3c4/scalar/bench_entry.txt"
         )
+    );
+    // Dotted names cannot meet: arm `a.b` with `c` and arm `a` with `b.c` are
+    // two files.
+    let m = "linux-x86_64-c4-container-intel";
+    let r = "20261115T093000Z-1a2b3c4";
+    assert_ne!(
+        disasm_rel("hash", m, r, "a.b", "c"),
+        disasm_rel("hash", m, r, "a", "b.c")
     );
     assert_eq!(at(path.to_str().unwrap()), Placement::InLayout);
     for bad in [
-        "results/hash/disasm/my-laptop/20261115T093000Z-1a2b3c4/scalar.bench_entry.txt",
-        "results/hash/disasm/linux-x86_64-c4-container-intel/latest/scalar.bench_entry.txt",
-        "results/hash/disasm/linux-x86_64-c4-container-intel/20261115T093000Z-1a2b3c4/scalar.bench_entry.s",
-        "results/hash/disasm/scalar.bench_entry.txt",
+        "results/hash/disasm/my-laptop/20261115T093000Z-1a2b3c4/scalar/bench_entry.txt",
+        "results/hash/disasm/linux-x86_64-c4-container-intel/latest/scalar/bench_entry.txt",
+        "results/hash/disasm/linux-x86_64-c4-container-intel/20261115T093000Z-1a2b3c4/scalar/bench_entry.s",
+        "results/hash/disasm/linux-x86_64-c4-container-intel/20261115T093000Z-1a2b3c4/scalar.bench_entry.txt",
+        "results/hash/disasm/linux-x86_64-c4-container-intel/20261115T093000Z-1a2b3c4/.x/bench_entry.txt",
+        "results/hash/disasm/scalar/bench_entry.txt",
     ] {
         assert_eq!(at(bad), Placement::Stray(Stray::InResults), "{bad}");
     }

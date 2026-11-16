@@ -72,7 +72,7 @@ fn a_named_function_of_an_arm_is_written_as_a_results_artifact() {
     );
     assert!(rel.starts_with("results/hash/disasm"), "{}", rel.display());
     assert!(
-        rel.ends_with("plusone.plusone_kernel.txt"),
+        rel.ends_with("plusone/plusone_kernel.txt"),
         "{}",
         rel.display()
     );

@@ -56,7 +56,7 @@ pub const VOID_DIR: &str = "void";
 /// A run in progress, staged until it completes.
 pub const INFLIGHT_DIR: &str = ".inflight";
 /// The directory under a bench's results that holds disassembly artifacts,
-/// `results/<bench>/disasm/<machine class>/<run>/<arm>.<symbol>.txt`: one
+/// `results/<bench>/disasm/<machine class>/<run>/<arm>/<symbol>.txt`: one
 /// named function of one arm, as the host's disassembler printed it. Not a
 /// cell, so no run reader takes it for one.
 pub const DISASM_DIR: &str = "disasm";
@@ -191,7 +191,7 @@ pub fn run_rel(bench: &str, cell: &Cell, machine: &str, run: &str) -> PathBuf {
 }
 
 /// The file a disassembly artifact of `symbol` in `arm` takes, relative to the
-/// results root: `<bench>/disasm/<machine>/<run>/<arm>.<symbol>.txt`. Written
+/// results root: `<bench>/disasm/<machine>/<run>/<arm>/<symbol>.txt`. Written
 /// once, like a run, and never replaced.
 #[must_use]
 pub fn disasm_rel(bench: &str, machine: &str, run: &str, arm: &str, symbol: &str) -> PathBuf {
@@ -199,7 +199,8 @@ pub fn disasm_rel(bench: &str, machine: &str, run: &str, arm: &str, symbol: &str
         .join(DISASM_DIR)
         .join(machine)
         .join(run)
-        .join(format!("{arm}.{symbol}.txt"))
+        .join(arm)
+        .join(format!("{symbol}.txt"))
 }
 
 /// Which part of a run an old-layout file holds.
@@ -370,12 +371,13 @@ fn place_in_results(parts: &[&str]) -> Placement {
     match parts {
         [_, file] if *file == INDEX_FILE => Placement::InLayout,
         [_, dir, ..] if *dir == VOID_DIR || *dir == INFLIGHT_DIR => Placement::InLayout,
-        [_, bench, dir, machine, run, file]
+        [_, bench, dir, machine, run, arm, file]
             if *dir == DISASM_DIR
                 && is_name(bench)
                 && is_machine_class(machine)
                 && is_run_id(run)
-                && file.ends_with(".txt") =>
+                && is_name(arm)
+                && file.strip_suffix(".txt").is_some_and(is_name) =>
         {
             Placement::InLayout
         },

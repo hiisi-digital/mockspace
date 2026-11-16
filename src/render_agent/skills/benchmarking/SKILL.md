@@ -38,7 +38,7 @@ pub fn hooks() -> Hooks {
 - `report`: renders a report for a run that has none; never touches one the run wrote.
 - `test`: `cargo test` in every crate under the bench tree (a bare `cargo test` at the root sees only the driver). A name narrows by path; flags after it go to cargo. Counts print with their profile.
 - `cargo mock bench migrate [--machine-class <class>] [--dry-run]`: moves an older results layout into run directories.
-- `cargo mock bench disasm <bench> <arm> <symbol>`: builds the arm as a run does and writes one exported function's disassembly to `results/<bench>/disasm/<machine class>/<run>/<arm>.<symbol>.txt`, tracked, never replaced. The evidence that a function compiles to what its design claims; name the symbol as `#[no_mangle]` or `#[export_name]` gives it.
+- `cargo mock bench disasm <bench> <arm> <symbol>`: builds the arm as a run does and writes one exported function's disassembly to `results/<bench>/disasm/<machine class>/<run>/<arm>/<symbol>.txt`, tracked, never replaced. The evidence that a function compiles to what its design claims; name the symbol as `#[no_mangle]` or `#[export_name]` gives it.
 
 ## The layers
 
