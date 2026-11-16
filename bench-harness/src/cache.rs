@@ -424,8 +424,8 @@ fn load_csv(path: &str) -> Result<Vec<Sample>, std::io::Error> {
 /// Write samples to a cache CSV. Rows come from [`crate::sample::to_csv`] and
 /// are read back by [`crate::sample::load_samples_csv`]: one writer and one
 /// reader for the whole crate, because this file used to carry byte-identical
-/// copies of both and a fifth parser in `meta_report` had already drifted off
-/// the shared column order.
+/// copies of both and a parser elsewhere had already drifted off the shared
+/// column order.
 fn write_csv(path: &str, samples: &[Sample]) -> std::io::Result<()> {
     std::fs::write(path, crate::sample::to_csv(samples))
 }

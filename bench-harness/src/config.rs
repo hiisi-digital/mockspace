@@ -290,8 +290,9 @@ pub struct BenchSection {
     #[serde(default)]
     pub normalise:   Option<NormaliseSection>,
     /// What the bench is for: `"snapshot"`, isolated reference code frozen by
-    /// its lock, or `"tracking"`, built against living code and read across
-    /// commits ([`Kind`]). Optional only so the refusal can name the bench:
+    /// its lock, or `"tracking"`, built against living code and read along
+    /// the source points its arms measured ([`Kind`]). Optional only so the
+    /// refusal can name the bench:
     /// [`crate::tree::load`] refuses a bench that declares none, and
     /// [`BenchManifest::for_size`] refuses one too.
     #[serde(default, deserialize_with = "de_kind", serialize_with = "ser_kind")]

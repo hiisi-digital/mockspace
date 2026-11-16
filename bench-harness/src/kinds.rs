@@ -113,12 +113,31 @@ impl Sources {
 
     /// The sources this process was handed, none where it was run by hand.
     #[must_use]
-    pub fn from_env() -> Sources {
-        std::env::var(mockspace_bench_layout::SOURCES_ENV)
-            .ok()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .map(|t| Sources::parse(&t))
-            .unwrap_or_default()
+    pub fn from_env() -> Option<Sources> {
+        let path = std::env::var(mockspace_bench_layout::SOURCES_ENV).ok()?;
+        Some(Sources::parse(&std::fs::read_to_string(path).unwrap_or_default()))
+    }
+
+    /// The source a variant of a bench of `kind` records: the one `handed`
+    /// names for its library at `path`, or the bench's own (`fallback`, the
+    /// lock id of a snapshot). A tracking arm that a run handed sources to and
+    /// that finds none of its own is refused rather than written as unknown,
+    /// since its rows could then stand at no point.
+    pub fn for_variant(
+        handed: Option<&Sources>,
+        kind: mockspace_bench_layout::Kind,
+        root: &Path,
+        path: &Path,
+        fallback: &str,
+    ) -> Result<String, String> {
+        match (handed.and_then(|s| s.of(root, path)), handed, kind) {
+            (Some(s), _, _) => Ok(s.to_string()),
+            (None, Some(_), mockspace_bench_layout::Kind::Tracking) => Err(format!(
+                "`mock bench run` handed no source for {}, so its rows could stand at no point",
+                path.display()
+            )),
+            _ => Ok(fallback.to_string()),
+        }
     }
 
     /// The source of the arm built at `path`, relative to `root` (the bench

@@ -104,10 +104,9 @@ pub struct BenchResult {
 }
 
 /// The header row every sample CSV in this crate carries. One definition: the
-/// column order is a contract between four places (this writer, this reader,
-/// the cache's copy, and the cross-bench report's parser) and it drifted, so
-/// `meta_report` read column 6 and called it `algo_ns` when column 6 is
-/// `e2e_ns`.
+/// column order is a contract between this writer and every reader, and a
+/// reader with its own copy of it once read column 6 as `algo_ns` when column
+/// 6 is `e2e_ns`.
 pub const CSV_HEADER: &str = "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,\
 bridge_ns,batch_count,score,input_tag,instructions,cycles,setup_ns,first_ns,digest\n";
 

@@ -56,7 +56,6 @@ pub mod history;
 pub mod inline_bench;
 pub mod kinds;
 pub mod matrix;
-pub mod meta_report;
 pub mod perf;
 pub mod quality;
 pub mod report;
@@ -64,6 +63,7 @@ pub mod sample;
 pub mod spec;
 pub mod staging;
 pub mod summary;
+pub mod system;
 pub mod test_baseline;
 pub mod test_sample;
 pub mod tree;
@@ -121,10 +121,6 @@ pub use error::BenchError;
 pub use harness::{run_orchestrator, run_worker, run_worker_validate, write_run};
 pub use history::{
     HistoryEntry,
-    Regression,
-    detect_regressions,
-    detect_regressions_window,
-    flagged_for as regression_flagged_for,
     ledger_commit,
     load_cell as load_cell_history,
     parse_summary,
@@ -132,7 +128,6 @@ pub use history::{
     timestamp,
 };
 pub use inline_bench::{InlineResult, InlineVariant, run_inline};
-pub use meta_report::{VariantResult, classify_family, generate as generate_meta_report};
 pub use perf::{
     PerfSnapshot,
     available as perf_available,

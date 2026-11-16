@@ -383,7 +383,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
     let machine = crate::env::collect_run_env().machine_class;
     // The system every row of this run records, the target included, and the
     // tracking arms' sources `mock bench run` handed over.
-    let system = crate::env::current_system(&machine);
+    let system = crate::system::of_this_run(&machine);
     let sources = crate::kinds::Sources::from_env();
     let tree_root = std::env::current_dir().unwrap_or_default();
     let run = unique_run_id(
@@ -528,9 +528,17 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
             config.variant_paths.retain(|path| {
                 match harness::preflight_variant(&path.display().to_string(), n, output_size) {
                     Ok(name) => {
-                        let source = sources.of(&tree_root, path).unwrap_or(&config.source);
-                        variant_source.insert(name, source.to_string());
-                        true
+                        match crate::kinds::Sources::for_variant(sources.as_ref(), config.kind, &tree_root, path, &config.source) {
+                            Ok(source) => {
+                                variant_source.insert(name, source);
+                                true
+                            },
+                            Err(reason) => {
+                                eprintln!("  REFUSED: {} :: {reason}", path.display());
+                                refused_failure = true;
+                                false
+                            },
+                        }
                     },
                     Err(reason) => {
                         eprintln!("  REFUSED: {} :: {reason}", path.display());

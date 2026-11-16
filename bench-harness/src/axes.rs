@@ -6,8 +6,8 @@
 //! The axes a bench's history is split on, and what is read along them.
 //!
 //! A summary row stands at a point: its variant (the arm), the system that ran
-//! it ([`crate::env::system`]) and the source it measured (a snapshot's lock
-//! id, a tracking arm's digest of what it built from). Each is an [`Axis`],
+//! it ([`crate::system`]) and the source it measured (a snapshot's lock id, a
+//! tracking arm's digest of what it built from). Each is an [`Axis`],
 //! and every reading of history goes through them the same way for both
 //! kinds of bench:
 //!
@@ -19,14 +19,18 @@
 //! - a run at the point the history already has is checked for drift, which
 //!   is the machine, the toolchain or the harness moving, since the code did
 //!   not; a run at a new point is compared with the point before it, and the
-//!   step is a regression or a speed-up of the code.
+//!   step is a regression or a speed-up of the code;
+//! - a source that names no code ([`known`]) is no point: its rows are kept
+//!   and counted, and never read against or as history;
+//! - a point is every row of its source ([`point_of`]), for the run's label
+//!   and the trail alike, so the two never disagree on the same rows.
 //!
 //! Grouping is for reading only. Nothing here drops, merges or skips a row:
 //! every run is written as its own run directory and read back whole.
 
 use std::collections::BTreeMap;
 
-use crate::history::{HistoryEntry, detect_regressions};
+use crate::history::HistoryEntry;
 
 /// One axis of a row's point.
 pub trait Axis {
@@ -128,12 +132,38 @@ pub enum Move {
     Level,
 }
 
+/// Whether a source names code. A row written before the `source` column
+/// (`""`) or by a driver no source was handed to
+/// ([`TRACKING_SOURCE`](mockspace_bench_layout::TRACKING_SOURCE), `-`) names
+/// none: it is never a point, never a step, and never a history anything is
+/// read against. Such rows are kept, written and counted, and only left out
+/// of the reading.
+#[must_use]
+pub fn known(source: &str) -> bool {
+    !source.is_empty() && source != mockspace_bench_layout::TRACKING_SOURCE
+}
+
+/// The point of `source` among `rows`: every one of them at that source. The
+/// one definition of a point, which the trail and the run's standing share.
+#[must_use]
+pub fn point_of(rows: &[HistoryEntry], source: &str) -> Point {
+    let at = on::<Source>(rows, source);
+    Point {
+        source:    source.to_string(),
+        runs:      at.len(),
+        median_ns: median(at.iter().map(|e| e.median_ns).collect()),
+        ci_lo_ns:  median(at.iter().map(|e| e.ci_lo_ns).collect()),
+        ci_hi_ns:  median(at.iter().map(|e| e.ci_hi_ns).collect()),
+    }
+}
+
 /// The source points of one variant on one system in the order the runs
 /// visited them, a source returning to after another counting again where
-/// it returns, each with every row of its source.
+/// it returns, each with every row of its source ([`point_of`]). Rows whose
+/// source is not [`known`] are not points and are passed over.
 #[must_use]
 pub fn trail(rows: &[HistoryEntry]) -> Vec<Point> {
-    let mut by_time: Vec<&HistoryEntry> = rows.iter().collect();
+    let mut by_time: Vec<&HistoryEntry> = rows.iter().filter(|e| known(&e.source)).collect();
     by_time.sort_by_key(|e| e.timestamp);
     let mut order: Vec<&str> = Vec::new();
     for e in by_time {
@@ -141,19 +171,7 @@ pub fn trail(rows: &[HistoryEntry]) -> Vec<Point> {
             order.push(&e.source);
         }
     }
-    order
-        .into_iter()
-        .map(|s| {
-            let at = on::<Source>(rows, s);
-            Point {
-                source:    s.to_string(),
-                runs:      at.len(),
-                median_ns: median(at.iter().map(|e| e.median_ns).collect()),
-                ci_lo_ns:  median(at.iter().map(|e| e.ci_lo_ns).collect()),
-                ci_hi_ns:  median(at.iter().map(|e| e.ci_hi_ns).collect()),
-            }
-        })
-        .collect()
+    order.into_iter().map(|s| point_of(rows, s)).collect()
 }
 
 /// How `to` stands against `from`.
@@ -200,39 +218,38 @@ impl Finding {
 }
 
 /// Read a run's rows, `current`, against the history of its cell: each row
-/// against the earlier rows of its own variant and system. Where the latest
-/// earlier row is of the same source, the run adds to that point and a move
-/// is [`DRIFT`]; where it is of another, the run starts a new point and is
-/// compared with that one, [`REGRESSION`] or [`FASTER`].
+/// against the earlier rows of its own variant and system whose source is
+/// [`known`], by the same points the trail reads. Where the latest of them is
+/// of the row's own source, the run adds to that point, and its row against
+/// the whole point is [`DRIFT`] where they part; where it is of another, the
+/// run starts a new point, and the row against the whole point before is
+/// [`REGRESSION`] or [`FASTER`]. A row whose own source is unknown is read
+/// against nothing.
 #[must_use]
 pub fn standing(current: &[HistoryEntry], historical: &[HistoryEntry]) -> Vec<Finding> {
     let mut out = Vec::new();
-    for cur in current {
-        let own: Vec<HistoryEntry> =
-            on::<System>(&on::<Variant>(historical, &cur.variant), &cur.system)
-                .into_iter()
-                .filter(|h| h.mode == cur.mode && h.n == cur.n && h.timestamp < cur.timestamp)
-                .collect();
+    for cur in current.iter().filter(|c| known(&c.source)) {
+        let own: Vec<HistoryEntry> = on::<System>(&on::<Variant>(historical, &cur.variant), &cur.system)
+            .into_iter()
+            .filter(|h| h.mode == cur.mode && h.n == cur.n && h.timestamp < cur.timestamp && known(&h.source))
+            .collect();
         let Some(latest) = own.iter().max_by_key(|h| h.timestamp) else {
             continue;
         };
-        let against = latest.source.clone();
-        let Some(r) =
-            detect_regressions(std::slice::from_ref(cur), &on::<Source>(&own, &against)).pop()
-        else {
-            continue;
+        let against = point_of(&own, &latest.source);
+        let now = point_of(std::slice::from_ref(cur), &cur.source);
+        let label = match (against.source == cur.source, step(&against, &now)) {
+            (_, Move::Level) => continue,
+            (true, _) => DRIFT,
+            (false, Move::Slower) => REGRESSION,
+            (false, Move::Faster) => FASTER,
         };
-        let label = match (against == cur.source, r.flagged, r.improved) {
-            (true, true, _) | (true, _, true) => DRIFT,
-            (false, true, _) => REGRESSION,
-            (false, _, true) => FASTER,
-            _ => continue,
-        };
+        let pct = if against.median_ns > 0.0 { (now.median_ns - against.median_ns) / against.median_ns * 100.0 } else { 0.0 };
         out.push(Finding {
             variant: cur.variant.clone(),
             label,
-            pct: r.pct_change,
-            against,
+            pct,
+            against: against.source,
         });
     }
     out
@@ -310,6 +327,10 @@ pub fn render_trails(rows: &[HistoryEntry]) -> String {
                     p.runs,
                     fmt_ns(p.median_ns)
                 ));
+            }
+            let unknown = own.iter().filter(|e| !known(&e.source)).count();
+            if unknown > 0 {
+                md.push_str(&format!("| {system} | {variant} | unknown | {unknown} | | not a point |\n"));
             }
         }
     }

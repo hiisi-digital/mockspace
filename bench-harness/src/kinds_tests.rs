@@ -32,6 +32,22 @@ fn a_snapshot_s_source_is_its_lock_and_a_missing_lock_is_refused() {
     assert_ne!(source_of("b", Kind::Snapshot, Some(&lock)).unwrap(), first);
 }
 
+/// A tracking arm a run handed sources to and that finds none is refused,
+/// never written as unknown; a snapshot arm takes its lock id; a driver run by
+/// hand, handed nothing, writes the fallback.
+#[test]
+fn a_tracking_arm_with_no_handed_source_is_refused() {
+    let handed = Sources::parse("target/mock-arms/live/a\taaaaaaaaaaaa\n");
+    let root = Path::new("/tree");
+    let a = Path::new("/tree/target/mock-arms/live/a/release/liba.so");
+    let b = Path::new("/tree/target/mock-arms/live/b/release/libb.so");
+    assert_eq!(Sources::for_variant(Some(&handed), Kind::Tracking, root, a, "-").unwrap(), "aaaaaaaaaaaa");
+    let err = Sources::for_variant(Some(&handed), Kind::Tracking, root, b, "-").unwrap_err();
+    assert!(err.contains("handed no source"), "{err}");
+    assert_eq!(Sources::for_variant(Some(&handed), Kind::Snapshot, root, b, "lockid").unwrap(), "lockid");
+    assert_eq!(Sources::for_variant(None, Kind::Tracking, root, b, "-").unwrap(), "-");
+}
+
 /// Each arm's library path finds its own source by prefix, an arm nested
 /// under another's prefix finds its own, `..` in either spelling is taken
 /// out, and a path no line names finds none.

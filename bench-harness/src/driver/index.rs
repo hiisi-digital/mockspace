@@ -167,7 +167,7 @@ mod tests {
                 median_ns:  median,
                 ci_lo_ns:   median,
                 ci_hi_ns:   median,
-                source:     "-".into(),
+                source:     "aaaaaaaaaaaa".into(),
                 system:     String::new(),
             };
             std::fs::write(dir.join(layout::SUMMARY_FILE), crate::history::render_summary(&[e])).unwrap();
@@ -193,7 +193,7 @@ mod tests {
             "{md}"
         );
         // each system's points: both of M's runs stand at one source, so one point of two runs
-        assert!(md.contains(&format!("| {M} | fnv1a | `-` | 2 | 11 ns |  |")), "{md}");
+        assert!(md.contains(&format!("| {M} | fnv1a | `aaaaaaaaaaaa` | 2 | 11 ns |  |")), "{md}");
         assert!(md.contains(&format!("hash/hash_n64/{M}/20261114T000000Z-a/report.md")), "{md}");
         std::fs::remove_dir_all(&root).ok();
     }
