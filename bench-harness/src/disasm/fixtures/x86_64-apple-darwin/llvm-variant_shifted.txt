@@ -3,121 +3,121 @@ libvariant_shifted.dylib:	file format mach-o 64-bit x86-64
 
 Disassembly of section __TEXT,__text:
 
-0000000000000340 <__RNvCs5LmqaUxnnpo_15variant_shifted7do_work>:
-     340:      	pushq	%rbp
-     341:      	movq	%rsp, %rbp
-     344:      	movzbl	(%rdi), %eax
-     347:      	movl	%eax, %ecx
-     349:      	shll	$0x5, %ecx
-     34c:      	subq	%rax, %rcx
-     34f:      	movzbl	0x1(%rdi), %eax
-     353:      	addq	%rcx, %rax
-     356:      	movl	%eax, %ecx
-     358:      	shll	$0x5, %ecx
-     35b:      	subq	%rax, %rcx
-     35e:      	movzbl	0x2(%rdi), %eax
-     362:      	addq	%rcx, %rax
-     365:      	movl	%eax, %ecx
-     367:      	shll	$0x5, %ecx
-     36a:      	subq	%rax, %rcx
-     36d:      	movzbl	0x3(%rdi), %eax
-     371:      	addq	%rcx, %rax
-     374:      	movq	%rax, %rcx
-     377:      	shlq	$0x5, %rcx
-     37b:      	subq	%rax, %rcx
-     37e:      	movzbl	0x4(%rdi), %eax
-     382:      	addq	%rcx, %rax
-     385:      	movq	%rax, %rcx
-     388:      	shlq	$0x5, %rcx
-     38c:      	subq	%rax, %rcx
-     38f:      	movzbl	0x5(%rdi), %eax
-     393:      	addq	%rcx, %rax
-     396:      	movq	%rax, %rcx
-     399:      	shlq	$0x5, %rcx
-     39d:      	subq	%rax, %rcx
-     3a0:      	movzbl	0x6(%rdi), %eax
-     3a4:      	addq	%rcx, %rax
-     3a7:      	movq	%rax, %rcx
-     3aa:      	shlq	$0x5, %rcx
-     3ae:      	subq	%rax, %rcx
-     3b1:      	movzbl	0x7(%rdi), %eax
-     3b5:      	addq	%rcx, %rax
-     3b8:      	movq	%rax, %rcx
-     3bb:      	shlq	$0x5, %rcx
-     3bf:      	subq	%rax, %rcx
-     3c2:      	movq	%rcx, (%rsi)
-     3c5:      	popq	%rbp
-     3c6:      	retq
-     3c7:      	nopw	(%rax,%rax)
+00000000000002e0 <__RNvCs5LmqaUxnnpo_15variant_shifted7do_work>:
+     2e0:      	pushq	%rbp
+     2e1:      	movq	%rsp, %rbp
+     2e4:      	movzbl	(%rdi), %eax
+     2e7:      	movl	%eax, %ecx
+     2e9:      	shll	$0x5, %ecx
+     2ec:      	subq	%rax, %rcx
+     2ef:      	movzbl	0x1(%rdi), %eax
+     2f3:      	addq	%rcx, %rax
+     2f6:      	movl	%eax, %ecx
+     2f8:      	shll	$0x5, %ecx
+     2fb:      	subq	%rax, %rcx
+     2fe:      	movzbl	0x2(%rdi), %eax
+     302:      	addq	%rcx, %rax
+     305:      	movl	%eax, %ecx
+     307:      	shll	$0x5, %ecx
+     30a:      	subq	%rax, %rcx
+     30d:      	movzbl	0x3(%rdi), %eax
+     311:      	addq	%rcx, %rax
+     314:      	movq	%rax, %rcx
+     317:      	shlq	$0x5, %rcx
+     31b:      	subq	%rax, %rcx
+     31e:      	movzbl	0x4(%rdi), %eax
+     322:      	addq	%rcx, %rax
+     325:      	movq	%rax, %rcx
+     328:      	shlq	$0x5, %rcx
+     32c:      	subq	%rax, %rcx
+     32f:      	movzbl	0x5(%rdi), %eax
+     333:      	addq	%rcx, %rax
+     336:      	movq	%rax, %rcx
+     339:      	shlq	$0x5, %rcx
+     33d:      	subq	%rax, %rcx
+     340:      	movzbl	0x6(%rdi), %eax
+     344:      	addq	%rcx, %rax
+     347:      	movq	%rax, %rcx
+     34a:      	shlq	$0x5, %rcx
+     34e:      	subq	%rax, %rcx
+     351:      	movzbl	0x7(%rdi), %eax
+     355:      	addq	%rcx, %rax
+     358:      	movq	%rax, %rcx
+     35b:      	shlq	$0x5, %rcx
+     35f:      	subq	%rax, %rcx
+     362:      	movq	%rcx, (%rsi)
+     365:      	popq	%rbp
+     366:      	retq
+     367:      	nopw	(%rax,%rax)
 
-00000000000003d0 <_bench_align>:
-     3d0:      	pushq	%rbp
-     3d1:      	movq	%rsp, %rbp
-     3d4:      	movq	%rdi, %rax
-     3d7:      	movq	%rsi, %rdi
-     3da:      	andq	$0xf, %rdi
-     3de:      	je	0x473 <_bench_align+0xa3>
-     3e4:      	movabsq	$-0x61c8864680b583eb, %rcx ## imm = 0x9E3779B97F4A7C15
-     3ee:      	movl	%esi, %edx
-     3f0:      	andl	$0x3, %edx
-     3f3:      	cmpl	$0x4, %edi
-     3f6:      	jae	0x3fc <_bench_align+0x2c>
-     3f8:      	xorl	%edi, %edi
-     3fa:      	jmp	0x460 <_bench_align+0x90>
-     3fc:      	andl	$0xc, %esi
-     3ff:      	xorl	%edi, %edi
-     401:      	nopw	%cs:(%rax,%rax)
-     40b:      	nopl	(%rax,%rax)
-     410:      	movq	%rdi, %r8
-     413:      	rolq	$0x11, %rax
-     417:      	imulq	%rcx, %rax
-     41b:      	xorq	%rdi, %rax
-     41e:      	rolq	$0x11, %rax
-     422:      	imulq	%rcx, %rax
-     426:      	incq	%rdi
-     429:      	xorq	%rax, %rdi
-     42c:      	rolq	$0x11, %rdi
-     430:      	imulq	%rcx, %rdi
-     434:      	leaq	0x2(%r8), %r9
-     438:      	xorq	%rdi, %r9
-     43b:      	leaq	0x4(%r8), %rdi
-     43f:      	rolq	$0x11, %r9
-     443:      	imulq	%rcx, %r9
-     447:      	addq	$0x3, %r8
-     44b:      	movq	%r8, %rax
-     44e:      	xorq	%r9, %rax
-     451:      	cmpq	%rsi, %rdi
-     454:      	jne	0x410 <_bench_align+0x40>
-     456:      	testq	%rdx, %rdx
-     459:      	je	0x473 <_bench_align+0xa3>
-     45b:      	nopl	(%rax,%rax)
-     460:      	rolq	$0x11, %rax
-     464:      	imulq	%rcx, %rax
-     468:      	xorq	%rdi, %rax
-     46b:      	incq	%rdi
-     46e:      	decq	%rdx
-     471:      	jne	0x460 <_bench_align+0x90>
-     473:      	popq	%rbp
-     474:      	retq
-     475:      	nopw	%cs:(%rax,%rax)
-     47f:      	nop
+0000000000000370 <_bench_align>:
+     370:      	pushq	%rbp
+     371:      	movq	%rsp, %rbp
+     374:      	movq	%rdi, %rax
+     377:      	movq	%rsi, %rdi
+     37a:      	andq	$0xf, %rdi
+     37e:      	je	0x413 <_bench_align+0xa3>
+     384:      	movabsq	$-0x61c8864680b583eb, %rcx ## imm = 0x9E3779B97F4A7C15
+     38e:      	movl	%esi, %edx
+     390:      	andl	$0x3, %edx
+     393:      	cmpl	$0x4, %edi
+     396:      	jae	0x39c <_bench_align+0x2c>
+     398:      	xorl	%edi, %edi
+     39a:      	jmp	0x400 <_bench_align+0x90>
+     39c:      	andl	$0xc, %esi
+     39f:      	xorl	%edi, %edi
+     3a1:      	nopw	%cs:(%rax,%rax)
+     3ab:      	nopl	(%rax,%rax)
+     3b0:      	movq	%rdi, %r8
+     3b3:      	rolq	$0x11, %rax
+     3b7:      	imulq	%rcx, %rax
+     3bb:      	xorq	%rdi, %rax
+     3be:      	rolq	$0x11, %rax
+     3c2:      	imulq	%rcx, %rax
+     3c6:      	incq	%rdi
+     3c9:      	xorq	%rax, %rdi
+     3cc:      	rolq	$0x11, %rdi
+     3d0:      	imulq	%rcx, %rdi
+     3d4:      	leaq	0x2(%r8), %r9
+     3d8:      	xorq	%rdi, %r9
+     3db:      	leaq	0x4(%r8), %rdi
+     3df:      	rolq	$0x11, %r9
+     3e3:      	imulq	%rcx, %r9
+     3e7:      	addq	$0x3, %r8
+     3eb:      	movq	%r8, %rax
+     3ee:      	xorq	%r9, %rax
+     3f1:      	cmpq	%rsi, %rdi
+     3f4:      	jne	0x3b0 <_bench_align+0x40>
+     3f6:      	testq	%rdx, %rdx
+     3f9:      	je	0x413 <_bench_align+0xa3>
+     3fb:      	nopl	(%rax,%rax)
+     400:      	rolq	$0x11, %rax
+     404:      	imulq	%rcx, %rax
+     408:      	xorq	%rdi, %rax
+     40b:      	incq	%rdi
+     40e:      	decq	%rdx
+     411:      	jne	0x400 <_bench_align+0x90>
+     413:      	popq	%rbp
+     414:      	retq
+     415:      	nopw	%cs:(%rax,%rax)
+     41f:      	nop
 
-0000000000000480 <_bench_entry>:
-     480:      	cmpq	$0x8, %rdx
-     484:      	jne	0x493 <_bench_entry+0x13>
-     486:      	pushq	%rbp
-     487:      	movq	%rsp, %rbp
-     48a:      	callq	0x340 <__RNvCs5LmqaUxnnpo_15variant_shifted7do_work>
-     48f:      	xorl	%eax, %eax
-     491:      	popq	%rbp
-     492:      	retq
-     493:      	leaq	0x13(%rip), %rax        ## 0x4ad
-     49a:      	retq
-     49b:      	nopl	(%rax,%rax)
+0000000000000420 <_bench_entry>:
+     420:      	cmpq	$0x8, %rdx
+     424:      	jne	0x433 <_bench_entry+0x13>
+     426:      	pushq	%rbp
+     427:      	movq	%rsp, %rbp
+     42a:      	callq	0x2e0 <__RNvCs5LmqaUxnnpo_15variant_shifted7do_work>
+     42f:      	xorl	%eax, %eax
+     431:      	popq	%rbp
+     432:      	retq
+     433:      	leaq	0x13(%rip), %rax        ## 0x44d
+     43a:      	retq
+     43b:      	nopl	(%rax,%rax)
 
-00000000000004a0 <_bench_name>:
-     4a0:      	pushq	%rbp
-     4a1:      	movq	%rsp, %rbp
-     4a4:      	leaq	0x2(%rip), %rax         ## 0x4ad
-     4ab:      	popq	%rbp
-     4ac:      	retq
+0000000000000440 <_bench_name>:
+     440:      	pushq	%rbp
+     441:      	movq	%rsp, %rbp
+     444:      	leaq	0x2(%rip), %rax         ## 0x44d
+     44b:      	popq	%rbp
+     44c:      	retq

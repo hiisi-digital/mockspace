@@ -3,54 +3,54 @@ libvariant_other.dylib:	file format mach-o 64-bit x86-64
 
 Disassembly of section __TEXT,__text:
 
-00000000000002f0 <__RNvCsiFkcPgBsqU6_13variant_other7do_work>:
-     2f0:      	pushq	%rbp
-     2f1:      	movq	%rsp, %rbp
-     2f4:      	movzbl	(%rdi), %ecx
-     2f7:      	movabsq	$0x100000001b3, %rax    ## imm = 0x100000001B3
-     301:      	imulq	%rax, %rcx
-     305:      	movzbl	0x1(%rdi), %edx
-     309:      	xorq	%rcx, %rdx
-     30c:      	imulq	%rax, %rdx
-     310:      	movzbl	0x2(%rdi), %ecx
-     314:      	xorq	%rdx, %rcx
-     317:      	imulq	%rax, %rcx
-     31b:      	movzbl	0x3(%rdi), %edx
-     31f:      	xorq	%rcx, %rdx
-     322:      	imulq	%rax, %rdx
-     326:      	movzbl	0x4(%rdi), %ecx
-     32a:      	xorq	%rdx, %rcx
-     32d:      	imulq	%rax, %rcx
-     331:      	movzbl	0x5(%rdi), %edx
-     335:      	xorq	%rcx, %rdx
-     338:      	imulq	%rax, %rdx
-     33c:      	movzbl	0x6(%rdi), %ecx
-     340:      	xorq	%rdx, %rcx
-     343:      	imulq	%rax, %rcx
-     347:      	movzbl	0x7(%rdi), %edx
-     34b:      	xorq	%rcx, %rdx
-     34e:      	imulq	%rax, %rdx
-     352:      	movq	%rdx, (%rsi)
-     355:      	popq	%rbp
-     356:      	retq
-     357:      	nopw	(%rax,%rax)
+0000000000000290 <__RNvCsiFkcPgBsqU6_13variant_other7do_work>:
+     290:      	pushq	%rbp
+     291:      	movq	%rsp, %rbp
+     294:      	movzbl	(%rdi), %ecx
+     297:      	movabsq	$0x100000001b3, %rax    ## imm = 0x100000001B3
+     2a1:      	imulq	%rax, %rcx
+     2a5:      	movzbl	0x1(%rdi), %edx
+     2a9:      	xorq	%rcx, %rdx
+     2ac:      	imulq	%rax, %rdx
+     2b0:      	movzbl	0x2(%rdi), %ecx
+     2b4:      	xorq	%rdx, %rcx
+     2b7:      	imulq	%rax, %rcx
+     2bb:      	movzbl	0x3(%rdi), %edx
+     2bf:      	xorq	%rcx, %rdx
+     2c2:      	imulq	%rax, %rdx
+     2c6:      	movzbl	0x4(%rdi), %ecx
+     2ca:      	xorq	%rdx, %rcx
+     2cd:      	imulq	%rax, %rcx
+     2d1:      	movzbl	0x5(%rdi), %edx
+     2d5:      	xorq	%rcx, %rdx
+     2d8:      	imulq	%rax, %rdx
+     2dc:      	movzbl	0x6(%rdi), %ecx
+     2e0:      	xorq	%rdx, %rcx
+     2e3:      	imulq	%rax, %rcx
+     2e7:      	movzbl	0x7(%rdi), %edx
+     2eb:      	xorq	%rcx, %rdx
+     2ee:      	imulq	%rax, %rdx
+     2f2:      	movq	%rdx, (%rsi)
+     2f5:      	popq	%rbp
+     2f6:      	retq
+     2f7:      	nopw	(%rax,%rax)
 
-0000000000000360 <_bench_entry>:
-     360:      	cmpq	$0x8, %rdx
-     364:      	jne	0x373 <_bench_entry+0x13>
-     366:      	pushq	%rbp
-     367:      	movq	%rsp, %rbp
-     36a:      	callq	0x2f0 <__RNvCsiFkcPgBsqU6_13variant_other7do_work>
-     36f:      	xorl	%eax, %eax
-     371:      	popq	%rbp
-     372:      	retq
-     373:      	leaq	0x13(%rip), %rax        ## 0x38d
-     37a:      	retq
-     37b:      	nopl	(%rax,%rax)
+0000000000000300 <_bench_entry>:
+     300:      	cmpq	$0x8, %rdx
+     304:      	jne	0x313 <_bench_entry+0x13>
+     306:      	pushq	%rbp
+     307:      	movq	%rsp, %rbp
+     30a:      	callq	0x290 <__RNvCsiFkcPgBsqU6_13variant_other7do_work>
+     30f:      	xorl	%eax, %eax
+     311:      	popq	%rbp
+     312:      	retq
+     313:      	leaq	0x13(%rip), %rax        ## 0x32d
+     31a:      	retq
+     31b:      	nopl	(%rax,%rax)
 
-0000000000000380 <_bench_name>:
-     380:      	pushq	%rbp
-     381:      	movq	%rsp, %rbp
-     384:      	leaq	0x2(%rip), %rax         ## 0x38d
-     38b:      	popq	%rbp
-     38c:      	retq
+0000000000000320 <_bench_name>:
+     320:      	pushq	%rbp
+     321:      	movq	%rsp, %rbp
+     324:      	leaq	0x2(%rip), %rax         ## 0x32d
+     32b:      	popq	%rbp
+     32c:      	retq

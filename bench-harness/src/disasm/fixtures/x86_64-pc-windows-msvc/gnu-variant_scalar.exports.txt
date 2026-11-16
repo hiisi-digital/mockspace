@@ -6,7 +6,7 @@ Characteristics 0x2022
 	large address aware
 	DLL
 
-Time/Date		Mon Nov 16 10:13:22 2026
+Time/Date		Mon Nov 16 10:19:02 2026
 Magic			020b	(PE32+)
 MajorLinkerVersion	14
 MinorLinkerVersion	0
@@ -97,5 +97,5 @@ There is a debug directory in .rdata at 0x180002010
 
 Type                Size     Rva      Offset
   2        CodeView 0000002b 0000202c 0000062c
-(format RSDS signature 8a12a93111205e444c4c44205044422e age 1 pdb variant_scalar.pdb)
+(format RSDS signature bc43f228c0cd17d64c4c44205044422e age 1 pdb variant_scalar.pdb)
 

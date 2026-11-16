@@ -284,3 +284,81 @@ fn linked_libraries_of_every_target_are_read_and_compared_live() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The recorded `variant_scalar` libraries of every format (`disasm/fixtures/`),
+/// read by every disassembler here that reads that format: `bench_entry` is
+/// found under the format's own spelling, a missing symbol is an error, and
+/// the format is read off the file's real bytes. A GNU `objdump` built without
+/// a format's backend (`objdump -i` does not list it) is not asked about it.
+#[test]
+fn every_tool_here_finds_bench_entry_in_a_linked_library_of_every_format_it_reads() {
+    use super::format::ObjectFormat;
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/disasm/fixtures");
+    let libraries = [
+        (
+            "x86_64-unknown-linux-gnu/libvariant_scalar.so",
+            ObjectFormat::Elf,
+            "elf64-x86-64",
+        ),
+        (
+            "aarch64-unknown-linux-gnu/libvariant_scalar.so",
+            ObjectFormat::Elf,
+            "elf64-littleaarch64",
+        ),
+        (
+            "x86_64-apple-darwin/libvariant_scalar.dylib",
+            ObjectFormat::MachO,
+            "mach-o-x86-64",
+        ),
+        (
+            "aarch64-apple-darwin/libvariant_scalar.dylib",
+            ObjectFormat::MachO,
+            "mach-o-arm64",
+        ),
+        (
+            "x86_64-pc-windows-msvc/variant_scalar.dll",
+            ObjectFormat::Coff {
+                i386:  false,
+                image: true,
+            },
+            "pei-x86-64",
+        ),
+    ];
+    let gnu_targets = Command::new("objdump")
+        .arg("-i")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let mut asked = 0;
+    for tool in tools() {
+        for (rel, format, gnu_name) in &libraries {
+            let lib = fixtures.join(rel);
+            assert_eq!(ObjectFormat::of_file(&lib), Some(*format), "{rel}");
+            let reads = match tool.flavour {
+                Flavour::Llvm => true,
+                Flavour::Gnu => gnu_targets.split_whitespace().any(|t| t == *gnu_name),
+                Flavour::Otool => *format == ObjectFormat::MachO,
+                Flavour::Dumpbin => matches!(format, ObjectFormat::Coff { .. }),
+            };
+            if !reads {
+                continue;
+            }
+            asked += 1;
+            let asm = tool
+                .symbol(&lib, "bench_entry")
+                .unwrap_or_else(|e| panic!("{:?} on {rel}: {e}", tool.flavour));
+            let lines = normalize_disasm(&asm, tool.flavour).lines().count();
+            assert!(
+                (2 .. 30).contains(&lines),
+                "{:?} on {rel}: {asm}",
+                tool.flavour
+            );
+            assert!(
+                tool.symbol(&lib, "bench_entry_absent").is_err(),
+                "{:?} on {rel}",
+                tool.flavour
+            );
+        }
+    }
+    assert!(asked > 0, "no tool here reads any of the recorded formats");
+}

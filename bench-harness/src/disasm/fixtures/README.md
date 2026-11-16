@@ -43,11 +43,17 @@ The commands, per target `<t>`, crate `<c>` and source `<s>`:
 
 ```sh
 rustc --target <t> --crate-type cdylib --crate-name <c> -O --edition 2021 \
-  -C panic=abort <linker args> -o <library> <s>
+  -C panic=abort <linker args> [-C link-arg=/BASE:0x190000000] -o <library> <s>
 llvm-objdump -d --no-show-raw-insn <library> > <t>/llvm-<c>.txt
 objdump -d --no-show-raw-insn <library> > <t>/gnu-<c>.txt
 objdump -p <library> > <t>/gnu-<c>.exports.txt
+cp <library> <t>/   # variant_scalar only
 ```
+
+The `variant_scalar` library of each target is kept beside its text, so the
+live tests read real bytes of every format with whatever tools a host has.
+Mach-O libraries are linked with `-install_name @rpath/<library>`, so no
+build path is written into them.
 
 Not recorded here: `otool` and `dumpbin` output, a 32-bit PE image, and any
 library linked against `std`. `tests_live.rs` reads the host's own `std`
