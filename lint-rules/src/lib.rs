@@ -87,6 +87,7 @@ mod no_primitive_key;
 mod no_raw_error_outside_primitives;
 mod no_self_define;
 mod no_todo;
+pub mod commit_subject;
 pub mod path_filter;
 pub mod round_id;
 pub mod lints_read_through_the_view;
@@ -1691,6 +1692,9 @@ pub fn duplicate_lint_names(pack: &LintPack) -> Vec<String> {
     for l in all_repo_lints() {
         bump(l.name());
     }
+    for l in all_message_lints() {
+        bump(l.name());
+    }
     for l in &pack.crate_lints {
         bump(l.name());
     }
@@ -1782,21 +1786,36 @@ pub fn all_repo_lints() -> Vec<Box<dyn RepoLint>> {
     ]
 }
 
-/// Run all message lints plus any custom ones, returning violations.
+/// Returns all registered message lints: the ones that judge an authored message
+/// rather than a tree.
+///
+/// One today, the commit subject lint, with the defaults its project has not
+/// overridden.
+pub fn all_message_lints() -> Vec<Box<dyn MessageLint>> {
+    vec![Box::new(commit_subject::CommitSubject::default())]
+}
+
+/// Run the builtin message lints plus any a pack supplies, returning violations.
 ///
 /// A lint declaring domains runs only for those; declaring none runs for all, so
 /// an attribution rule covers every surface without enumerating them.
 ///
-/// mockspace ships no message lints of its own: a commit convention is not
-/// something an engine should impose, so every one arrives from a pack the project
-/// chose to import.
+/// The builtins run first and are configured from `overrides`, the way the other
+/// builtin sets are, so `[lints.commit-subject]` reaches the lint that checks the
+/// subject. A pack's lints are already configured by [`LintPack::configure_from`].
 pub fn check_message_with_extra(
     ctx: &MessageContext,
     overrides: Option<&LintConfig>,
     extra_lints: &[Box<dyn MessageLint>],
 ) -> Vec<LintError> {
+    let mut builtin = all_message_lints();
+    if let Some(cfg) = overrides {
+        for lint in &mut builtin {
+            cfg.apply_params_to(lint.as_mut());
+        }
+    }
     let mut errors = Vec::new();
-    for lint in extra_lints.iter().map(Box::as_ref) {
+    for lint in builtin.iter().chain(extra_lints).map(Box::as_ref) {
         let domains = lint.domains();
         if !domains.is_empty() && !domains.contains(&ctx.domain) {
             continue;

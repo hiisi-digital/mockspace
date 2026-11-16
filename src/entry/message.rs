@@ -95,11 +95,9 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, mode: LintMode, req: &Request) 
         return ExitCode::FAILURE;
     }
 
-    // No message lints means the project imported no pack that ships one, which
-    // is a legitimate state: mockspace itself has no opinion about commit style.
-    if pack.message_lints.is_empty() {
-        return ExitCode::SUCCESS;
-    }
+    // No early return for a pack with no message lints: mockspace's own commit
+    // subject lint runs whatever the pack holds, and a gate that returned success
+    // here for an empty pack was the one that passed every subject.
 
     let signals = if cfg.agent.attribution.mode_signals.is_empty() {
         agent_mode::default_signals(&crate::render_agent::agent_mode_var(&cfg.project_name))

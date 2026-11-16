@@ -177,6 +177,9 @@ pub fn enumerate(pack: &LintPack, config: &LintConfig) -> Vec<Listing> {
     for l in mockspace_lint_rules::all_repo_lints() {
         out.push(one(l.name(), Kind::Repo, l.default_severity(), config));
     }
+    for l in mockspace_lint_rules::all_message_lints() {
+        out.push(one(l.name(), Kind::Message, l.default_severity(), config));
+    }
 
     for l in &pack.crate_lints {
         out.push(one(l.name(), Kind::Crate, l.default_severity(), config));
@@ -767,7 +770,7 @@ mod tests {
     ///
     /// **The defect this module shipped with.** Every function here read the
     /// pack and only the pack, which is right for a tool and wrong for a lint:
-    /// the engine adds `all_lints`, `all_workspace_lints` and `all_repo_lints`
+    /// the engine adds `all_lints`, `all_workspace_lints`, `all_repo_lints` and `all_message_lints`
     /// at every gate and none of them is ever a pack member. So the command
     /// answering what is checking you could not see most of it.
     #[test]
@@ -775,7 +778,8 @@ mod tests {
         let listings = enumerate(&LintPack::default(), &LintConfig::empty());
         let expected = mockspace_lint_rules::all_lints().len()
             + mockspace_lint_rules::all_workspace_lints().len()
-            + mockspace_lint_rules::all_repo_lints().len();
+            + mockspace_lint_rules::all_repo_lints().len()
+            + mockspace_lint_rules::all_message_lints().len();
         assert!(
             expected > 0,
             "the engine ships builtins, or this arm proves nothing"
@@ -785,6 +789,16 @@ mod tests {
             expected,
             "an empty pack still has every builtin checking you"
         );
+    }
+
+    /// The commit subject lint is a builtin message lint, so it is listed with no pack and a
+    /// severity keyed to it names something that runs.
+    #[test]
+    fn the_builtin_commit_subject_lint_is_listed_and_configuring_it_is_not_absent() {
+        let listings = enumerate(&LintPack::default(), &LintConfig::empty());
+        assert_eq!(listing(&listings, "commit-subject").kind, Kind::Message);
+        let config = config_with(&[("commit-subject", Severity::HARD_ERROR)]);
+        assert!(configured_but_absent(&LintPack::default(), &config).is_empty());
     }
 
     /// Every kind the pack can carry is enumerated, one arm each.
