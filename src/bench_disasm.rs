@@ -5,7 +5,7 @@
 
 //! `mock bench disasm <bench> <arm> <symbol>`: build one arm as a run builds
 //! it and write the disassembly of one of its functions as a results artifact,
-//! `results/<bench>/disasm/<machine class>/<run>/<arm>.<symbol>.txt`, to commit
+//! `results/<bench>/disasm/<machine class>/<run>/<arm>/<symbol>.txt`, to commit
 //! beside the runs. The build is removed again afterwards, as a run's is.
 
 use std::path::Path;
@@ -14,7 +14,8 @@ use std::process::ExitCode;
 use mockspace_bench_harness::disasm::{ArtifactPlace, write_symbol_artifact};
 use mockspace_bench_harness::{env, history, layout};
 
-use crate::bench::{aligned, build_arm, profile_args_for, run_rev_of};
+use crate::bench::profile_args_for;
+use crate::bench_arms::{aligned, build_arm, run_rev_of};
 use crate::config::Config;
 use crate::{bench_builds, bench_gen, bench_rev};
 

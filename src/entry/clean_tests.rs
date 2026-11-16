@@ -191,3 +191,20 @@ fn every_dispatched_subcommand_is_in_the_known_list() {
         );
     }
 }
+
+#[test]
+fn mock_help_bench_names_every_bench_subcommand() {
+    // `mock bench` dispatches only what `bench::SUBCOMMANDS` lists, so a
+    // subcommand the top-level help leaves out is one this catches.
+    let bench = crate::entry::help::commands()
+        .iter()
+        .find(|c| c.name == "bench")
+        .expect("bench is a command");
+    for sub in crate::bench::SUBCOMMANDS {
+        assert!(
+            bench.help.contains(&format!("`{sub}")),
+            "`mock help bench` does not name `{sub}`: {}",
+            bench.help
+        );
+    }
+}

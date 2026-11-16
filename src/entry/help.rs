@@ -268,9 +268,9 @@ const COMMANDS: &[Cmd] = &[
         summary: "run the bench harness",
         args:    &[],
         help:    "Runs the bench harness: `init`, `add <bench> [<arm>]`, `run \
-                  [<bench>...]`, `report`, `list`, `test`, `migrate`. Everything \
-                  after `bench` is forwarded to it verbatim, so its own usage \
-                  governs from that point on.",
+                  [<bench>...]`, `report`, `list`, `test`, `migrate`, `disasm \
+                  <bench> <arm> <symbol>`. Everything after `bench` is forwarded \
+                  to it verbatim, so its own usage governs from that point on.",
     },
     Cmd {
         name:    "sketches",

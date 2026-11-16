@@ -30,6 +30,7 @@ use std::process::{Command, ExitCode};
 use mockspace_bench_harness::config::BuildSection;
 use mockspace_bench_harness::tree as bench_tree;
 
+use crate::bench_arms::{aligned, build_arm, run_rev_of};
 use crate::config::Config;
 use crate::{bench_builds, bench_gen, bench_migrate, bench_rev, bench_variants};
 
@@ -96,18 +97,25 @@ fn split_positional_and_flags<'a>(
     (positional, flags)
 }
 
+/// Every subcommand `mock bench` takes. Dispatch goes through this list, so a
+/// subcommand missing from it is refused, and `mock help bench` is held to
+/// name each one.
+pub(crate) const SUBCOMMANDS: [&str; 8] =
+    ["init", "run", "report", "test", "list", "add", "disasm", "migrate"];
+
 pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
     let sub = args.first().copied().unwrap_or("");
     let rest: Vec<&str> = args.iter().skip(1).copied().collect();
+    let listed = SUBCOMMANDS.contains(&sub);
     match sub {
-        "init" => cmd_init(cfg),
-        "run" => cmd_run(cfg, &rest),
-        "report" => cmd_report(cfg, &rest),
-        "test" => cmd_test(cfg, &rest),
-        "list" => cmd_list(cfg),
-        "add" => cmd_add(cfg, &rest),
-        "disasm" => crate::bench_disasm::cmd(cfg, &rest),
-        "migrate" => bench_migrate::cmd(cfg, &rest),
+        "init" if listed => cmd_init(cfg),
+        "run" if listed => cmd_run(cfg, &rest),
+        "report" if listed => cmd_report(cfg, &rest),
+        "test" if listed => cmd_test(cfg, &rest),
+        "list" if listed => cmd_list(cfg),
+        "add" if listed => cmd_add(cfg, &rest),
+        "disasm" if listed => crate::bench_disasm::cmd(cfg, &rest),
+        "migrate" if listed => bench_migrate::cmd(cfg, &rest),
         "" => {
             print_help();
             ExitCode::SUCCESS
@@ -786,7 +794,7 @@ fn build_argv(manifest: &Path, profile: &[String], target_dir: Option<&Path>) ->
 
 /// One cargo build with explicit profile flags and an optional
 /// tool-owned target directory; returns stdout for artifact parsing.
-fn cargo_build_at(
+pub(crate) fn cargo_build_at(
     manifest: &Path,
     what: &str,
     profile: &[String],
@@ -801,57 +809,6 @@ fn cargo_build_at(
         return Err(format!("cargo build failed for {what}"));
     }
     Ok(out.stdout)
-}
-
-/// One commit of the framework for every crate a run links, taken from the
-/// locks of the arms it builds (`wanted`, every arm where `None`). `bench_rev`
-/// says why.
-pub(crate) fn run_rev_of(
-    cfg: &Config,
-    plan: &bench_gen::GenPlan,
-    dep: &str,
-    wanted: Option<&[String]>,
-) -> Result<Option<String>, String> {
-    let arm_locks = bench_rev::arm_locks(&plan.arms, wanted);
-    let pins = bench_gen::driver_gen_dir(&cfg.mock_dir).join(".pack-pins");
-    bench_rev::run_rev(&arm_locks, dep, &pins, &crate::pack_pin::ls_remote_head)
-}
-
-/// Align the crate at `dir` to the run's framework commit, where it has one.
-pub(crate) fn aligned(dir: &Path, run_rev: Option<&str>) -> Result<(), String> {
-    match run_rev {
-        Some(rev) => bench_rev::align(dir, rev, &bench_rev::cargo_update),
-        None => Ok(()),
-    }
-}
-
-/// Build one arm of a composed tree as a run builds it: its own manifest
-/// (checked) or the generated one (written), aligned to the run's framework
-/// commit by `align`, with the bench's profile into `target_dir`. Returns the
-/// manifest built and cargo's artifact records.
-pub(crate) fn build_arm(
-    cfg: &Config,
-    plan: &bench_gen::GenPlan,
-    dep: &str,
-    arm: &bench_tree::ArmSource,
-    align: &impl Fn(&Path) -> Result<(), String>,
-    profile: &[String],
-    target_dir: Option<&Path>,
-) -> Result<(PathBuf, Vec<u8>), String> {
-    let what = format!("arm {}/arms/{}", arm.bench, arm.arm);
-    let manifest_path = if arm.has_manifest {
-        check_arm_lib_name(arm)?;
-        arm.dir.join("Cargo.toml")
-    } else {
-        let gen_dir = bench_gen::arm_gen_dir(&cfg.mock_dir, arm);
-        let toml = bench_gen::arm_cargo_toml(arm, dep, &plan.support)?;
-        bench_gen::write_if_changed(&gen_dir.join("Cargo.toml"), &toml)?;
-        gen_dir.join("Cargo.toml")
-    };
-    align(manifest_path.parent().unwrap_or(&arm.dir)).map_err(|e| format!("{what}: {e}"))?;
-    eprintln!("  building {what}...");
-    let built = cargo_build_at(&manifest_path, &what, profile, target_dir)?;
-    Ok((manifest_path, built))
 }
 
 /// Resolve exactly one built executable from a build's artifact
@@ -1062,7 +1019,7 @@ fn run_generated(
 /// is what short-name resolution builds paths from), so a consumer
 /// manifest declaring a different one would build a dylib nothing
 /// can find. Refuse it with the fix spelled out.
-fn check_arm_lib_name(arm: &bench_tree::ArmSource) -> Result<(), String> {
+pub(crate) fn check_arm_lib_name(arm: &bench_tree::ArmSource) -> Result<(), String> {
     let expected = arm.arm.replace('-', "_");
     let text = fs::read_to_string(arm.dir.join("Cargo.toml"))
         .map_err(|e| format!("reading {}: {e}", arm.dir.join("Cargo.toml").display()))?;
