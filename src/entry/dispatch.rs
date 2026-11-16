@@ -379,6 +379,23 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         );
     }
 
+    // These read the mock directory and no generated crate, so they run before the lint pack is
+    // loaded: loading it generates the crate and asks cargo whether it is fresh, which is most of
+    // the cost of a call and nothing these two read.
+    match first_positional(&args) {
+        Some("sketches") => {
+            let rest: Vec<String> =
+                subcommand_args(&args, "sketches").into_iter().map(str::to_string).collect();
+            return crate::sketches::cmd(&cfg, &rest);
+        },
+        Some("test-units") => {
+            let rest: Vec<String> =
+                subcommand_args(&args, "test-units").into_iter().map(str::to_string).collect();
+            return crate::suite::layout_report::run(&cfg, &rest);
+        },
+        _ => {},
+    }
+
     // Effective custom lints. The old proxy statically links them in and passes
     // them here; a launcher-run engine instead gets the pin-matched
     // `mockspace-lint-rules` dep via `--mockspace-lint-rules-dep` and loads this
@@ -864,16 +881,6 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 // could forward it.
                 let bench_args = subcommand_args(&args, "bench");
                 return bench::cmd(&cfg, &bench_args);
-            },
-            "sketches" => {
-                let rest: Vec<String> =
-                    subcommand_args(&args, "sketches").into_iter().map(str::to_string).collect();
-                return crate::sketches::cmd(&cfg, &rest);
-            },
-            "test-units" => {
-                let rest: Vec<String> =
-                    subcommand_args(&args, "test-units").into_iter().map(str::to_string).collect();
-                return crate::suite::layout_report::run(&cfg, &rest);
             },
             "test" => {
                 let test_args = subcommand_args(&args, "test");

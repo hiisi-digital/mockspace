@@ -6,6 +6,7 @@
 //! declares a custom lint, so a command that loads the lint pack generates its
 //! crate and asks cargo to build it. `cargo` on the path is a shim that writes
 //! down every call and builds nothing, which makes both visible: the call log,
+//! less the `metadata` reads that build nothing,
 //! and the generated store under the cache.
 //!
 //! The control, `lints`, is a command that does read the pack. It has to show
@@ -61,8 +62,14 @@ impl Probe {
             .unwrap()
     }
 
+    /// Every cargo call but `metadata`, which reads the member graph and builds nothing.
     fn cargo_calls(&self) -> String {
-        fs::read_to_string(&self.calls).unwrap_or_default()
+        fs::read_to_string(&self.calls)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| !l.starts_with("metadata"))
+            .map(|l| format!("{l}\n"))
+            .collect()
     }
 
     fn generated(&self) -> bool {
