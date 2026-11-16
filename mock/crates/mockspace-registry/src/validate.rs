@@ -255,7 +255,8 @@ const NAMESPACE_KEYS: &[&str] = &[
 
 /// The keys in `NAMESPACE_KEYS` the struct does not carry, because a tool other
 /// than this loader reads them. `console_direct = true` lets the console commit an
-/// edit to the namespace's rows straight onto the trunk. Reporting it as discarded
+/// edit to the namespace's rows straight onto the trunk, and `mock rows-gate` holds a
+/// commit staging those rows alone to the registry check only. Reporting it as discarded
 /// would be false, since something does read it, and reading it here would give
 /// the loader a field it has no use for. The test holds this list apart from the
 /// struct, so a key the struct does read cannot hide in it.

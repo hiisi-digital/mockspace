@@ -54,6 +54,7 @@ mod test;
 pub(crate) mod test_benches;
 pub(crate) use subcmd::*;
 mod resolve;
+pub(crate) mod rows_gate;
 mod tool;
 mod tool_writes;
 pub(crate) use resolve::*;

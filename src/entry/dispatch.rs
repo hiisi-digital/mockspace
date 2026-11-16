@@ -348,6 +348,15 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         return crate::suite::history_guard::run(&cfg.repo_root, &cfg.mock_dir);
     }
 
+    // The pre-commit gate of a commit staging rows of the console's direct namespaces alone. It
+    // runs the registry check and nothing else, so it comes before the lint pack is loaded and
+    // before the gate is reinstalled, both of which cost far more than the check.
+    if first_positional(&args) == Some("rows-gate") {
+        return super::rows_gate::run(&cfg, |reg| {
+            registry_gate(&cfg, reg, &[], LintMode::Commit, pack)
+        });
+    }
+
     // A declared data ref with no instance reads as a directory with nothing in it, and a file a
     // ref holds that the branch still tracks is in two places. Either stops the run here, before
     // a lint or a tool reads the mock directory. The verbs that repair it are let through.

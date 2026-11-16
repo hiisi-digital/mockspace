@@ -457,6 +457,18 @@ else
         # `--doc-only` claims, and the engine checks that claim against the staged index (`verify_doc_only`).
         # It is the claim a staged registry row made before the registry stopped being a shared input.
         if [ -n "$STAGED_REGISTRY" ] && [ -z "$STAGED_NON_REGISTRY" ]; then
+            # Rows of the namespaces the console commits straight onto the trunk, and nothing
+            # else in the whole index: `rows-gate` holds them to the registry check alone and
+            # records the tree for the pre-push hook. It answers 3 when the index holds more,
+            # and the commit takes the gate below.
+            ROWS_RC=0
+            MS_GATE_SOFT=3 ms_gate pre-commit rows-gate || ROWS_RC=$?
+            if [ "$ROWS_RC" = "0" ]; then
+                ms_say "pre-commit: console-direct rows passed the registry check."
+                ms_chain "$@"
+            elif [ "$ROWS_RC" != "3" ]; then
+                exit 1
+            fi
             ARGS+=(--doc-only)
         fi
     fi
@@ -558,6 +570,23 @@ PUSH_REPO_ONLY=""
 PUSH_NOT_REGISTRY=""
 PUSH_REFS=0
 PUSH_DELETES=0
+PUSH_ROWS_GATED=0
+# The trees `mock rows-gate` passed at commit, one to a line, in this worktree's git directory.
+MS_ROWS_RECORD=$(git rev-parse --git-path mockspace/gated-rows 2>/dev/null || true)
+ms_rows_gated() {{
+    local c n=0
+    if [ -z "$MS_ROWS_RECORD" ] || [ ! -f "$MS_ROWS_RECORD" ]; then
+        return 1
+    fi
+    if [ -n "$(git rev-list --min-parents=2 "$1..$2" 2>/dev/null)" ]; then
+        return 1
+    fi
+    for c in $(git rev-list "$1..$2" 2>/dev/null); do
+        grep -qxF "$(git rev-parse "$c^{{tree}}")" "$MS_ROWS_RECORD" || return 1
+        n=$((n + 1))
+    done
+    [ "$n" -gt 0 ]
+}}
 while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     if [ -z "$local_sha" ]; then
         continue
@@ -580,6 +609,13 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     if ! git cat-file -e "$remote_sha" 2>/dev/null; then
         FULL_REASON="remote sha not fetched"
         break
+    fi
+    # Every commit of the range passed `rows-gate` at commit on the very tree it carries, and
+    # none is a merge: the range is console-direct rows alone, already held to the registry
+    # check on each tree, so the push lints none of it again.
+    if ms_rows_gated "$remote_sha" "$local_sha"; then
+        PUSH_ROWS_GATED=$((PUSH_ROWS_GATED + 1))
+        continue
     fi
     # A pushed shared input (the project lints, the config) reaches every crate,
     # so it forces the full scope, under its own reason.
@@ -637,6 +673,15 @@ fi
 # A deletion beside a ref that publishes a commit leaves the scope to that ref.
 if [ "$PUSH_REFS" -gt 0 ] && [ "$PUSH_REFS" -eq "$PUSH_DELETES" ]; then
     ms_say "  scope: none (the push deletes refs and publishes no commit)"
+    ms_say "pre-push: validation passed."
+    ms_chain "$@"
+fi
+
+# Every ref publishes only commits the rows gate passed (or deletes): nothing is left to lint.
+if [ "$PUSH_ROWS_GATED" -gt 0 ] && [ -z "$FULL_REASON" ] && [ -z "$CHANGED_CRATES" ] \
+    && [ -z "$PUSH_REPO_ONLY" ] && [ -z "$PUSH_NOT_REGISTRY" ] \
+    && [ $((PUSH_DELETES + PUSH_ROWS_GATED)) -eq "$PUSH_REFS" ]; then
+    ms_say "  scope: none (every pushed commit passed the rows gate on its own tree)"
     ms_say "pre-push: validation passed."
     ms_chain "$@"
 fi
