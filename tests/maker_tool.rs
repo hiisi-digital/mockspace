@@ -20,8 +20,11 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 fn dep_spec() -> String {
-    let lint_rules = concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules");
-    format!("{{ package = \"mockspace-lint-rules\", path = \"{lint_rules}\" }}")
+    let lint_rules = mockspace_manifest::toml_text::basic_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/lint-rules"
+    ));
+    format!("{{ package = \"mockspace-lint-rules\", path = {lint_rules} }}")
 }
 
 /// One crate registering every arm: an honest maker that strays when asked

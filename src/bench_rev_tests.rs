@@ -255,8 +255,8 @@ fn tree() -> Tree {
         &driver.join("Cargo.toml"),
         &format!(
             "[workspace]\n\n[package]\nname = \"driver\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
-             [dependencies]\n{BENCH_CORE} = {branch}\nkit = {{ path = \"{}\" }}\n",
-            kit.display()
+             [dependencies]\n{BENCH_CORE} = {branch}\nkit = {{ path = {} }}\n",
+            mockspace_manifest::toml_text::basic_string(&kit.display().to_string())
         ),
     );
     write(&driver.join("src/main.rs"), "fn main() {}\n");

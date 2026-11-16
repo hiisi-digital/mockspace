@@ -101,8 +101,11 @@ fn pair(tag: &str) -> Pair {
 }
 
 fn dep() -> String {
-    let lint_rules = concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules");
-    format!("{{ package = \"mockspace-lint-rules\", path = \"{lint_rules}\" }}")
+    let lint_rules = mockspace_manifest::toml_text::basic_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/lint-rules"
+    ));
+    format!("{{ package = \"mockspace-lint-rules\", path = {lint_rules} }}")
 }
 
 fn load_of(cache: &Path, mock: &Path) -> Result<LoadedLints, String> {

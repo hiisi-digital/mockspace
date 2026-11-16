@@ -362,9 +362,9 @@ pub(crate) fn write_cdylib_crate(
     // a tool is found because it is in the tree.
     for tool in tools {
         manifest.push_str(&format!(
-            "{} = {{ path = \"{}\" }}\n",
+            "{} = {{ path = {} }}\n",
             tool.package,
-            tool.path.display().to_string().replace('\\', "/")
+            mockspace_manifest::toml_text::basic_string(&tool.path.display().to_string())
         ));
     }
     // Force every reference to `mockspace-lint-rules` (the cdylib's own, and any

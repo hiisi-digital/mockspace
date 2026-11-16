@@ -96,6 +96,7 @@ pub fn hooks() -> Hooks {
 #[test]
 fn a_config_only_nested_tree_runs_end_to_end_through_the_generated_driver() {
     let repo = env!("CARGO_MANIFEST_DIR");
+    let repo_toml = mockspace_manifest::toml_text::basic_string(repo);
     let root_guard = mockspace_manifest::scratch::tempdir().unwrap();
     let root = root_guard.path().to_path_buf();
     let mock_dir = root.join("mock");
@@ -107,7 +108,7 @@ fn a_config_only_nested_tree_runs_end_to_end_through_the_generated_driver() {
         &format!(
             r#"
 [build]
-mockspace = '{{ path = "{repo}" }}'
+mockspace = '{{ path = {repo_toml} }}'
 opt-level = 0
 lto = "off"
 codegen-units = 16
@@ -240,6 +241,7 @@ master_seed = 7
 #[test]
 fn an_arm_declaring_another_output_size_than_its_routine_is_refused() {
     let repo = env!("CARGO_MANIFEST_DIR");
+    let repo_toml = mockspace_manifest::toml_text::basic_string(repo);
     let root_guard = mockspace_manifest::scratch::tempdir().unwrap();
     let root = root_guard.path().to_path_buf();
     let mock_dir = root.join("mock");
@@ -250,7 +252,7 @@ fn an_arm_declaring_another_output_size_than_its_routine_is_refused() {
         &format!(
             r#"
 [build]
-mockspace = '{{ path = "{repo}" }}'
+mockspace = '{{ path = {repo_toml} }}'
 opt-level = 0
 lto = "off"
 codegen-units = 16

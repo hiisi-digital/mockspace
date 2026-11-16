@@ -117,7 +117,7 @@ fn repoint(tree: &Path, pin: &str, packs: &[(String, String)]) {
         } else if let Some((name, dir)) =
             packs.iter().find(|(n, _)| trimmed.starts_with(&format!("{n} =")))
         {
-            out.push(format!("{name} = {{ path = \"{dir}\" }}"));
+            out.push(format!("{name} = {{ path = {} }}", mockspace_manifest::toml_text::basic_string(dir)));
         } else {
             out.push(line.to_string());
         }

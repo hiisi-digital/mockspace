@@ -53,8 +53,11 @@ fn lint_path(mock: &Path) -> PathBuf {
 /// is a changed revision to the store, as a new engine rev is, and costs no rebuild of lint-rules.
 fn dep(spelling: &str) -> String {
     format!(
-        "{{ package = \"mockspace-lint-rules\", path = \"{}{spelling}\" }}",
-        env!("CARGO_MANIFEST_DIR")
+        "{{ package = \"mockspace-lint-rules\", path = {} }}",
+        mockspace_manifest::toml_text::basic_string(&format!(
+            "{}{spelling}",
+            env!("CARGO_MANIFEST_DIR")
+        ))
     )
 }
 

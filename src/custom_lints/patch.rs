@@ -30,8 +30,8 @@ pub(super) fn patch_section(lint_rules_dep: &str, cargo_home: &Path) -> Option<S
     let mut out = String::new();
     for spelling in spellings_of(&url) {
         out.push_str(&format!(
-            "\n[patch.\"{spelling}\"]\nmockspace-lint-rules = {{ path = \"{}\" }}\n",
-            path.display()
+            "\n[patch.\"{spelling}\"]\nmockspace-lint-rules = {{ path = {} }}\n",
+            mockspace_manifest::toml_text::basic_string(&path.display().to_string())
         ));
     }
     Some(out)

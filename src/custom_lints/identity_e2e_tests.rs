@@ -56,8 +56,11 @@ fn identity_in(cache: &Path, mock: &Path) -> String {
     settle();
     let cfg = Config::from_dir(mock);
     let dep = format!(
-        "{{ package = \"mockspace-lint-rules\", path = \"{}/lint-rules\" }}",
-        env!("CARGO_MANIFEST_DIR")
+        "{{ package = \"mockspace-lint-rules\", path = {} }}",
+        mockspace_manifest::toml_text::basic_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/lint-rules"
+        ))
     );
     load_in(cache, &cfg, &mock.join("mockspace.toml"), &dep)
         .unwrap()
@@ -118,8 +121,11 @@ fn name_in(cache: &Path, mock: &Path) -> String {
     settle();
     let cfg = Config::from_dir(mock);
     let dep = format!(
-        "{{ package = \"mockspace-lint-rules\", path = \"{}/lint-rules\" }}",
-        env!("CARGO_MANIFEST_DIR")
+        "{{ package = \"mockspace-lint-rules\", path = {} }}",
+        mockspace_manifest::toml_text::basic_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/lint-rules"
+        ))
     );
     let loaded = load_in(cache, &cfg, &mock.join("mockspace.toml"), &dep)
         .unwrap()
@@ -263,8 +269,11 @@ fn probe_tool(mock: &Path, body: &str) {
     std::fs::write(
         t.join("Cargo.toml"),
         format!(
-            "[package]\nname = \"probe-tool\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nmockspace = {{ package = \"mockspace-lint-rules\", path = \"{}/lint-rules\" }}\n",
-            env!("CARGO_MANIFEST_DIR")
+            "[package]\nname = \"probe-tool\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nmockspace = {{ package = \"mockspace-lint-rules\", path = {} }}\n",
+            mockspace_manifest::toml_text::basic_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/lint-rules"
+            ))
         ),
     )
     .unwrap();

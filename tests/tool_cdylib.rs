@@ -22,8 +22,11 @@ use std::path::Path;
 /// The `mockspace-lint-rules` in this workspace, renamed to `mockspace` so a
 /// tool crate's source reads exactly as a consumer's would.
 fn dep_spec() -> String {
-    let lint_rules = concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules");
-    format!("{{ package = \"mockspace-lint-rules\", path = \"{lint_rules}\" }}")
+    let lint_rules = mockspace_manifest::toml_text::basic_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/lint-rules"
+    ));
+    format!("{{ package = \"mockspace-lint-rules\", path = {lint_rules} }}")
 }
 
 /// Write a tool crate at `<tools>/<dir>` whose package is `pkg` and whose

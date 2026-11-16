@@ -130,8 +130,10 @@ fn lint_rules_from_checkout(source: &Path) -> Vec<String> {
     vec![
         "--mockspace-lint-rules-dep".to_string(),
         format!(
-            "{{ package = \"mockspace-lint-rules\", path = \"{}\" }}",
-            source.join("lint-rules").display()
+            "{{ package = \"mockspace-lint-rules\", path = {} }}",
+            mockspace_manifest::toml_text::basic_string(
+                &source.join("lint-rules").display().to_string()
+            )
         ),
     ]
 }

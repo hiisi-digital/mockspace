@@ -43,12 +43,13 @@ pub extern "C" fn plusone_kernel(x: u64) -> u64 {
 #[test]
 fn a_named_function_of_an_arm_is_written_as_a_results_artifact() {
     let repo = env!("CARGO_MANIFEST_DIR");
+    let repo_toml = mockspace_manifest::toml_text::basic_string(repo);
     let root_guard = mockspace_manifest::scratch::tempdir().unwrap();
     let mock_dir = root_guard.path().join("mock");
     let bench_dir = mock_dir.join("benches");
     write(
         &bench_dir.join("bench.toml"),
-        &format!("\n[build]\nmockspace = '{{ path = \"{repo}\" }}'\n"),
+        &format!("\n[build]\nmockspace = '{{ path = {repo_toml} }}'\n"),
     );
     write(
         &bench_dir.join("hash").join("bench.toml"),

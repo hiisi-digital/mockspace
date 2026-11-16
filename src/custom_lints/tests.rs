@@ -206,8 +206,8 @@ fn a_tool_crate_lands_on_the_dependency_line_by_package_name_and_path() {
     let manifest = std::fs::read_to_string(gen_dir.join("Cargo.toml")).unwrap();
     assert!(
         manifest.contains(&format!(
-            "demo-phrase-search = {{ path = \"{}\" }}",
-            t.path.display()
+            "demo-phrase-search = {{ path = {} }}",
+            mockspace_manifest::toml_text::basic_string(&t.path.display().to_string())
         )),
         "{manifest}"
     );

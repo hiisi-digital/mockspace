@@ -115,8 +115,11 @@ fn a_word_that_is_not_a_tool_directory_is_not_reported_as_a_tool() {
 // --- The two arms that need a real cdylib ------------------------------------
 
 fn dep_spec() -> String {
-    let lint_rules = concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules");
-    format!("{{ package = \"mockspace-lint-rules\", path = \"{lint_rules}\" }}")
+    let lint_rules = mockspace_manifest::toml_text::basic_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/lint-rules"
+    ));
+    format!("{{ package = \"mockspace-lint-rules\", path = {lint_rules} }}")
 }
 
 /// Write a tool crate whose `lint_pack!` registers `tools`, verbatim.

@@ -30,9 +30,12 @@ fn tree(parent: &Path, derive_dependencies: &str, derive_source: &str) -> PathBu
         tool.join("Cargo.toml"),
         format!(
             "[package]\nname = \"probe-tool\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\n\
-             mockspace = {{ package = \"mockspace-lint-rules\", path = \"{}/lint-rules\" }}\n\
+             mockspace = {{ package = \"mockspace-lint-rules\", path = {} }}\n\
              probe-derive = {{ path = \"../../derive-probe\" }}\n",
-            env!("CARGO_MANIFEST_DIR")
+            mockspace_manifest::toml_text::basic_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/lint-rules"
+            ))
         ),
     )
     .unwrap();
@@ -58,7 +61,7 @@ const PURE: &str = "use proc_macro::TokenStream;\n#[proc_macro_derive(Probe)]\np
 fn kept_after_build(mock: &Path, cache: &Path) -> usize {
     std::thread::sleep(crate::custom_lints::depinfo::TRUST_MARGIN + std::time::Duration::from_millis(200));
     let cfg = Config::from_dir(mock);
-    let dep = format!("{{ package = \"mockspace-lint-rules\", path = \"{}/lint-rules\" }}", env!("CARGO_MANIFEST_DIR"));
+    let dep = format!("{{ package = \"mockspace-lint-rules\", path = {} }}", mockspace_manifest::toml_text::basic_string(concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules")));
     load_in(cache, &cfg, &mock.join("mockspace.toml"), &dep).unwrap().expect("something to load");
     std::fs::read_dir(cache.join("built"))
         .map(|d| d.flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".deps")).count())

@@ -227,3 +227,25 @@ fn a_second_run_of_a_tree_waits_for_the_first() {
     drop(held);
     assert!(other.try_lock().is_ok());
 }
+
+/// A Windows path in the `[build] mockspace` spec is escaped TOML, and is read
+/// back as the path it names before a crate's directory is joined to it, then
+/// written escaped again; slicing the text between the quotes doubled every
+/// backslash on each pass.
+#[test]
+fn a_windows_path_spec_expands_to_the_crate_under_that_path() {
+    let spec = format!(
+        "{{ path = {} }}",
+        mockspace_manifest::toml_text::basic_string(r"C:\repo\mockspace")
+    );
+    let expanded = dep_for_crate(&spec, "bench-core");
+    let doc: toml_edit::DocumentMut = format!("x = {expanded}").parse().unwrap();
+    let path = doc["x"]["path"].as_str().unwrap();
+    assert_eq!(
+        path,
+        std::path::Path::new(r"C:\repo\mockspace")
+            .join("bench-core")
+            .display()
+            .to_string()
+    );
+}
