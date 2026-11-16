@@ -112,12 +112,7 @@ impl Builds {
         stdout: &[u8],
     ) -> Result<(), String> {
         let built = artifacts_of(manifest, stdout);
-        let dylib = built
-            .iter()
-            .flat_map(|b| b.files.iter())
-            .map(|(f, _)| f)
-            .find(|f| f.extension().is_some_and(|e| e == std::env::consts::DLL_EXTENSION))
-            .cloned()
+        let dylib = cdylib_in(&built)
             .ok_or_else(|| format!("arm {}/arms/{} built no cdylib", arm.bench, arm.arm))?;
         let arm_dir = bench_dir.join(bench_tree::arm_target_dir(&arm.bench, &arm.arm));
         let dest_dir = arm_dir.join("release");
@@ -131,6 +126,15 @@ impl Builds {
         self.built.extend(built);
         self.links.push(arm_dir);
         Ok(())
+    }
+
+    /// The cdylib the build of `manifest` wrote, from its cargo output, and
+    /// remembered like [`Builds::record`] so it goes with the rest.
+    pub(crate) fn record_cdylib(&mut self, manifest: &Path, stdout: &[u8]) -> Option<PathBuf> {
+        let built = artifacts_of(manifest, stdout);
+        let dylib = cdylib_in(&built);
+        self.built.extend(built);
+        dylib
     }
 
     fn sweep(&mut self) {
@@ -233,6 +237,17 @@ impl Drop for Builds {
             self.sweep();
         }
     }
+}
+
+/// The first cdylib among what `built` wrote: a file with this host's dynamic
+/// library extension, since an arm is built for the host that loads it.
+fn cdylib_in(built: &[Built]) -> Option<PathBuf> {
+    built
+        .iter()
+        .flat_map(|b| b.files.iter())
+        .map(|(f, _)| f)
+        .find(|f| f.extension().is_some_and(|e| e == std::env::consts::DLL_EXTENSION))
+        .cloned()
 }
 
 /// The packages `manifest` built according to cargo's `compiler-artifact`

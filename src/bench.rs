@@ -106,6 +106,7 @@ pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
         "test" => cmd_test(cfg, &rest),
         "list" => cmd_list(cfg),
         "add" => cmd_add(cfg, &rest),
+        "disasm" => crate::bench_disasm::cmd(cfg, &rest),
         "migrate" => bench_migrate::cmd(cfg, &rest),
         "" => {
             print_help();
@@ -129,6 +130,8 @@ fn print_help() {
     eprintln!("  test     run cargo test in every crate under the bench tree");
     eprintln!("  list     list benches, sizes, and variants from bench.toml");
     eprintln!("  add      scaffold a new variant crate: mock bench add <name>");
+    eprintln!("  disasm   write one function of one arm as a results artifact:");
+    eprintln!("           mock bench disasm <bench> <arm> <symbol>");
     eprintln!("  migrate  move results and history in an older layout into runs:");
     eprintln!("           mock bench migrate [--machine-class <class>] [--dry-run]");
     eprintln!();
@@ -731,7 +734,7 @@ fn build_variants(bench_dir: &Path, names: &[&str], profile: &[String]) -> Resul
 /// two runs of an unchanged variant can differ in inlining and
 /// layout, which is exactly the contamination per-variant cdylib
 /// isolation exists to prevent.
-fn profile_args_for(build: Option<&BuildSection>) -> Vec<String> {
+pub(crate) fn profile_args_for(build: Option<&BuildSection>) -> Vec<String> {
     let opt = build.and_then(|b| b.opt_level).unwrap_or(3);
     let lto = build
         .and_then(|b| b.lto.clone())
@@ -800,6 +803,57 @@ fn cargo_build_at(
     Ok(out.stdout)
 }
 
+/// One commit of the framework for every crate a run links, taken from the
+/// locks of the arms it builds (`wanted`, every arm where `None`). `bench_rev`
+/// says why.
+pub(crate) fn run_rev_of(
+    cfg: &Config,
+    plan: &bench_gen::GenPlan,
+    dep: &str,
+    wanted: Option<&[String]>,
+) -> Result<Option<String>, String> {
+    let arm_locks = bench_rev::arm_locks(&plan.arms, wanted);
+    let pins = bench_gen::driver_gen_dir(&cfg.mock_dir).join(".pack-pins");
+    bench_rev::run_rev(&arm_locks, dep, &pins, &crate::pack_pin::ls_remote_head)
+}
+
+/// Align the crate at `dir` to the run's framework commit, where it has one.
+pub(crate) fn aligned(dir: &Path, run_rev: Option<&str>) -> Result<(), String> {
+    match run_rev {
+        Some(rev) => bench_rev::align(dir, rev, &bench_rev::cargo_update),
+        None => Ok(()),
+    }
+}
+
+/// Build one arm of a composed tree as a run builds it: its own manifest
+/// (checked) or the generated one (written), aligned to the run's framework
+/// commit by `align`, with the bench's profile into `target_dir`. Returns the
+/// manifest built and cargo's artifact records.
+pub(crate) fn build_arm(
+    cfg: &Config,
+    plan: &bench_gen::GenPlan,
+    dep: &str,
+    arm: &bench_tree::ArmSource,
+    align: &impl Fn(&Path) -> Result<(), String>,
+    profile: &[String],
+    target_dir: Option<&Path>,
+) -> Result<(PathBuf, Vec<u8>), String> {
+    let what = format!("arm {}/arms/{}", arm.bench, arm.arm);
+    let manifest_path = if arm.has_manifest {
+        check_arm_lib_name(arm)?;
+        arm.dir.join("Cargo.toml")
+    } else {
+        let gen_dir = bench_gen::arm_gen_dir(&cfg.mock_dir, arm);
+        let toml = bench_gen::arm_cargo_toml(arm, dep, &plan.support)?;
+        bench_gen::write_if_changed(&gen_dir.join("Cargo.toml"), &toml)?;
+        gen_dir.join("Cargo.toml")
+    };
+    align(manifest_path.parent().unwrap_or(&arm.dir)).map_err(|e| format!("{what}: {e}"))?;
+    eprintln!("  building {what}...");
+    let built = cargo_build_at(&manifest_path, &what, profile, target_dir)?;
+    Ok((manifest_path, built))
+}
+
 /// Resolve exactly one built executable from a build's artifact
 /// records.
 fn single_executable(manifest: &Path, stdout: &[u8], what: &str) -> Result<PathBuf, String> {
@@ -863,64 +917,28 @@ fn run_generated(
     // Which benches the filter selects; a request may name a sweep
     // (`bench/sweep`), which builds its bench's arms.
     let wanted = bench_rev::wanted(names);
-    // One commit of the framework for every crate the run links, taken from
-    // the locks of the arms it builds. `bench_rev` says why.
-    let arm_locks = bench_rev::arm_locks(&plan.arms, wanted.as_deref());
-    let pins = bench_gen::driver_gen_dir(&cfg.mock_dir).join(".pack-pins");
-    let run_rev =
-        match bench_rev::run_rev(&arm_locks, &dep, &pins, &crate::pack_pin::ls_remote_head) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("error: {e}");
-                return ExitCode::FAILURE;
-            },
-        };
-    let align = |dir: &Path| -> Result<(), String> {
-        match &run_rev {
-            Some(rev) => bench_rev::align(dir, rev, &bench_rev::cargo_update),
-            None => Ok(()),
-        }
+    let run_rev = match run_rev_of(cfg, &plan, &dep, wanted.as_deref()) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
     };
+    let align = |dir: &Path| aligned(dir, run_rev.as_deref());
 
     if !report_only {
         for arm in &plan.arms {
             if !bench_rev::selects(wanted.as_deref(), arm) {
                 continue;
             }
-            let what = format!("arm {}/arms/{}", arm.bench, arm.arm);
-            let manifest_path = if arm.has_manifest {
-                if let Err(e) = check_arm_lib_name(arm) {
-                    eprintln!("error: {e}");
-                    return ExitCode::FAILURE;
-                }
-                arm.dir.join("Cargo.toml")
-            } else {
-                let gen_dir = bench_gen::arm_gen_dir(&cfg.mock_dir, arm);
-                let toml = match bench_gen::arm_cargo_toml(arm, &dep, &plan.support) {
-                    Ok(t) => t,
+            let (manifest_path, built) =
+                match build_arm(cfg, &plan, &dep, arm, &align, &profile, target.as_deref()) {
+                    Ok(b) => b,
                     Err(e) => {
                         eprintln!("error: {e}");
                         return ExitCode::FAILURE;
                     },
                 };
-                if let Err(e) = bench_gen::write_if_changed(&gen_dir.join("Cargo.toml"), &toml) {
-                    eprintln!("error: {e}");
-                    return ExitCode::FAILURE;
-                }
-                gen_dir.join("Cargo.toml")
-            };
-            if let Err(e) = align(manifest_path.parent().unwrap_or(&arm.dir)) {
-                eprintln!("error: {what}: {e}");
-                return ExitCode::FAILURE;
-            }
-            eprintln!("  building {what}...");
-            let built = match cargo_build_at(&manifest_path, &what, &profile, target.as_deref()) {
-                Ok(o) => o,
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    return ExitCode::FAILURE;
-                },
-            };
             if let Err(e) = builds.link_arm(bench_dir, arm, &manifest_path, &built) {
                 eprintln!("error: {e}");
                 return ExitCode::FAILURE;
@@ -1132,16 +1150,10 @@ fn cmd_init(cfg: &Config) -> ExitCode {
 // ── list ──
 
 /// Human display for one arm entry: the short name where the entry
-/// is one, the dylib stem where it is a path.
+/// is one, the arm name its library file carries where it is a path,
+/// read off that file's own suffix rather than the host's.
 fn entry_display(entry: &str) -> String {
-    let stem = entry
-        .rsplit('/')
-        .next()
-        .unwrap_or(entry)
-        .trim_end_matches(std::env::consts::DLL_SUFFIX);
-    stem.strip_prefix(std::env::consts::DLL_PREFIX)
-        .unwrap_or(stem)
-        .to_string()
+    mockspace_bench_harness::library::arm_name(entry).to_string()
 }
 
 fn cmd_list(cfg: &Config) -> ExitCode {

@@ -21,6 +21,7 @@ pub mod autofix;
 pub mod bench;
 mod bench_builds;
 mod bench_commit;
+mod bench_disasm;
 pub mod bench_docs;
 mod bench_migrate;
 pub mod bench_gen;
