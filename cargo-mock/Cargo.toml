@@ -56,7 +56,7 @@ include = [
 # A `0.0.x` requirement is already the exact version and nothing else, which is
 # what this wants: the launcher is what every consumer repo installs, and it
 # moves when the number here moves rather than when a branch does.
-renki = "0.0.1"
+renki = "0.0.5-rc.2"
 # The path is what a checkout builds against and the version is what the
 # registry resolves, since cargo strips the path on publish and a dependency
 # left with neither is refused.

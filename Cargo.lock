@@ -358,6 +358,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "notko"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4856ec4bc0c44e913b2f2ac9804a7ef71a56477c27d0534cab579d2fe0ae957a"
+
+[[package]]
 name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -434,12 +440,34 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "renki"
-version = "0.0.1"
+version = "0.0.5-rc.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73d5bf35752f3e3da67d0dfb6a969f876c39d400754813c4d53ae179d083464e"
+checksum = "d6aebbff3e683ed31e4c578a080c519fd7f307c11f12f3d61df20cff845990a6"
 dependencies = [
+ "notko",
+ "renki-config",
+ "renki-dirs",
  "serde",
  "toml",
+ "toml_edit",
+]
+
+[[package]]
+name = "renki-config"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e51f398fb4ec01ac3416363e09d238e9bd0fd563230330bd6ba1fa92840146be"
+dependencies = [
+ "notko",
+]
+
+[[package]]
+name = "renki-dirs"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "250b59018b615caeafde41cade76b67c87be88ba525a73ef8a3e5a93ba0d29e2"
+dependencies = [
+ "notko",
 ]
 
 [[package]]
