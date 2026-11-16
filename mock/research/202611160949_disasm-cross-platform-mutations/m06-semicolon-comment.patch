@@ -1,5 +1,5 @@
 diff --git a/bench-harness/src/disasm/normalize.rs b/bench-harness/src/disasm/normalize.rs
-index 8c5106e..a74e56f 100644
+index 2da28e8..0617331 100644
 --- a/bench-harness/src/disasm/normalize.rs
 +++ b/bench-harness/src/disasm/normalize.rs
 @@ -118,7 +118,7 @@ pub(super) fn strip_comment(insn: &str, flavour: Flavour) -> &str {

@@ -1,5 +1,5 @@
-# git apply m05-bare-hex-target.patch && cargo test -p mockspace-bench-harness --lib -- disasm library
+# recorded on a1d1fd3; replay: git apply m05-bare-hex-target.patch && cargo test -p mockspace-bench-harness --lib -- disasm library
 test disasm::tests::an_annotated_target_folds_whether_or_not_it_is_written_with_0x ... FAILED
 test disasm::tests_recorded::the_same_entry_at_other_addresses_normalises_to_the_same_text ... FAILED
 test disasm::tests_live::different_work_is_not_flagged_duplicate ... FAILED
-test result: FAILED. 39 passed; 3 failed; 1 ignored; 0 measured; 238 filtered out; finished in 1.75s
+test result: FAILED. 41 passed; 3 failed; 1 ignored; 0 measured; 238 filtered out; finished in 2.11s

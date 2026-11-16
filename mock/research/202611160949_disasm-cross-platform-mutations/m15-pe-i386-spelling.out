@@ -1,3 +1,3 @@
-# git apply m15-pe-i386-spelling.patch && cargo test -p mockspace-bench-harness --lib -- disasm library
+# recorded on a1d1fd3; replay: git apply m15-pe-i386-spelling.patch && cargo test -p mockspace-bench-harness --lib -- disasm library
 test disasm::tests_tool::every_format_is_read_off_its_own_leading_bytes_and_spells_a_symbol_its_way ... FAILED
-test result: FAILED. 41 passed; 1 failed; 1 ignored; 0 measured; 238 filtered out; finished in 1.95s
+test result: FAILED. 43 passed; 1 failed; 1 ignored; 0 measured; 238 filtered out; finished in 2.11s

@@ -1,0 +1,13 @@
+diff --git a/bench-harness/src/disasm/pe_exports.rs b/bench-harness/src/disasm/pe_exports.rs
+index fc76fd2..e6fad52 100644
+--- a/bench-harness/src/disasm/pe_exports.rs
++++ b/bench-harness/src/disasm/pe_exports.rs
+@@ -94,7 +94,7 @@ impl Exports {
+         let base = text.lines().find_map(|l| {
+             let (value, rest) = l.trim().split_once(char::is_whitespace)?;
+             rest.trim_start()
+-                .starts_with("image base")
++                .starts_with("image-base")
+                 .then(|| hex(value))?
+         })?;
+         let mut entries = Vec::new();

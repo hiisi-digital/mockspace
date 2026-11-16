@@ -1,0 +1,3 @@
+# recorded on a1d1fd3; replay: git apply m30-spec-path-sliced.patch && cargo test -p mockspace --lib -- bench_gen
+test bench_gen::tests::a_windows_path_spec_expands_to_the_crate_under_that_path ... FAILED
+test result: FAILED. 15 passed; 1 failed; 0 ignored; 0 measured; 1855 filtered out; finished in 0.08s

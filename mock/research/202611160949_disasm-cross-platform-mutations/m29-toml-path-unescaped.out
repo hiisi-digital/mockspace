@@ -1,0 +1,3 @@
+# recorded on a1d1fd3; replay: git apply m29-toml-path-unescaped.patch && cargo test -p mockspace-manifest --lib -- toml_text
+test toml_text::tests::a_windows_path_reads_back_as_itself ... FAILED
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 35 filtered out; finished in 0.05s

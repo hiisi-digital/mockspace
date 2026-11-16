@@ -63,9 +63,12 @@ its exports and could never find `bench_entry` in one.
   for GNU, `--disassemble-symbols=` for LLVM, `--no-show-raw-insn` for both,
   `/DISASM:NOBYTES` for dumpbin); otool and dumpbin, which cannot filter by
   symbol, are cut to the symbol by an exact label match.
-- `disasm/pe_exports.rs`: for GNU `objdump` on a DLL, the function is the
-  stretch of the whole disassembly from its export's RVA to the next export's,
-  read off `objdump -p`. The last export runs to the end of its section.
+- `disasm/pe_exports.rs`: for GNU `objdump` and for `dumpbin` on a DLL, neither
+  of which labels an export without a symbol table or a PDB, the function is
+  the stretch of the whole disassembly from its export's RVA to the next
+  export's. One `Exports` holds the table, read by one reader per tool
+  (`objdump -p`, `dumpbin /HEADERS /EXPORTS`), and cuts the stretch the same
+  way for both. The last export runs to the end of its section.
 - `disasm/format.rs`: the object format is read off the file's leading bytes
   (ELF, Mach-O in all four magics, PE through `e_lfanew`, a bare COFF object by
   its machine), and the symbol is spelled as that format spells it: underscored
@@ -76,8 +79,8 @@ its exports and could never find `bench_entry` in one.
   every tool's shape, the address column comes off whether it is `addr:` or
   otool's bare address, comments come off (`#`, `//`, `;`), every annotated
   target folds whether written `0x` or bare, spacing is made canonical, and
-  RIP-relative displacements, any `adrp` page and the `add` after it fold.
-  From `dumpbin`, a long hex token folds only as a branch or call target or as
+  RIP-relative displacements with their sign, any `adrp` page and the `add`
+  after it fold. From `dumpbin`, a long hex token folds only as a branch or call target or as
   a whole `[...]` absolute address; every other one is an immediate and stays.
   An empty result is no evidence.
 - `mock bench disasm <bench> <arm> <symbol>` builds the arm as `run` does
@@ -85,10 +88,19 @@ its exports and could never find `bench_entry` in one.
   disassembly to `results/<bench>/disasm/<machine class>/<run>/<arm>/<symbol>.txt`,
   which `bench-layout` places in the layout and no run reader takes for a
   cell. The file is created exclusively; where one is there the next `-<k>`
-  run is taken, and the header names the run directory the file sits in.
-- `mock help bench`, the `benches` rule card and the `benchmarking` skill name
-  the command; `mock bench` dispatches only what `bench::SUBCOMMANDS` lists,
-  and a test holds `mock help bench` to name each one.
+  run is taken, and the header names the run directory the file sits in. The
+  bench, arm and symbol names are refused before the arm is built where they
+  cannot name a results file.
+- `mock bench` dispatches from one table, `bench::SUBCOMMANDS`, of each name
+  and what runs it, and a test holds every listing of the subcommands to it:
+  `mock help bench`, the help `mock bench` prints, and the `cargo mock bench`
+  row of `docs/USAGE_GUIDE.md`. The `benches` rule card and the
+  `benchmarking` skill name the command too.
+- Every path the tool and its tests write into a TOML document goes through
+  one helper, `mockspace_manifest::toml_text::basic_string`, which quotes and
+  escapes it, so a Windows path's backslashes are not read as escapes. The
+  `[build] mockspace` spec's path is read back as TOML rather than sliced out
+  of the text. The class is counted at the end.
 
 ## What was proven, where, and how
 
@@ -116,11 +128,18 @@ Binutils 2.42 `objdump`, toolchain `nightly-2026-05-28`).
 - The recorded `variant_scalar` library of each format is read live by every
   tool on the host that reads that format, and its format read off its real
   bytes, PE included.
+- The `dumpbin` export reader, on hand-written `dumpbin /HEADERS /EXPORTS`
+  output for the recorded PE library in dumpbin's documented layout: it reads
+  the same table as GNU's reader of the real `objdump -p`, and both cut the
+  same `bench_entry` out of the recorded disassembly. A real dumpbin read on
+  Windows, of `/DISASM:NOBYTES` and of `/HEADERS /EXPORTS`, is still owed,
+  under `prove_the_otool_and_dumpbin_disassembly_paths_on_real_hosts`.
 - `mock bench disasm` end to end (`tests/bench_disasm_e2e.rs`): a tree with one
   generated-manifest arm, the artifact placed in the layout, a second beside the
   first, a missing function failing with nothing written.
-- Every fix was taken back out of the code one at a time, 23 mutations, and
-  each turned red the tests named against it in
+- Every fix was taken back out of the code one at a time, 30 mutations
+  recorded on a1d1fd3 (each `.out` names it), and each turned red the tests
+  named against it in
   `mock/research/202611160949_disasm-cross-platform-mutations/README.md`; the
   directory holds each mutation as a patch and the test lines its run printed,
   with the command that replays it.
@@ -165,3 +184,19 @@ three that accept all three suffixes are right, `built.rs` defaulting a
 suffixless file to `so` names nothing on disk, and the two in the custom-lint
 end-to-end tests are the ticket above. Every disassembler flag, symbol spelling and
 section name lived in `bench-harness/src/disasm.rs`, which this branch rewrote.
+
+The second class, found by review: a filesystem path written into a TOML
+string unescaped, which a Windows path's backslashes break (`C:\Users` reads
+as the invalid escape `\U`). The search was
+`grep -rn 'path = \\"{\|path = "{\|path = {:?}\|Value::from(.*to_string_lossy'`
+over the Rust sources outside `mock/research/` and v2's `mock/crates/`. It
+found 39 writes in 25 files, of which 8 are the tool's own (four in the
+generated driver and arm manifests of `bench_gen.rs`, the lint-rules patch,
+the lint crate manifest, `cargo-mock`'s `--engine` dependency, the nextest
+junit path) and 31 are tests. Four mechanisms were in use (none, `{:?}`, a `\`
+to `/` rewrite, and `toml_edit::Value`), and all 39 now go through
+`basic_string`. The one read of such a
+path, the `[build] mockspace` spec's in `dep_for_crate`, parses the spec as
+TOML. Left alone: `#[path = ...]` in generated Rust, which is Rust's escaping
+rather than TOML's and already right, and a `file://` URL built from a path in
+`patch_tests.rs`, a URL rather than a TOML path.

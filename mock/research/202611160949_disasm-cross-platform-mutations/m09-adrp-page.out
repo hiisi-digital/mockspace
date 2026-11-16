@@ -1,3 +1,3 @@
-# git apply m09-adrp-page.patch && cargo test -p mockspace-bench-harness --lib -- disasm library
+# recorded on a1d1fd3; replay: git apply m09-adrp-page.patch && cargo test -p mockspace-bench-harness --lib -- disasm library
 test disasm::tests::an_adrp_page_folds_in_every_form_and_its_companion_add_with_it ... FAILED
-test result: FAILED. 41 passed; 1 failed; 1 ignored; 0 measured; 238 filtered out; finished in 2.02s
+test result: FAILED. 43 passed; 1 failed; 1 ignored; 0 measured; 238 filtered out; finished in 2.26s

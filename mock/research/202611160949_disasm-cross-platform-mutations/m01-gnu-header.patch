@@ -1,5 +1,5 @@
 diff --git a/bench-harness/src/disasm/normalize.rs b/bench-harness/src/disasm/normalize.rs
-index 8c5106e..5f38858 100644
+index 2da28e8..50e800e 100644
 --- a/bench-harness/src/disasm/normalize.rs
 +++ b/bench-harness/src/disasm/normalize.rs
 @@ -82,7 +82,6 @@ pub(super) fn instruction_text(line: &str) -> Option<&str> {

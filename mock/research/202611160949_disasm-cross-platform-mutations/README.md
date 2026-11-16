@@ -1,11 +1,12 @@
 # Mutations of the cross-platform disassembly, and the tests each turns red
 
 Each fix of `work/disasm-cross-platform` taken back out of the code one at a
-time, on x86_64 Linux with `llvm-objdump` 18.1.3 and GNU `objdump` 2.42. Every
-`<name>.patch` is the mutation as a diff from the branch; every `<name>.out`
-opens with the command that replays it and holds the test lines that run
-printed. A row below lists the tests that failed under its mutation, read off
-its `.out`.
+time, on x86_64 Linux with `llvm-objdump` 18.1.3 and GNU `objdump` 2.42, every
+one recorded on commit a1d1fd3 of the branch. Every `<name>.patch` is the
+mutation as a diff from that commit; every `<name>.out` opens with the commit
+it was recorded on and the command that replays it, then holds the test lines
+that run printed. A row below lists the tests that failed under its mutation,
+read off its `.out`.
 
 | mutation | what it takes back out | failing tests |
 |---|---|---|
@@ -25,10 +26,17 @@ its `.out`.
 | `m14-gnu-pe-exports` | GNU's export lookup in a DLL | `disasm::tests_live::every_tool_here_finds_bench_entry_in_a_linked_library_of_every_format_it_reads` |
 | `m15-pe-i386-spelling` | the bare spelling first for a 32-bit PE image | `disasm::tests_tool::every_format_is_read_off_its_own_leading_bytes_and_spells_a_symbol_its_way` |
 | `m16-dylib-check-name` | dylib_check naming its library as the host does | `dylib_check::tests::a_module_library_is_named_as_this_host_names_one` |
-| `m17-build-for-empty-prefix` | build_for reading the file's own prefix (as on Windows) | `bench_variants::tests::an_artifact_path_with_its_platform_name_finds_the_same_crate`, `bench_variants::tests::an_artifact_path_named_for_any_target_finds_the_same_crate_on_every_host` |
+| `m17-build-for-empty-prefix` | build_for reading the file's own prefix (as on Windows) | `bench_variants::tests::an_artifact_path_named_for_any_target_finds_the_same_crate_on_every_host`, `bench_variants::tests::an_artifact_path_with_its_platform_name_finds_the_same_crate` |
 | `m18-layout-placement` | the layout placing a disasm artifact | `tests::a_disassembly_artifact_is_in_the_layout_and_no_run_reader_takes_it_for_a_run` |
 | `m19-layout-dotted-names` | the arm's own directory under a disasm run | `tests::a_disassembly_artifact_is_in_the_layout_and_no_run_reader_takes_it_for_a_run` |
-| `m20-artifact-overwrites` | exclusive creation of an artifact | `disasm::artifact::tests::a_file_already_there_is_never_replaced`, `disasm::artifact::tests::a_second_artifact_takes_the_next_run_and_says_which` |
+| `m20-artifact-overwrites` | exclusive creation of an artifact | `disasm::artifact::tests::a_second_artifact_takes_the_next_run_and_says_which`, `disasm::artifact::tests::a_file_already_there_is_never_replaced` |
 | `m21-artifact-header-run` | the header naming the run it sits in | `disasm::artifact::tests::the_header_names_the_run_directory_the_artifact_sits_in` |
-| `m22-help-without-disasm` | disasm in mock help bench | `entry::clean_tests::mock_help_bench_names_every_bench_subcommand` |
+| `m22-help-without-disasm` | disasm in mock help bench | `entry::clean_tests::every_surface_listing_the_bench_subcommands_names_each_one` |
 | `m23-recorded-pair-made-identical` | a recorded pair differing in its instructions (fixture edit) | `disasm::tests_recorded::every_recorded_pair_differs_in_its_instruction_lines_before_normalisation` |
+| `m24-rip-sign-kept` | the sign of an AT&T RIP-relative displacement | `disasm::tests::a_rip_relative_displacement_is_layout_and_folds` |
+| `m25-intel-rip-sign-kept` | the sign of an Intel or dumpbin RIP-relative displacement | `disasm::tests::a_rip_relative_displacement_is_layout_and_folds` |
+| `m26-dumpbin-exports-reader` | dumpbin's export table reader | `disasm::tests_tool::dumpbin_and_gnu_read_one_export_table_and_cut_the_same_function` |
+| `m27-guide-without-disasm` | disasm in the usage guide's bench row | `entry::clean_tests::every_surface_listing_the_bench_subcommands_names_each_one` |
+| `m28-names-checked-after-build` | refusing a bad name before the arm is built | `bench_disasm::tests::exactly_three_names_are_taken` |
+| `m29-toml-path-unescaped` | escaping a backslash in a TOML path | `toml_text::tests::a_windows_path_reads_back_as_itself` |
+| `m30-spec-path-sliced` | reading the [build] mockspace path as TOML | `bench_gen::tests::a_windows_path_spec_expands_to_the_crate_under_that_path` |

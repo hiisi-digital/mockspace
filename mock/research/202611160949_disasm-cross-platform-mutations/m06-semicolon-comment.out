@@ -1,3 +1,3 @@
-# git apply m06-semicolon-comment.patch && cargo test -p mockspace-bench-harness --lib -- disasm library
+# recorded on a1d1fd3; replay: git apply m06-semicolon-comment.patch && cargo test -p mockspace-bench-harness --lib -- disasm library
 test disasm::tests::every_tools_comment_comes_off_and_no_immediate_does ... FAILED
-test result: FAILED. 41 passed; 1 failed; 1 ignored; 0 measured; 238 filtered out; finished in 1.81s
+test result: FAILED. 43 passed; 1 failed; 1 ignored; 0 measured; 238 filtered out; finished in 2.33s

@@ -1,13 +1,13 @@
 diff --git a/bench-harness/src/disasm/tool.rs b/bench-harness/src/disasm/tool.rs
-index b54e8f7..3082a4f 100644
+index 971c8bb..98669b3 100644
 --- a/bench-harness/src/disasm/tool.rs
 +++ b/bench-harness/src/disasm/tool.rs
-@@ -123,7 +123,7 @@ impl Disassembler {
-                 return Ok(block);
-             }
-         }
--        if self.flavour == Flavour::Gnu
-+        if self.flavour == Flavour::Gnu && false
-             && matches!(
-                 ObjectFormat::of_file(file),
-                 Some(ObjectFormat::Coff {
+@@ -111,7 +111,7 @@ impl Disassembler {
+         );
+         let file_arg = file.display().to_string();
+         Ok(match self.flavour {
+-            Flavour::Gnu if image => Exports::from_gnu(&self.run(&["-p".to_string(), file_arg])?),
++            Flavour::Gnu if false => Exports::from_gnu(&self.run(&["-p".to_string(), file_arg])?),
+             Flavour::Dumpbin if image => {
+                 let args = ["/NOLOGO", "/HEADERS", "/EXPORTS"].map(String::from);
+                 let mut args = args.to_vec();

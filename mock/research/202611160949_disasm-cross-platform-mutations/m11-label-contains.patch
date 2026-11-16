@@ -1,8 +1,8 @@
 diff --git a/bench-harness/src/disasm/tool.rs b/bench-harness/src/disasm/tool.rs
-index b54e8f7..d84561d 100644
+index 971c8bb..9e1b703 100644
 --- a/bench-harness/src/disasm/tool.rs
 +++ b/bench-harness/src/disasm/tool.rs
-@@ -158,6 +158,7 @@ fn is_label(trimmed: &str) -> bool {
+@@ -173,6 +173,7 @@ fn is_label(trimmed: &str) -> bool {
  
  /// Whether the label line `trimmed` names exactly `spelling`.
  fn labels(trimmed: &str, spelling: &str) -> bool {

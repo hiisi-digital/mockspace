@@ -1,4 +1,4 @@
-# git apply m20-artifact-overwrites.patch && cargo test -p mockspace-bench-harness --lib -- disasm::artifact
-test disasm::artifact::tests::a_file_already_there_is_never_replaced ... FAILED
+# recorded on a1d1fd3; replay: git apply m20-artifact-overwrites.patch && cargo test -p mockspace-bench-harness --lib -- disasm::artifact
 test disasm::artifact::tests::a_second_artifact_takes_the_next_run_and_says_which ... FAILED
-test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 278 filtered out; finished in 0.06s
+test disasm::artifact::tests::a_file_already_there_is_never_replaced ... FAILED
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 279 filtered out; finished in 0.08s
