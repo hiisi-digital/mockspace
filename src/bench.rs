@@ -97,25 +97,31 @@ fn split_positional_and_flags<'a>(
     (positional, flags)
 }
 
-/// Every subcommand `mock bench` takes. Dispatch goes through this list, so a
-/// subcommand missing from it is refused, and `mock help bench` is held to
-/// name each one.
-pub(crate) const SUBCOMMANDS: [&str; 8] =
-    ["init", "run", "report", "test", "list", "add", "disasm", "migrate"];
+/// One `mock bench` subcommand: its name and what runs it with the arguments
+/// after the name.
+type Subcommand = (&'static str, fn(&Config, &[&str]) -> ExitCode);
+
+/// Every subcommand `mock bench` takes, and the one place each is dispatched
+/// from: a name is a subcommand exactly when it is here, and `mock help bench`
+/// and the usage guide are held to name each one.
+pub(crate) const SUBCOMMANDS: [Subcommand; 8] = [
+    ("init", |cfg, _| cmd_init(cfg)),
+    ("run", cmd_run),
+    ("report", cmd_report),
+    ("test", cmd_test),
+    ("list", |cfg, _| cmd_list(cfg)),
+    ("add", cmd_add),
+    ("disasm", crate::bench_disasm::cmd),
+    ("migrate", bench_migrate::cmd),
+];
 
 pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
     let sub = args.first().copied().unwrap_or("");
     let rest: Vec<&str> = args.iter().skip(1).copied().collect();
-    let listed = SUBCOMMANDS.contains(&sub);
+    if let Some((_, run)) = SUBCOMMANDS.iter().find(|(name, _)| *name == sub) {
+        return run(cfg, &rest);
+    }
     match sub {
-        "init" if listed => cmd_init(cfg),
-        "run" if listed => cmd_run(cfg, &rest),
-        "report" if listed => cmd_report(cfg, &rest),
-        "test" if listed => cmd_test(cfg, &rest),
-        "list" if listed => cmd_list(cfg),
-        "add" if listed => cmd_add(cfg, &rest),
-        "disasm" if listed => crate::bench_disasm::cmd(cfg, &rest),
-        "migrate" if listed => bench_migrate::cmd(cfg, &rest),
         "" => {
             print_help();
             ExitCode::SUCCESS
@@ -128,41 +134,46 @@ pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
     }
 }
 
+/// What `mock bench` with no subcommand, or an unknown one, prints.
+pub(crate) const HELP: &str = concat!(
+    "mock bench. canonical bench framework commands\n",
+    "\n",
+    "subcommands:\n",
+    "  init     scaffold mock/benches/ in this consumer\n",
+    "  run      build the arms and the generated driver, run the harness\n",
+    "  report   render report.md for any run that has none\n",
+    "  test     run cargo test in every crate under the bench tree\n",
+    "  list     list benches, sizes, and variants from bench.toml\n",
+    "  add      scaffold a new variant crate: mock bench add <name>\n",
+    "  disasm   write one function of one arm as a results artifact:\n",
+    "           mock bench disasm <bench> <arm> <symbol>\n",
+    "  migrate  move results and history in an older layout into runs:\n",
+    "           mock bench migrate [--machine-class <class>] [--dry-run]\n",
+    "\n",
+    "`run` and `report` accept bench names to restrict the pass:\n",
+    "  mock bench run <name> [<name> ...]   run only the named benches\n",
+    "with no names, every bench in bench.toml runs\n",
+    "`run` removes the arm and driver builds it made once the results are written;\n",
+    "  mock bench run --keep-builds         keeps them for a second run\n",
+    "\n",
+    "`mock/benches/` layout (created by `init`):\n",
+    "  bench.toml            globals: [timing] [dispatch] [build] [workload.*]\n",
+    "  <bench>/bench.toml    the bench: top-level fields + optional [sweep.<name>]\n",
+    "  <bench>/arms/<arm>/   one measured cdylib per arm (manifest generated)\n",
+    "  <bench>/support/      this bench's library crates\n",
+    "  support/              library crates several benches share\n",
+    "  src/lib.rs            optional hooks() library\n",
+    "  results/<bench>/<sweep>_n<point>/<machine class>/<run>/\n",
+    "                        one run: samples.csv meta.json report.md summary.tsv\n",
+    "\n",
+    "a run is written once and never replaced; runs on other machines sit\n",
+    "beside it, and a cell's history is its runs on the same machine class.\n",
+    "the driver is generated from bench.toml and is the only runner: a\n",
+    "Cargo.toml or a binary of your own in the tree is refused\n",
+);
+
 fn print_help() {
-    eprintln!("mock bench. canonical bench framework commands");
-    eprintln!();
-    eprintln!("subcommands:");
-    eprintln!("  init     scaffold mock/benches/ in this consumer");
-    eprintln!("  run      build the arms and the generated driver, run the harness");
-    eprintln!("  report   render report.md for any run that has none");
-    eprintln!("  test     run cargo test in every crate under the bench tree");
-    eprintln!("  list     list benches, sizes, and variants from bench.toml");
-    eprintln!("  add      scaffold a new variant crate: mock bench add <name>");
-    eprintln!("  disasm   write one function of one arm as a results artifact:");
-    eprintln!("           mock bench disasm <bench> <arm> <symbol>");
-    eprintln!("  migrate  move results and history in an older layout into runs:");
-    eprintln!("           mock bench migrate [--machine-class <class>] [--dry-run]");
-    eprintln!();
-    eprintln!("`run` and `report` accept bench names to restrict the pass:");
-    eprintln!("  mock bench run <name> [<name> ...]   run only the named benches");
-    eprintln!("with no names, every bench in bench.toml runs");
-    eprintln!("`run` removes the arm and driver builds it made once the results are written;");
-    eprintln!("  mock bench run --keep-builds         keeps them for a second run");
-    eprintln!();
-    eprintln!("`mock/benches/` layout (created by `init`):");
-    eprintln!("  bench.toml            globals: [timing] [dispatch] [build] [workload.*]");
-    eprintln!("  <bench>/bench.toml    the bench: top-level fields + optional [sweep.<name>]");
-    eprintln!("  <bench>/arms/<arm>/   one measured cdylib per arm (manifest generated)");
-    eprintln!("  <bench>/support/      this bench's library crates");
-    eprintln!("  support/              library crates several benches share");
-    eprintln!("  src/lib.rs            optional hooks() library");
-    eprintln!("  results/<bench>/<sweep>_n<point>/<machine class>/<run>/");
-    eprintln!("                        one run: samples.csv meta.json report.md summary.tsv");
-    eprintln!();
-    eprintln!("a run is written once and never replaced; runs on other machines sit");
-    eprintln!("beside it, and a cell's history is its runs on the same machine class.");
-    eprintln!("the driver is generated from bench.toml and is the only runner: a");
-    eprintln!("Cargo.toml or a binary of your own in the tree is refused");
+    eprint!("{HELP}");
 }
 
 // ── run ──

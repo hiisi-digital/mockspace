@@ -193,18 +193,33 @@ fn every_dispatched_subcommand_is_in_the_known_list() {
 }
 
 #[test]
-fn mock_help_bench_names_every_bench_subcommand() {
-    // `mock bench` dispatches only what `bench::SUBCOMMANDS` lists, so a
-    // subcommand the top-level help leaves out is one this catches.
-    let bench = crate::entry::help::commands()
+fn every_surface_listing_the_bench_subcommands_names_each_one() {
+    // `bench::SUBCOMMANDS` is what `mock bench` dispatches; each place a
+    // reader learns the subcommands from is held to name every one of them.
+    let help = crate::entry::help::commands()
         .iter()
         .find(|c| c.name == "bench")
-        .expect("bench is a command");
-    for sub in crate::bench::SUBCOMMANDS {
+        .expect("bench is a command")
+        .help;
+    let guide_row = include_str!("../../docs/USAGE_GUIDE.md")
+        .lines()
+        .find(|l| l.starts_with("| `cargo mock bench` |"))
+        .expect("the usage guide has a `cargo mock bench` row");
+    for (sub, _) in crate::bench::SUBCOMMANDS {
+        let named = format!("`{sub}");
         assert!(
-            bench.help.contains(&format!("`{sub}")),
-            "`mock help bench` does not name `{sub}`: {}",
-            bench.help
+            help.contains(&named),
+            "`mock help bench` does not name `{sub}`: {help}"
+        );
+        assert!(
+            guide_row.contains(&named),
+            "docs/USAGE_GUIDE.md does not name `{sub}`: {guide_row}"
+        );
+        assert!(
+            crate::bench::HELP
+                .lines()
+                .any(|l| l.trim_start().starts_with(&format!("{sub} "))),
+            "`mock bench` help does not name `{sub}`"
         );
     }
 }
