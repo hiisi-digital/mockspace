@@ -1,0 +1,9 @@
+[package]
+name = "fx_top"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+fx_left = { path = "../fx_left" }
+fx_right = { path = "../fx_right" }

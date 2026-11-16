@@ -1,0 +1,15 @@
+# A consumer's bench tree, held inside the sketch so the run needs no real consumer's tree. `build-from-clean` has
+# one arm that builds the fixture workspace in it from an empty target directory on every call; `build-without-clean`
+# is its control, the same build with nothing removed first. The support crate `clean-build` does the work of both.
+# No `[build] mockspace` is set, so the arms and the driver take the bench crates from the default source,
+# mockspace's `dev` branch, as a consumer that sets nothing does.
+
+[benchspace]
+members = ["build-from-clean", "build-without-clean"]
+
+[timing]
+passes = 3
+runs_per_pass = 1
+batch_size = 1
+harness_runs = 1
+cooldowns_ms = [0]

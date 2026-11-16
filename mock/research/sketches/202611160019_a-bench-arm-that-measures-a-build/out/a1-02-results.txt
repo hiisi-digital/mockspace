@@ -1,0 +1,9 @@
+## what the run left under results/
+benches/results/INDEX.md
+benches/results/build-from-clean/build-from-clean_n1/linux-x86_64-c4-container-intel/20261116T002225Z-2764b23-dirty/calls.tsv
+benches/results/build-from-clean/build-from-clean_n1/linux-x86_64-c4-container-intel/20261116T002225Z-2764b23-dirty/meta.json
+benches/results/build-from-clean/build-from-clean_n1/linux-x86_64-c4-container-intel/20261116T002225Z-2764b23-dirty/report.md
+benches/results/build-from-clean/build-from-clean_n1/linux-x86_64-c4-container-intel/20261116T002225Z-2764b23-dirty/samples.csv
+benches/results/build-from-clean/build-from-clean_n1/linux-x86_64-c4-container-intel/20261116T002225Z-2764b23-dirty/summary.tsv
+## the call record the arm left behind, empty when after_cell took it
+cat: /home/user/target/m4-build-from-clean/calls.tsv: No such file or directory

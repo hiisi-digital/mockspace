@@ -1,0 +1,5 @@
+# The workspace `build-from-clean` builds: four library crates in a diamond, no dependency outside it.
+
+[workspace]
+resolver = "3"
+members = ["fx_base", "fx_left", "fx_right", "fx_top"]

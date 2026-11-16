@@ -1,0 +1,2 @@
+# schema_v1	timestamp	git_commit	benchmark	variant	n	mode	median_ns	ci_lo_ns	ci_hi_ns
+1794788571	2764b23-dirty	build-from-clean_n1	from_clean	1	warm	142454350.6	142454350.6	144524398.1
