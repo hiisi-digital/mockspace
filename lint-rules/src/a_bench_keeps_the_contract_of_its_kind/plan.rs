@@ -53,6 +53,34 @@ pub struct Bench {
     pub arms:        Vec<ArmRoot>,
     /// Its own `support/` crates (a composed member's), absolute.
     pub own_support: Vec<PathBuf>,
+    /// Every workload program it and its sweeps name.
+    pub workloads:   Vec<String>,
+}
+
+impl Bench {
+    /// Whether it is a `[bench.<name>]` section of the root `bench.toml`,
+    /// whose file every other root section and the tree's setup share, so
+    /// only its own section of it is the bench's.
+    #[must_use]
+    pub fn is_root_section(&self, bench_dir: &Path) -> bool {
+        self.section.is_some()
+            && super::reach::normal(&self.file) == super::reach::normal(&bench_dir.join("bench.toml"))
+    }
+}
+
+/// The workloads a bench or sweep table names, `default` where a composed
+/// bench names none.
+fn workloads_of(tables: &[&toml::Value], default: bool) -> Vec<String> {
+    let mut out: Vec<String> = tables
+        .iter()
+        .filter_map(|t| t.get("workload").and_then(toml::Value::as_str).map(str::to_string))
+        .collect();
+    if default && tables.first().is_some_and(|t| t.get("workload").is_none()) {
+        out.push("default".to_string());
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Every bench under `bench_dir`, in key order. Empty where the tree has no
@@ -145,6 +173,7 @@ fn sections(doc: &toml::Table, file: &Path, base: &Path, member: Option<&str>) -
                     })
                     .collect(),
                 own_support: Vec::new(),
+                workloads:   workloads_of(&[section], false),
             }
         })
         .collect()
@@ -201,6 +230,7 @@ fn composed(view: &View<'_>, doc: &toml::Table, file: &Path, dir: &Path, member:
         lock: dir.join(lock_name(None)),
         arms,
         own_support,
+        workloads: workloads_of(&lists.iter().collect::<Vec<_>>(), true),
     }
 }
 

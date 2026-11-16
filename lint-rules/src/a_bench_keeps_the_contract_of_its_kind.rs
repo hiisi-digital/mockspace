@@ -7,9 +7,11 @@
 //!
 //! Every bench is a snapshot or a tracking bench ([`Kind`]), and says which in
 //! its `bench.toml`. A snapshot builds only from inside the bench tree, and its
-//! lock records every file it builds from, so the reference it is never
-//! changes under its history. A tracking bench builds against code outside the
-//! tree, which is what its history across commits follows. Found and refused:
+//! lock records every file it builds from and the setup it runs under from the
+//! root `bench.toml`, so the reference it is never changes under its history. A
+//! tracking bench builds against code outside the tree, and its history is
+//! read by the source each arm measured, a digest of that code and the same
+//! setup ([`arm_code`]). Found and refused:
 //!
 //! - a bench that declares no kind, or a word that names none;
 //! - a snapshot whose arms reach anything outside the bench tree;
@@ -26,10 +28,13 @@
 
 mod plan;
 mod reach;
+mod setup;
+#[cfg(test)]
+mod setup_tests;
 #[cfg(test)]
 mod tests;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use mockspace_bench_layout::{Kind, LOCK_HEADER};
@@ -88,8 +93,13 @@ pub fn plans(view: &View<'_>, bench_dir: &Path) -> Vec<KindPlan> {
                 section: b.section.clone(),
                 declared: b.declared.clone(),
                 admits,
-                lock_body: (admits == Kind::Snapshot)
-                    .then(|| lock_body(view, bench_dir, &closure.files)),
+                lock_body: (admits == Kind::Snapshot).then(|| {
+                    format!(
+                        "{LOCK_HEADER}\n{}{}",
+                        digest_lines(view, bench_dir, &closure.files),
+                        setup::setup_lines(view, bench_dir, &b)
+                    )
+                }),
                 outside: closure.outside,
                 lock: PathBuf::from(rel_str(&b.lock, bench_dir)),
             }
@@ -97,19 +107,10 @@ pub fn plans(view: &View<'_>, bench_dir: &Path) -> Vec<KindPlan> {
         .collect()
 }
 
-/// The lock of `files`: a header, then [`digest_lines`].
-fn lock_body(
-    view: &View<'_>,
-    bench_dir: &Path,
-    files: &std::collections::BTreeSet<PathBuf>,
-) -> String {
-    format!("{LOCK_HEADER}\n{}", digest_lines(view, bench_dir, files))
-}
-
 /// `<sha256>  <path>` per file, the path relative to the bench tree (climbing
 /// out of it with `..` for a file outside), in path order, so the text is the
 /// same in every checkout of the same files.
-fn digest_lines(
+pub fn digest_lines(
     view: &View<'_>,
     bench_dir: &Path,
     files: &std::collections::BTreeSet<PathBuf>,
@@ -147,10 +148,34 @@ pub struct ArmCode {
     pub crate_dir: PathBuf,
     /// Whether the tool generates its manifest.
     pub generated: bool,
-    /// [`digest_lines`] over every file it builds from, in the tree and out
-    /// of it. The tool adds the versions its other dependencies resolved to
-    /// and takes the digest of the whole as the arm's source.
-    pub files:     String,
+    /// Every file it builds from that the manifests name a way to, absolute:
+    /// its own crate, every crate it takes by path wherever it sits, and the
+    /// bench's own `bench.toml`. A crate reached through a dependency inherited
+    /// from a workspace is not among them, since resolving one is cargo's;
+    /// the tool asks cargo for those and adds them with [`ArmCode::text`].
+    pub paths:     BTreeSet<PathBuf>,
+    /// The setup it runs under that sits in the root `bench.toml`, one line
+    /// per value it uses (`setup::setup_lines`).
+    pub setup:     String,
+}
+
+impl ArmCode {
+    /// The code text of the arm: [`digest_lines`] over its `paths` and every
+    /// file of `more`, then its setup. The tool adds the versions its other
+    /// dependencies resolved to and takes the digest of the whole as the arm's
+    /// source.
+    #[must_use]
+    pub fn text(&self, view: &View<'_>, bench_dir: &Path, more: &BTreeSet<PathBuf>) -> String {
+        let all: BTreeSet<PathBuf> = self.paths.iter().chain(more).map(|p| reach::normal(p)).collect();
+        format!("{}{}", digest_lines(view, bench_dir, &all), self.setup)
+    }
+}
+
+/// The files of the crates at `dirs` as they are built, and of every crate
+/// they take by path: the files a crate cargo resolved for an arm adds to it.
+#[must_use]
+pub fn crates_as_built(view: &View<'_>, bench_dir: &Path, dirs: &[PathBuf]) -> BTreeSet<PathBuf> {
+    reach::crates_as_built(view, bench_dir, dirs)
 }
 
 /// Every arm of every bench declared `kind = "tracking"` in the tree at
@@ -162,6 +187,7 @@ pub fn arm_code(view: &View<'_>, bench_dir: &Path) -> Vec<ArmCode> {
         if b.declared != Declared::Kind(Kind::Tracking) {
             continue;
         }
+        let setup = setup::setup_lines(view, bench_dir, &b);
         for arm in &b.arms {
             let c = reach::arm_closure(view, bench_dir, &b, arm, Kind::Tracking);
             out.push(ArmCode {
@@ -169,7 +195,8 @@ pub fn arm_code(view: &View<'_>, bench_dir: &Path) -> Vec<ArmCode> {
                 section:   b.section.clone(),
                 crate_dir: PathBuf::from(reach::rel_up(&arm.dir, bench_dir)),
                 generated: !arm.manifest,
-                files:     digest_lines(view, bench_dir, &c.files),
+                paths:     c.files,
+                setup:     setup.clone(),
             });
         }
     }

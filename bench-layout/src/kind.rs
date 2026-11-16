@@ -50,7 +50,8 @@ pub const SOURCES_ENV: &str = "MOCKSPACE_BENCH_SOURCES";
 pub enum Kind {
     /// Isolated reference code, frozen by its lock.
     Snapshot,
-    /// Built against living code, compared across commits.
+    /// Built against living code, read along the source points its arms
+    /// measured.
     Tracking,
 }
 
@@ -79,11 +80,13 @@ impl Kind {
         match self {
             Kind::Snapshot => {
                 "a snapshot is isolated reference code: every arm builds only from crates and files \
-                 inside the bench tree, and its lock records those files, which never change after"
+                 inside the bench tree, and its lock records those files and the setup it runs \
+                 under, which never change after"
             },
             Kind::Tracking => {
                 "a tracking bench builds against living code: at least one arm reaches a crate \
-                 outside the bench tree, and its history is read across commits"
+                 outside the bench tree, and its history is read by the source each arm measured, \
+                 a digest of the code it built from"
             },
         }
     }

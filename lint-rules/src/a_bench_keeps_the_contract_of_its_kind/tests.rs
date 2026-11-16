@@ -6,19 +6,19 @@
 use super::*;
 use crate::Reading;
 
-const ARM: &str = "[workspace]\n[package]\nname = \"a\"\nversion = \"0.0.0\"\n[lib]\npath = \"src/lib.rs\"\ncrate-type = [\"cdylib\"]\n[dependencies]\nmockspace-bench-core = { git = \"https://github.com/hiisi-digital/mockspace\", branch = \"dev\" }\n";
+pub(super) const ARM: &str ="[workspace]\n[package]\nname = \"a\"\nversion = \"0.0.0\"\n[lib]\npath = \"src/lib.rs\"\ncrate-type = [\"cdylib\"]\n[dependencies]\nmockspace-bench-core = { git = \"https://github.com/hiisi-digital/mockspace\", branch = \"dev\" }\n";
 const LIB: &str = "[package]\nname = \"s\"\nversion = \"0.0.0\"\n";
 
 /// A repository with a bench tree under `mock/benches/` and whatever else the
 /// case puts beside it, every path relative to the repository root.
-fn repo(files: &[(&str, &str)]) -> tempfile::TempDir {
+pub(super) fn repo(files: &[(&str, &str)]) -> tempfile::TempDir {
     let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     write(&tmp, &[("mock/benches/bench.toml", "[timing]\n")]);
     write(&tmp, files);
     tmp
 }
 
-fn write(tmp: &tempfile::TempDir, files: &[(&str, &str)]) {
+pub(super) fn write(tmp: &tempfile::TempDir, files: &[(&str, &str)]) {
     for (path, body) in files {
         let p = tmp.path().join(path);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -26,7 +26,7 @@ fn write(tmp: &tempfile::TempDir, files: &[(&str, &str)]) {
     }
 }
 
-fn findings(tmp: &tempfile::TempDir) -> Vec<String> {
+pub(super) fn findings(tmp: &tempfile::TempDir) -> Vec<String> {
     let reading = Reading::new(tmp.path());
     bench_kinds(&reading.view(), &tmp.path().join("mock/benches"))
         .into_iter()
@@ -43,7 +43,7 @@ fn plan_of(tmp: &tempfile::TempDir, bench: &str) -> KindPlan {
 }
 
 /// Write the lock `mock bench freeze` would, from the plan.
-fn freeze(tmp: &tempfile::TempDir, bench: &str) {
+pub(super) fn freeze(tmp: &tempfile::TempDir, bench: &str) {
     let p = plan_of(tmp, bench);
     let lock = tmp.path().join("mock/benches").join(&p.lock);
     std::fs::write(lock, p.lock_body.unwrap()).unwrap();
@@ -51,7 +51,7 @@ fn freeze(tmp: &tempfile::TempDir, bench: &str) {
 
 /// A snapshot built only from its own arm and a support crate of the tree, with
 /// the instrument from git, frozen.
-fn frozen_snapshot() -> tempfile::TempDir {
+pub(super) fn frozen_snapshot() -> tempfile::TempDir {
     let tmp = repo(&[
         (
             "mock/benches/hash/bench.toml",
@@ -88,6 +88,9 @@ fn a_frozen_snapshot_inside_the_tree_keeps_its_contract() {
         "hash/bench.toml",
         "support/mix/Cargo.toml",
         "support/mix/src/lib.rs",
+        "setup:[timing]",
+        "setup:[build]",
+        "setup:[workload.default]",
     ]);
 }
 
@@ -386,9 +389,10 @@ fn a_tracking_arm_s_code_follows_its_path_dependencies_out_of_the_tree() {
     ];
     let code = |tmp: &tempfile::TempDir| -> Vec<(String, String)> {
         let reading = Reading::new(tmp.path());
-        arm_code(&reading.view(), &tmp.path().join("mock/benches"))
+        let bench_dir = tmp.path().join("mock/benches");
+        arm_code(&reading.view(), &bench_dir)
             .into_iter()
-            .map(|a| (a.crate_dir.display().to_string(), a.files))
+            .map(|a| (a.crate_dir.display().to_string(), a.text(&reading.view(), &bench_dir, &BTreeSet::new())))
             .collect()
     };
     let tmp = repo(&files);
@@ -431,4 +435,9 @@ fn a_tracking_arm_s_code_follows_its_path_dependencies_out_of_the_tree() {
         "a crate two path steps out moves the arm that reaches it"
     );
     assert_eq!(after[1], first[1], "the arm that does not reach it stands");
+
+    write(&tmp, &[("mock/benches/bench.toml", "[timing]\npasses = 2\n")]);
+    let set = code(&tmp);
+    assert!(set[0].1.contains("  setup:[timing]\n"), "{}", set[0].1);
+    assert!(set[0] != after[0] && set[1] != after[1], "the setup moves every arm that runs under it");
 }

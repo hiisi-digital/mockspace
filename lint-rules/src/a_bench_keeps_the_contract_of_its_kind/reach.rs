@@ -12,7 +12,10 @@
 //!
 //! [`arm_closure`] follows one arm out of the tree as well, through every
 //! crate it takes by path wherever it sits, for the digest of a tracking
-//! arm's source.
+//! arm's source. A crate taken through a workspace it inherits is not
+//! followed here, since resolving one is cargo's: the tool asks cargo for
+//! every path package an arm's build resolved and adds them through
+//! [`crates_as_built`].
 //!
 //! Read: `[dependencies]`, `[build-dependencies]` and their `[target.*]` forms,
 //! `[patch.*]`, the `[lib] path`, and in Rust source the literal paths of
@@ -77,8 +80,31 @@ pub fn closure(view: &View<'_>, bench_dir: &Path, bench: &Bench, kind: Kind) -> 
         starts.extend(arm_starts(view, bench_dir, bench, arm, kind));
     }
     let mut c = walk_from(view, bench_dir, starts, false);
-    c.files.insert(normal(&bench.file));
+    own_file(&mut c, bench_dir, bench);
     c
+}
+
+/// The bench's own `bench.toml` into `c`, where the file is its own. A root
+/// section shares the root file, and its own section of it is read with the
+/// setup instead.
+fn own_file(c: &mut Closure, bench_dir: &Path, bench: &Bench) {
+    if !bench.is_root_section(bench_dir) {
+        c.files.insert(normal(&bench.file));
+    }
+}
+
+/// The files of the crates at `dirs` as they are built, wherever they sit,
+/// and of every crate they take by path: in the bench tree every file under
+/// the crate, out of it the manifest, the build script and the library's
+/// source, with the files that source includes by a literal path.
+pub fn crates_as_built(view: &View<'_>, bench_dir: &Path, dirs: &[PathBuf]) -> BTreeSet<PathBuf> {
+    walk_from(
+        view,
+        bench_dir,
+        dirs.iter().map(|d| (normal(d), true)).collect(),
+        true,
+    )
+    .files
 }
 
 /// Every file one arm builds from, in the bench tree and out of it: the
@@ -99,7 +125,7 @@ pub fn arm_closure(
         arm_starts(view, bench_dir, bench, arm, kind),
         true,
     );
-    c.files.insert(normal(&bench.file));
+    own_file(&mut c, bench_dir, bench);
     c
 }
 

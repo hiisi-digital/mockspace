@@ -40,7 +40,7 @@
 
 pub mod a_bench_runs_only_on_the_generated_driver;
 pub mod a_bench_keeps_the_contract_of_its_kind;
-pub use a_bench_keeps_the_contract_of_its_kind::{ArmCode as BenchArmCode, arm_code as bench_arm_code, Declared as BenchKindDeclared, KindFinding as BenchKindFinding, KindPlan as BenchKindPlan, bench_kinds, plans as bench_kind_plans};
+pub use a_bench_keeps_the_contract_of_its_kind::{ArmCode as BenchArmCode, arm_code as bench_arm_code, crates_as_built as bench_crates_as_built,Declared as BenchKindDeclared, KindFinding as BenchKindFinding, KindPlan as BenchKindPlan, bench_kinds, plans as bench_kind_plans};
 pub use a_bench_runs_only_on_the_generated_driver::{Runner as BenchRunner, bench_runners};
 mod bench_results_live_in_the_harness_layout;
 pub mod canon_not_while_panel_open;
