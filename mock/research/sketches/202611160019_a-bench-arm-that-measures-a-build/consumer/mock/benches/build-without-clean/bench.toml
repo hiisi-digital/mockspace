@@ -1,0 +1,14 @@
+# The control of `build-from-clean`. Its one arm, `without_clean`, is `from_clean` with the removal taken out: it
+# builds the same fixture into the same target directory and records the same way, so every call after the first
+# finds the build before it and compiles nothing. The hooks library must refuse this cell. If it did not, the record
+# that passes `build-from-clean` would not tell a build from clean apart from a no-op.
+
+title = "build-without-clean: the control, the same fixture built without removing the target directory"
+workload = "default"
+master_seed = 0x6d34_6275_696c_6402
+arms = ["without_clean"]
+baseline = "without_clean"
+may_differ = false
+required = true
+points = [1]
+timing = { passes = 3, runs_per_pass = 1, batch_size = 1, cooldowns_ms = [0], validation_seeds = 1, determinism_check_seeds = 1 }

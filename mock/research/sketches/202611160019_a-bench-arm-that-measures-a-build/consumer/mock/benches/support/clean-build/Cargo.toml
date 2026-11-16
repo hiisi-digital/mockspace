@@ -1,0 +1,10 @@
+[package]
+name = "clean-build"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MPL-2.0"
+description = "What `build-from-clean` does on each call: the fixture workspace built from an empty target directory, and a record of what the compiler built."
+
+# its own root, so no workspace above claims it
+[workspace]

@@ -1,0 +1,19 @@
+# One arm, `from_clean`. A call removes the fixture's target directory untimed, builds the fixture workspace
+# (`fixture/`, four library crates with no dependency outside it) in cargo's dev profile inside the harness's
+# `timed!` run block, then counts untimed the crates the compiler reported as built fresh, and answers with that
+# count. A bench of one arm gets no validation and no determinism check from the harness, so nothing in the harness
+# reads that answer; the hooks library reads the call record instead and refuses the cell if any call shows a crate
+# count other than four, a library present before the build or missing after it, a lock wait, or a failed cargo.
+#
+# A call is one whole build, so a worker makes one timed call after its one warm-up call, and three passes give
+# three timed calls in each of the harness's two modes.
+
+title = "build-from-clean: a fixture workspace of four crates built from an empty target directory"
+workload = "default"
+master_seed = 0x6d34_6275_696c_6401
+arms = ["from_clean"]
+baseline = "from_clean"
+may_differ = false
+required = true
+points = [1]
+timing = { passes = 3, runs_per_pass = 1, batch_size = 1, cooldowns_ms = [0], validation_seeds = 1, determinism_check_seeds = 1 }

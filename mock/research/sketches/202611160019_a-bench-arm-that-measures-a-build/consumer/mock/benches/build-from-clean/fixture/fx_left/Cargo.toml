@@ -1,0 +1,8 @@
+[package]
+name = "fx_left"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+fx_base = { path = "../fx_base" }

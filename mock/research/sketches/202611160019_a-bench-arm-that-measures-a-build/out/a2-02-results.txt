@@ -1,0 +1,13 @@
+## what is under results/ after the run
+benches/results/INDEX.md
+benches/results/build-from-clean/build-from-clean_n1/linux-x86_64-c4-container-intel/20261116T002225Z-2764b23-dirty/calls.tsv
+benches/results/build-from-clean/build-from-clean_n1/linux-x86_64-c4-container-intel/20261116T002225Z-2764b23-dirty/meta.json
+benches/results/build-from-clean/build-from-clean_n1/linux-x86_64-c4-container-intel/20261116T002225Z-2764b23-dirty/report.md
+benches/results/build-from-clean/build-from-clean_n1/linux-x86_64-c4-container-intel/20261116T002225Z-2764b23-dirty/samples.csv
+benches/results/build-from-clean/build-from-clean_n1/linux-x86_64-c4-container-intel/20261116T002225Z-2764b23-dirty/summary.tsv
+benches/results/build-without-clean/build-without-clean_n1/linux-x86_64-c4-container-intel/20261116T002449Z-2764b23-dirty/calls.tsv
+benches/results/build-without-clean/build-without-clean_n1/linux-x86_64-c4-container-intel/20261116T002449Z-2764b23-dirty/meta.json
+benches/results/build-without-clean/build-without-clean_n1/linux-x86_64-c4-container-intel/20261116T002449Z-2764b23-dirty/report.md
+benches/results/build-without-clean/build-without-clean_n1/linux-x86_64-c4-container-intel/20261116T002449Z-2764b23-dirty/samples.csv
+## a call record left behind, which after_cell takes when it runs
+target
