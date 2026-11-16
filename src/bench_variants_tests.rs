@@ -49,6 +49,23 @@ fn an_artifact_path_with_its_platform_name_finds_the_same_crate() {
     assert_eq!(b, build("satfold-seq", Some(Path::new("/b/../target"))));
 }
 
+/// The manifest accepts a library named for any target on every host, so its
+/// crate is found by the file's own naming, not the host's: `libX.dylib` on
+/// Linux used to leave `bench_satfold_seq.dylib`'s stem prefixed or suffixed.
+#[test]
+fn an_artifact_path_named_for_any_target_finds_the_same_crate_on_every_host() {
+    let libs = lib_names(&plant("[bench.x]\n").path().to_path_buf());
+    for file in ["libbench_satfold_seq.so", "libbench_satfold_seq.dylib", "bench_satfold_seq.dll"] {
+        let entry = format!("../target/release/{file}");
+        let b = build_for(&entry, Path::new("/b"), &libs);
+        assert_eq!(
+            b,
+            Some(build("satfold-seq", Some(Path::new("/b/../target")))),
+            "{file}"
+        );
+    }
+}
+
 #[test]
 fn a_short_name_and_a_variants_path_build_with_cargos_own_target() {
     let t = plant("[bench.h]\nvariants = [\"fnv1a\", \"variants/plain-arm/target/release/plain_arm\"]\n");
