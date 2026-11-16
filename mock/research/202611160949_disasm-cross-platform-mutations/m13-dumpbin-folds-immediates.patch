@@ -1,0 +1,13 @@
+diff --git a/bench-harness/src/disasm/normalize.rs b/bench-harness/src/disasm/normalize.rs
+index 8c5106e..17d4d06 100644
+--- a/bench-harness/src/disasm/normalize.rs
++++ b/bench-harness/src/disasm/normalize.rs
+@@ -295,7 +295,7 @@ pub(super) fn fold_dumpbin_operands(insn: &str) -> String {
+     let mut lone = true;
+     let flush = |token: &mut String, out: &mut String, closing: bool, depth: i32, lone: bool| {
+         let address = if depth > 0 { closing && lone } else { branch };
+-        if address && long_hex(token) {
++        if long_hex(token) {
+             out.push_str("ADDR");
+         } else if ["_R", "_ZN", "__R", "__ZN", "?"]
+             .iter()

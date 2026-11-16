@@ -1,0 +1,3 @@
+# git apply m16-dylib-check-name.patch && cargo test -p mockspace --lib -- dylib_check
+test dylib_check::tests::a_module_library_is_named_as_this_host_names_one ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1869 filtered out; finished in 0.08s

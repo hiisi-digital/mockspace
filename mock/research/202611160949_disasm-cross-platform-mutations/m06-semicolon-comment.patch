@@ -1,0 +1,13 @@
+diff --git a/bench-harness/src/disasm/normalize.rs b/bench-harness/src/disasm/normalize.rs
+index 8c5106e..a74e56f 100644
+--- a/bench-harness/src/disasm/normalize.rs
++++ b/bench-harness/src/disasm/normalize.rs
+@@ -118,7 +118,7 @@ pub(super) fn strip_comment(insn: &str, flavour: Flavour) -> &str {
+         let cut = match bytes[i] {
+             b'#' => after_space && matches!(next, None | Some(b' ' | b'\t' | b'#')),
+             b'/' => after_space && next == Some(b'/'),
+-            b';' => after_space || flavour == Flavour::Otool,
++            b';' => flavour == Flavour::Otool,
+             _ => false,
+         };
+         if cut {

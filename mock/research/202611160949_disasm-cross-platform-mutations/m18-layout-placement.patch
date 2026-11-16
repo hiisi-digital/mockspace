@@ -1,0 +1,13 @@
+diff --git a/bench-layout/src/lib.rs b/bench-layout/src/lib.rs
+index d969d09..6dd2c63 100644
+--- a/bench-layout/src/lib.rs
++++ b/bench-layout/src/lib.rs
+@@ -372,7 +372,7 @@ fn place_in_results(parts: &[&str]) -> Placement {
+         [_, file] if *file == INDEX_FILE => Placement::InLayout,
+         [_, dir, ..] if *dir == VOID_DIR || *dir == INFLIGHT_DIR => Placement::InLayout,
+         [_, bench, dir, machine, run, arm, file]
+-            if *dir == DISASM_DIR
++            if *dir == "never-disasm"
+                 && is_name(bench)
+                 && is_machine_class(machine)
+                 && is_run_id(run)

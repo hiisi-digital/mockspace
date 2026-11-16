@@ -45,6 +45,8 @@ left). And a tool that ran and printed only headers gave an empty string, which
 two variants then shared as a false duplicate.
 
 On Windows nothing was looked for at all: no `dumpbin`, no `llvm-objdump.exe`.
+A linked DLL also carries no COFF symbol table, so GNU `objdump` labels none of
+its exports and could never find `bench_entry` in one.
 
 ## What the branch changes
 
@@ -61,23 +63,32 @@ On Windows nothing was looked for at all: no `dumpbin`, no `llvm-objdump.exe`.
   for GNU, `--disassemble-symbols=` for LLVM, `--no-show-raw-insn` for both,
   `/DISASM:NOBYTES` for dumpbin); otool and dumpbin, which cannot filter by
   symbol, are cut to the symbol by an exact label match.
+- `disasm/pe_exports.rs`: for GNU `objdump` on a DLL, the function is the
+  stretch of the whole disassembly from its export's RVA to the next export's,
+  read off `objdump -p`. The last export runs to the end of its section.
 - `disasm/format.rs`: the object format is read off the file's leading bytes
   (ELF, Mach-O in all four magics, PE through `e_lfanew`, a bare COFF object by
   its machine), and the symbol is spelled as that format spells it: underscored
-  on Mach-O and 32-bit COFF, bare on ELF and 64-bit COFF.
+  on Mach-O and in a 32-bit COFF object, bare on ELF and 64-bit COFF. A 32-bit
+  PE image tries the bare export name first and the underscored one second,
+  since no i686 DLL has been read here.
 - `disasm/normalize.rs`: header, section and label lines are recognised in
   every tool's shape, the address column comes off whether it is `addr:` or
   otool's bare address, comments come off (`#`, `//`, `;`), every annotated
   target folds whether written `0x` or bare, spacing is made canonical, and
-  RIP-relative displacements, any `adrp` page and dumpbin's full-width
-  addresses and mangled call targets fold. An empty result is no evidence.
+  RIP-relative displacements, any `adrp` page and the `add` after it fold.
+  From `dumpbin`, a long hex token folds only as a branch or call target or as
+  a whole `[...]` absolute address; every other one is an immediate and stays.
+  An empty result is no evidence.
 - `mock bench disasm <bench> <arm> <symbol>` builds the arm as `run` does
-  (`build_arm`, shared with `run`) and writes the function's disassembly to
-  `results/<bench>/disasm/<machine class>/<run>/<arm>.<symbol>.txt`, which
-  `bench-layout` now places in the layout and no run reader takes for a cell.
-  Written once; a second one of the same second takes a `-<k>` suffix.
-- The `benches` rule card and the `benchmarking` skill name the command and the
-  tool order.
+  (`src/bench_arms.rs`, shared with `run`) and writes the function's
+  disassembly to `results/<bench>/disasm/<machine class>/<run>/<arm>/<symbol>.txt`,
+  which `bench-layout` places in the layout and no run reader takes for a
+  cell. The file is created exclusively; where one is there the next `-<k>`
+  run is taken, and the header names the run directory the file sits in.
+- `mock help bench`, the `benches` rule card and the `benchmarking` skill name
+  the command; `mock bench` dispatches only what `bench::SUBCOMMANDS` lists,
+  and a test holds `mock help bench` to name each one.
 
 ## What was proven, where, and how
 
@@ -86,47 +97,51 @@ Binutils 2.42 `objdump`, toolchain `nightly-2026-05-28`).
 
 - Both reds reproduced on `origin/dev` at 2f11e87 before any change, and green
   after.
-- Live, on real cdylibs built by `rustc` for the host, read by both
+- Live, on `std` cdylibs built by `rustc` for the host, read by both
   `llvm-objdump` and GNU `objdump` (`disasm/tests_live.rs`): `bench_entry` is
   found and a missing symbol is an error, identical work in two crates is one
   duplicate pair, different work behind an identical dispatcher is not.
-- Live, on objects cross-built for `x86_64-apple-darwin`,
-  `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`
-  and `aarch64-unknown-linux-gnu` (rustup targets installed for the purpose),
-  read by `llvm-objdump`: the format is detected, the entry spelled as the
-  format spells it, and the duplicate decision is right. The test skips a target
-  whose standard library is not installed and says so; `aarch64-pc-windows-msvc`
-  was skipped here.
 - Recorded, on any host (`disasm/tests_recorded.rs`, fixtures and the exact
-  commands in `disasm/fixtures/README.md`): the same three objects per target,
-  `llvm-objdump` for all five targets and GNU `objdump` for ELF x86_64 and COFF
-  x86_64, the two formats this binutils reads. The duplicate decision, the
-  entry's block under the format's spelling and the wrong spelling finding
-  nothing are held for each.
+  commands in `disasm/fixtures/README.md`): linked `no_std` libraries of
+  x86_64 and aarch64 ELF, x86_64 and arm64 Mach-O, and x86_64 PE, linked here
+  by the system linker and by `rust-lld`, read by `llvm-objdump` for all five
+  and by GNU `objdump` for x86_64 ELF and PE. A guard holds every identical-work
+  pair to differ in its instruction lines before normalisation. What the
+  recorded output exercises: branch and call targets, RIP-relative
+  displacements, the `add` after an `adrp`, salted names and image bases that
+  move with the layout; the duplicate decision; the entry under the format's
+  spelling and none under the other; GNU's export lookup in a DLL. What it does
+  not: an `adrp` page that itself moves, otool and dumpbin output, a 32-bit PE
+  image, and libraries linked against `std` on any target but the host's.
+- The recorded `variant_scalar` library of each format is read live by every
+  tool on the host that reads that format, and its format read off its real
+  bytes, PE included.
 - `mock bench disasm` end to end (`tests/bench_disasm_e2e.rs`): a tree with one
   generated-manifest arm, the artifact placed in the layout, a second beside the
   first, a missing function failing with nothing written.
-- Each behaviour's test was shown failing with that behaviour taken back out of
-  the code, one mutation at a time: the GNU header rule (six tests red, the
-  live and recorded duplicate tests among them), the GNU symbol flag, the
-  host-based naming, the RIP fold, the bare-hex fold, the `;` comment rule, the
-  Mach-O spelling, the empty-result rule, the `adrp` page fold, the exact label
-  match, the dumpbin fold, `dylib_check`'s name, `build_for` with an empty host
-  prefix (as on Windows), and the layout's placement of an artifact.
+- Every fix was taken back out of the code one at a time, 23 mutations, and
+  each turned red the tests named against it in
+  `mock/research/202611160949_disasm-cross-platform-mutations/README.md`; the
+  directory holds each mutation as a patch and the test lines its run printed,
+  with the command that replays it.
 
 Not proven on a real host: `otool` and `dumpbin` output (their rules follow the
-documented line shapes and are held by synthetic unit tests only; on a stock mac
-Apple's LLVM `objdump` is found first, so otool runs only without it), Windows
-and macOS hosts as such, aarch64 Linux as a host, 32-bit COFF's underscore
-against a real object, and `aarch64-pc-windows-msvc`. `tests_live.rs` is not
-gated to a platform, so it runs on every bench machine with whatever tools that
-machine has and proves it there.
+documented line shapes and are held by synthetic lines only), Windows and macOS
+hosts as such, aarch64 Linux as a host, and a 32-bit PE image, whose path in
+`format.rs` is held by synthetic header bytes only. `tests_live.rs` reads the
+host's libraries with every tool the host has, `otool` on macOS and `dumpbin`
+on Windows included, and fails on a host with no disassembler or no `rustc`,
+so each bench machine proves its own platform when the suite runs there. The
+live test that links every target with `rust-lld` is ignored under
+`install_the_rustup_targets_the_cross_linked_disasm_test_need`, since no bench
+machine carries those rustup targets; it passes here with `--ignored`.
 
 ## What is left
 
 - `prove_the_otool_and_dumpbin_disassembly_paths_on_real_hosts`: run the live
-  tests on a mac without `objdump` and on Windows with only `dumpbin`, and
-  record both tools' output as fixtures.
+  tests on a mac and on Windows, and record both tools' output as fixtures.
+- `install_the_rustup_targets_the_cross_linked_disasm_test_need`: the ignored
+  cross-linking test.
 - `mock_bench_disasm_refuses_a_bench_named_by_a_member_path`: a composed-member
   bench named `a/b` gets no artifact until the layout says where its results
   sit.

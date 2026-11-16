@@ -1,0 +1,13 @@
+diff --git a/bench-harness/src/disasm/normalize.rs b/bench-harness/src/disasm/normalize.rs
+index 8c5106e..febbd4c 100644
+--- a/bench-harness/src/disasm/normalize.rs
++++ b/bench-harness/src/disasm/normalize.rs
+@@ -56,7 +56,7 @@ pub(super) fn normalize_disasm(text: &str, flavour: Flavour) -> String {
+         if insn.is_empty() {
+             continue;
+         }
+-        let mut normalized = fold_rip_relative(&normalize_addresses(&insn));
++        let mut normalized = normalize_addresses(&insn);
+         if flavour == Flavour::Dumpbin {
+             normalized = fold_dumpbin_operands(&normalized);
+         }

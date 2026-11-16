@@ -1,0 +1,3 @@
+# git apply m12-dumpbin-no-fold.patch && cargo test -p mockspace-bench-harness --lib -- disasm library
+test disasm::tests::dumpbin_full_width_addresses_and_mangled_names_fold ... FAILED
+test result: FAILED. 41 passed; 1 failed; 1 ignored; 0 measured; 238 filtered out; finished in 1.98s

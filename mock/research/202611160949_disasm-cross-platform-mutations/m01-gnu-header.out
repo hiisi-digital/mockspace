@@ -1,0 +1,7 @@
+# git apply m01-gnu-header.patch && cargo test -p mockspace-bench-harness --lib -- disasm library
+test disasm::tests::a_gnu_file_header_does_not_make_two_libraries_differ ... FAILED
+test disasm::tests::every_tools_header_and_label_lines_are_dropped ... FAILED
+test disasm::tests::output_with_no_instructions_is_no_evidence ... FAILED
+test disasm::tests_recorded::identical_work_in_two_libraries_is_one_duplicate_on_every_format_and_tool ... FAILED
+test disasm::tests_live::identical_work_in_separate_crates_is_flagged_duplicate ... FAILED
+test result: FAILED. 37 passed; 5 failed; 1 ignored; 0 measured; 238 filtered out; finished in 1.98s

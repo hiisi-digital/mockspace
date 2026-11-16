@@ -1,0 +1,13 @@
+diff --git a/bench-harness/src/disasm.rs b/bench-harness/src/disasm.rs
+index 32d83a1..a74e99f 100644
+--- a/bench-harness/src/disasm.rs
++++ b/bench-harness/src/disasm.rs
+@@ -192,7 +192,7 @@ fn build_report(
+ /// The name to print a variant under: its arm name, read off its library's
+ /// own file name ([`crate::library::arm_name`]).
+ fn short_name(path: &str) -> &str {
+-    crate::library::arm_name(path)
++    { let f = path.rsplit('/').next().unwrap_or(path); let f = f.strip_suffix(std::env::consts::DLL_SUFFIX).unwrap_or(f); f.strip_prefix(std::env::consts::DLL_PREFIX).unwrap_or(f) }
+ }
+ 
+ /// Print a [`CheckReport`] to stderr. Total or partial extraction failure is

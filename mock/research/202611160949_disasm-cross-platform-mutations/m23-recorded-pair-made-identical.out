@@ -1,0 +1,3 @@
+# git apply m23-recorded-pair-made-identical.patch && cargo test -p mockspace-bench-harness --lib -- disasm::tests_recorded
+test disasm::tests_recorded::every_recorded_pair_differs_in_its_instruction_lines_before_normalisation ... FAILED
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 278 filtered out; finished in 0.07s

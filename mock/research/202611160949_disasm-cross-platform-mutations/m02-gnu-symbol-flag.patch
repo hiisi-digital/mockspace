@@ -1,0 +1,13 @@
+diff --git a/bench-harness/src/disasm/tool.rs b/bench-harness/src/disasm/tool.rs
+index b54e8f7..a8a65fa 100644
+--- a/bench-harness/src/disasm/tool.rs
++++ b/bench-harness/src/disasm/tool.rs
+@@ -70,7 +70,7 @@ impl Disassembler {
+     fn symbol_args(&self, file: &Path, spelling: &str) -> Option<Vec<String>> {
+         let flag = match self.flavour {
+             Flavour::Llvm => format!("--disassemble-symbols={spelling}"),
+-            Flavour::Gnu => format!("--disassemble={spelling}"),
++            Flavour::Gnu => format!("--disassemble-symbols={spelling}"),
+             Flavour::Otool | Flavour::Dumpbin => return None,
+         };
+         Some(vec![

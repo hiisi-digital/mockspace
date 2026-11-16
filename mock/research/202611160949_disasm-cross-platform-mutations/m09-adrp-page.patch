@@ -1,0 +1,13 @@
+diff --git a/bench-harness/src/disasm/normalize.rs b/bench-harness/src/disasm/normalize.rs
+index 8c5106e..8e4311d 100644
+--- a/bench-harness/src/disasm/normalize.rs
++++ b/bench-harness/src/disasm/normalize.rs
+@@ -60,7 +60,7 @@ pub(super) fn normalize_disasm(text: &str, flavour: Flavour) -> String {
+         if flavour == Flavour::Dumpbin {
+             normalized = fold_dumpbin_operands(&normalized);
+         }
+-        if let Some(folded) = fold_adrp_target(&normalized) {
++        if let Some(folded) = None::<String> {
+             normalized = folded;
+         }
+         if let Some(reg) = &adrp_reg

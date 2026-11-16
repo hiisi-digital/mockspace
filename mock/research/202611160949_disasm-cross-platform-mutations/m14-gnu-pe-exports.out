@@ -1,0 +1,3 @@
+# git apply m14-gnu-pe-exports.patch && cargo test -p mockspace-bench-harness --lib -- disasm library
+test disasm::tests_live::every_tool_here_finds_bench_entry_in_a_linked_library_of_every_format_it_reads ... FAILED
+test result: FAILED. 41 passed; 1 failed; 1 ignored; 0 measured; 238 filtered out; finished in 1.96s

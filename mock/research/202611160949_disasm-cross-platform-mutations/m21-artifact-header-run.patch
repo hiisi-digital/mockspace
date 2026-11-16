@@ -1,0 +1,12 @@
+diff --git a/bench-harness/src/disasm/artifact.rs b/bench-harness/src/disasm/artifact.rs
+index 071ce22..a7e169c 100644
+--- a/bench-harness/src/disasm/artifact.rs
++++ b/bench-harness/src/disasm/artifact.rs
+@@ -112,6 +112,7 @@ fn artifact_text(
+         program = found.tool.program.display(),
+         flavour = found.tool.flavour,
+         machine = place.machine,
++        run = place.run,
+         text = found.text,
+     )
+ }
