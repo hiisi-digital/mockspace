@@ -78,13 +78,19 @@ fn stub_bin() -> std::path::PathBuf {
         let bin = mockspace_manifest::scratch::held();
         fs::create_dir_all(&bin).unwrap();
         // `cargo` records its arguments, one call to a line, in the file the run
-        // names, and passes. The others serve the byline scan.
+        // names, and passes. A `rows-gate` call exits with the number in `rows-gate.rc` beside
+        // that file, and with 3 (not rows alone) where there is none. The others serve the
+        // byline scan.
         for name in ["mock", "cargo-mock", "cargo"] {
             let path = bin.join(name);
             crate::test_exec::write_executable(
                 &path,
                 b"#!/usr/bin/env bash\ncat >/dev/null\n\
-                  [ -n \"$MS_STUB_ARGS\" ] && echo \"$*\" >> \"$MS_STUB_ARGS\"\nexit 0\n",
+                  [ -n \"$MS_STUB_ARGS\" ] && echo \"$*\" >> \"$MS_STUB_ARGS\"\n\
+                  case \" $* \" in *\" rows-gate \"*)\n\
+                  rc=$(cat \"$(dirname \"$MS_STUB_ARGS\")/rows-gate.rc\" 2>/dev/null || echo 3)\n\
+                  exit \"$rc\";; esac\n\
+                  exit 0\n",
             );
         }
         bin

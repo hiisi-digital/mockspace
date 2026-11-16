@@ -259,7 +259,8 @@ MS_SHARED=("${{MS_CODE[@]}}" "mockspace.toml" "$MOCK_DIR/mockspace.toml")
 /// reach the terminal of a hook this way, whatever prints them.
 pub(crate) fn gate_shell() -> String {
     r##"# Quiet by default: green prints nothing, red prints `blocked: <gate>` and a line per kind of
-# error. MOCKSPACE_VERBOSE=1 prints everything, as the hooks once always did.
+# error. MOCKSPACE_VERBOSE=1 prints everything, as the hooks once always did. An exit status
+# equal to MS_GATE_SOFT is an answer rather than a red, returned to the caller unreported.
 ms_verbose() {
     [ -n "${MOCKSPACE_VERBOSE:-}" ] && [ "${MOCKSPACE_VERBOSE}" != "0" ]
 }
@@ -272,14 +273,14 @@ ms_gate() {
     shift
     if ms_verbose; then
         cargo mock "$@" 2>&1 || rc=$?
-        if [ "$rc" -ne 0 ]; then echo "blocked: $gate" >&2; fi
+        if [ "$rc" -ne 0 ] && [ "$rc" != "${MS_GATE_SOFT:-}" ]; then echo "blocked: $gate" >&2; fi
         return "$rc"
     fi
     raw=$(mktemp)
     findings=$(mktemp)
     trap 'rm -f "$raw" "$findings"; trap - RETURN INT TERM' RETURN INT TERM
     MOCKSPACE_GATE_FINDINGS="$findings" cargo mock "$@" >"$raw" 2>&1 || rc=$?
-    if [ "$rc" -ne 0 ]; then
+    if [ "$rc" -ne 0 ] && [ "$rc" != "${MS_GATE_SOFT:-}" ]; then
         cargo mock gate-report "$gate" "$raw" "$findings" >&2 || { cat "$raw" >&2; echo "blocked: $gate" >&2; }
     fi
     return "$rc"
