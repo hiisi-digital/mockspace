@@ -694,7 +694,7 @@ The `commit-msg` and `pre-push` hooks hand a pack's message lints the commit's a
 
 ### The commit subject gate
 
-The `commit-msg` and `pre-push` hooks run one builtin message lint on every project, `commit-subject`, with no pack and no configuration needed. It reads the first authored line of the message and refuses it unless it opens with a type from the configured set, then `: `, then a message. By default the set is `feat`, `fix`, `refactor`, `docs`, `test`, `chore` and `bench`, the message starts lowercase, there is no parenthesised scope and no trailing period, and the subject is at most 71 characters. A subject git wrote itself (`Merge ...`, `Revert "..."`, `fixup! ...`) is not held to it. The mood of the verb is not checkable and is not checked. The agent hook declines, since it holds a shell command and not a message, and the `commit-msg` hook that follows reads the real message file.
+The `commit-msg` and `pre-push` hooks run one builtin message lint on every project, `commit-subject`, with no pack and no configuration needed. It reads the first authored line of the message and refuses it unless it opens with a type from the configured set, then `: `, then a message. By default the set is `feat`, `fix`, `refactor`, `docs`, `test`, `chore` and `bench`, the message starts lowercase, there is no parenthesised scope and no trailing period, and the subject is at most 71 characters. A subject git wrote itself in the shapes it writes (`Merge branch '...'`, `Merge pull request #...`, `Revert "..."`, `Reapply "..."`) is not held to it, and a `fixup!`, `squash!` or `amend!` subject passes the commit gate and is refused at the build and push gates. The mood of the verb is not checkable and is not checked. The agent hook declines, since it holds a shell command and not a message, and the `commit-msg` hook that follows reads the real message file.
 
 The convention is configured under `[lints.commit-subject]` in `mockspace.toml`, so a project adds a type without touching mockspace:
 
@@ -710,7 +710,7 @@ extra_types = "research,deploy"   # added to the default set
 # commit = "off"                  # the severity keys turn the whole check off
 ```
 
-The same parameters render the `commit-style` skill, so the documentation an agent reads lists the set the gate accepts. The skill is a builtin and is on by default; `agent_commit_style_skill = false` in `mock/agent/config.toml` declines it, and a consumer skill named `commit-style` overrides it and may use `{{commit_types}}`, `{{commit_rules}}` and `{{commit_examples}}` to read the same configuration. A project that imports a pack carrying its own commit lint should set `[lints.commit-subject] commit = "off"` where the two would disagree.
+The same parameters render the `commit-style` skill, so the documentation an agent reads lists the set the gate accepts. The skill is a builtin and is on by default; `agent_commit_style_skill = false` in `mock/agent/config.toml` declines it, and a consumer skill named `commit-style` overrides it and may use `{{commit_types}}`, `{{commit_rules}}` and `{{commit_examples}}` to read the same configuration. A key the lint does not know, or a value it cannot read, stops the load of `mockspace.toml` with the line that is wrong, so a misspelled `extra_type` is refused and not ignored. `commit = "off"` on its own turns the check off at every gate.
 
 ## What mockspace does not do
 
