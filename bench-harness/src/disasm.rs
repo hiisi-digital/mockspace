@@ -40,6 +40,7 @@ use std::path::Path;
 mod artifact;
 mod format;
 mod normalize;
+mod pe_exports;
 mod tool;
 
 pub use artifact::{ArtifactPlace, write_symbol_artifact};
@@ -273,3 +274,7 @@ mod tests_live;
 #[cfg(test)]
 #[path = "disasm/tests_recorded.rs"]
 mod tests_recorded;
+
+#[cfg(test)]
+#[path = "disasm/tests_tool.rs"]
+mod tests_tool;

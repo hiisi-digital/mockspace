@@ -20,11 +20,16 @@ pub(super) enum ObjectFormat {
     Elf,
     /// Mach-O, macOS and iOS. Every C symbol carries a leading underscore.
     MachO,
-    /// PE/COFF, Windows. x86_64 and aarch64 symbols carry no prefix; 32-bit
-    /// x86 prefixes a `cdecl` symbol with an underscore.
+    /// PE/COFF, Windows.
     Coff {
-        /// Whether the machine is 32-bit x86.
-        i386: bool,
+        /// Whether the machine is 32-bit x86, whose COFF symbol table
+        /// prefixes a `cdecl` symbol with an underscore.
+        i386:  bool,
+        /// Whether this is a linked image (a DLL) rather than an object. An
+        /// image carries no COFF symbol table; the names a disassembler shows
+        /// for it come from the export table, which spells a `cdecl` export
+        /// without the underscore.
+        image: bool,
     },
 }
 
@@ -50,24 +55,21 @@ impl ObjectFormat {
                 }
                 let machine = u16::from_le_bytes(bytes.get(at + 4 .. at + 6)?.try_into().ok()?);
                 Some(Self::Coff {
-                    i386: machine == COFF_I386,
+                    i386:  machine == COFF_I386,
+                    image: true,
                 })
             },
             [lo, hi, ..] => {
-                match u16::from_le_bytes([*lo, *hi]) {
-                    // A bare COFF object starts with its machine.
-                    COFF_I386 => {
-                        Some(Self::Coff {
-                            i386: true,
-                        })
-                    },
-                    COFF_AMD64 | COFF_ARM64 => {
-                        Some(Self::Coff {
-                            i386: false,
-                        })
-                    },
-                    _ => None,
-                }
+                // A bare COFF object starts with its machine.
+                let i386 = match u16::from_le_bytes([*lo, *hi]) {
+                    COFF_I386 => true,
+                    COFF_AMD64 | COFF_ARM64 => false,
+                    _ => return None,
+                };
+                Some(Self::Coff {
+                    i386,
+                    image: false,
+                })
             },
             _ => None,
         }
@@ -86,28 +88,40 @@ impl ObjectFormat {
         Self::of_bytes(&head)
     }
 
-    /// The spelling `symbol` (its name in C) has in this format's symbol
-    /// table.
-    pub(super) fn spell(self, symbol: &str) -> String {
+    /// The spellings `symbol` (its name in C) may have in this format, the
+    /// likeliest first.
+    ///
+    /// A 32-bit PE image tries the bare export name before the underscored
+    /// one: no i686 DLL has been read here, only synthetic header bytes, so
+    /// which of the two a disassembler shows for it is not settled.
+    pub(super) fn spellings(self, symbol: &str) -> Vec<String> {
+        let bare = symbol.to_string();
+        let underscored = format!("_{symbol}");
         match self {
             Self::MachO
             | Self::Coff {
                 i386: true,
-            } => format!("_{symbol}"),
+                image: false,
+            } => vec![underscored],
+            Self::Coff {
+                i386: true,
+                image: true,
+            } => vec![bare, underscored],
             Self::Elf
             | Self::Coff {
                 i386: false,
-            } => symbol.to_string(),
+                ..
+            } => vec![bare],
         }
     }
 }
 
-/// The spellings to look `symbol` up under in the file at `path`: the one its
+/// The spellings to look `symbol` up under in the file at `path`: those its
 /// format uses, or, where the format cannot be told, the bare spelling and
 /// then the underscore-prefixed one.
 pub(super) fn symbol_spellings(path: &Path, symbol: &str) -> Vec<String> {
     match ObjectFormat::of_file(path) {
-        Some(format) => vec![format.spell(symbol)],
+        Some(format) => format.spellings(symbol),
         None => vec![symbol.to_string(), format!("_{symbol}")],
     }
 }

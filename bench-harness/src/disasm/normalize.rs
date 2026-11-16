@@ -12,16 +12,19 @@
 //! composes. Each line comes out as `mnemonic operands`, one space between
 //! the two, operands joined by bare commas, whatever spacing the tool used.
 //!
-//! What is read, per flavour, and where it was checked against real output
-//! (`disasm/fixtures/`, recorded on x86_64 Linux from objects cross-built for
-//! each target, and the live tests on the host):
+//! What is read, per flavour, and where it was checked against real output:
 //!
-//! - `llvm-objdump` on ELF x86_64 and aarch64, Mach-O x86_64 and arm64, COFF
-//!   x86_64: recorded.
-//! - GNU `objdump` on ELF x86_64 and COFF x86_64: recorded.
-//! - `otool -tv` and `dumpbin /DISASM`: not reachable from Linux; their rules
-//!   below follow their documented line shapes and are proven only by the
-//!   live tests on a macOS or Windows host that has no `llvm-objdump`.
+//! - `llvm-objdump` on linked `no_std` libraries of ELF x86_64 and aarch64,
+//!   Mach-O x86_64 and arm64, and PE x86_64, recorded in `disasm/fixtures/`:
+//!   branch and call targets, RIP-relative displacements, the `add` after an
+//!   `adrp`, and salted names, all moving with the layout. An `adrp` page that
+//!   itself moves, and otool's decimal page, are held by synthetic lines only.
+//! - GNU `objdump` on linked ELF x86_64 and PE x86_64, recorded the same way;
+//!   ELF x86_64 `std` libraries live on the host as well.
+//! - `otool -tv` and `dumpbin /DISASM`: not reachable from Linux. Their rules
+//!   follow the tools' documented line shapes, are held by synthetic lines,
+//!   and are proven by the live tests on a macOS or Windows bench machine,
+//!   which read the host's libraries with every tool installed there.
 
 use super::tool::Flavour;
 
@@ -270,18 +273,29 @@ fn fold_hex_tokens(s: &str) -> String {
 
 /// `dumpbin` writes a target as a bare full-width address
 /// (`0000000180001010`, sometimes `h`-suffixed) and a call to a named
-/// function as its mangled name, salted with the crate's hash. Both fold:
-/// an operand token of eight or more hex digits to `ADDR`, a token spelled as
-/// a Rust (`_R`, `_ZN`) or MSVC (`?`) mangled name to `SYM`.
+/// function as its mangled name, salted with the crate's hash. Folded: a
+/// long hex token as the operand of a branch or call (`j*`, `call`, `loop*`)
+/// and as the whole of a `[...]` operand (an absolute address) to `ADDR`, and a
+/// token spelled as a Rust (`_R`, `_ZN`) or MSVC (`?`) mangled name to `SYM`.
+/// Every other hex token is an immediate or a displacement the algorithm
+/// chose, `mov rax,0CBF29CE484222325h` or `[rax+12345678h]`, and is kept.
 pub(super) fn fold_dumpbin_operands(insn: &str) -> String {
     let Some((mnemonic, operands)) = insn.split_once(' ') else {
         return insn.to_string();
     };
+    let branch =
+        mnemonic.starts_with('j') || mnemonic.starts_with("call") || mnemonic.starts_with("loop");
+    let long_hex = |token: &str| {
+        let digits = token.strip_suffix('h').unwrap_or(token);
+        digits.len() >= 8 && digits.chars().all(|c| c.is_ascii_hexdigit())
+    };
     let mut out = format!("{mnemonic} ");
     let mut token = String::new();
-    let flush = |token: &mut String, out: &mut String| {
-        let digits = token.strip_suffix('h').unwrap_or(token);
-        if digits.len() >= 8 && digits.chars().all(|c| c.is_ascii_hexdigit()) {
+    let mut depth = 0;
+    let mut lone = true;
+    let flush = |token: &mut String, out: &mut String, closing: bool, depth: i32, lone: bool| {
+        let address = if depth > 0 { closing && lone } else { branch };
+        if address && long_hex(token) {
             out.push_str("ADDR");
         } else if ["_R", "_ZN", "__R", "__ZN", "?"]
             .iter()
@@ -294,14 +308,29 @@ pub(super) fn fold_dumpbin_operands(insn: &str) -> String {
         token.clear();
     };
     for c in operands.chars() {
-        if matches!(c, ',' | '[' | ']' | '+' | '-' | ' ' | '*') {
-            flush(&mut token, &mut out);
-            out.push(c);
-        } else {
-            token.push(c);
+        match c {
+            '[' => {
+                flush(&mut token, &mut out, false, depth, lone);
+                depth += 1;
+                lone = true;
+                out.push(c);
+            },
+            ']' => {
+                flush(&mut token, &mut out, true, depth, lone);
+                depth -= 1;
+                out.push(c);
+            },
+            ',' | '+' | '-' | ' ' | '*' => {
+                if depth > 0 {
+                    lone = false;
+                }
+                flush(&mut token, &mut out, false, depth, lone);
+                out.push(c);
+            },
+            _ => token.push(c),
         }
     }
-    flush(&mut token, &mut out);
+    flush(&mut token, &mut out, false, depth, lone);
     out
 }
 

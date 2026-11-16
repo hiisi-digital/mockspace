@@ -17,7 +17,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use super::format::symbol_spellings;
+use super::format::{ObjectFormat, symbol_spellings};
+use super::pe_exports::export_block;
 
 /// The output dialects the duplicate check reads. A fixed vocabulary of tools,
 /// not content: each is a different program with its own flags and its own
@@ -120,6 +121,23 @@ impl Disassembler {
             };
             if let Some(block) = symbol_block(&text, spelling) {
                 return Ok(block);
+            }
+        }
+        if self.flavour == Flavour::Gnu
+            && matches!(
+                ObjectFormat::of_file(file),
+                Some(ObjectFormat::Coff {
+                    image: true,
+                    ..
+                })
+            )
+        {
+            let p = self.run(&["-p".to_string(), file.display().to_string()])?;
+            let whole = self.whole(file)?;
+            for spelling in &spellings {
+                if let Some(block) = export_block(&whole, &p, spelling) {
+                    return Ok(block);
+                }
             }
         }
         Err(format!(
