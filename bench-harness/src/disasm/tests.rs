@@ -184,13 +184,32 @@ fn a_rip_relative_displacement_is_layout_and_folds() {
         normalize_disasm("   1a0:\tmov    0x3af2d(%rip),%rax        # 4c6a8 <x>", GNU),
         "mov ADDR(%rip),%rax"
     );
+    // The sign moves with the layout too: the same load, its data once after
+    // the instruction and once before it.
     assert_eq!(
-        fold_rip_relative("lea rax,[rip + 0x3af2d]"),
-        "lea rax,[rip + ADDR]"
+        normalize_disasm("   16d0:      \tleaq\t-0x123a(%rip), %rax", LLVM),
+        normalize_disasm("   16d0:      \tleaq\t0x13(%rip), %rax", LLVM),
     );
     assert_eq!(
-        fold_rip_relative("lea rax,[rip+0x10]"),
-        "lea rax,[rip+ADDR]"
+        normalize_disasm("   16d0:      \tleaq\t-0x123a(%rip), %rax", LLVM),
+        "leaq ADDR(%rip),%rax"
+    );
+    for intel in ["lea rax,[rip + 0x3af2d]", "lea rax,[rip - 0x3af2d]", "lea rax,[rip+0x10]"] {
+        assert_eq!(fold_rip_relative(intel), "lea rax,[rip+ADDR]", "{intel}");
+    }
+    assert_eq!(
+        normalize_disasm(
+            "  0000000180001090: lea         rax,[rip+1234h]",
+            Flavour::Dumpbin
+        ),
+        normalize_disasm(
+            "  0000000180001090: lea         rax,[rip-20h]",
+            Flavour::Dumpbin
+        ),
+    );
+    assert_eq!(
+        fold_rip_relative("jmp qword ptr [rip]"),
+        "jmp qword ptr [rip]"
     );
     assert_eq!(
         fold_rip_relative("lea rax,[rax+0x10]"),

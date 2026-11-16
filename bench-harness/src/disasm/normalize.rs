@@ -217,7 +217,10 @@ pub(super) fn normalize_addresses(insn: &str) -> String {
 
 /// Fold a RIP-relative displacement, which is layout (the distance from the
 /// instruction to the data it reaches) rather than a field offset: AT&T
-/// `0x3af2d(%rip)` and Intel `[rip+0x3af2d]` / `[rip + 0x3af2d]`.
+/// `0x3af2d(%rip)` and `-0x3af2d(%rip)`, Intel `[rip+0x3af2d]` and
+/// `[rip - 0x3af2d]`, and dumpbin `[rip+1234h]`. The sign is layout as much as
+/// the magnitude (the data sits before the instruction or after it), so it
+/// folds with it.
 pub(super) fn fold_rip_relative(insn: &str) -> String {
     let mut out = String::with_capacity(insn.len());
     let mut rest = insn;
@@ -227,6 +230,10 @@ pub(super) fn fold_rip_relative(insn: &str) -> String {
             .rfind(|c: char| !(c.is_ascii_hexdigit() || c == 'x'))
             .map_or(0, |p| p + 1);
         if head[start ..].starts_with("0x") {
+            let start = match head[.. start].ends_with(['-', '+']) {
+                true => start - 1,
+                false => start,
+            };
             out.push_str(&head[.. start]);
             out.push_str("ADDR");
         } else {
@@ -242,8 +249,12 @@ pub(super) fn fold_rip_relative(insn: &str) -> String {
         let Some(close) = rest[open ..].find(']') else { break };
         let inner = &rest[open + 1 .. open + close];
         folded.push_str(&rest[..= open]);
-        if inner.split(['+', '-', ' ']).any(|t| t == "rip") {
-            folded.push_str(&fold_hex_tokens(inner));
+        let tokens: Vec<&str> = inner
+            .split(['+', '-', ' '])
+            .filter(|t| !t.is_empty())
+            .collect();
+        if tokens.contains(&"rip") {
+            folded.push_str(if tokens.len() > 1 { "rip+ADDR" } else { "rip" });
         } else {
             folded.push_str(inner);
         }
@@ -252,23 +263,6 @@ pub(super) fn fold_rip_relative(insn: &str) -> String {
     }
     folded.push_str(rest);
     folded
-}
-
-/// Every `0x` literal of `s` replaced by `ADDR`.
-fn fold_hex_tokens(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(at) = rest.find("0x") {
-        out.push_str(&rest[.. at]);
-        let tail = &rest[at + 2 ..];
-        let end = tail
-            .find(|c: char| !c.is_ascii_hexdigit())
-            .unwrap_or(tail.len());
-        out.push_str("ADDR");
-        rest = &tail[end ..];
-    }
-    out.push_str(rest);
-    out
 }
 
 /// `dumpbin` writes a target as a bare full-width address
