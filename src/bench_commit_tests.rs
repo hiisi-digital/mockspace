@@ -33,7 +33,7 @@ fn repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
     let mock = root.join("mock");
     let bench = mock.join("benches");
     write(&bench.join("bench.toml"), "[timing]\n");
-    write(&bench.join("hash/bench.toml"), "arms = [\"fnv\"]\n");
+    write(&bench.join("hash/bench.toml"), "kind = \"tracking\"\ntitle = \"h\"\narms = [\"fnv\"]\npoints = [64]\n");
     write(&bench.join("hash/arms/fnv/src/lib.rs"), "pub fn f() {}\n");
     write(
         &bench.join("support/mix/Cargo.toml"),

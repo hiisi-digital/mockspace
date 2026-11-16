@@ -203,3 +203,23 @@ fn a_directory_that_is_not_a_repository_has_no_digest() {
     write(&mock.join("benches/x.rs"), "");
     assert_eq!(digest(tmp.path(), &mock, &mock.join("benches")), None);
 }
+
+/// A tree with a root `bench.toml` that does not load (here a bench that
+/// declares no kind) has no inputs and says why, never the files on disk
+/// alone, which would leave out every manifest it generates; so it has no
+/// digest and is never shown green on it. The control: declaring its kind,
+/// the same tree lists.
+#[test]
+fn a_tree_that_does_not_load_has_no_inputs_and_says_why() {
+    let (_t, root, mock) = repo();
+    let bench_dir = mock.join("benches");
+    write(&bench_dir.join("bench.toml"), "[timing]\n");
+    write(&bench_dir.join("sample/bench.toml"), "title = \"s\"\narms = [\"a\"]\npoints = [64]\n");
+    let err = inputs(&root, &mock, &bench_dir).err().expect("refused");
+    assert!(err.contains("declares no `kind`"), "{err}");
+    assert_eq!(digest(&root, &mock, &bench_dir), None);
+
+    write(&bench_dir.join("sample/bench.toml"), "kind = \"snapshot\"\ntitle = \"s\"\narms = [\"a\"]\npoints = [64]\n");
+    let (_, generated) = inputs(&root, &mock, &bench_dir).expect("the control lists");
+    assert!(generated.iter().any(|g| g.label == "generated/sample/a/Cargo.toml"));
+}

@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use mockspace_bench_harness::config::BuildSection;
+use mockspace_bench_harness::layout::Kind;
 use mockspace_bench_harness::tree as bench_tree;
 
 use crate::config::Config;
@@ -100,7 +101,7 @@ pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
     let sub = args.first().copied().unwrap_or("");
     let rest: Vec<&str> = args.iter().skip(1).copied().collect();
     match sub {
-        "init" => cmd_init(cfg),
+        "init" => cmd_init(cfg, &rest),
         "run" => cmd_run(cfg, &rest),
         "report" => cmd_report(cfg, &rest),
         "test" => cmd_test(cfg, &rest),
@@ -124,12 +125,14 @@ fn print_help() {
     eprintln!("mock bench. canonical bench framework commands");
     eprintln!();
     eprintln!("subcommands:");
-    eprintln!("  init     scaffold mock/benches/ in this consumer");
+    eprintln!("  init     scaffold mock/benches/ in this consumer, its sample bench of the");
+    eprintln!("           kind named: mock bench init --kind <snapshot|tracking>");
     eprintln!("  run      build the arms and the generated driver, run the harness");
     eprintln!("  report   render report.md for any run that has none");
     eprintln!("  test     run cargo test in every crate under the bench tree");
     eprintln!("  list     list benches, sizes, and variants from bench.toml");
-    eprintln!("  add      scaffold a new variant crate: mock bench add <name>");
+    eprintln!("  add      scaffold an arm, and a new bench of the kind named:");
+    eprintln!("           mock bench add <bench> [<arm>] [--kind <snapshot|tracking>]");
     eprintln!("  migrate  move results and history in an older layout into runs:");
     eprintln!("           mock bench migrate [--machine-class <class>] [--dry-run]");
     eprintln!("           or declare every bench's kind and freeze the snapshots:");
@@ -331,7 +334,19 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
     // plainly has an arm in it. Write the same manifest `mock bench run`
     // would (never build it; `cargo test` builds what it needs), and
     // fold it into the set to walk.
-    if let Ok(plan) = bench_gen::plan(&bench_dir) {
+    //
+    // A tree that does not load (a bench declaring no kind, an invalid
+    // manifest, nothing declared at all) is refused here with its reason: the
+    // manifests it would generate are what the walk cannot see, so going on
+    // would test the tree without them and say nothing.
+    let plan = match bench_gen::plan(&bench_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
+    {
         let dep = bench_gen::mockspace_dep(&plan.manifest);
         for arm in &plan.arms {
             if arm.has_manifest {
@@ -358,10 +373,6 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
             manifests.push(gen_dir.join("Cargo.toml"));
         }
     }
-    // A `plan` error (no bench declared anywhere, an invalid
-    // manifest) is not this command's to report a second time: the
-    // walk above already found whatever is really on disk, and if
-    // that is nothing, the refusal immediately below says so.
     manifests.sort();
     manifests.dedup();
 
@@ -1041,8 +1052,20 @@ fn run_generated(
     if let Some(commit) = crate::bench_commit::commit_marked(&cfg.repo_root, &cfg.mock_dir, bench_dir) {
         cmd.env(crate::bench_commit::COMMIT_ENV, commit);
     }
-    // Each tracking arm's source, taken now that its build left its lockfile.
+    // The system the arms were built for, asked of cargo under the same
+    // configuration the builds took, and each tracking arm's source, taken now
+    // that its build left its lockfile.
     if !report_only {
+        let class = mockspace_bench_harness::env::collect_run_env().machine_class;
+        match mockspace_bench_harness::system::probe(&class, &gen_dir.join("Cargo.toml"), &profile) {
+            Ok(system) => {
+                cmd.env(mockspace_bench_harness::system::SYSTEM_ENV, system);
+            },
+            Err(e) => {
+                eprintln!("error: asking cargo what the arms were built for: {e}");
+                return ExitCode::FAILURE;
+            },
+        }
         match crate::bench_sources::write_sources(&cfg.repo_root, &cfg.mock_dir, bench_dir, &gen_dir, &plan.arms) {
             Ok(path) => {
                 cmd.env(mockspace_bench_harness::layout::SOURCES_ENV, path);
@@ -1130,7 +1153,54 @@ fn check_arm_lib_name(arm: &bench_tree::ArmSource) -> Result<(), String> {
 
 // ── init ──
 
-fn cmd_init(cfg: &Config) -> ExitCode {
+/// The `--kind <kind>` (or `--kind=<kind>`) among `args`, and the rest. No
+/// kind is defaulted: a word that names none is refused, and so is the flag
+/// with no value.
+fn take_kind<'a>(args: &[&'a str]) -> Result<(Option<Kind>, Vec<&'a str>), String> {
+    let mut kind = None;
+    let mut rest = Vec::new();
+    let mut it = args.iter().copied();
+    while let Some(a) = it.next() {
+        let word = match a.strip_prefix("--kind") {
+            Some("") => it.next().ok_or("`--kind` takes `snapshot` or `tracking`")?,
+            Some(v) if v.starts_with('=') => &v[1 ..],
+            _ => {
+                rest.push(a);
+                continue;
+            },
+        };
+        kind = Some(Kind::parse(word).ok_or_else(|| {
+            format!("`--kind {word}` names no kind; a bench is `snapshot` or `tracking`")
+        })?);
+    }
+    Ok((kind, rest))
+}
+
+/// Why a new bench is refused without `--kind`.
+fn kind_required(what: &str) -> String {
+    format!(
+        "{what} takes `--kind snapshot` or `--kind tracking`, since no kind is defaulted. {}; {}.",
+        Kind::Snapshot.contract(),
+        Kind::Tracking.contract()
+    )
+}
+
+fn cmd_init(cfg: &Config, args: &[&str]) -> ExitCode {
+    let kind = match take_kind(args) {
+        Ok((Some(k), rest)) if rest.is_empty() => k,
+        Ok((None, rest)) if rest.is_empty() => {
+            eprintln!("error: {}", kind_required("`mock bench init`"));
+            return ExitCode::FAILURE;
+        },
+        Ok((_, rest)) => {
+            eprintln!("error: `mock bench init` takes only `--kind <kind>`, not `{}`", rest.join(" "));
+            return ExitCode::FAILURE;
+        },
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
     let bench_dir = cfg.mock_dir.join("benches");
     if bench_dir.exists() {
         eprintln!(
@@ -1143,7 +1213,7 @@ fn cmd_init(cfg: &Config) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    if let Err(e) = write_starter_files(&bench_dir) {
+    if let Err(e) = write_starter_files(&bench_dir, kind) {
         eprintln!("error: scaffolding failed: {e}");
         return ExitCode::FAILURE;
     }
@@ -1159,7 +1229,18 @@ fn cmd_init(cfg: &Config) -> ExitCode {
     eprintln!("  3. `mock bench add <bench> <arm>` scaffolds more of either");
     eprintln!("  4. `mock bench run` generates the driver, builds, measures");
     eprintln!("  5. `mock bench report` regenerates reports from cached samples");
+    eprintln!("  {}", kind_next_step(kind, "sample"));
     ExitCode::SUCCESS
+}
+
+/// What a scaffolded bench of `kind` still needs before it keeps its contract.
+fn kind_next_step(kind: Kind, bench: &str) -> String {
+    match kind {
+        Kind::Snapshot => format!("a snapshot: `mock bench freeze {bench}` once its arms are written"),
+        Kind::Tracking => {
+            "a tracking bench: an arm naming the living crate it follows, outside the bench tree".to_string()
+        },
+    }
 }
 
 // ── list ──
@@ -1206,7 +1287,16 @@ fn cmd_list(cfg: &Config) -> ExitCode {
 // ── add ──
 
 fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
-    // `add` recognises no flags at all, so anything shaped like one is
+    // `--kind` is the one flag, which a new bench takes.
+    let (kind, args) = match take_kind(args) {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
+    let args = args.as_slice();
+    // `add` recognises no other flag, so anything shaped like one is
     // refused rather than handed to the positional matcher below. Without
     // this, `mock bench add newb --force` matched the two-argument arm
     // (`[b, a] => (*b, Some(*a))`) and `name_ok` permits `-`, needed for
@@ -1219,7 +1309,7 @@ fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
     // rather than getting silent garbage.
     if let Some(flag) = args.iter().find(|a| a.starts_with('-')) {
         eprintln!(
-            "error: `mock bench add` takes no flags; `{flag}` would otherwise be read as a bench or arm name. usage: mock bench add <bench> [<arm>]  (or <bench>/<arm>)"
+            "error: `mock bench add` takes no flag but `--kind`; `{flag}` would otherwise be read as a bench or arm name. usage: mock bench add <bench> [<arm>] [--kind <kind>]  (or <bench>/<arm>)"
         );
         return ExitCode::FAILURE;
     }
@@ -1230,6 +1320,10 @@ fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
     // scaffolds a member, which the default benchspace glob picks up
     // without a declaration.
     if bench_dir.join("variants").is_dir() {
+        if kind.is_some() {
+            eprintln!("error: `mock bench add <variant>` in a flat tree adds a variant crate, which has no kind of its own; its `[bench.<name>]` section declares it");
+            return ExitCode::FAILURE;
+        }
         return cmd_add_legacy(&bench_dir, args);
     }
 
@@ -1259,11 +1353,23 @@ fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
     }
 
     let bdir = bench_dir.join(bench);
-    if !bdir.join("bench.toml").exists() {
+    let new_bench = !bdir.join("bench.toml").exists();
+    match (new_bench, kind) {
+        (true, None) => {
+            eprintln!("error: {}", kind_required(&format!("a new bench, `{bench}`,")));
+            return ExitCode::FAILURE;
+        },
+        (false, Some(_)) => {
+            eprintln!(
+                "error: `{bench}` exists and declares its kind in its bench.toml; `--kind` is for a new bench"
+            );
+            return ExitCode::FAILURE;
+        },
+        _ => {},
+    }
+    if let Some(kind) = kind.filter(|_| new_bench) {
         let arms_list = format!("{:?}", arm.unwrap_or("sample"));
-        let toml = STARTER_BENCH_DIR_TOML
-            .replace("SAMPLE_TITLE", bench)
-            .replace("\"SAMPLE_ARM\"", &arms_list);
+        let toml = starter_bench_toml(bench, &arms_list, kind);
         if let Err(e) = bench_gen::write_if_changed(&bdir.join("bench.toml"), &toml) {
             eprintln!("error: {e}");
             return ExitCode::FAILURE;
@@ -1286,8 +1392,17 @@ fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
     eprintln!("  1. implement the run block in {bench}/arms/{arm}/src/lib.rs");
     eprintln!("  2. reference \"{arm}\" from the bench's `arms` list if it is not there yet");
     eprintln!("  3. a snapshot: `mock bench freeze {bench}` once the arms are written; a tracking");
-    eprintln!("     bench: `kind = \"tracking\"` and an arm naming the living crate it follows");
+    eprintln!("     bench: an arm naming the living crate it follows");
     ExitCode::SUCCESS
+}
+
+/// A new bench's `bench.toml`, of `kind`, titled `title`, its arms `arms`
+/// (already quoted).
+fn starter_bench_toml(title: &str, arms: &str, kind: Kind) -> String {
+    STARTER_BENCH_DIR_TOML
+        .replace("SAMPLE_KIND", kind.name())
+        .replace("SAMPLE_TITLE", title)
+        .replace("\"SAMPLE_ARM\"", arms)
 }
 
 /// A freshly scaffolded bench is a member through the default glob;
@@ -1355,7 +1470,7 @@ fn cmd_add_legacy(bench_dir: &Path, args: &[&str]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn write_starter_files(bench_dir: &Path) -> std::io::Result<()> {
+fn write_starter_files(bench_dir: &Path, kind: Kind) -> std::io::Result<()> {
     let write = |rel: &str, content: &str| -> std::io::Result<()> {
         let path = bench_dir.join(rel);
         if let Some(parent) = path.parent() {
@@ -1366,9 +1481,7 @@ fn write_starter_files(bench_dir: &Path) -> std::io::Result<()> {
     write("bench.toml", STARTER_ROOT_BENCH_TOML)?;
     write(
         "sample/bench.toml",
-        &STARTER_BENCH_DIR_TOML
-            .replace("SAMPLE_TITLE", "Sample bench")
-            .replace("SAMPLE_ARM", "sample"),
+        &starter_bench_toml("Sample bench", "\"sample\"", kind),
     )?;
     write("sample/arms/sample/src/lib.rs", STARTER_ARM_LIB)?;
     write("README.md", STARTER_README)?;
@@ -1417,14 +1530,16 @@ const STARTER_BENCH_DIR_TOML: &str = r#"# One bench: one question, one set of co
 # against; `floor = "arm"` a null-cost arm subtracted from every arm
 # first.
 #
-# The kind says what the bench is for. A snapshot is isolated reference
+# The kind says what the bench is for, and it was chosen when the bench
+# was scaffolded; none is defaulted. A snapshot is isolated reference
 # code: its arms build only from the bench tree, and once they are
-# written `mock bench freeze <bench>` locks their files, which never
-# change after. A tracking bench builds against living code, an arm
-# naming a crate outside the bench tree, and its history is read
-# across commits; it carries no lock.
+# written `mock bench freeze <bench>` locks their files and the setup
+# they run under, which never change after. A tracking bench builds
+# against living code, an arm naming a crate outside the bench tree; it
+# carries no lock, and its history is read by source point, each arm's
+# source being a digest of the code it built from.
 
-kind = "snapshot"
+kind = "SAMPLE_KIND"
 title = "SAMPLE_TITLE"
 workload = "default"
 arms = ["SAMPLE_ARM"]
@@ -1750,7 +1865,7 @@ mod tests {
         let root_guard = temp_mock("cmd-test-after-init");
         let root = root_guard.path().to_path_buf();
         let cfg = Config::from_dir(&root);
-        assert_eq!(format!("{:?}", cmd_init(&cfg)), success());
+        assert_eq!(format!("{:?}", cmd_init(&cfg, &["--kind", "snapshot"])), success());
 
         let bench_dir = root.join("benches");
         assert!(
@@ -1785,6 +1900,16 @@ mod tests {
              the same way `mock bench run` does",
             generated.display()
         );
+
+        // A tree that stops loading (its bench drops its kind) is refused
+        // before the walk, rather than walked without the manifests it
+        // generates: no manifest is written for it.
+        std::fs::remove_file(&generated).unwrap();
+        let sample = bench_dir.join("sample/bench.toml");
+        let text = std::fs::read_to_string(&sample).unwrap();
+        std::fs::write(&sample, text.replace("\nkind = \"snapshot\"\n", "\n")).unwrap();
+        assert_eq!(format!("{:?}", cmd_test(&cfg, &[])), format!("{:?}", ExitCode::FAILURE));
+        assert!(!generated.exists(), "a tree that does not load generated nothing");
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -1987,7 +2112,14 @@ mod tests {
         let root = root_guard.path().to_path_buf();
         let bench_dir = root.join("benches");
         std::fs::create_dir_all(bench_dir.join("support/the-crate")).unwrap();
-        std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
+        // A tree that loads: a root section whose variant has a manifest of
+        // its own, so nothing is generated and only the support crate is
+        // walked into.
+        std::fs::write(
+            bench_dir.join("bench.toml"),
+            "[bench.s]\nkind = \"snapshot\"\ntitle = \"s\"\nworkload = \"default\"\nvariants = [\"v\"]\nsizes = [64]\n",
+        )
+        .unwrap();
         for entry in ["Cargo.toml", "src"] {
             copy_recursive(
                 &source.join(entry),
@@ -2034,12 +2166,28 @@ mod tests {
     /// The guard is structural now: whatever init writes must load
     /// through the same planner the run uses, and the driver source
     /// must generate from it.
+    /// `init` defaults no kind: with none, or a word that names none, it is
+    /// refused and writes nothing.
+    #[test]
+    fn init_takes_the_kind_and_defaults_none() {
+        let mock_guard = temp_mock("init-kind");
+        let mock = mock_guard.path().to_path_buf();
+        let cfg = Config::from_dir(&mock);
+        for args in [&[][..], &["--kind"][..], &["--kind", "warm"][..], &["--force"][..]] {
+            assert_eq!(format!("{:?}", cmd_init(&cfg, args)), format!("{:?}", ExitCode::FAILURE), "{args:?}");
+            assert!(!mock.join("benches").exists(), "{args:?} scaffolded");
+        }
+        assert_eq!(format!("{:?}", cmd_init(&cfg, &["--kind", "tracking"])), success());
+        let sample = std::fs::read_to_string(mock.join("benches/sample/bench.toml")).unwrap();
+        assert!(sample.contains("\nkind = \"tracking\"\n"), "{sample}");
+    }
+
     #[test]
     fn init_scaffolds_a_tree_the_planner_accepts_and_the_generator_serves() {
         let mock_guard = temp_mock("init");
         let mock = mock_guard.path().to_path_buf();
         let cfg = Config::from_dir(&mock);
-        let code = cmd_init(&cfg);
+        let code = cmd_init(&cfg, &["--kind", "snapshot"]);
         assert_eq!(format!("{code:?}"), success());
 
         let bench_dir = mock.join("benches");
@@ -2048,13 +2196,16 @@ mod tests {
             plan.manifest.nested_mode,
             "init scaffolds the nested layout"
         );
+        let sample = std::fs::read_to_string(bench_dir.join("sample/bench.toml")).unwrap();
+        assert!(sample.contains("\nkind = \"snapshot\"\n"), "the kind it was asked for: {sample}");
+        assert!(!sample.contains("across commits"), "{sample}");
         assert_eq!(plan.manifest.bench_names(), vec!["sample"]);
         assert_eq!(plan.arms.len(), 1);
         assert!(!plan.arms[0].has_manifest, "the arm manifest is generated");
         bench_gen::driver_main_source(&plan.manifest, None).expect("the driver generates");
 
         // init refuses an existing tree and points at `add`
-        let code = cmd_init(&cfg);
+        let code = cmd_init(&cfg, &["--kind", "snapshot"]);
         assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::FAILURE));
         std::fs::remove_dir_all(&mock).ok();
     }
@@ -2094,11 +2245,18 @@ mod tests {
         let mock_guard = temp_mock("add");
         let mock = mock_guard.path().to_path_buf();
         let cfg = Config::from_dir(&mock);
-        assert_eq!(format!("{:?}", cmd_init(&cfg)), success());
+        assert_eq!(format!("{:?}", cmd_init(&cfg, &["--kind", "snapshot"])), success());
         let bench_dir = mock.join("benches");
 
-        // a new bench with a named arm
+        // a new bench takes its kind, which is never defaulted
         let code = cmd_add(&cfg, &["warm-container", "kernel"]);
+        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::FAILURE));
+        assert!(!bench_dir.join("warm-container").exists(), "nothing is scaffolded without a kind");
+        let code = cmd_add(&cfg, &["warm-container", "kernel", "--kind", "flaky"]);
+        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::FAILURE), "a word that names no kind");
+
+        // a new bench with a named arm
+        let code = cmd_add(&cfg, &["warm-container", "kernel", "--kind=tracking"]);
         assert_eq!(format!("{code:?}"), success());
         assert!(bench_dir.join("warm-container/bench.toml").is_file());
         assert!(
@@ -2115,6 +2273,11 @@ mod tests {
         // the scaffolded bench names the arm it was created with
         let toml = std::fs::read_to_string(bench_dir.join("warm-container/bench.toml")).unwrap();
         assert!(toml.contains("\"kernel\""), "{toml}");
+        assert!(toml.contains("\nkind = \"tracking\"\n"), "the kind it was asked for: {toml}");
+
+        // an existing bench keeps the kind it declares
+        let code = cmd_add(&cfg, &["warm-container", "other", "--kind", "snapshot"]);
+        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::FAILURE));
 
         // the slash form adds an arm to the existing bench
         let code = cmd_add(&cfg, &["warm-container/native"]);
@@ -2151,7 +2314,7 @@ mod tests {
         let mock_guard = temp_mock("add-flag-refused");
         let mock = mock_guard.path().to_path_buf();
         let cfg = Config::from_dir(&mock);
-        assert_eq!(format!("{:?}", cmd_init(&cfg)), success());
+        assert_eq!(format!("{:?}", cmd_init(&cfg, &["--kind", "snapshot"])), success());
         let bench_dir = mock.join("benches");
 
         let code = cmd_add(&cfg, &["newb", "--force"]);

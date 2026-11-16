@@ -184,7 +184,7 @@ pub(crate) fn inputs(
         .filter(|f| f.file_name().is_some_and(|n| n == "Cargo.toml"))
         .filter_map(|f| Some((f.parent()?.to_path_buf(), std::fs::read_to_string(f).ok()?)))
         .collect();
-    let generated = generated(mock_dir, bench_dir);
+    let generated = generated(mock_dir, bench_dir)?;
     manifests.extend(
         generated
             .iter()
@@ -235,36 +235,38 @@ pub(crate) fn inputs(
 /// What `mock bench` writes under `target/`: a manifest for each arm that has
 /// none, and the driver's manifest and source. Digested as text because what they say depends on this build of
 /// mockspace as much as on any file the consumer keeps.
-fn generated(mock_dir: &Path, bench_dir: &Path) -> Vec<Generated> {
+///
+/// A tree with no root `bench.toml` generates nothing. A tree that has one
+/// and does not load (a bench declaring no kind, an invalid manifest) is an
+/// error with its reason, never an empty list: the inputs would leave out
+/// every manifest it generates, and the tree would read as listed when it
+/// was not. The digest is then not taken, so the tree runs, and `mock bench
+/// test` refuses it with the same reason.
+fn generated(mock_dir: &Path, bench_dir: &Path) -> Result<Vec<Generated>, String> {
     let mut out = Vec::new();
-    let Ok(plan) = crate::bench_gen::plan(bench_dir) else {
-        return out;
-    };
+    if !bench_dir.join("bench.toml").is_file() {
+        return Ok(out);
+    }
+    let plan = crate::bench_gen::plan(bench_dir)?;
     let dep = crate::bench_gen::mockspace_dep(&plan.manifest);
     for arm in plan.arms.iter().filter(|a| !a.has_manifest) {
-        if let Ok(text) = crate::bench_gen::arm_cargo_toml(arm, &dep, &plan.support) {
-            out.push(Generated {
-                dir: Some(crate::bench_gen::arm_gen_dir(mock_dir, arm)),
-                label: format!("generated/{}/{}/Cargo.toml", arm.bench, arm.arm),
-                text,
-            });
-        }
-    }
-    if let Ok(text) = crate::bench_gen::driver_cargo_toml(&dep, &plan.support, &crate::bench_gen::driver_name(bench_dir)) {
         out.push(Generated {
-            dir: Some(crate::bench_gen::driver_gen_dir(mock_dir)),
-            label: "generated/driver/Cargo.toml".to_string(),
-            text,
+            dir:   Some(crate::bench_gen::arm_gen_dir(mock_dir, arm)),
+            label: format!("generated/{}/{}/Cargo.toml", arm.bench, arm.arm),
+            text:  crate::bench_gen::arm_cargo_toml(arm, &dep, &plan.support)?,
         });
     }
-    if let Ok(text) = crate::bench_gen::driver_main_source(&plan.manifest, None) {
-        out.push(Generated {
-            dir: None,
-            label: "generated/driver/main.rs".to_string(),
-            text,
-        });
-    }
-    out
+    out.push(Generated {
+        dir:   Some(crate::bench_gen::driver_gen_dir(mock_dir)),
+        label: "generated/driver/Cargo.toml".to_string(),
+        text:  crate::bench_gen::driver_cargo_toml(&dep, &plan.support, &crate::bench_gen::driver_name(bench_dir))?,
+    });
+    out.push(Generated {
+        dir:   None,
+        label: "generated/driver/main.rs".to_string(),
+        text:  crate::bench_gen::driver_main_source(&plan.manifest, None)?,
+    });
+    Ok(out)
 }
 
 /// The directories a manifest depends on by `path`, in its `dependencies`,
