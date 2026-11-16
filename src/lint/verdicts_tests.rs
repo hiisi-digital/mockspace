@@ -83,14 +83,18 @@ fn a_file_digest_is_the_content_and_not_the_name() {
     assert_eq!(file_digest(&dir.path().join("missing")), None);
 }
 
-/// Every regular file under `dir`, recursively.
+/// Every packed file under `dir`, recursively; a salt's mark holds no verdict.
 fn files_under(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut todo = vec![dir.to_path_buf()];
     while let Some(d) = todo.pop() {
         for e in fs::read_dir(&d).unwrap().flatten() {
             let p = e.path();
-            if p.is_dir() { todo.push(p) } else { out.push(p) }
+            if p.is_dir() {
+                todo.push(p)
+            } else if p.extension().is_some_and(|e| e == PACK_EXT) {
+                out.push(p)
+            }
         }
     }
     out
@@ -396,47 +400,35 @@ fn a_repository_in_steady_use_stays_bounded_by_what_it_used_lately() {
     }
 }
 
-/// Finding 5: another salt's files stay while that engine is in use, and go once it has been
-/// untouched past [`KEPT`].
+/// Finding 5 and review round 2: another salt stays while a store of it is open, and its files
+/// go, with its mark, the moment a store of another salt opens with none of it open.
 #[test]
-fn another_salt_is_kept_while_in_use_and_goes_once_untouched_past_the_window() {
+fn another_salt_stays_while_open_and_goes_at_the_next_open_once_closed() {
     let dir = mockspace_manifest::scratch::tempdir().unwrap();
-    let t = generation_start();
-    let day = Duration::from_secs(24 * 60 * 60);
-    let (a, b) = (
-        store_at(dir.path(), "pack-a", t),
-        store_at(dir.path(), "pack-b", t),
-    );
-    let (ka, kb) = (a.digest(&[b"x"]), b.digest(&[b"x"]));
+    let a = store(dir.path(), "pack-a");
+    let ka = a.digest(&[b"x"]);
     a.remember(&ka, "a");
-    b.remember(&kb, "b");
-    // only pack-b runs from here; pack-a was last used at `t`
-    for d in [KEPT - day, KEPT + day] {
-        assert_eq!(
-            store_at(dir.path(), "pack-b", t + d).replay(&kb).as_deref(),
-            Some("b")
-        );
-        assert_eq!(
-            store_at(dir.path(), "pack-a", t + d).replay(&ka).as_deref(),
-            Some("a"),
-            "untouched {d:?}: kept"
-        );
-        assert_eq!(
-            store_at(dir.path(), "pack-b", t + d + day)
-                .replay(&kb)
-                .as_deref(),
-            Some("b")
-        );
-    }
-    // pack-a was read at `t + KEPT + day`, so its verdict is in that generation's file
-    let later = t + KEPT * 3;
+    let b = store(dir.path(), "pack-b");
+    b.remember(&b.digest(&[b"x"]), "b");
+    assert_eq!(files_under(dir.path()).len(), 2, "both salts written");
     assert_eq!(
-        store_at(dir.path(), "pack-b", later).replay(&kb),
-        None,
-        "pack-b unused since t + KEPT + 2 days"
+        store(dir.path(), "pack-a").replay(&ka).as_deref(),
+        Some("a"),
+        "open: kept"
     );
-    let left = files_under(dir.path());
-    assert!(left.is_empty(), "both untouched past the window: {left:?}");
+
+    drop(a);
+    let _b2 = store(dir.path(), "pack-b");
+    let left: Vec<_> = fs::read_dir(&b.dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert_eq!(
+        files_under(dir.path()).len(),
+        1,
+        "closed: its packed file gone, found {left:?}"
+    );
 }
 
 /// A record whose bytes are not the ones written, as a crash can leave a file's end zeroed, is

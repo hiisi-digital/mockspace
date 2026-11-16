@@ -47,7 +47,7 @@ fn pack_of(s: &DiskVerdicts) -> PathBuf {
 /// A copy of this binary in `role`, with `vars` set, its output kept.
 fn command(role: &str, base: &Path, vars: &[(&str, String)]) -> Command {
     let mut c = Command::new(std::env::current_exe().expect("the test binary"));
-    c.args([CHILD_TEST, "--exact", "--test-threads=1", "--nocapture"])
+    c.args([CHILD_TEST, "--exact", "--ignored", "--test-threads=1", "--nocapture"])
         .env(ROLE, role)
         .env("MOCKSPACE_VERDICTS_TEST_BASE", base)
         .stdout(Stdio::piped())
@@ -88,16 +88,25 @@ fn num<T: std::str::FromStr>(name: &str) -> T {
 /// falls and the next one fails: by `SIGXFSZ`, which ends the process, or with `EFBIG` once the
 /// signal is ignored, which is how a full disk looks to the writer.
 fn cap_file_size(bytes: libc::rlim_t, survive: bool) {
-    // SAFETY: plain calls with valid arguments; this process is a test child with one thread
-    // doing work.
+    // SAFETY: `signal` and `getrlimit`/`setrlimit` are called with valid arguments and a limit
+    // read into a local. They act on the whole process, which is a child started for one test:
+    // its other threads are libtest's, which write no file while the test runs, and the limit
+    // applies to every regular file the process writes, which is only the store's.
     unsafe {
         if survive {
             libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
         }
-        let lim = libc::rlimit {
-            rlim_cur: bytes,
-            rlim_max: libc::RLIM_INFINITY,
+        let mut lim = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
         };
+        assert_eq!(
+            libc::getrlimit(libc::RLIMIT_FSIZE, &mut lim),
+            0,
+            "the limit is read"
+        );
+        // the hard limit stays as it was: raising it takes a privilege a test does not have
+        lim.rlim_cur = bytes.min(lim.rlim_max);
         assert_eq!(
             libc::setrlimit(libc::RLIMIT_FSIZE, &lim),
             0,
@@ -106,6 +115,7 @@ fn cap_file_size(bytes: libc::rlim_t, survive: bool) {
     }
 }
 
+/// Lifts the cap back to the hard limit.
 fn uncap_file_size() {
     cap_file_size(libc::RLIM_INFINITY, true);
 }
@@ -117,8 +127,10 @@ fn pause() {
     }
 }
 
-/// What a started copy of this binary does, by its role. Run directly, it does nothing.
+/// What a started copy of this binary does, by its role. Ignored, so it runs only when a test
+/// starts it with `--ignored`.
 #[test]
+#[ignore = "started in a role by the cross-process tests"]
 fn child() {
     let Ok(role) = std::env::var(ROLE) else { return };
     let base = PathBuf::from(var("MOCKSPACE_VERDICTS_TEST_BASE"));
@@ -169,6 +181,15 @@ fn child() {
             for _ in 0 .. num::<u16>("ROUNDS") {
                 check_replays(&open(&base), num("WRITERS"), num("COUNT"), num("BIG"));
             }
+        },
+        // saves one verdict under the salt of `PACK`, says so by making `READY`, and keeps the
+        // store open until its standard input closes
+        "hold" => {
+            let s = DiskVerdicts::open_in(&base, Path::new("/repo"), &var("PACK"))
+                .expect("a store opens");
+            s.remember(&key_of(&s, 0, 0), &value_of(0, 0));
+            fs::write(var("READY"), "").unwrap();
+            let _ = std::io::Read::read_to_end(&mut std::io::stdin(), &mut Vec::new());
         },
         other => panic!("no role {other}"),
     }
@@ -346,23 +367,94 @@ fn a_reader_racing_failing_writes_replays_only_what_was_saved() {
     }
 }
 
-/// Finding 4: another process's sweep removes the repository's directory, still empty, between
-/// this store opening and its first write; the write still lands.
+/// Finding 4: another process's sweep removes a repository's empty directory, and leaves the
+/// directory of a store that is open and has not written yet, whose first write lands.
 #[test]
-fn a_sweep_in_another_process_does_not_lose_a_fresh_stores_write() {
+fn a_sweep_in_another_process_leaves_an_open_stores_directory_and_its_write() {
     let dir = mockspace_manifest::scratch::tempdir().unwrap();
-    let s = open(dir.path());
-    let repo_dir = s.dir.clone();
-    // as the store makes it on its first write, which it may not have reached yet
+    let repo_dir = open(dir.path()).dir.clone();
+    fs::remove_dir_all(&repo_dir).unwrap();
     fs::create_dir_all(&repo_dir).unwrap();
     assert_ok(&run("open-other", dir.path(), &[]), "the sweeping process");
     assert!(
         !repo_dir.exists(),
-        "the control: the other process swept the empty directory"
+        "the control: the other process sweeps an empty directory"
     );
+
+    let s = open(dir.path());
+    assert_ok(&run("open-other", dir.path(), &[]), "the sweeping process");
+    assert!(repo_dir.exists(), "the directory of an open store stays");
     s.remember(&key_of(&s, 0, 0), &value_of(0, 0));
     assert_eq!(
         open(dir.path()).replay(&key_of(&s, 0, 0)),
         Some(value_of(0, 0))
+    );
+}
+
+/// The files of the salt of `pack` in the store at `base`.
+fn files_of_salt(base: &Path, pack: &str) -> Vec<PathBuf> {
+    let s = DiskVerdicts::open_in(base, Path::new("/repo"), pack).expect("a store opens");
+    let salt = hex(&s.salt);
+    drop(s);
+    fs::read_dir(base.join(open(base).dir.file_name().unwrap()))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(&salt))
+        })
+        .collect()
+}
+
+/// Review round 2: another salt a live process holds open stays, and once that process has
+/// ended, the next store opened on the repository removes it at once, whatever its age.
+#[test]
+fn another_salt_held_by_a_live_process_stays_and_goes_at_once_when_it_ends() {
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
+    let base = dir.path();
+    let ready = base.join("ready");
+    let mut held = command("hold", base, &[
+        ("PACK", "pack-b".into()),
+        ("READY", ready.display().to_string()),
+    ])
+    .stdin(Stdio::piped())
+    .spawn()
+    .unwrap();
+    let start = std::time::Instant::now();
+    while !ready.exists() {
+        assert!(
+            start.elapsed().as_secs() < 60,
+            "the holding process did not get ready"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let a = open(base);
+    a.remember(&key_of(&a, 1, 1), &value_of(1, 1));
+    let b = DiskVerdicts::open_in(base, Path::new("/repo"), "pack-b").unwrap();
+    assert_eq!(
+        b.replay(&key_of(&b, 0, 0)),
+        Some(value_of(0, 0)),
+        "held by a live process: kept"
+    );
+    drop((a, b));
+
+    drop(held.stdin.take());
+    assert_ok(&held.wait_with_output().unwrap(), "the holding process");
+    let a = open(base);
+    assert_eq!(
+        a.replay(&key_of(&a, 1, 1)),
+        Some(value_of(1, 1)),
+        "the control: the own salt stays"
+    );
+    let left: Vec<_> = files_of_salt(base, "pack-b")
+        .into_iter()
+        .filter(|p| p.extension().is_some_and(|e| e == "pack"))
+        .collect();
+    assert!(
+        left.is_empty(),
+        "held by nobody: gone at once, found {left:?}"
     );
 }

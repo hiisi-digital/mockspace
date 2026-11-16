@@ -24,8 +24,18 @@
 //! copies a verdict it replays from the one before into this one. So a verdict lasts at least
 //! [`KEPT`] after it was last read or written and at most twice that, and what a store loads is
 //! what was in use over the last two generations, each verdict at most twice. The files of an
-//! older generation, of any salt, nothing reads any more, and opening a store removes them;
-//! another salt in use keeps its two.
+//! older generation, of any salt, nothing reads any more, and opening a store removes them.
+//!
+//! **Another salt goes the moment no store has it open.** An open store holds a shared lock on
+//! its salt's mark, `<salt>.live`, for as long as it lives, and opening a store removes every
+//! other salt of the repository whose mark it can lock exclusively (see `verdicts_live.rs`). So a
+//! rebuilt engine drops the verdicts of the one before on its first run, and two engines running
+//! at once on one repository keep each other's.
+//!
+//! **The store is for one machine's clock.** A generation is read off the wall clock, so a store
+//! whose clock runs two generations ahead of another's removes that one's current file, and its
+//! later appends go to a file no longer in the directory and are lost without a word. A store
+//! shared between machines, on a network mount or a synced directory, is not supported.
 //!
 //! **A record is framed and checked**: a magic, the key's and the value's lengths, a checksum of
 //! all of them, then the key and the value. A record is taken only when its checksum holds, and a
@@ -36,8 +46,8 @@
 //! failed write leaves nothing of it behind.
 //!
 //! The older layout of one file per verdict, which released engines still write into the same
-//! directory, and anything else this store wrote before, is removed only once both its access
-//! and its modification time are [`KEPT`] old, so an engine still in use keeps its own.
+//! directory and which holds no mark, is removed only once both its access and its modification
+//! time are [`KEPT`] old, so an engine still in use keeps its own.
 //!
 //! `MOCKSPACE_NO_VERDICTS=1` turns the store off for a run, which is how an incremental run is
 //! compared with a full one.
@@ -52,6 +62,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use mockspace_lint_rules::verdict::VerdictCache;
 use sha2::{Digest, Sha256};
 
+#[path = "verdicts_live.rs"]
+mod live;
 #[path = "verdicts_record.rs"]
 mod record;
 use record::{encode, parse};
@@ -79,12 +91,14 @@ const PACK_EXT: &str = "pack";
 /// reads no file. Writes are appended one whole record at a time under the file's exclusive lock
 /// (`File::lock`), so runs in several processes never interleave their records.
 pub struct DiskVerdicts {
-    /// The repository's directory in the store, made by the first write.
+    /// The repository's directory in the store.
     dir:     PathBuf,
     /// This generation's packed file, the one written to.
     current: PathBuf,
     salt:    [u8; 32],
     state:   Mutex<State>,
+    /// The salt's mark, held shared while the store lives, so no other store removes the salt.
+    _live:   File,
 }
 
 struct State {
@@ -139,6 +153,8 @@ impl DiskVerdicts {
         salt.update(pack_identity.as_bytes());
         let salt: [u8; 32] = salt.finalize().into();
         let file_of = |g: u64| dir.join(format!("{}.{g}.{PACK_EXT}", hex(&salt)));
+        let live = live::hold(&dir, &hex(&salt))?;
+        live::drop_unheld(&dir, &hex(&salt));
 
         let mut entries = HashMap::new();
         // The generation before first, so this one's record of a key wins.
@@ -159,6 +175,7 @@ impl DiskVerdicts {
                 entries,
                 file: None,
             }),
+            _live: live,
         })
     }
 
@@ -243,7 +260,8 @@ fn sweep(base: &Path, now: SystemTime, generation: u64) {
 }
 
 /// In one repository's directory: the packed files of a generation before the last two, of any
-/// salt, and a packed file of no generation once untouched; then the directory, when empty.
+/// salt, a packed file of no generation once untouched, and the marks no store holds of salts
+/// with no packed file left; then the directory, when empty.
 fn sweep_repository(dir: &Path, now: SystemTime, generation: u64) {
     let Ok(files) = fs::read_dir(dir) else { return };
     let suffix = format!(".{PACK_EXT}");
@@ -263,7 +281,8 @@ fn sweep_repository(dir: &Path, now: SystemTime, generation: u64) {
             let _ = fs::remove_file(f.path());
         }
     }
-    // Only succeeds when empty. A store that opened it and has not written yet makes it again.
+    live::drop_bare_marks(dir);
+    // Only succeeds when empty, which it is not while a store holds a mark in it.
     let _ = fs::remove_dir(dir);
 }
 
