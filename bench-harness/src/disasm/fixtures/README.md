@@ -39,15 +39,50 @@ aarch64 backend), and PE has `gnu-<crate>.exports.txt` from `objdump -p`: GNU
 labels no export in a DLL, so its `bench_entry` is found through the export
 table.
 
-The commands, per target `<t>`, crate `<c>` and source `<s>`:
+The commands, run from an empty build directory with the pinned toolchain,
+for each crate `<c>` (`variant_scalar`, `variant_unrolled_x4`, `variant_other`,
+`variant_shifted`) and its source `<s>` (`probe.rs` for the first two,
+`probe_other.rs`, `probe_shifted.rs`). Each target's command in full:
 
 ```sh
-rustc --target <t> --crate-type cdylib --crate-name <c> -O --edition 2021 \
-  -C panic=abort <linker args> [-C link-arg=/BASE:0x190000000] -o <library> <s>
+# x86_64-unknown-linux-gnu, the system linker
+rustc --target x86_64-unknown-linux-gnu --crate-type cdylib --crate-name <c> -O --edition 2021 \
+  -C panic=abort -o lib<c>.so <s>
+
+# aarch64-unknown-linux-gnu
+rustc --target aarch64-unknown-linux-gnu --crate-type cdylib --crate-name <c> -O --edition 2021 \
+  -C panic=abort \
+  -C linker=rust-lld -C linker-flavor=ld.lld -C link-arg=--no-relax \
+  -o lib<c>.so <s>
+
+# x86_64-apple-darwin
+rustc --target x86_64-apple-darwin --crate-type cdylib --crate-name <c> -O --edition 2021 \
+  -C panic=abort \
+  -C linker=rust-lld -C linker-flavor=ld64.lld \
+  -C link-arg=-install_name -C link-arg=@rpath/lib<c>.dylib \
+  -o lib<c>.dylib <s>
+
+# aarch64-apple-darwin
+rustc --target aarch64-apple-darwin --crate-type cdylib --crate-name <c> -O --edition 2021 \
+  -C panic=abort \
+  -C linker=rust-lld -C linker-flavor=ld64.lld -C link-arg=-ignore_optimization_hints \
+  -C link-arg=-install_name -C link-arg=@rpath/lib<c>.dylib \
+  -o lib<c>.dylib <s>
+
+# x86_64-pc-windows-msvc; variant_unrolled_x4 adds -C link-arg=/BASE:0x190000000
+rustc --target x86_64-pc-windows-msvc --crate-type cdylib --crate-name <c> -O --edition 2021 \
+  -C panic=abort \
+  -C linker=rust-lld -C link-arg=/NODEFAULTLIB -C link-arg=/NOENTRY \
+  -o <c>.dll <s>
+```
+
+Then, in the build directory, per library:
+
+```sh
 llvm-objdump -d --no-show-raw-insn <library> > <t>/llvm-<c>.txt
-objdump -d --no-show-raw-insn <library> > <t>/gnu-<c>.txt
-objdump -p <library> > <t>/gnu-<c>.exports.txt
-cp <library> <t>/   # variant_scalar only
+objdump -d --no-show-raw-insn <library> > <t>/gnu-<c>.txt         # x86_64 ELF and PE
+objdump -p <library> > <t>/gnu-<c>.exports.txt                    # PE
+cp <library> <t>/                                                  # variant_scalar
 ```
 
 The `variant_scalar` library of each target is kept beside its text, so the
