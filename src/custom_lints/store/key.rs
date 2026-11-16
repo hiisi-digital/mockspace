@@ -3,10 +3,14 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-//! Where the generated crate lives, and the key that names the directory.
+//! Where the generated crate lives, the key that names the directory, and the revision it is
+//! built at.
 //!
-//! The key hashes what makes two builds differ and nothing about where a worktree sits, so the
-//! worktrees of one repo at the same revisions are one cargo package.
+//! The key hashes the repo and the one tool a build is cut to, and nothing about where a worktree
+//! sits or which revisions it builds against, so every worktree and every revision of one repo is
+//! one cargo package. Cargo then replaces the library in place when a revision moves, and the
+//! target holds one library per package. The revision (the engine's lint-rules and the packs) is
+//! carried beside the crate, where the store reads which kept libraries it has made old.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -69,35 +73,34 @@ fn base_from(
 }
 
 /// Where the generated lint crate's manifest goes: `<base>/<key>/Cargo.toml`,
-/// outside every worktree.
+/// outside every worktree. Pure apart from reading the repo's git config.
 ///
-/// `packs` are the specs cargo will be handed, a branch already replaced by the
-/// rev of its tip (see [`resolve_packs`]). A changed rev is a new key and so a
-/// separate build; the same revs from any worktree are the same cargo package,
-/// which is the sharing. Pure apart from reading the repo's git config.
+/// The revisions it builds against are not in the key: a changed rev rewrites
+/// this one crate, and cargo builds its library over the old one rather than
+/// beside it (see [`revision`]).
 ///
 /// `scope` is the one tool a build is cut to (`None` for the whole content),
 /// and it is part of the key: a build of one tool is not the build of every
 /// lint and tool, and the two must not overwrite each other's generated crate.
-pub(crate) fn lints_manifest_path(
-    base: &Path,
-    cfg: &Config,
-    lint_rules_dep: &str,
-    packs: &[(String, String)],
-    scope: Option<&str>,
-) -> PathBuf {
+pub(crate) fn lints_manifest_path(base: &Path, cfg: &Config, scope: Option<&str>) -> PathBuf {
     let mock_rel = cfg
         .mock_dir
         .strip_prefix(&cfg.repo_root)
         .unwrap_or(&cfg.mock_dir);
-    let key = lint_crate_key(
-        &repo_identity(&cfg.repo_root),
-        mock_rel,
-        lint_rules_dep,
-        packs,
-        scope,
-    );
+    let key = lint_crate_key(&repo_identity(&cfg.repo_root), mock_rel, scope);
     base.join(format!("{key:016x}")).join("Cargo.toml")
+}
+
+/// The revision a build is made at: the engine's lint-rules dependency and the
+/// packs, as cargo will be handed them, a branch already replaced by the rev of
+/// its tip (see [`resolve_packs`]). A kept library of another revision of the
+/// same crate is one the build has made old.
+pub(crate) fn revision(lint_rules_dep: &str, packs: &[(String, String)]) -> String {
+    let mut text = format!("{lint_rules_dep}\n");
+    for (name, spec) in packs {
+        text.push_str(&format!("{name}={spec}\n"));
+    }
+    format!("{:016x}", crate::pack_pin::fnv1a(text.as_bytes()))
 }
 
 /// Each pack's spec with a branch replaced by the rev of its tip.
@@ -124,19 +127,8 @@ pub(crate) fn resolve_packs(
 
 /// FNV-1a rather than std's hasher, whose output may change between releases:
 /// the key names a directory that outlives the binary that made it.
-fn lint_crate_key(
-    identity: &str,
-    mock_rel: &Path,
-    lint_rules_dep: &str,
-    packs: &[(String, String)],
-    scope: Option<&str>,
-) -> u64 {
-    let mut text = format!("{identity}\n{}\n{lint_rules_dep}\n", mock_rel.display());
-    for (name, spec) in packs {
-        text.push_str(&format!("{name}={spec}\n"));
-    }
-    // Appended only when set, so the key of every whole build is the key it
-    // always had and no existing build is orphaned.
+fn lint_crate_key(identity: &str, mock_rel: &Path, scope: Option<&str>) -> u64 {
+    let mut text = format!("{identity}\n{}\n", mock_rel.display());
     if let Some(tool) = scope {
         text.push_str(&format!("scope={tool}\n"));
     }
@@ -224,7 +216,7 @@ pub(crate) fn absolutize_path_pack(spec: &str, from: &Path) -> String {
 /// A key directory's name: sixteen lowercase hex digits, as the key is written.
 /// Anything else under the base (the pack pins, a stray file) is not ours to
 /// remove.
-pub(super) fn is_key_name(name: &str) -> bool {
+pub(crate) fn is_key_name(name: &str) -> bool {
     name.len() == 16
         && name
             .bytes()

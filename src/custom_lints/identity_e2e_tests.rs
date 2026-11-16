@@ -9,6 +9,7 @@ use std::process::Command;
 
 use crate::config::Config;
 use crate::custom_lints::load_in;
+use crate::custom_lints::store::knobs::PROCESS_ENV as ENV;
 
 /// A lint with a panic site, so the library embeds the path of the file the
 /// lint was built from, which is what made the old byte digest tree specific.
@@ -165,8 +166,6 @@ fn a_file_a_lint_includes_is_part_of_what_was_built() {
     assert_eq!(name_in(&cache, &mock), "two");
 }
 
-/// Serialises the cases that set an environment variable of the whole process.
-static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
@@ -400,6 +399,7 @@ impl Drop for ConfigGuard {
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_cargo_config_that_appears_during_the_build_is_not_kept_under_the_old_key() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let mock = tree(tmp.path(), "review2-config", "unused");
