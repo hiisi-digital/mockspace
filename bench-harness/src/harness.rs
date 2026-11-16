@@ -162,18 +162,25 @@ unsafe fn load_variant(
 ///
 /// The hash is checked before the size, so a variant built against another
 /// `mockspace-bench-core` is told that rather than that an export is missing.
+/// A variant that passes is answered with the name it exports, which its
+/// samples and summary rows carry.
 pub fn preflight_variant(
     dylib_path: &str,
     n: usize,
     output_size: usize,
-) -> Result<(), String> {
+) -> Result<String, String> {
     // SAFETY: loading a variant runs its initialisers, which every path that
     // times one does as well; the checks call only the size and hash exports.
     let lib = unsafe { libloading::Library::new(dylib_path) }
         .map_err(|e| format!("dlopen failed: {e}"))?;
     // SAFETY: `lib` was just loaded, and the checks call only the hash and
     // size exports at the types `bench-core` declares for them.
-    unsafe { check_variant(&lib, n, output_size) }
+    unsafe { check_variant(&lib, n, output_size) }?;
+    // SAFETY: the symbol is read at the type every variant exports it at, and
+    // the string it returns is read before `lib` is dropped.
+    let name_fn: libloading::Symbol<BenchNameFn> =
+        unsafe { lib.get(b"bench_name") }.map_err(|e| format!("missing bench_name symbol: {e}"))?;
+    Ok(unsafe { variant_name(*name_fn) })
 }
 
 /// The ABI hash and the output size, in that order, which is what the worker

@@ -42,6 +42,7 @@ pub use kind::{
     LOCK_HEADER,
     SECTION_LOCK_SUFFIX,
     SNAPSHOT_LOCK,
+    SOURCES_ENV,
     TRACKING_SOURCE,
     glob_match,
     lock_name,
@@ -66,12 +67,14 @@ pub const INDEX_FILE: &str = "INDEX.md";
 pub const VOID_DIR: &str = "void";
 /// A run in progress, staged until it completes.
 pub const INFLIGHT_DIR: &str = ".inflight";
-/// The header line of a [`SUMMARY_FILE`]: the schema the old ledger used, and a
-/// tenth column, `source`, naming the code a row measured. A snapshot's row
-/// carries its [`source_id`], a tracking bench's carries [`TRACKING_SOURCE`],
-/// and a row written before the column existed has none.
-pub const SUMMARY_HEADER: &str =
-    "# schema_v2\ttimestamp\tgit_commit\tbenchmark\tvariant\tn\tmode\tmedian_ns\tci_lo_ns\tci_hi_ns\tsource";
+/// The header line of a [`SUMMARY_FILE`]: the schema the old ledger used, and
+/// two columns after it naming where a row stands. `source` is the code the
+/// row measured: a snapshot's lock id, a tracking arm's digest of what it
+/// built from, [`TRACKING_SOURCE`] where none was known. `system` is the
+/// system that ran it: the machine class, and the target where the build was
+/// pointed at one. A row written before either column existed has none, and a
+/// reader takes the system from the run's machine class directory.
+pub const SUMMARY_HEADER: &str = "# schema_v2\ttimestamp\tgit_commit\tbenchmark\tvariant\tn\tmode\tmedian_ns\tci_lo_ns\tci_hi_ns\tsource\tsystem";
 
 /// One cell of a bench: a sweep at one point, named `<sweep>_n<point>`.
 ///

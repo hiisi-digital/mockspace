@@ -12,12 +12,16 @@
 //! A snapshot is isolated reference code: everything its arms build from sits
 //! inside the bench tree, and the files of it are recorded in a
 //! [`SNAPSHOT_LOCK`] beside its `bench.toml` and never change after. Its
-//! history holds the code fixed, so a moving timing says the machine, the
-//! toolchain or the harness moved.
+//! source is the lock's id.
 //!
 //! A tracking bench builds against living code, at least one arm reaching a
 //! crate outside the bench tree, the repository's own code in the usual case.
-//! Its history is read across commits, so a moving timing says the code moved.
+//! Its source is a digest of every file each arm builds from, in the tree and
+//! out of it, and of the versions its other dependencies resolved to.
+//!
+//! The source and the system that ran a row are axes its history is split on,
+//! the same for both kinds: rows of one source on one system are one point,
+//! and a run adds samples to its point.
 //!
 //! The harness, the tool and the lint pack read the kind through this one
 //! vocabulary.
@@ -32,9 +36,14 @@ pub const SECTION_LOCK_SUFFIX: &str = ".snapshot.lock";
 /// The header line of a [`SNAPSHOT_LOCK`].
 pub const LOCK_HEADER: &str = "# snapshot lock v1: sha256 and path of every file the snapshot builds from, relative to the bench tree";
 
-/// The `source` a summary row of a tracking bench records: its code is named by
-/// the run's commit, not by a lock.
+/// The `source` a summary row records when no source is known: a row written
+/// by a driver run by hand, outside `mock bench run`, which computes sources.
 pub const TRACKING_SOURCE: &str = "-";
+
+/// The environment variable `mock bench run` sets on the driver: the path of
+/// a file of `<path prefix>\t<source>` lines, one per arm, the prefix relative
+/// to the bench tree and matching the start of the arm's built library path.
+pub const SOURCES_ENV: &str = "MOCKSPACE_BENCH_SOURCES";
 
 /// What a bench is for, and so how it builds and how its history is read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -88,17 +97,6 @@ impl Kind {
     #[must_use]
     pub const fn generated_arm_takes_root_support(self) -> bool {
         matches!(self, Kind::Tracking)
-    }
-
-    /// How a timing that left its history is called, by kind: a snapshot's
-    /// code is fixed, so the environment drifted; a tracking bench's code is
-    /// what moved.
-    #[must_use]
-    pub const fn moved_label(self) -> &'static str {
-        match self {
-            Kind::Snapshot => "DRIFT",
-            Kind::Tracking => "REGRESSION",
-        }
     }
 }
 
@@ -186,13 +184,10 @@ mod tests {
         assert_ne!(lock_name(Some("a")), lock_name(Some("b")));
     }
 
-    /// Only a tracking arm takes the root support crates, and the two kinds
-    /// call a moved timing by different names.
+    /// Only a tracking arm takes the root support crates.
     #[test]
-    fn the_kinds_differ_in_root_support_and_in_what_a_move_is_called() {
+    fn only_a_tracking_arm_takes_the_root_support() {
         assert!(Kind::Tracking.generated_arm_takes_root_support());
         assert!(!Kind::Snapshot.generated_arm_takes_root_support());
-        assert_eq!(Kind::Snapshot.moved_label(), "DRIFT");
-        assert_eq!(Kind::Tracking.moved_label(), "REGRESSION");
     }
 }

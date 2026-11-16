@@ -31,9 +31,15 @@ pub struct HistoryEntry {
     pub median_ns:  f64,
     pub ci_lo_ns:   f64,
     pub ci_hi_ns:   f64,
-    /// The code the row measured: a snapshot's lock id, `-` for a tracking
-    /// bench, empty for a row written before the column existed.
+    /// The code the row measured: a snapshot's lock id, a tracking arm's
+    /// digest of what it built from, `-` where none was known, empty for a row
+    /// written before the column existed. One axis of the row's point
+    /// ([`crate::axes`]).
     pub source:     String,
+    /// The system that ran it ([`crate::env::system`]). Empty only in a row
+    /// written before the column existed, which [`load_cell`] fills from the
+    /// run's machine class directory. One axis of the row's point.
+    pub system:     String,
 }
 
 /// A run's summary file: the schema header, then one row per entry.
@@ -42,7 +48,7 @@ pub fn render_summary(entries: &[HistoryEntry]) -> String {
     let mut out = format!("{SUMMARY_HEADER}\n");
     for e in entries {
         out.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\t{}\n",
             e.timestamp,
             e.git_commit,
             e.benchmark,
@@ -52,7 +58,8 @@ pub fn render_summary(entries: &[HistoryEntry]) -> String {
             e.median_ns,
             e.ci_lo_ns,
             e.ci_hi_ns,
-            e.source
+            e.source,
+            e.system
         ));
     }
     out
@@ -80,23 +87,40 @@ pub fn parse_summary(text: &str) -> Vec<HistoryEntry> {
                 ci_lo_ns:   p[7].parse().unwrap_or(0.0),
                 ci_hi_ns:   p[8].parse().unwrap_or(0.0),
                 source:     p.get(9).map(|s| s.trim().to_string()).unwrap_or_default(),
+                system:     p.get(10).map(|s| s.trim().to_string()).unwrap_or_default(),
             });
         }
     }
     entries
 }
 
+/// The rows of one run's summary, each carrying its system: the row's own, or
+/// the run's machine class where the row predates the column.
+#[must_use]
+pub fn run_rows(run: &mockspace_bench_layout::RunDir) -> Vec<HistoryEntry> {
+    let Ok(text) = std::fs::read_to_string(run.dir.join(SUMMARY_FILE)) else {
+        return Vec::new();
+    };
+    let mut rows = parse_summary(&text);
+    for r in &mut rows {
+        if r.system.is_empty() {
+            r.system = run.machine.clone();
+        }
+    }
+    rows
+}
+
 /// Every summary row of one cell on one machine class, across its runs, oldest
-/// run first. Runs on other machine classes are not read: a timing is compared
-/// only with timings taken on the same class of machine. A run with no summary
-/// (one an `after_cell` hook failed) contributes nothing.
+/// run first, each carrying its system ([`run_rows`]). Runs on other machine
+/// classes are not read, and the rows are split further by their system, the
+/// target included, wherever they are compared ([`crate::axes`]). A run with
+/// no summary (one an `after_cell` hook failed) contributes nothing.
 #[must_use]
 pub fn load_cell(results_root: &Path, bench: &str, cell: &Cell, machine: &str) -> Vec<HistoryEntry> {
     mockspace_bench_layout::runs(results_root)
         .into_iter()
         .filter(|r| r.bench == bench && &r.cell == cell && r.machine == machine)
-        .filter_map(|r| std::fs::read_to_string(r.dir.join(SUMMARY_FILE)).ok())
-        .flat_map(|text| parse_summary(&text))
+        .flat_map(|r| run_rows(&r))
         .collect()
 }
 
@@ -129,6 +153,8 @@ pub struct Regression {
     pub pct_change: f64,
     /// The current confidence interval lies entirely above the historical one.
     pub flagged:    bool,
+    /// The current confidence interval lies entirely below the historical one.
+    pub improved:   bool,
 }
 
 impl Regression {
@@ -203,13 +229,13 @@ pub fn detect_regressions_window(
             hist_medians[n / 2]
         };
 
-        let mut hist_ci_hi: Vec<f64> = window.iter().map(|h| h.ci_hi_ns).collect();
-        hist_ci_hi.sort_by(|a, b| a.total_cmp(b));
-        let hist_ci_hi_median = if n % 2 == 0 {
-            (hist_ci_hi[n / 2 - 1] + hist_ci_hi[n / 2]) / 2.0
-        } else {
-            hist_ci_hi[n / 2]
+        let median_of = |pick: fn(&HistoryEntry) -> f64| {
+            let mut v: Vec<f64> = window.iter().map(|h| pick(h)).collect();
+            v.sort_by(|a, b| a.total_cmp(b));
+            if n % 2 == 0 { (v[n / 2 - 1] + v[n / 2]) / 2.0 } else { v[n / 2] }
         };
+        let hist_ci_hi_median = median_of(|h| h.ci_hi_ns);
+        let hist_ci_lo_median = median_of(|h| h.ci_lo_ns);
 
         let pct = if hist_median > 0.0 {
             ((curr.median_ns - hist_median) / hist_median) * 100.0
@@ -224,6 +250,7 @@ pub fn detect_regressions_window(
             mode:       curr.mode.clone(),
             pct_change: pct,
             flagged:    regressed,
+            improved:   curr.ci_hi_ns < hist_ci_lo_median,
         });
     }
 
@@ -254,6 +281,7 @@ mod tests {
             ci_lo_ns:   lo,
             ci_hi_ns:   hi,
             source:     "-".into(),
+            system:     "linux-x86_64-c4-bare-amd".into(),
         }
     }
 
@@ -395,5 +423,39 @@ mod tests {
         let stamps: Vec<u64> = load_cell(&root, "hash", &cell, here).iter().map(|e| e.timestamp).collect();
         assert_eq!(stamps, [1, 2]);
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Every loaded row names its system: a row from before the column takes
+    /// the machine class of the run directory it sits in, and a row that
+    /// names its own, a target included, keeps it.
+    #[test]
+    fn a_loaded_row_always_names_its_system() {
+        let root = mockspace_manifest::scratch::held();
+        let _ = std::fs::remove_dir_all(&root);
+        let cell = Cell { sweep: "hash".into(), n: 64 };
+        let here = "linux-x86_64-c4-bare-amd";
+        let put = |run: &str, body: &str| {
+            let dir = root.join(mockspace_bench_layout::run_rel("hash", &cell, here, run));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(SUMMARY_FILE), body).unwrap();
+        };
+        put("20261114T000000Z-a", "# schema_v1\n1\ta\thash_n64\tfnv1a\t64\twarm\t1.0\t1.0\t1.0\n");
+        let mut own = entry("fnv1a", "warm", 2, 1.0, 1.0, 1.0);
+        own.system = format!("{here}+target-cpu=native");
+        put("20261115T000000Z-b", &render_summary(&[own]));
+        let systems: Vec<String> = load_cell(&root, "hash", &cell, here).into_iter().map(|e| e.system).collect();
+        assert_eq!(systems, [here.to_string(), format!("{here}+target-cpu=native")]);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A run whose interval lies wholly below its history is marked improved,
+    /// and is not flagged; one inside it is neither.
+    #[test]
+    fn a_run_below_its_history_is_improved_and_not_flagged() {
+        let historical: Vec<HistoryEntry> = (1 ..= 5).map(|i| entry("fnv1a", "warm", i, 100.0, 98.0, 102.0)).collect();
+        let faster = detect_regressions(&[entry("fnv1a", "warm", 99, 80.0, 78.0, 82.0)], &historical);
+        assert!(faster[0].improved && !faster[0].flagged);
+        let level = detect_regressions(&[entry("fnv1a", "warm", 99, 100.0, 97.0, 103.0)], &historical);
+        assert!(!level[0].improved && !level[0].flagged);
     }
 }

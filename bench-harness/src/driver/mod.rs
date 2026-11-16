@@ -381,6 +381,11 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
     // ── run identity: every cell of this run lands under one machine
     // class and one run id, a sibling of every earlier run ──
     let machine = crate::env::collect_run_env().machine_class;
+    // The system every row of this run records, the target included, and the
+    // tracking arms' sources `mock bench run` handed over.
+    let system = crate::env::current_system(&machine);
+    let sources = crate::kinds::Sources::from_env();
+    let tree_root = std::env::current_dir().unwrap_or_default();
     let run = unique_run_id(
         &results_root,
         &machine,
@@ -398,7 +403,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
         if cli.report_only {
             " [report-only]".to_string()
         } else {
-            format!(", run {run} on {machine}")
+            format!(", run {run} on {system}")
         }
     );
 
@@ -515,11 +520,18 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
         // variant into an empty sample set. A refusal fails the run and
         // takes out only its own variant; the rest of the cell, and every
         // other cell, still runs and is promoted.
+        // Each variant's source, by the name it exports: its own where `mock
+        // bench run` handed one for its library path, the bench's otherwise.
+        let mut variant_source: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         {
             let (n, output_size) = (config.n, routine.bridge.output_size);
             config.variant_paths.retain(|path| {
                 match harness::preflight_variant(&path.display().to_string(), n, output_size) {
-                    Ok(()) => true,
+                    Ok(name) => {
+                        let source = sources.of(&tree_root, path).unwrap_or(&config.source);
+                        variant_source.insert(name, source.to_string());
+                        true
+                    },
                     Err(reason) => {
                         eprintln!("  REFUSED: {} :: {reason}", path.display());
                         refused_failure = true;
@@ -666,7 +678,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
             }
             let md = crate::kinds::with_kind_paragraph(
                 &crate::generate_report(&ds, &result.title),
-                &crate::kinds::methodology(config.kind, &config.source, &result.env.git_commit),
+                &crate::kinds::methodology(config.kind, &config.source, &result.env.git_commit, &system),
             );
             if let Err(e) = std::fs::write(&findings_path, md) {
                 eprintln!("error: writing report: {e}");
@@ -700,6 +712,9 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
         let per_variant = warm_medians(&result);
         let mut best = f64::INFINITY;
         let mut entries: Vec<HistoryEntry> = Vec::new();
+        // One time for every row of the cell, so the rows of one run read as
+        // one run wherever they are grouped.
+        let at = history::timestamp();
         for (variant, vals) in &per_variant {
             let mut v = vals.clone();
             let m = median(&mut v);
@@ -708,7 +723,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
             }
             let (_, lo, hi) = bootstrap_ci_median(vals, config.master_seed);
             entries.push(HistoryEntry {
-                timestamp:  history::timestamp(),
+                timestamp:  at,
                 git_commit: history::ledger_commit(&result.env.git_commit),
                 benchmark:  cell.name(),
                 variant:    variant.clone(),
@@ -717,20 +732,17 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
                 median_ns:  m,
                 ci_lo_ns:   lo,
                 ci_hi_ns:   hi,
-                source:     config.source.clone(),
+                source:     variant_source.get(variant).cloned().unwrap_or_else(|| config.source.clone()),
+                system:     system.clone(),
             });
         }
         // The earlier runs of this cell on this machine class; this run is
-        // still staged, so it is not among them.
+        // still staged, so it is not among them. Each row is read against its
+        // own variant on its own system, by source point.
         let historical = history::load_cell(&results_root, &config.bench, &cell, &machine);
-        let standing = crate::kinds::standing(config.kind, &config.source, &entries, &historical);
-        for r in &standing.rows {
-            if r.flagged {
-                eprintln!("  {}: {}", standing.label, r.render(&config.bench_name));
-            }
-        }
-        if let Some(note) = &standing.note {
-            eprintln!("  not flagged: {note}");
+        let standing = crate::axes::standing(&entries, &historical);
+        for f in &standing {
+            eprintln!("  {}", f.render(&config.bench_name));
         }
         for e in &entries {
             summary.push(SummaryRow {
@@ -739,7 +751,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
                 variant:       e.variant.clone(),
                 median_ns:     e.median_ns,
                 ratio_vs_best: if best > 0.0 { e.median_ns / best } else { 1.0 },
-                moved:         history::flagged_for(&standing.rows, &e.variant).then_some(standing.label),
+                moved:         crate::axes::label_for(&standing, &e.variant),
             });
         }
         if cell_failed {

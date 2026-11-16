@@ -44,6 +44,7 @@ pub use mockspace_bench_core as core;
 pub use mockspace_bench_layout as layout;
 
 pub mod analysis;
+pub mod axes;
 pub mod cache;
 pub mod config;
 pub mod disasm;

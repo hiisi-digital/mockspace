@@ -3,29 +3,28 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-//! How each bench kind's history is read.
+//! What each bench kind says a run measured.
 //!
 //! A run's summary rows record the code they measured in their `source`
-//! column. A snapshot's is the id of its lock, so its history is the runs of
-//! that one lock on one machine class: the code is fixed, and a timing that
-//! leaves its history says the machine, the toolchain or the harness moved,
-//! which this calls drift. A tracking bench's is `-`, and its code is named
-//! by the run's commit, so its history is the runs at clean commits on one
-//! machine class: a timing that leaves it says the code moved, a regression.
-//! A tracking run on a dirty tree is compared and shown, and never flagged,
-//! since no commit names the code it ran.
+//! column and the system that ran them in their `system` column. A
+//! snapshot's source is the id of its lock, the same for every arm. A
+//! tracking arm's is the digest `mock bench run` takes of every file the arm
+//! built from, in the tree and out of it, and of the versions its other
+//! dependencies resolved to, handed to the driver in
+//! [`SOURCES_ENV`](mockspace_bench_layout::SOURCES_ENV). Both are read the
+//! same way from there, along the axes of [`crate::axes`].
 //!
 //! What a bench may build from, by kind, is the lint pack's
 //! `a-bench-keeps-the-contract-of-its-kind`, which `mock bench run` asks
 //! before it builds anything.
 
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use mockspace_bench_layout::{Kind, TRACKING_SOURCE, source_id};
 use sha2::{Digest, Sha256};
 
 use crate::error::BenchError;
-use crate::history::{HistoryEntry, Regression, detect_regressions};
+use crate::history::HistoryEntry;
 
 /// The refusal for a bench that declares no kind.
 #[must_use]
@@ -39,9 +38,10 @@ pub fn no_kind_reason(bench: &str) -> String {
     )
 }
 
-/// The `source` a run of this bench records: a snapshot's lock id, read from
-/// the lock at `lock`, or [`TRACKING_SOURCE`]. A snapshot with no lock is
-/// refused: a run of it could not say which code it measured.
+/// The `source` a run of this bench records where no arm says otherwise: a
+/// snapshot's lock id, read from the lock at `lock`, or [`TRACKING_SOURCE`],
+/// which a tracking arm's own digest replaces ([`Sources::of`]). A snapshot
+/// with no lock is refused: a run of it could not say which code it measured.
 pub fn source_of(bench: &str, kind: Kind, lock: Option<&Path>) -> Result<String, BenchError> {
     if kind == Kind::Tracking {
         return Ok(TRACKING_SOURCE.to_string());
@@ -50,120 +50,124 @@ pub fn source_of(bench: &str, kind: Kind, lock: Option<&Path>) -> Result<String,
         BenchError::InvalidConfig {
             reason: format!(
                 "snapshot `{bench}` {why}. A snapshot is frozen by its lock, and a run of it records \
-             the lock's id so its history never mixes two versions of its code. Run `mock bench \
-             freeze {bench}` to write it."
+                 the lock's id so its history never mixes two versions of its code. Run `mock bench \
+                 freeze {bench}` to write it."
             ),
         }
     };
     let lock = lock.ok_or_else(|| refuse("has no lock location".into()))?;
     let bytes =
         std::fs::read(lock).map_err(|_| refuse(format!("has no lock at {}", lock.display())))?;
-    let hex: String = Sha256::digest(&bytes)
+    Ok(source_id(&hex(&bytes)))
+}
+
+/// The sha256 of `bytes`, in hex.
+#[must_use]
+pub fn hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
-        .collect();
-    Ok(source_id(&hex))
-}
-
-/// Whether a recorded commit names the code it ran: present, and clean.
-fn names_its_code(commit: &str) -> bool {
-    let c = commit.trim();
-    !c.is_empty() && c != "unknown" && !c.ends_with("-dirty")
-}
-
-/// The earlier rows a run of `kind` is compared with, out of `historical` (one
-/// cell on one machine class): a snapshot's rows of the same source, a
-/// tracking bench's rows at clean commits.
-#[must_use]
-pub fn comparable(kind: Kind, source: &str, historical: &[HistoryEntry]) -> Vec<HistoryEntry> {
-    historical
-        .iter()
-        .filter(|h| {
-            match kind {
-                Kind::Snapshot => !source.is_empty() && h.source == source,
-                Kind::Tracking => names_its_code(&h.git_commit),
-            }
-        })
-        .cloned()
         .collect()
 }
 
-/// A run's standing against its history, read by its kind.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Standing {
-    /// One row per variant that has comparable history.
-    pub rows:  Vec<Regression>,
-    /// What a flagged row is called: [`Kind::moved_label`].
-    pub label: &'static str,
-    /// Why nothing is flagged though rows moved, where that is so.
-    pub note:  Option<String>,
+/// `path` with `.` and `..` taken out lexically.
+fn normal(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {},
+            Component::ParentDir => {
+                out.pop();
+            },
+            other => out.push(other),
+        }
+    }
+    out
 }
 
-/// Compare a run's rows, `current`, with the history of its cell on its machine
-/// class, by the bench's kind.
-#[must_use]
-pub fn standing(
-    kind: Kind,
-    source: &str,
-    current: &[HistoryEntry],
-    historical: &[HistoryEntry],
-) -> Standing {
-    let mut rows = detect_regressions(current, &comparable(kind, source, historical));
-    let dirty = kind == Kind::Tracking && current.iter().any(|c| !names_its_code(&c.git_commit));
-    let note = if dirty && rows.iter().any(|r| r.flagged) {
-        for r in &mut rows {
-            r.flagged = false;
+/// The tracking arms' sources of one run, read from the file `mock bench run`
+/// names in [`SOURCES_ENV`](mockspace_bench_layout::SOURCES_ENV): one
+/// `<path prefix>\t<source>` line per arm, the prefix relative to the bench
+/// tree and the start of the arm's built library path.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Sources {
+    by_prefix: Vec<(PathBuf, String)>,
+}
+
+impl Sources {
+    /// Parse the file's text.
+    #[must_use]
+    pub fn parse(text: &str) -> Sources {
+        let mut by_prefix: Vec<(PathBuf, String)> = text
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .map(|(p, s)| (normal(Path::new(p)), s.trim().to_string()))
+            .collect();
+        // The longest prefix first, so an arm nested under another's path is
+        // found before it.
+        by_prefix.sort_by_key(|(p, _)| std::cmp::Reverse(p.components().count()));
+        Sources {
+            by_prefix,
         }
-        Some(
-            "the run was taken on a tree with changes no commit names, so a move against \
-             history is shown and not flagged; commit, then run again"
-                .to_string(),
-        )
-    } else {
-        None
-    };
-    Standing {
-        rows,
-        label: kind.moved_label(),
-        note,
+    }
+
+    /// The sources this process was handed, none where it was run by hand.
+    #[must_use]
+    pub fn from_env() -> Sources {
+        std::env::var(mockspace_bench_layout::SOURCES_ENV)
+            .ok()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .map(|t| Sources::parse(&t))
+            .unwrap_or_default()
+    }
+
+    /// The source of the arm built at `path`, relative to `root` (the bench
+    /// tree), where one was handed for it.
+    #[must_use]
+    pub fn of(&self, root: &Path, path: &Path) -> Option<&str> {
+        let rel = normal(path.strip_prefix(root).unwrap_or(path));
+        self.by_prefix
+            .iter()
+            .find(|(p, _)| rel.starts_with(p))
+            .map(|(_, s)| s.as_str())
     }
 }
 
 /// The paragraph a run's report opens its methodology with: which kind of
-/// bench it is, what code it measured, and how its numbers are to be read.
+/// bench it is, the system it ran on, what code it measured, and how its
+/// numbers are read.
 #[must_use]
-pub fn methodology(kind: Kind, source: &str, commit: &str) -> String {
+pub fn methodology(kind: Kind, source: &str, commit: &str, system: &str) -> String {
+    let reading = "Runs at one source on one system are one point, every run adding to it; a \
+                   difference against that point is drift of the machine, the toolchain or the \
+                   harness, a difference between a point and the one before it is the code's. \
+                   Another system is another variant, never compared with this one.";
     match kind {
         Kind::Snapshot => {
             format!(
-                "Kind: snapshot, source `{source}`. The code measured is the reference frozen by \
-                 the bench's lock and is the same in every run of this source, so a difference \
-                 against earlier runs on this machine class is drift of the machine, the \
-                 toolchain or the harness, not of the code. Compare arms within a run freely; \
-                 compare runs only of one source."
+                "Kind: snapshot, source `{source}`, on `{system}`. The code measured is the \
+                 reference frozen by the bench's lock. {reading}"
             )
         },
         Kind::Tracking => {
             format!(
-                "Kind: tracking, at `{commit}`. The arms build against living code, so this run \
-                 measures the code as it stood at that commit, and a difference against earlier \
-                 runs on this machine class at clean commits is the code's trend. A run on a \
-                 dirty tree is shown against history and never flagged."
+                "Kind: tracking, at `{commit}`, on `{system}`. The arms build against living \
+                 code, and each row's source is the digest of every file its arm built from and \
+                 of the versions its dependencies resolved to. {reading}"
             )
         },
     }
 }
 
-/// What code a run measured, read off its summary rows by their kind: `,
-/// snapshot <source>` or `, tracking at <commit>`, and nothing for rows
-/// written before the `source` column, which say neither. The index and the
-/// generated bench docs both name a run's code this way.
+/// What a run measured and where, read off its summary rows: `, on <system>
+/// at <commit>`. The index and the generated bench docs both name a run this
+/// way; the sources are in each row and in the trails.
 #[must_use]
 pub fn measured(rows: &[HistoryEntry]) -> String {
     match rows.first() {
-        Some(e) if e.source == TRACKING_SOURCE => format!(", tracking at `{}`", e.git_commit),
-        Some(e) if !e.source.is_empty() => format!(", snapshot `{}`", e.source),
-        _ => String::new(),
+        Some(e) if !e.system.is_empty() => format!(", on `{}` at `{}`", e.system, e.git_commit),
+        Some(e) => format!(", at `{}`", e.git_commit),
+        None => String::new(),
     }
 }
 

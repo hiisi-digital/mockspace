@@ -22,7 +22,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use mockspace_bench_harness::history::{HistoryEntry, parse_summary};
+use mockspace_bench_harness::axes;
+use mockspace_bench_harness::history::{HistoryEntry, run_rows};
 use mockspace_bench_harness::layout;
 
 use crate::config::Config;
@@ -42,25 +43,32 @@ fn docgen_enabled(bench_dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// The latest run with a summary of every cell on every machine class:
-/// `(<bench>/<cell>, machine class, run, its rows)`, sorted by the first two.
+/// The latest run with a summary of every cell on every system:
+/// `(<bench>/<cell>, system, run, its rows of that system)`, sorted by the
+/// first two. A system is a variant of its own, so a machine class whose runs
+/// were built for two targets gives two entries.
 fn latest_runs(bench_dir: &Path) -> Vec<(String, String, String, Vec<HistoryEntry>)> {
     let mut latest: std::collections::BTreeMap<(String, String), (String, Vec<HistoryEntry>)> =
         std::collections::BTreeMap::new();
     // Oldest first within a machine, so the last one seen is the latest.
     for r in layout::runs(&bench_dir.join(layout::RESULTS_DIR)) {
-        let Ok(text) = fs::read_to_string(r.dir.join(layout::SUMMARY_FILE)) else {
-            continue;
-        };
-        let rows = parse_summary(&text);
-        if rows.is_empty() {
-            continue;
+        let rows = run_rows(&r);
+        for (system, at) in axes::split::<axes::System>(&rows) {
+            latest.insert((format!("{}/{}", r.bench, r.cell.name()), system), (r.run.clone(), at));
         }
-        latest.insert((format!("{}/{}", r.bench, r.cell.name()), r.machine), (r.run, rows));
     }
     latest
         .into_iter()
-        .map(|((cell, machine), (run, rows))| (cell, machine, run, rows))
+        .map(|((cell, system), (run, rows))| (cell, system, run, rows))
+        .collect()
+}
+
+/// Every row of every run of `cell` (`<bench>/<cell>`), for its trails.
+fn cell_rows(bench_dir: &Path, cell: &str) -> Vec<HistoryEntry> {
+    layout::runs(&bench_dir.join(layout::RESULTS_DIR))
+        .iter()
+        .filter(|r| format!("{}/{}", r.bench, r.cell.name()) == cell)
+        .flat_map(run_rows)
         .collect()
 }
 
@@ -138,16 +146,29 @@ pub fn generate(cfg: &Config) -> Vec<std::path::PathBuf> {
          the latest run of each. Succinct by design: for the full data behind \
          any number (per-sample CSVs, environment metadata, statistical \
          findings), see `mock/benches/results/` in the repository.\n\n\
-         A snapshot's number measures reference code that never changes, so it \
-         moves only with the machine, the toolchain or the harness. A tracking \
-         bench's number measures the code at the commit named, and its history \
-         across commits is the code's trend.\n\n",
+         Every system is a variant of its own and is shown beside the others, \
+         never pooled with them. Runs at one source on one system are one \
+         point: a snapshot has one source, its lock, so its number moves only \
+         with the machine, the toolchain or the harness; a tracking arm's \
+         source is the code it built from, and its trail of points is the \
+         code's trend.\n\n",
     );
 
+    let mut last_cell = String::new();
     for (cell, machine, run, rows) in &runs {
+        if *cell != last_cell {
+            last_cell = cell.clone();
+            let latest: Vec<(String, Vec<HistoryEntry>)> =
+                runs.iter().filter(|r| r.0 == *cell).map(|r| (r.1.clone(), r.3.clone())).collect();
+            md.push_str(&format!(
+                "## {cell}\n\n{}\n{}\n",
+                axes::render_systems(&latest),
+                axes::render_trails(&cell_rows(&bench_dir, cell))
+            ));
+        }
         let benchmark = format!("{cell} on {machine}");
-        let file_key = format!("{}.{machine}", cell.replace('/', "."));
-        md.push_str(&format!("## {benchmark}\n\n"));
+        let file_key = format!("{}.{}", cell.replace('/', "."), machine.replace('+', "."));
+        md.push_str(&format!("### {benchmark}\n\n"));
         md.push_str(&format!("Run `{run}`{}.\n\n", mockspace_bench_harness::kinds::measured(rows)));
         md.push_str("| variant | median | vs best |\n|---|---|---|\n");
         let best = rows
@@ -218,7 +239,7 @@ mod tests {
         let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let results = dir.path().join(layout::RESULTS_DIR);
         let cell = layout::Cell { sweep: "width-l1".into(), n: 80003 };
-        let put = |machine: &str, run: &str, median: f64, summary: bool| {
+        let put = |machine: &str, system: &str, run: &str, median: f64, summary: bool| {
             let d = results.join(layout::run_rel("warm", &cell, machine, run));
             fs::create_dir_all(&d).unwrap();
             if summary {
@@ -233,22 +254,28 @@ mod tests {
                     ci_lo_ns:   median,
                     ci_hi_ns:   median,
                     source:     "-".into(),
+                    system:     system.into(),
                 };
                 fs::write(d.join(layout::SUMMARY_FILE), mockspace_bench_harness::render_summary(&[e])).unwrap();
             }
         };
         let linux = "linux-x86_64-c4-bare-amd";
+        let native = "linux-x86_64-c4-bare-amd+target-cpu=native";
         let mac = "macos-aarch64-c8-bare-apple";
-        put(linux, "20261114T000000Z-a", 10.0, true);
-        put(linux, "20261115T000000Z-b", 11.0, true);
-        put(linux, "20261116T000000Z-c", 12.0, false);
-        put(mac, "20261101T000000Z-z", 5.0, true);
+        put(linux, "", "20261114T000000Z-a", 10.0, true);
+        put(linux, "", "20261115T000000Z-b", 11.0, true);
+        put(linux, "", "20261116T000000Z-c", 12.0, false);
+        // a later run on the same machine built for its own cpu: another system,
+        // which neither hides nor is hidden by the plain build's latest run
+        put(linux, native, "20261117T000000Z-d", 8.0, true);
+        put(mac, "", "20261101T000000Z-z", 5.0, true);
         let got: Vec<(String, String, String, f64)> = latest_runs(dir.path())
             .into_iter()
             .map(|(c, m, r, rows)| (c, m, r, rows[0].median_ns))
             .collect();
         assert_eq!(got, vec![
             ("warm/width-l1_n80003".into(), linux.into(), "20261115T000000Z-b".into(), 11.0),
+            ("warm/width-l1_n80003".into(), native.into(), "20261117T000000Z-d".into(), 8.0),
             ("warm/width-l1_n80003".into(), mac.into(), "20261101T000000Z-z".into(), 5.0),
         ]);
     }

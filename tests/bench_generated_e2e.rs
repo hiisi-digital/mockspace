@@ -228,6 +228,9 @@ master_seed = 7
         "the earlier run's samples stand untouched"
     );
     assert!(runs[1].join("summary.tsv").is_file(), "{:?}", runs[1]);
+    // the second run at the unchanged snapshot is written, and stands at the same source point
+    let again = mockspace_bench_harness::history::parse_summary(&std::fs::read_to_string(runs[1].join("summary.tsv")).unwrap());
+    assert!(!again.is_empty() && again.iter().all(|r| r.source == source), "{again:?}");
     let index = std::fs::read_to_string(bench_dir.join("results/INDEX.md")).unwrap();
     assert!(index.contains("2 run(s)"), "{index}");
 

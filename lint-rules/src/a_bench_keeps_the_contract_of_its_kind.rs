@@ -97,14 +97,23 @@ pub fn plans(view: &View<'_>, bench_dir: &Path) -> Vec<KindPlan> {
         .collect()
 }
 
-/// The lock of `files`: a header, then `<sha256>  <path>` per file, the path
-/// relative to the bench tree, in path order.
+/// The lock of `files`: a header, then [`digest_lines`].
 fn lock_body(
     view: &View<'_>,
     bench_dir: &Path,
     files: &std::collections::BTreeSet<PathBuf>,
 ) -> String {
-    let tree = reach::normal(bench_dir);
+    format!("{LOCK_HEADER}\n{}", digest_lines(view, bench_dir, files))
+}
+
+/// `<sha256>  <path>` per file, the path relative to the bench tree (climbing
+/// out of it with `..` for a file outside), in path order, so the text is the
+/// same in every checkout of the same files.
+fn digest_lines(
+    view: &View<'_>,
+    bench_dir: &Path,
+    files: &std::collections::BTreeSet<PathBuf>,
+) -> String {
     let mut lines: Vec<(String, String)> = files
         .iter()
         .map(|f| {
@@ -117,13 +126,52 @@ fn lock_body(
                         .collect()
                 })
                 .unwrap_or_else(|| "missing".to_string());
-            (rel_str(f, &tree), hex)
+            (reach::rel_up(f, bench_dir), hex)
         })
         .collect();
     lines.sort();
-    let mut out = format!("{LOCK_HEADER}\n");
-    for (path, hex) in lines {
-        out.push_str(&format!("{hex}  {path}\n"));
+    lines
+        .into_iter()
+        .map(|(path, hex)| format!("{hex}  {path}\n"))
+        .collect()
+}
+
+/// One arm of a tracking bench and the code it builds from, for its source.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArmCode {
+    /// The bench key.
+    pub bench:     String,
+    /// The `[bench.<section>]` it belongs to, where it does.
+    pub section:   Option<String>,
+    /// The arm's crate directory, relative to the bench tree.
+    pub crate_dir: PathBuf,
+    /// Whether the tool generates its manifest.
+    pub generated: bool,
+    /// [`digest_lines`] over every file it builds from, in the tree and out
+    /// of it. The tool adds the versions its other dependencies resolved to
+    /// and takes the digest of the whole as the arm's source.
+    pub files:     String,
+}
+
+/// Every arm of every bench declared `kind = "tracking"` in the tree at
+/// `bench_dir`, with the code it builds from.
+#[must_use]
+pub fn arm_code(view: &View<'_>, bench_dir: &Path) -> Vec<ArmCode> {
+    let mut out = Vec::new();
+    for b in plan::benches(view, bench_dir) {
+        if b.declared != Declared::Kind(Kind::Tracking) {
+            continue;
+        }
+        for arm in &b.arms {
+            let c = reach::arm_closure(view, bench_dir, &b, arm, Kind::Tracking);
+            out.push(ArmCode {
+                bench:     b.key.clone(),
+                section:   b.section.clone(),
+                crate_dir: PathBuf::from(reach::rel_up(&arm.dir, bench_dir)),
+                generated: !arm.manifest,
+                files:     digest_lines(view, bench_dir, &c.files),
+            });
+        }
     }
     out
 }

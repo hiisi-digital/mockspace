@@ -155,10 +155,13 @@ fn print_help() {
     eprintln!();
     eprintln!("every bench declares `kind = \"snapshot\"` or `kind = \"tracking\"`:");
     eprintln!("  snapshot  isolated reference code: its arms build only from the bench tree,");
-    eprintln!("            its lock records those files and they never change; its history");
-    eprintln!("            is runs of the one lock, so a move is drift of machine or toolchain");
-    eprintln!("  tracking  builds against living code outside the bench tree; its history");
-    eprintln!("            is runs at clean commits, so a move is the code's regression");
+    eprintln!("            its lock records those files and they never change; its source");
+    eprintln!("            is the lock's id");
+    eprintln!("  tracking  builds against living code outside the bench tree; each arm's");
+    eprintln!("            source is a digest of every file it builds from and what resolved");
+    eprintln!("rows of one source on one system are one point and every run adds to it;");
+    eprintln!("a move at a point is DRIFT, a new point is a REGRESSION or FASTER than the");
+    eprintln!("one before, and no system is ever compared with another.");
     eprintln!();
     eprintln!("a run is written once and never replaced; runs on other machines sit");
     eprintln!("beside it, and a cell's history is its runs on the same machine class.");
@@ -1038,6 +1041,18 @@ fn run_generated(
     if let Some(commit) = crate::bench_commit::commit_marked(&cfg.repo_root, &cfg.mock_dir, bench_dir) {
         cmd.env(crate::bench_commit::COMMIT_ENV, commit);
     }
+    // Each tracking arm's source, taken now that its build left its lockfile.
+    if !report_only {
+        match crate::bench_sources::write_sources(&cfg.repo_root, &cfg.mock_dir, bench_dir, &gen_dir, &plan.arms) {
+            Ok(path) => {
+                cmd.env(mockspace_bench_harness::layout::SOURCES_ENV, path);
+            },
+            Err(e) => {
+                eprintln!("error: taking the tracking arms' sources: {e}");
+                return ExitCode::FAILURE;
+            },
+        }
+    }
     for n in names {
         cmd.args(["--only", n]);
     }
@@ -1530,15 +1545,21 @@ driver binary is generated from `bench.toml` on every run.
 
 A snapshot is isolated reference code that stays as it is: its arms
 build only from crates and files inside this tree, and its lock holds
-them fixed. Its history is the runs of that one lock on one machine
-class, so a timing that moves says the machine, the toolchain or the
-harness drifted, and the run reports it as `DRIFT`.
+them fixed. Its source is the lock's id.
 
 A tracking bench builds against living code, at least one arm naming a
-crate outside this tree. Its history is the runs at clean commits on
-one machine class, so a timing that moves says the code moved, and the
-run reports it as `REGRESSION`. A run on a dirty tree is compared and
-never flagged.
+crate outside this tree. Each arm's source is a digest of every file
+it builds from, inside this tree and out of it, and of the versions
+its other dependencies resolved to.
+
+Every summary row records its source and the system that ran it, the
+machine class and any target the build was pointed at. Rows of one
+source on one system are one point, and every run adds to its point,
+whatever commit it was taken at. A timing that moves at the same point
+is `DRIFT` of the machine, the toolchain or the harness; a new point
+slower or faster than the one before is a `REGRESSION` or `FASTER` of
+the code. A system is never compared with another: `results/INDEX.md`
+shows them side by side, each with its trail of points.
 
 Both are refused by `mock bench run` and by the lint
 `a-bench-keeps-the-contract-of-its-kind` when they break their

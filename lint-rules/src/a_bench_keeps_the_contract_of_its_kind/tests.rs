@@ -358,3 +358,77 @@ fn an_excluded_member_is_not_read() {
         "the control: included, it is refused"
     );
 }
+
+/// A tracking arm's code is every file it builds from, followed out of the
+/// tree through the crates it takes by path, named from the bench tree with
+/// `..` so another checkout reads the same text. A change to the outside
+/// crate's source moves it; a change to its tests, which no arm builds, does
+/// not; and an arm that does not reach the crate is not moved by it.
+#[test]
+fn a_tracking_arm_s_code_follows_its_path_dependencies_out_of_the_tree() {
+    let arm_a = format!("{ARM}engine = {{ path = \"../../../../crates/engine\" }}\n");
+    let arm_b = format!("{ARM}libc = \"0.2\"\n");
+    let engine = format!("{LIB}[dependencies]\ncore2 = {{ path = \"../core2\" }}\n");
+    let files = [
+        (
+            "mock/benches/live/bench.toml",
+            "kind = \"tracking\"\ntitle = \"l\"\narms = [\"a\", \"b\"]\npoints = [64]\n",
+        ),
+        ("mock/benches/live/arms/a/Cargo.toml", arm_a.as_str()),
+        ("mock/benches/live/arms/a/src/lib.rs", ""),
+        ("mock/benches/live/arms/b/Cargo.toml", arm_b.as_str()),
+        ("mock/benches/live/arms/b/src/lib.rs", ""),
+        ("mock/crates/engine/Cargo.toml", engine.as_str()),
+        ("mock/crates/engine/src/lib.rs", "pub fn f() {}\n"),
+        ("mock/crates/engine/tests/t.rs", ""),
+        ("mock/crates/core2/Cargo.toml", LIB),
+        ("mock/crates/core2/src/lib.rs", ""),
+    ];
+    let code = |tmp: &tempfile::TempDir| -> Vec<(String, String)> {
+        let reading = Reading::new(tmp.path());
+        arm_code(&reading.view(), &tmp.path().join("mock/benches"))
+            .into_iter()
+            .map(|a| (a.crate_dir.display().to_string(), a.files))
+            .collect()
+    };
+    let tmp = repo(&files);
+    let first = code(&tmp);
+    assert_eq!(first.len(), 2);
+    let a = &first[0].1;
+    for p in [
+        "../crates/engine/src/lib.rs",
+        "../crates/engine/Cargo.toml",
+        "../crates/core2/src/lib.rs",
+        "live/arms/a/src/lib.rs",
+    ] {
+        assert!(a.contains(&format!("  {p}\n")), "missing {p}:\n{a}");
+    }
+    assert!(
+        !a.contains("tests/t.rs"),
+        "an outside crate's tests are not built into an arm:\n{a}"
+    );
+
+    let elsewhere = repo(&files);
+    assert_eq!(
+        code(&elsewhere),
+        first,
+        "another checkout of the same files reads the same"
+    );
+
+    write(&tmp, &[(
+        "mock/crates/engine/tests/t.rs",
+        "#[test] fn t() {}\n",
+    )]);
+    assert_eq!(
+        code(&tmp),
+        first,
+        "a test the arm does not build moves nothing"
+    );
+    write(&tmp, &[("mock/crates/core2/src/lib.rs", "pub fn g() {}\n")]);
+    let after = code(&tmp);
+    assert_ne!(
+        after[0], first[0],
+        "a crate two path steps out moves the arm that reaches it"
+    );
+    assert_eq!(after[1], first[1], "the arm that does not reach it stands");
+}

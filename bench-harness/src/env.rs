@@ -86,6 +86,43 @@ pub fn machine_class(f: &MachineFacts<'_>) -> String {
     )
 }
 
+/// The system a run is taken on: the machine class, and after it each way the
+/// build was pointed at a target other than the host's default, `+`-joined:
+/// `target=<triple>` for a cross target, and every `target-cpu=` and
+/// `target-feature=` codegen flag in `rustflags`. Two runs on one machine class
+/// built for different targets are two systems, and are never compared.
+///
+/// Read from what the process is handed: `target` is `CARGO_BUILD_TARGET`,
+/// `rustflags` is `RUSTFLAGS` and `CARGO_ENCODED_RUSTFLAGS` together. Flags set
+/// in a cargo configuration file are not read.
+#[must_use]
+pub fn system(machine_class: &str, target: Option<&str>, rustflags: &str) -> String {
+    let mut parts = vec![machine_class.to_string()];
+    if let Some(t) = target.map(str::trim).filter(|t| !t.is_empty()) {
+        parts.push(format!("target={t}"));
+    }
+    let tokens: Vec<&str> = rustflags.split(|c: char| c.is_whitespace() || c == '\u{1f}').filter(|t| !t.is_empty()).collect();
+    for (i, t) in tokens.iter().enumerate() {
+        let flag = match *t {
+            "-C" | "--codegen" => tokens.get(i + 1).copied().unwrap_or(""),
+            other => other.strip_prefix("-C").unwrap_or(""),
+        };
+        if flag.starts_with("target-cpu=") || flag.starts_with("target-feature=") {
+            parts.push(flag.to_string());
+        }
+    }
+    parts.join("+")
+}
+
+/// [`system`] for this process: its machine class and the target variables
+/// it was handed, which `mock bench run` hands the driver as it built the arms.
+#[must_use]
+pub fn current_system(machine_class: &str) -> String {
+    let var = |k: &str| std::env::var(k).unwrap_or_default();
+    let flags = format!("{} {}", var("RUSTFLAGS"), var("CARGO_ENCODED_RUSTFLAGS"));
+    system(machine_class, std::env::var("CARGO_BUILD_TARGET").ok().as_deref(), &flags)
+}
+
 /// The values `std::env::consts::OS` and `ARCH` take.
 const KNOWN_TOKENS: [&str; 54] = [
     "linux", "macos", "windows", "freebsd", "netbsd", "openbsd", "dragonfly", "android",
@@ -364,6 +401,23 @@ mod tests {
 
     fn facts(brand: &str) -> MachineFacts<'_> {
         MachineFacts { os: "linux", arch: "x86_64", cpus: 12, container: false, cpu_brand: brand }
+    }
+
+    /// A build pointed at a target is another system than the host's default
+    /// on the same machine class: a cross target, a target cpu and target
+    /// features each count, in every spelling of the codegen flag; any other
+    /// flag does not.
+    #[test]
+    fn a_build_pointed_at_a_target_is_another_system() {
+        let c = "linux-x86_64-c4-bare-amd";
+        assert_eq!(system(c, None, ""), c);
+        assert_eq!(system(c, Some(""), "-C opt-level=3 --cfg x"), c, "flags that pick no target change nothing");
+        assert_eq!(system(c, None, "-C target-cpu=native"), format!("{c}+target-cpu=native"));
+        assert_eq!(system(c, None, "-Ctarget-feature=+avx2"), format!("{c}+target-feature=+avx2"));
+        assert_eq!(
+            system(c, Some("x86_64-unknown-linux-musl"), "--codegen\u{1f}target-cpu=znver4"),
+            format!("{c}+target=x86_64-unknown-linux-musl+target-cpu=znver4")
+        );
     }
 
     #[test]

@@ -10,6 +10,10 @@
 //! workspace-inherited one. The harness's own crates (`mockspace-bench-*`) are
 //! the instrument, not the code measured, and are passed over.
 //!
+//! [`arm_closure`] follows one arm out of the tree as well, through every
+//! crate it takes by path wherever it sits, for the digest of a tracking
+//! arm's source.
+//!
 //! Read: `[dependencies]`, `[build-dependencies]` and their `[target.*]` forms,
 //! `[patch.*]`, the `[lib] path`, and in Rust source the literal paths of
 //! `include!`, `include_str!`, `include_bytes!` and `#[path = "..."]`. Not
@@ -20,15 +24,16 @@ use std::path::{Component, Path, PathBuf};
 
 use mockspace_bench_layout::Kind;
 
-use super::plan::{Bench, rel_str};
+use super::plan::{ArmRoot, Bench, rel_str};
 use crate::{Entry, View};
 
-/// What one bench builds from.
+/// What a bench, or one arm, builds from.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Closure {
     /// Every reach outside the bench tree, said in words.
     pub outside: Vec<String>,
-    /// Every file inside the bench tree it builds from, absolute.
+    /// Every file it builds from that was read, absolute: inside the bench
+    /// tree only, unless the walk followed crates out of it.
     pub files:   BTreeSet<PathBuf>,
 }
 
@@ -47,51 +52,120 @@ pub fn normal(path: &Path) -> PathBuf {
     out
 }
 
-/// What `bench` builds from, its generated arms taking support crates as an
-/// arm of `kind` does.
-pub fn closure(view: &View<'_>, bench_dir: &Path, bench: &Bench, kind: Kind) -> Closure {
-    let tree = normal(bench_dir);
-    let root_support: Vec<PathBuf> = view
-        .list(bench_dir.join("support"))
-        .map(|l| {
-            l.entries()
-                .iter()
-                .filter(|e| Entry::is_dir(e))
-                .map(|e| bench_dir.join("support").join(e.name()))
-                .collect()
-        })
-        .unwrap_or_default();
-    let mut generated_deps = bench.own_support.clone();
-    if kind.generated_arm_takes_root_support() {
-        generated_deps.extend(root_support);
-    }
+/// `path` relative to `base`, both taken lexically, climbing out of `base`
+/// with `..` where `path` is not under it: the same spelling in every
+/// checkout, wherever it sits on the disk.
+pub fn rel_up(path: &Path, base: &Path) -> String {
+    let (path, base) = (normal(path), normal(base));
+    let p: Vec<_> = path.components().collect();
+    let b: Vec<_> = base.components().collect();
+    let common = p.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let mut parts: Vec<String> = vec!["..".to_string(); b.len() - common];
+    parts.extend(
+        p[common ..]
+            .iter()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned()),
+    );
+    parts.join("/")
+}
 
+/// What `bench` builds from inside the bench tree, and every reach out of it,
+/// its generated arms taking support crates as an arm of `kind` does.
+pub fn closure(view: &View<'_>, bench_dir: &Path, bench: &Bench, kind: Kind) -> Closure {
+    let mut starts = Vec::new();
+    for arm in &bench.arms {
+        starts.extend(arm_starts(view, bench_dir, bench, arm, kind));
+    }
+    let mut c = walk_from(view, bench_dir, starts, false);
+    c.files.insert(normal(&bench.file));
+    c
+}
+
+/// Every file one arm builds from, in the bench tree and out of it: the
+/// crates it reaches by path wherever they are, followed through their own
+/// path dependencies, the files their source includes, and the bench's
+/// `bench.toml`. Out of the tree a crate is read as cargo builds it: its
+/// manifest, its build script and its library's source directory.
+pub fn arm_closure(
+    view: &View<'_>,
+    bench_dir: &Path,
+    bench: &Bench,
+    arm: &ArmRoot,
+    kind: Kind,
+) -> Closure {
+    let mut c = walk_from(
+        view,
+        bench_dir,
+        arm_starts(view, bench_dir, bench, arm, kind),
+        true,
+    );
+    c.files.insert(normal(&bench.file));
+    c
+}
+
+/// Where a walk of one arm starts: its crate, and for a generated manifest the
+/// support crates its kind takes.
+fn arm_starts(
+    view: &View<'_>,
+    bench_dir: &Path,
+    bench: &Bench,
+    arm: &ArmRoot,
+    kind: Kind,
+) -> Vec<(PathBuf, bool)> {
+    let mut starts = vec![(normal(&arm.dir), arm.manifest)];
+    if !arm.manifest {
+        starts.extend(bench.own_support.iter().map(|d| (normal(d), true)));
+        if kind.generated_arm_takes_root_support() {
+            let support = bench_dir.join("support");
+            let roots: Vec<PathBuf> = view
+                .list(&support)
+                .map(|l| {
+                    l.entries()
+                        .iter()
+                        .filter(|e| Entry::is_dir(e))
+                        .map(|e| support.join(e.name()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            starts.extend(roots.into_iter().map(|d| (normal(&d), true)));
+        }
+    }
+    starts
+}
+
+/// Walk the crates from `starts`, each `(dir, has a manifest)`. With
+/// `follow`, a crate out of the tree is read and followed too; without, it is
+/// only said as a reach outside.
+fn walk_from(
+    view: &View<'_>,
+    bench_dir: &Path,
+    starts: Vec<(PathBuf, bool)>,
+    follow: bool,
+) -> Closure {
+    let tree = normal(bench_dir);
     let mut walk = Walk {
         view,
         tree: &tree,
         closure: Closure::default(),
         seen: BTreeSet::new(),
+        follow,
     };
-    walk.closure.files.insert(normal(&bench.file));
-    let mut queue: Vec<(PathBuf, bool)> = Vec::new();
-    for arm in &bench.arms {
-        queue.push((normal(&arm.dir), arm.manifest));
-        if !arm.manifest {
-            queue.extend(generated_deps.iter().map(|d| (normal(d), true)));
-        }
-    }
+    let mut queue = starts;
     while let Some((dir, manifest)) = queue.pop() {
         if !walk.seen.insert(dir.clone()) {
             continue;
         }
-        if !dir.starts_with(&tree) {
+        if dir.starts_with(&tree) {
+            walk.files_under(&dir);
+        } else if follow {
+            walk.files_as_built(&dir);
+        } else {
             walk.out(format!(
                 "builds the crate at {}, outside the bench tree",
                 dir.display()
             ));
             continue;
         }
-        walk.crate_files(&dir);
         if manifest {
             queue.extend(walk.manifest(&dir).into_iter().map(|d| (d, true)));
         }
@@ -107,6 +181,7 @@ struct Walk<'v, 'r> {
     tree:    &'v Path,
     closure: Closure,
     seen:    BTreeSet<PathBuf>,
+    follow:  bool,
 }
 
 impl Walk<'_, '_> {
@@ -118,9 +193,9 @@ impl Walk<'_, '_> {
         rel_str(p, self.tree)
     }
 
-    /// Every file of the crate at `dir`, and every file its Rust source names
-    /// by a literal path.
-    fn crate_files(&mut self, dir: &Path) {
+    /// Every file under `dir`, and every file its Rust source names by a
+    /// literal path.
+    fn files_under(&mut self, dir: &Path) {
         let skip = |_: &Path, e: &Entry| {
             (Entry::is_dir(e) && (e.name() == "target" || e.name().starts_with('.')))
                 || e.name() == "Cargo.lock"
@@ -131,6 +206,20 @@ impl Walk<'_, '_> {
                 self.source_paths(&f);
             }
             self.closure.files.insert(f);
+        }
+    }
+
+    /// A crate out of the tree, as cargo builds it: its manifest, its build
+    /// script, and `src/`. A library elsewhere is read where the manifest
+    /// names it. Its tests, benches and examples are not built into an arm.
+    fn files_as_built(&mut self, dir: &Path) {
+        for f in ["Cargo.toml", "build.rs"] {
+            if self.view.is_file(dir.join(f)) {
+                self.closure.files.insert(normal(&dir.join(f)));
+            }
+        }
+        if self.view.is_dir(dir.join("src")) {
+            self.files_under(&dir.join("src"));
         }
     }
 
@@ -157,17 +246,20 @@ impl Walk<'_, '_> {
         }
         for lit in found {
             let target = normal(&base.join(&lit));
-            if target.starts_with(self.tree) {
-                self.closure.files.insert(target);
-            } else {
+            if !target.starts_with(self.tree) {
                 let why = format!("{} reads `{lit}`, outside the bench tree", self.rel(file));
                 self.out(why);
+                if !self.follow {
+                    continue;
+                }
             }
+            self.closure.files.insert(target);
         }
     }
 
-    /// The in-tree crates the manifest at `dir` depends on, every other
-    /// dependency said as a reach outside.
+    /// The crates the manifest at `dir` takes by path that the walk goes on
+    /// into: those in the tree, and with `follow` every one. Every other
+    /// dependency is said as a reach outside.
     fn manifest(&mut self, dir: &Path) -> Vec<PathBuf> {
         let file = dir.join("Cargo.toml");
         let Some(Ok(doc)) = self.view.toml(&file) else {
@@ -196,7 +288,7 @@ impl Walk<'_, '_> {
         {
             tables.extend(p.as_table());
         }
-        let mut inside = Vec::new();
+        let mut next = Vec::new();
         for (name, spec) in tables.into_iter().flat_map(|t| t.iter()) {
             let package = spec
                 .get("package")
@@ -208,13 +300,15 @@ impl Walk<'_, '_> {
             match where_from(spec) {
                 From::Path(p) => {
                     let target = normal(&dir.join(p));
-                    if target.starts_with(self.tree) {
-                        inside.push(target);
-                    } else {
+                    if !target.starts_with(self.tree) {
                         self.out(format!(
                             "`{who}` takes `{name}` by path from `{p}`, outside the bench tree"
                         ));
+                        if !self.follow {
+                            continue;
+                        }
                     }
+                    next.push(target);
                 },
                 From::Elsewhere(what) => self.out(format!("`{who}` takes `{name}` {what}")),
             }
@@ -226,19 +320,20 @@ impl Walk<'_, '_> {
         {
             let target = normal(&dir.join(lib));
             if !target.starts_with(dir) {
-                if target.starts_with(self.tree) {
-                    if let Some(src) = target.parent() {
-                        let src = src.to_path_buf();
-                        self.crate_files(&src);
-                    }
-                } else {
+                if !target.starts_with(self.tree) {
                     self.out(format!(
                         "`{who}` builds its library from `{lib}`, outside the bench tree"
                     ));
                 }
+                if target.starts_with(self.tree) || self.follow {
+                    if let Some(src) = target.parent() {
+                        let src = src.to_path_buf();
+                        self.files_under(&src);
+                    }
+                }
             }
         }
-        inside
+        next
     }
 }
 
