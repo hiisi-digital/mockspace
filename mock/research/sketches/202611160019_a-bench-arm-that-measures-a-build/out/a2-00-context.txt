@@ -1,0 +1,18 @@
+## checkout
+2764b231fc4159d6a32e30e6a17bcca5eb43728b
+## mockspace dev on the remote
+2764b231fc4159d6a32e30e6a17bcca5eb43728b	refs/heads/dev
+## the toolchain the fixture builds with
+cargo 1.98.0-nightly (fbb61be30 2026-05-26)
+rustc 1.98.0-nightly (57d06900f 2026-05-27)
+binary: rustc
+commit-hash: 57d06900fd7d9ee06d3a7f323bb77f17ab3cfaf8
+commit-date: 2026-05-27
+host: x86_64-unknown-linux-gnu
+release: 1.98.0-nightly
+LLVM version: 22.1.6
+## the machine
+4
+Linux 6.18.44-fc-v470
+## the fixture's target directory before the run
+ls: cannot access '/home/user/target/m4-build-from-clean/target/debug': No such file or directory
