@@ -30,7 +30,7 @@ fn repo_with_lints_packs_and_tools() -> (tempfile::TempDir, crate::config::Confi
 }
 
 #[test]
-fn a_tool_scope_carries_the_one_tool_and_no_lints_or_packs() {
+fn a_tool_scope_carries_the_one_tool_and_no_lints() {
     let (dir, cfg) = repo_with_lints_packs_and_tools();
     let path = dir.path().join("mockspace.toml");
     // control: the whole content is all of it, so the scope below is
@@ -40,19 +40,26 @@ fn a_tool_scope_carries_the_one_tool_and_no_lints_or_packs() {
     assert_eq!(whole.packs.len(), 1);
     assert_eq!(whole.tools.len(), 2);
 
-    let scoped = discover_scoped(&cfg, &path, "ticket-add").unwrap();
+    let scoped = discover_scoped(&cfg, &path, "ticket-add", false).unwrap();
     assert!(scoped.lint_files.is_empty(), "no lint builds for a tool");
     assert!(scoped.packs.is_empty(), "no pack builds for a tool");
     let tools: Vec<&str> = scoped.tools.iter().map(|t| t.dir.as_str()).collect();
     assert_eq!(tools, ["ticket-add"]);
+
+    // With no record of a whole build the packs come too, so their tools can say whether the name
+    // is taken, and still no lint.
+    let unrecorded = discover_scoped(&cfg, &path, "ticket-add", true).unwrap();
+    assert!(unrecorded.lint_files.is_empty(), "no lint builds for a tool");
+    assert_eq!(unrecorded.packs.len(), 1);
+    assert_eq!(unrecorded.tools.len(), 1);
 }
 
 #[test]
 fn a_name_that_is_no_tool_directory_scopes_to_nothing() {
     let (dir, cfg) = repo_with_lints_packs_and_tools();
     let path = dir.path().join("mockspace.toml");
-    assert!(discover_scoped(&cfg, &path, "foo").is_none());
-    assert!(discover_scoped(&cfg, &path, "some-pack").is_none());
+    assert!(discover_scoped(&cfg, &path, "foo", true).is_none());
+    assert!(discover_scoped(&cfg, &path, "some-pack", true).is_none());
 }
 
 #[test]

@@ -138,6 +138,8 @@ fn kept(cache: &Path) -> Vec<(PathBuf, Vec<u8>)> {
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_repo_leaves_one_crate_one_library_and_no_copy_of_it() {
+    // A case beside it that plants a cargo config changes the identity mid-build, and nothing is kept.
+    let _env = crate::custom_lints::store::knobs::PROCESS_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let mock = tree(tmp.path());

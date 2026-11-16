@@ -35,7 +35,7 @@ mod support;
 
 #[cfg(test)]
 pub(crate) use key::is_key_name;
-pub(crate) use key::{absolutize_path_pack, lints_manifest_path, resolve_packs, repo_identity, shared_base};
+pub(crate) use key::{absolutize_path_pack, lints_manifest_path, resolve_packs, repo_identity, revision, shared_base};
 pub(crate) use lock::lock_dir;
 pub(crate) use reap::reap;
 pub(crate) use record::{

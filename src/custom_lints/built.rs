@@ -85,6 +85,7 @@ fn find(base: &Path, key: &str, roots: &Roots) -> Option<(PathBuf, String)> {
 pub(crate) fn dylib_for(
     base: &Path,
     key: &str,
+    revision: &str,
     roots: &Roots,
     gen_dir: &Path,
     margin: Duration,
@@ -116,13 +117,20 @@ pub(crate) fn dylib_for(
     };
     let list = depinfo::encode(&deps);
     let name = format!("{key}-{}", &digest_bytes(list.as_bytes())[.. 16]);
-    keep(base, &name, &built.dylib, &list);
+    if keep(base, &name, &built.dylib, &list) {
+        supersede(base, gen_dir, revision, &name);
+    }
     Ok(Library { path: built.dylib, identity: Some(name) })
 }
 
-/// Library first and list second, each written beside and renamed in, so a peer never maps a
-/// half-written library and never finds a list whose library is not there.
-fn keep(base: &Path, name: &str, built: &Path, list: &str) {
+/// Library first and list second, each put beside and renamed in, so a peer never maps a
+/// half-written library and never finds a list whose library is not there. Whether it was kept.
+///
+/// The library is a hard link to the file cargo built, never a copy, so the bytes are on disk once.
+/// The linker writes a new file and cargo links it into place, so a later build of the same crate
+/// leaves the kept file as it was. Where no link can be made (another filesystem), nothing is kept,
+/// which costs sharing only.
+fn keep(base: &Path, name: &str, built: &Path, list: &str) -> bool {
     let dir = base.join(DIR);
     let ext = built.extension().and_then(|e| e.to_str()).unwrap_or("so");
     let pid = std::process::id();
@@ -130,14 +138,56 @@ fn keep(base: &Path, name: &str, built: &Path, list: &str) {
     let tmp_library = dir.join(format!(".{name}.{pid}.tmp"));
     let listing = dir.join(format!("{name}.{LIST}"));
     let tmp_listing = dir.join(format!(".{name}.{pid}.{LIST}.tmp"));
+    let _ = std::fs::remove_file(&tmp_library);
     let stored = std::fs::create_dir_all(&dir)
-        .and_then(|()| std::fs::copy(built, &tmp_library))
-        .and_then(|_| std::fs::rename(&tmp_library, &library))
+        .and_then(|()| std::fs::hard_link(built, &tmp_library))
+        .and_then(|()| std::fs::rename(&tmp_library, &library))
         .and_then(|()| std::fs::write(&tmp_listing, list))
         .and_then(|()| std::fs::rename(&tmp_listing, &listing));
     if stored.is_err() {
         let _ = std::fs::remove_file(&tmp_library);
         let _ = std::fs::remove_file(&tmp_listing);
+    }
+    stored.is_ok()
+}
+
+/// Which libraries a generated crate kept, one line each: the revision it was built at, a space,
+/// and the entry's name.
+const KEPT: &str = ".kept";
+
+/// Record `name` as kept by the crate at `gen_dir` at `revision`, and remove every library the
+/// crate kept at another revision: a new engine or pack rev has made them old, and nothing of the
+/// repo loads them again. Libraries of the same revision stay, one per state of the lint sources,
+/// so worktrees of one repo at different sources each find their own.
+fn supersede(base: &Path, gen_dir: &Path, revision: &str, name: &str) {
+    let record = gen_dir.join(KEPT);
+    let mut lines = Vec::new();
+    for line in std::fs::read_to_string(&record).unwrap_or_default().lines() {
+        let Some((rev, entry)) = line.split_once(' ') else { continue };
+        if !is_entry_name(entry) || entry == name {
+            continue;
+        }
+        if rev == revision {
+            if kept_library(base, entry).is_some() {
+                lines.push(line.to_string());
+            }
+        } else {
+            remove_entry(base, entry);
+        }
+    }
+    lines.push(format!("{revision} {name}"));
+    let _ = crate::custom_lints::write_if_changed(&record, &(lines.join("\n") + "\n"));
+}
+
+/// A name as `dylib_for` makes them, letters, digits and dashes, so a line of the record can never
+/// reach outside the store.
+fn is_entry_name(entry: &str) -> bool {
+    !entry.is_empty() && entry.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+fn remove_entry(base: &Path, entry: &str) {
+    for ext in EXTENSIONS.iter().chain(std::iter::once(&LIST)) {
+        let _ = std::fs::remove_file(base.join(DIR).join(format!("{entry}.{ext}")));
     }
 }
 

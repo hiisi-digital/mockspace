@@ -78,8 +78,8 @@ fn a_scoped_run_refuses_a_recorded_duplicate_and_builds_the_rest_alone() {
 }
 
 #[test]
-fn a_scoped_run_with_no_record_takes_the_whole_build_once() {
-    assert_eq!(plan_scoped(None, "ticket-add"), ScopedPlan::Whole);
+fn a_scoped_run_with_no_record_builds_the_tool_with_the_packs_only() {
+    assert_eq!(plan_scoped(None, "ticket-add"), ScopedPlan::OneToolAndPacks);
 }
 
 fn git(dir: &Path, args: &[&str]) {
@@ -106,9 +106,9 @@ fn a_worktree_with_no_record_reads_the_newest_a_sibling_left() {
     let seat = tmp.path().join("seat");
     git(&main, &["worktree", "add", "-q", seat.to_str().unwrap()]);
     let seat_mock = seat.join("mock");
-    // the control: nothing recorded anywhere, so the run takes the whole build that writes the record
+    // the control: nothing recorded anywhere, so the run builds the tool with the packs
     assert_eq!(duplicates_for_run(&seat, &seat_mock), None);
-    assert_eq!(plan_scoped(duplicates_for_run(&seat, &seat_mock), "ticket-add"), ScopedPlan::Whole);
+    assert_eq!(plan_scoped(duplicates_for_run(&seat, &seat_mock), "ticket-add"), ScopedPlan::OneToolAndPacks);
     record_duplicates(&main.join("mock"), &["check".to_string()]).unwrap();
     assert_eq!(duplicates_for_run(&seat, &seat_mock), Some(vec!["check".to_string()]));
     assert_eq!(plan_scoped(duplicates_for_run(&seat, &seat_mock), "ticket-add"), ScopedPlan::OneTool);
