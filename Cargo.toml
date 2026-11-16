@@ -86,6 +86,8 @@ serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 
 [dev-dependencies]
+# The cross-process verdict store tests cap a child's file size to cut a write part way.
+libc = "0.2"
 mockspace-store = { path = "mock/crates/mockspace-store", features = ["test-support"] }
 mockspace-registry = { path = "mock/crates/mockspace-registry", features = ["test-support"] }
 tempfile = "3"

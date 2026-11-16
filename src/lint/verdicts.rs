@@ -347,3 +347,7 @@ pub(crate) mod test_base {
 #[cfg(test)]
 #[path = "verdicts_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "verdicts_process_tests.rs"]
+mod process_tests;

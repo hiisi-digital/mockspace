@@ -178,3 +178,94 @@ fn two_writers_of_one_store_lose_and_corrupt_nothing() {
         }
     }
 }
+
+/// The bytes the store writes for one record, read off a store of their own.
+fn record_bytes(parts: &[&[u8]], value: &str) -> Vec<u8> {
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
+    let s = store(dir.path(), "");
+    s.remember(&s.digest(parts), value);
+    fs::read(pack_path(&s)).unwrap()
+}
+
+fn pack_path(s: &DiskVerdicts) -> PathBuf {
+    s.pack.clone()
+}
+
+/// Repro (b) of the review, over every cut: a record cut short at any byte, then a whole record,
+/// replays the whole one and never the cut one, and never a value made of the two.
+#[test]
+fn a_record_cut_at_any_byte_is_no_value_and_hides_no_later_record() {
+    let long = "a value with a newline\n".repeat(12);
+    let (a, b, c) = (record_bytes(&[b"a"], "before"), record_bytes(&[b"b"], &long), record_bytes(&[b"c"], "after"));
+    for cut in 1 .. b.len() {
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
+        let s = store(dir.path(), "");
+        s.remember(&s.digest(&[b"a"]), "before");
+        assert_eq!(fs::read(pack_path(&s)).unwrap(), a, "the control: one record is what was measured");
+        fs::write(pack_path(&s), [a.as_slice(), &b[.. cut], c.as_slice()].concat()).unwrap();
+        let again = store(dir.path(), "");
+        assert_eq!(again.replay(&again.digest(&[b"a"])).as_deref(), Some("before"), "cut {cut}");
+        assert_eq!(again.replay(&again.digest(&[b"b"])), None, "cut {cut}: the cut record is no value");
+        assert_eq!(again.replay(&again.digest(&[b"c"])).as_deref(), Some("after"), "cut {cut}: the later record");
+    }
+}
+
+/// Finding 5: two engines in use on one repository each keep their verdicts.
+#[test]
+fn two_engines_in_use_on_one_repository_keep_each_others_verdicts() {
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
+    let (a, b) = (store(dir.path(), "pack-a"), store(dir.path(), "pack-b"));
+    for n in 0 .. 5u8 {
+        a.remember(&a.digest(&[&[n]]), "saved by pack-a");
+        b.remember(&b.digest(&[&[n]]), "saved by pack-b");
+    }
+    let (a, b) = (store(dir.path(), "pack-a"), store(dir.path(), "pack-b"));
+    for n in 0 .. 5u8 {
+        assert_eq!(a.replay(&a.digest(&[&[n]])).as_deref(), Some("saved by pack-a"));
+        assert_eq!(b.replay(&b.digest(&[&[n]])).as_deref(), Some("saved by pack-b"));
+    }
+}
+
+fn set_times(path: &Path, accessed: SystemTime, modified: SystemTime) {
+    let times = fs::FileTimes::new().set_accessed(accessed).set_modified(modified);
+    fs::File::options().write(true).open(path).unwrap().set_times(times).unwrap();
+}
+
+/// Finding 3 and 5: an entry of the one-file-per-verdict layout, which a released engine still
+/// writes, is kept while either of its times is within two weeks, and goes once both are older.
+/// A mount that keeps no access times leaves the access time old while the entry is rewritten.
+#[test]
+fn the_old_layout_is_kept_while_either_time_is_fresh_and_goes_once_both_are_old() {
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
+    let base = dir.path();
+    let (now, old) = (SystemTime::now(), SystemTime::now() - Duration::from_secs(30 * 24 * 60 * 60));
+    let shard = base.join("01");
+    fs::create_dir_all(&shard).unwrap();
+    let entry = |n: u8| shard.join(format!("{n:02x}").repeat(31));
+    for (n, (accessed, modified)) in [(now, now), (old, now), (now, old), (old, old)].into_iter().enumerate() {
+        fs::write(entry(n as u8), "old verdict").unwrap();
+        set_times(&entry(n as u8), accessed, modified);
+    }
+    fs::create_dir_all(base.join("last-full-run")).unwrap();
+    fs::write(base.join("last-full-run/live"), "key\n").unwrap();
+
+    let _s = store(base, "");
+    assert!(entry(0).exists(), "both times fresh");
+    assert!(entry(1).exists(), "read long ago and written lately, as on a mount without access times");
+    assert!(entry(2).exists(), "written long ago and read lately");
+    assert!(!entry(3).exists(), "both times old");
+    assert!(base.join("last-full-run/live").exists(), "kept keys written lately");
+}
+
+/// Finding 3 for the packed file: written lately, read long ago as a mount without access times
+/// leaves it, the file is in use and stays.
+#[test]
+fn a_packed_file_written_lately_is_kept_whatever_its_access_time() {
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
+    let s = store(dir.path(), "");
+    let key = s.digest(&[b"k"]);
+    s.remember(&key, "v");
+    let old = SystemTime::now() - Duration::from_secs(30 * 24 * 60 * 60);
+    set_times(&pack_path(&s), old, SystemTime::now());
+    assert_eq!(store(dir.path(), "").replay(&key).as_deref(), Some("v"));
+}
