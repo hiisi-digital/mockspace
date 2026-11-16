@@ -25,7 +25,7 @@
 //!
 //! | key | default | meaning |
 //! |---|---|---|
-//! | `types` | [`DEFAULT_TYPES`] | the permitted types, comma separated; replaces the default |
+//! | `types` | [`DEFAULT_TYPES`] | the permitted types, comma separated; replaces the default; an entry that can never match (whitespace, the separator or `(` in it) stops the load |
 //! | `extra_types` | none | types added to the set, comma separated; how a project adds one |
 //! | `separator` | `": "` | what follows the type |
 //! | `breaking_marker` | `"!"` | suffix of the type marking a breaking change |
@@ -51,6 +51,9 @@
 //! #...`, `Revert "..."`, `Reapply "..."`), is not authored and is not held to the convention.
 //! `fixup!`, `squash!` and `amend!` subjects are passed at the commit gate, where they are
 //! wanted, and refused at the build and push gates, where they would reach the trunk unfolded.
+//! A table-level `commit`, `build` or `push` severity sets those gates for every other finding
+//! but leaves the commit gate passing for these; naming `autosquash-leftover` under `findings`
+//! sets all three.
 //! Authorship trailers belong to an attribution lint, which also covers forge bodies; this lint
 //! reads commits only. An agent hook hands the lint a shell command rather than a message, and a
 //! subject cannot be read out of a command line reliably, so the lint declines there and the
@@ -99,6 +102,10 @@ impl Lint for CommitSubject {
         ]
     }
 
+    fn override_keeps_passes(&self, finding_kind: &str) -> bool {
+        finding_kind == "autosquash-leftover"
+    }
+
     fn config_keys(&self) -> &[&str] {
         policy::KEYS
     }
@@ -124,7 +131,7 @@ impl MessageLint for CommitSubject {
         if ctx.invocation.is_some() {
             return out;
         }
-        let lines = check::authored_lines(ctx.message);
+        let lines = check::authored_lines(ctx.message, ctx.recorded);
         let Some(at) = check::subject_at(&lines) else {
             return out;
         };

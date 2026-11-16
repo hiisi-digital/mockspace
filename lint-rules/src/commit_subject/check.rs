@@ -49,7 +49,14 @@ pub(super) fn exemption(subject: &str) -> Exempt {
 
 /// The authored part of a commit message: comment lines dropped, and everything from git's
 /// verbose-diff scissors marker, so text git added cannot trip the lint.
-pub(super) fn authored_lines(message: &str) -> Vec<&str> {
+///
+/// Only text still in the editor file has comment lines. A `recorded` message is what git kept,
+/// where a line starting with `#` is part of the message (`-m` cleans whitespace only), so it is
+/// read whole: `#42 fix it` is a subject with no type, not a comment.
+pub(super) fn authored_lines(message: &str, recorded: bool) -> Vec<&str> {
+    if recorded {
+        return message.lines().collect();
+    }
     message
         .split("# ------------------------ >8")
         .next()

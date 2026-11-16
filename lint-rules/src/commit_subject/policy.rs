@@ -9,8 +9,11 @@
 use std::collections::HashMap;
 
 /// The types a project gets when it names none: the workspace's commit-style set,
-/// and `bench` for a commit that lands a measurement.
-pub const DEFAULT_TYPES: &[&str] = &["feat", "fix", "refactor", "docs", "test", "chore", "bench"];
+/// `bench` for a commit that lands a measurement, and `release` for the merge commit
+/// `homma release run` writes in every repository that releases through it.
+pub const DEFAULT_TYPES: &[&str] = &[
+    "feat", "fix", "refactor", "docs", "test", "chore", "bench", "release",
+];
 
 /// Every key the lint reads under `[lints.commit-subject]`.
 pub(super) const KEYS: &[&str] = &[
@@ -215,6 +218,20 @@ impl CommitSubject {
                 "types" | "extra_types" if split_list(value).is_empty() => {
                     out.push(bad("names no type"));
                 },
+                "types" | "extra_types" => {
+                    let sep = params
+                        .get("separator")
+                        .filter(|s| !s.is_empty())
+                        .map_or(": ", String::as_str);
+                    for t in split_list(value) {
+                        if let Some(why) = never_matches(&t, sep) {
+                            out.push(format!(
+                                "`{key}` lists `{t}`, which can never match a subject: {why}; \
+                                 separate types with commas"
+                            ));
+                        }
+                    }
+                },
                 "separator" if value.is_empty() => out.push(bad("is empty")),
                 "require_type"
                 | "allow_scope"
@@ -242,6 +259,23 @@ impl CommitSubject {
             }
         }
         out
+    }
+}
+
+/// Why a listed type can never be the type of a subject, when it cannot.
+///
+/// The subject's type is read as the one word before the first separator or `(`, so a name with
+/// whitespace, the separator or a parenthesis in it is never what is read. Such an entry would
+/// refuse every subject that spells it, with a message naming a type that is on the list.
+fn never_matches(ty: &str, separator: &str) -> Option<&'static str> {
+    if ty.chars().any(char::is_whitespace) {
+        Some("a type is one word, with no whitespace in it")
+    } else if ty.contains(separator) {
+        Some("the separator ends the type, so it cannot be inside one")
+    } else if ty.contains('(') {
+        Some("a parenthesis opens a scope, so it cannot be inside a type")
+    } else {
+        None
     }
 }
 

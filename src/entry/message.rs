@@ -81,6 +81,18 @@ pub(crate) struct Request<'a> {
 
 /// Lint one message. Returns failure when any finding blocks at `mode`.
 pub(crate) fn run(cfg: &Config, pack: &LintPack, mode: LintMode, req: &Request) -> ExitCode {
+    run_message(cfg, pack, mode, req, false)
+}
+
+/// [`run`], for a message that is `recorded` when it is a commit as git kept it (a `--batch`
+/// record read from history) and not text still in the editor file.
+fn run_message(
+    cfg: &Config,
+    pack: &LintPack,
+    mode: LintMode,
+    req: &Request,
+    recorded: bool,
+) -> ExitCode {
     // An unknown preset name would quietly weaken the predicate, so it is an
     // error rather than something to route around, and it is checked before
     // any lint runs: a typo'd preset in a repo that ships no message lints beyond
@@ -123,6 +135,7 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, mode: LintMode, req: &Request) 
     )
     .with_invocation(message_invocation(req))
     .with_identity(author_of, committer_of);
+    let ctx = if recorded { ctx.recorded() } else { ctx };
 
     let findings = mockspace_lint_rules::check_message_with_extra(
         &ctx,
@@ -388,7 +401,7 @@ pub(crate) fn run_batch(
             author: rec.author.as_deref(),
             committer: rec.committer.as_deref(),
         };
-        if run(cfg, pack, gate, &req) != ExitCode::SUCCESS {
+        if run_message(cfg, pack, gate, &req, true) != ExitCode::SUCCESS {
             failed += 1;
         }
     }

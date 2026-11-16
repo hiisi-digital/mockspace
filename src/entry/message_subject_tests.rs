@@ -168,3 +168,49 @@ fn an_autosquash_commit_passes_the_commit_gate_and_is_refused_by_the_push_gate()
     );
     assert_eq!(failed, 1);
 }
+
+#[test]
+fn a_pound_subject_skips_the_commit_gate_as_a_comment_and_is_refused_at_the_push() {
+    // Mutant: the push gate drops `#` lines from the recorded message, so `#42 fix it`, which
+    // `git commit -m` keeps as the subject, is read as no message and passes.
+    let (_tmp, cfg) = project("");
+    // in the editor file the line is a comment, and git itself aborts an empty message
+    assert_eq!(
+        commit(&cfg, LintMode::Commit, "#42 fix it"),
+        ExitCode::SUCCESS
+    );
+    let batch = "A <a@x>\x1eA <a@x>\x1eaaa1111 #42 fix it\x1f#42 fix it\n\0";
+    let (checked, failed) = run_batch(
+        &cfg,
+        &LintPack::default(),
+        LintMode::Push,
+        MessageDomain::CommitMessage,
+        batch,
+        "<stdin>",
+        None,
+        None,
+    );
+    assert_eq!((checked, failed), (1, 1));
+}
+
+#[test]
+fn a_table_that_sets_every_gate_to_error_still_lets_a_fixup_through_the_commit_gate() {
+    // Mutant: the table's per-gate severity replaces the finding's own, so muisti's and riimu's
+    // `commit = "error"` refuses `fixup!` at the commit gate, where the docs say it passes.
+    let (_tmp, cfg) = project(
+        "[lints.commit-subject]\ncommit = \"error\"\nbuild = \"error\"\npush = \"error\"\n",
+    );
+    assert_eq!(
+        commit(&cfg, LintMode::Commit, "fixup! fix: handle it"),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(
+        commit(&cfg, LintMode::Push, "fixup! fix: handle it"),
+        ExitCode::FAILURE
+    );
+    // the table still sets an ordinary finding at its gates
+    assert_eq!(
+        commit(&cfg, LintMode::Commit, "research: x"),
+        ExitCode::FAILURE
+    );
+}

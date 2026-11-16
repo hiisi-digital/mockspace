@@ -59,7 +59,6 @@ fn a_well_formed_subject_of_every_default_type_passes_with_no_pack_and_no_config
 #[test]
 fn bench_is_in_the_default_set() {
     // Mutant: `bench` is left out of `DEFAULT_TYPES`; seven such commits once passed unlisted.
-    assert!(DEFAULT_TYPES.contains(&"bench"));
     assert!(kinds("bench: land the m1 results", None).is_empty());
 }
 
@@ -259,4 +258,77 @@ fn the_builtin_is_registered_once_and_in_no_pack() {
         .collect();
     assert_eq!(names, vec![LINT_NAME]);
     assert!(crate::duplicate_lint_names(&crate::LintPack::default()).is_empty());
+}
+
+#[test]
+fn release_is_in_the_default_set_for_the_merge_commit_the_release_tool_writes() {
+    // Mutant: `release` is left out of `DEFAULT_TYPES`; `homma release run` merges with
+    // `release: <version>` and would be refused at the commit gate and again at the push.
+    assert!(kinds("release: 0.4.0", None).is_empty());
+    assert!(kinds("release: 0.4.0-rc.1", None).is_empty());
+}
+
+#[test]
+fn a_pound_line_is_a_comment_in_the_editor_file_and_a_subject_once_recorded() {
+    // Mutant: comment lines are dropped from a recorded message too, so `#42 fix it`, which
+    // `git commit -m` keeps as the subject, is read as nothing and skips the gate at the push.
+    let root = Path::new("/tmp");
+    let editor = message("#42 fix it\n", root);
+    assert!(check_message_with_extra(&editor, None, &[]).is_empty());
+    let recorded = message("#42 fix it\n", root).recorded();
+    let found: Vec<_> = check_message_with_extra(&recorded, None, &[])
+        .into_iter()
+        .filter_map(|e| e.finding_kind)
+        .collect();
+    assert_eq!(found, vec!["missing-type"]);
+    // a recorded body line starting with a pound sign is no subject, and stays unjudged
+    let body = message("fix: x\n\n# a heading in the body\n", root).recorded();
+    assert!(check_message_with_extra(&body, None, &[]).is_empty());
+}
+
+#[test]
+fn a_base_severity_cannot_raise_the_commit_gate_for_an_autosquash_commit() {
+    // Mutant: the table's per-gate severity replaces the finding's own, so `commit = "error"`
+    // (which muisti and riimu set) refuses `fixup!` at the commit gate where it is wanted.
+    let mut cfg = LintConfig::empty();
+    cfg.base.insert(
+        LINT_NAME.to_string(),
+        crate::Severity::new(crate::Level::Error, crate::Level::Error, crate::Level::Error),
+    );
+    let root = Path::new("/tmp");
+    let found = check_message_with_extra(&message("fixup! fix: x", root), Some(&cfg), &[]);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].severity.effective(LintMode::Commit), crate::Level::Pass);
+    assert_eq!(found[0].severity.effective(LintMode::Build), crate::Level::Error);
+    assert_eq!(found[0].severity.effective(LintMode::Push), crate::Level::Error);
+    // the table lowering a gate still lowers it: riimu runs the build gate off
+    let mut lowered = LintConfig::empty();
+    lowered.base.insert(
+        LINT_NAME.to_string(),
+        crate::Severity::new(crate::Level::Error, crate::Level::Pass, crate::Level::Error),
+    );
+    let found = check_message_with_extra(&message("fixup! fix: x", root), Some(&lowered), &[]);
+    assert_eq!(found[0].severity.effective(LintMode::Build), crate::Level::Pass);
+    assert_eq!(found[0].severity.effective(LintMode::Push), crate::Level::Error);
+    // an ordinary finding takes the table's severity whole, as every lint's does
+    let found = check_message_with_extra(&message("research: x", root), Some(&cfg), &[]);
+    assert_eq!(found[0].severity.effective(LintMode::Commit), crate::Level::Error);
+}
+
+#[test]
+fn a_finding_named_in_the_table_is_set_by_it_even_for_an_autosquash_commit() {
+    // Mutant: the autosquash carve-out also ignores `[lints.commit-subject.findings]`, so a
+    // project cannot choose to refuse `fixup!` at the commit gate.
+    let mut cfg = LintConfig::empty();
+    cfg.findings.insert(
+        LINT_NAME.to_string(),
+        [(
+            "autosquash-leftover".to_string(),
+            crate::Severity::new(crate::Level::Error, crate::Level::Error, crate::Level::Error),
+        )]
+        .into(),
+    );
+    let root = Path::new("/tmp");
+    let found = check_message_with_extra(&message("fixup! fix: x", root), Some(&cfg), &[]);
+    assert_eq!(found[0].severity.effective(LintMode::Commit), crate::Level::Error);
 }

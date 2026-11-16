@@ -275,3 +275,29 @@ fn a_bad_value_never_changes_what_is_applied() {
     let policy = CommitSubject::from_params(cfg.params.get(LINT_NAME));
     assert_eq!(policy, CommitSubject::default());
 }
+
+#[test]
+fn a_type_entry_that_can_never_match_is_refused_at_load() {
+    // Mutant: the list is read without checking each entry, so `feat fix` is accepted and then
+    // refuses every subject with a message naming a type that is on the list.
+    for list in ["feat fix", "feat, fix up", "fix(x)", "a: b"] {
+        for key in ["types", "extra_types"] {
+            let found = problems(&[(key, list)]);
+            assert_eq!(found.len(), 1, "{key} = {list:?}: {found:?}");
+            assert!(found[0].contains("can never match"), "{}", found[0]);
+        }
+    }
+    // the entry that holds the separator is judged against the separator the project set
+    assert_eq!(problems(&[("types", "feat-x"), ("separator", "-")]).len(), 1);
+    assert!(problems(&[("types", "feat-x")]).is_empty());
+    // a list of entries that can match stays clean
+    assert!(problems(&[("types", "feat, fix"), ("extra_types", "research,deploy")]).is_empty());
+}
+
+#[test]
+fn a_refused_type_entry_names_the_entry_and_not_the_whole_list() {
+    // Mutant: the whole value is reported, so a long list hides which entry is wrong.
+    let found = problems(&[("extra_types", "research, two words, deploy")]);
+    assert_eq!(found.len(), 1);
+    assert!(found[0].contains("`two words`"), "{}", found[0]);
+}

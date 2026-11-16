@@ -1308,6 +1308,18 @@ pub trait Lint: Send + Sync {
         &[]
     }
 
+    /// Whether a lint-wide severity override leaves the gates where this finding kind passes
+    /// alone.
+    ///
+    /// A finding that is deliberately `Pass` at a gate (a `fixup!` commit at the commit gate,
+    /// where it is wanted) would be raised there by a table-level `commit = "error"`, which a
+    /// project sets to mean its ordinary findings block. When this is true for the kind, a
+    /// lint-wide override takes effect only at the gates the finding already acts at. A severity
+    /// the project names for the kind itself under `findings` still sets all three.
+    fn override_keeps_passes(&self, _finding_kind: &str) -> bool {
+        false
+    }
+
     /// Configuration keys this lint accepts.
     fn config_keys(&self) -> &[&str] {
         &[]
@@ -1507,6 +1519,10 @@ pub struct MessageContext<'a> {
     /// amend by another person, and is the forge itself on a merge made in its
     /// web interface.
     pub committer:  Option<&'a str>,
+    /// Whether the message is a commit as git recorded it, with the comment lines git strips
+    /// already gone, as a push gate or a build gate reads it from history. False for text still
+    /// in the editor file, where a leading `#` is a comment and not part of the subject.
+    pub recorded:   bool,
 }
 
 impl<'a> MessageContext<'a> {
@@ -1532,6 +1548,7 @@ impl<'a> MessageContext<'a> {
             invocation: None,
             author: None,
             committer: None,
+            recorded: false,
         }
     }
 
@@ -1539,6 +1556,13 @@ impl<'a> MessageContext<'a> {
     #[must_use]
     pub fn with_invocation(mut self, invocation: Option<Invocation<'a>>) -> Self {
         self.invocation = invocation;
+        self
+    }
+
+    /// Mark the message as a commit as git recorded it, comment lines already stripped.
+    #[must_use]
+    pub fn recorded(mut self) -> Self {
+        self.recorded = true;
         self
     }
 
@@ -2085,6 +2109,7 @@ mod pack_configuration_tests {
             invocation: None,
             author:     None,
             committer:  None,
+            recorded:   false,
         }
     }
 
