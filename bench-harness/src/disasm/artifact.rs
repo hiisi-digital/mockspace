@@ -163,6 +163,29 @@ mod tests {
     }
 
     #[test]
+    fn the_header_names_the_run_directory_the_artifact_sits_in() {
+        let p = place(Path::new("/r"), "hash", "scalar");
+        let found = SymbolDisassembly {
+            tool:       super::super::Disassembler {
+                program: "llvm-objdump".into(),
+                flavour: super::super::Flavour::Llvm,
+            },
+            text:       "0000000000001000 <bench_entry>:\n    1000:\tretq".to_string(),
+            normalized: "retq".to_string(),
+        };
+        let text = artifact_text(
+            &p,
+            "20261116T093000Z-1a2b3c4-2",
+            "bench_entry",
+            Path::new("/x/libscalar.so"),
+            &found,
+        );
+        assert!(text.contains("run: 20261116T093000Z-1a2b3c4-2\n"), "{text}");
+        assert!(text.contains("# library: libscalar.so\n"), "{text}");
+        assert!(text.ends_with("    1000:\tretq\n"), "{text}");
+    }
+
+    #[test]
     fn a_file_already_there_is_never_replaced() {
         let root = mockspace_manifest::scratch::tempdir().unwrap();
         let p = place(root.path(), "hash", "scalar");
