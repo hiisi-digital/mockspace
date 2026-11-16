@@ -1,7 +1,7 @@
 # Sketch findings: a lint that judges a crate edge by the source directories at its two ends
 
 **Date:** 2026-11-16
-**Outcome:** WORKS for the arm that reads the manifests itself. The arm that reads the engine's extracted dependency list misses an edge written under a `[dependencies.<name>]` header, so that arm is INCONCLUSIVE as a vehicle until the extraction is repaired.
+**Outcome:** WORKS for the arm that reads the manifests itself. The arm that reads the engine's extracted dependency list FAILS: it passes a tree the first arm refuses, because the extraction misses an edge written under a `[dependencies.<name>]` header (step 4 is the counterexample).
 **Unblocks:** a repository that splits its crates over several source directories can state which directory may take which, in its `mockspace.toml`, and have the statement checked on every commit.
 
 The sketch was written unattended by a dispatched seat on the night of 15 to 16 November 2026. The dispatcher opened `out/10_lint_fixture-red.out`, `out/11_lint_fixture-green.out`, `out/13_lint_fixture-header-form.out` and `out/14_lint_fixture-empty.out` before writing this file, and did not rerun the driver. Nothing here is authority.
@@ -34,7 +34,7 @@ No shipped source is edited. The fixtures are whole small workspaces under the s
 
 6. The cross-directory dependency builds in one cargo workspace (`out/30` to `out/35`: builds, `cargo tree` and the workspace members of the fixtures). Not opened by the dispatcher.
 
-Two output files were edited by hand after their runs, and are not raw: in `out/30_build_fixture-red.out` a toolchain path was folded to a placeholder, and in `out/21_diff_red_rule-added.out` one word of a comment line was changed.
+Two output files were edited by hand after their runs, and are not raw: in `out/30_build_fixture-red.out` a toolchain path was folded to a placeholder, and in `out/21_diff_red_rule-added.out` one word of a comment line was changed. A rerun that replaces both with what the driver writes is owed and was not made. A reviewer's read on 16 November opened `out/12` and `out/30` and found both support steps 3 and 6; it also placed the extraction's miss in the shipped parser, where a table header sets the dependency state and the crate name in the header is never captured, and dev, build and target sections are not told apart.
 
 ## The result
 
