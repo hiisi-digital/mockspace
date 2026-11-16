@@ -224,7 +224,7 @@ pub(crate) fn absolutize_path_pack(spec: &str, from: &Path) -> String {
 /// A key directory's name: sixteen lowercase hex digits, as the key is written.
 /// Anything else under the base (the pack pins, a stray file) is not ours to
 /// remove.
-pub(super) fn is_key_name(name: &str) -> bool {
+pub(crate) fn is_key_name(name: &str) -> bool {
     name.len() == 16
         && name
             .bytes()

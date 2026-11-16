@@ -162,3 +162,7 @@ pub(crate) fn reap(base: &Path, now: SystemTime, stale_after: Duration) -> usize
 #[cfg(test)]
 #[path = "built_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "built_e2e_tests.rs"]
+mod e2e;
