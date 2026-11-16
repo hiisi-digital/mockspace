@@ -10,7 +10,7 @@ Every statement is about the version one tree, the live code consumers run: the 
 
 ## Hypothesis
 
-The bench harness can run an arm whose work is to build a fixture cargo workspace from clean, and record one build time per repetition, each repetition from clean, without the build contending with the harness's own target directory.
+The bench harness can run an arm whose work is to build a fixture cargo workspace from clean, and record one build time per repetition, each repetition from clean. Whether the build contends with the harness's own target directory was part of the question and is not answered here: the arm's check for a wait on cargo's lock never fired and has no control, so it shows nothing either way.
 
 ## The vehicle
 
@@ -30,7 +30,7 @@ The hooks empty the call record at the start, copy it into the cell's run direct
 
 3. `build-from-clean` on the final tree. Bench exit 0, run `20261116T002537Z-2764b23-dirty`. It started with the control's built target still present; the first call removed it. All fourteen calls show four crates compiled, libraries absent before and present after, no wait on a lock, exit 0. `samples.csv` has six timed rows of one build each: 126.1, 114.1 and 127.6 ms in the harness's warm mode, 133.0, 112.5 and 141.1 ms in its cold mode. The part of each call outside the timed block is 1.9 to 3.6 ms, which is the removal of the target directory; the seat reports 38 microseconds for the control, which removes nothing.
 
-The first run's outputs were written by an earlier `run.sh` on a tree that differs from the staged one: the support crate moved, its fixture path changed, the control bench was added, and one comment in a `bench.toml` was rewritten. The third run is the one on the final tree. No output file was edited after its run. The raw outputs carry the absolute paths the tools printed.
+The first run's outputs were written by an earlier `run.sh` on a tree that differs from the staged one: the support crate moved, its fixture path changed, the control bench was added, and one comment in a `bench.toml` was rewritten. The third run is the one on the final tree. After a reviewer's read, the worktree's absolute path was folded to `<worktree>` in three output files (`a1-01`, `a2-01`, `a3-01`); two others name the shared build directory as the tools printed it; nothing else in any output was edited after its run.
 
 ## The result
 

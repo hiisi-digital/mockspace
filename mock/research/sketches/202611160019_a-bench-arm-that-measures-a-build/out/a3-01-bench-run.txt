@@ -8,7 +8,7 @@ run plan: 1 bench(es), 1 config(s), run 20261116T002537Z-2764b23-dirty on linux-
   pass 2/3 cd=0ms... done (16s elapsed, ~8s left)
   pass 3/3 cd=0ms... done (23s elapsed, ~0s left)
   Total: 22.9s
-  samples: /home/user/.worktrees/sketch-build-arm/mock/research/sketches/202611160019_a-bench-arm-that-measures-a-build/consumer/mock/benches/results/.inflight/1794788737-4744/build-from-clean/build-from-clean_n1/linux-x86_64-c4-container-intel/20261116T002537Z-2764b23-dirty/samples.csv (6 rows)
+  samples: <worktree>/mock/research/sketches/202611160019_a-bench-arm-that-measures-a-build/consumer/mock/benches/results/.inflight/1794788737-4744/build-from-clean/build-from-clean_n1/linux-x86_64-c4-container-intel/20261116T002537Z-2764b23-dirty/samples.csv (6 rows)
   after_cell: 14 calls, each built all 4 fixture crates into an empty target directory
 
 bench                             n variant                    median  vs best
