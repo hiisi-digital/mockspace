@@ -41,7 +41,7 @@ fn open(base: &Path) -> DiskVerdicts {
 
 /// The packed file the store writes to.
 fn pack_of(s: &DiskVerdicts) -> PathBuf {
-    s.pack.clone()
+    s.current.clone()
 }
 
 /// A copy of this binary in `role`, with `vars` set, its output kept.
@@ -59,7 +59,9 @@ fn command(role: &str, base: &Path, vars: &[(&str, String)]) -> Command {
 }
 
 fn run(role: &str, base: &Path, vars: &[(&str, String)]) -> Output {
-    command(role, base, vars).output().expect("the child starts")
+    command(role, base, vars)
+        .output()
+        .expect("the child starts")
 }
 
 fn assert_ok(out: &Output, what: &str) {
@@ -77,26 +79,35 @@ fn var(name: &str) -> String {
 }
 
 fn num<T: std::str::FromStr>(name: &str) -> T {
-    var(name).parse().unwrap_or_else(|_| panic!("{name} is a number"))
+    var(name)
+        .parse()
+        .unwrap_or_else(|_| panic!("{name} is a number"))
 }
 
 /// Caps the size any file this process writes may reach. Over it, a write is cut where the cap
 /// falls and the next one fails: by `SIGXFSZ`, which ends the process, or with `EFBIG` once the
 /// signal is ignored, which is how a full disk looks to the writer.
-fn cap_file_size(bytes: u64, survive: bool) {
+fn cap_file_size(bytes: libc::rlim_t, survive: bool) {
     // SAFETY: plain calls with valid arguments; this process is a test child with one thread
     // doing work.
     unsafe {
         if survive {
             libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
         }
-        let lim = libc::rlimit { rlim_cur: bytes as libc::rlim_t, rlim_max: libc::RLIM_INFINITY };
-        assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &lim), 0, "the cap is set");
+        let lim = libc::rlimit {
+            rlim_cur: bytes,
+            rlim_max: libc::RLIM_INFINITY,
+        };
+        assert_eq!(
+            libc::setrlimit(libc::RLIMIT_FSIZE, &lim),
+            0,
+            "the cap is set"
+        );
     }
 }
 
 fn uncap_file_size() {
-    cap_file_size(libc::RLIM_INFINITY as u64, true);
+    cap_file_size(libc::RLIM_INFINITY, true);
 }
 
 /// Waits `PAUSE_US` microseconds when set, so the children of a race interleave.
@@ -120,18 +131,19 @@ fn child() {
                 s.remember(&key_of(&s, w, n), &value_of(w, n));
                 pause();
             }
-        }
+        },
         // opens a store for another repository in the same base, which sweeps it
         "open-other" => {
-            let _ = DiskVerdicts::open_in(&base, Path::new("/another-repo"), "pack").expect("a store opens");
-        }
+            let _ = DiskVerdicts::open_in(&base, Path::new("/another-repo"), "pack")
+                .expect("a store opens");
+        },
         // saves a value too big for the cap, and dies part way through writing it
         "die-mid-write" => {
             let s = open(&base);
             cap_file_size(num("CAP"), false);
             s.remember(&big_key(&s, 0), &big_value(0));
             unreachable!("the write over the cap ends the process");
-        }
+        },
         // saves a value too big for the cap, which fails, then a small one, which fits
         "fail-then-write" => {
             let s = open(&base);
@@ -139,7 +151,7 @@ fn child() {
             s.remember(&big_key(&s, 0), &big_value(0));
             s.remember(&key_of(&s, 9, 9), &value_of(9, 9));
             uncap_file_size();
-        }
+        },
         // saves big values with the cap set just above the file each time, so most are cut
         "flaky" => {
             let s = open(&base);
@@ -151,13 +163,13 @@ fn child() {
                 uncap_file_size();
                 pause();
             }
-        }
+        },
         // opens the store over and over and checks every value it replays
         "read" => {
             for _ in 0 .. num::<u16>("ROUNDS") {
                 check_replays(&open(&base), num("WRITERS"), num("COUNT"), num("BIG"));
             }
-        }
+        },
         other => panic!("no role {other}"),
     }
 }
@@ -183,9 +195,12 @@ fn writers_in_separate_processes_lose_and_corrupt_nothing() {
     let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let children: Vec<_> = (0 .. 4u8)
         .map(|w| {
-            command("write", dir.path(), &[("WRITER", w.to_string()), ("COUNT", "200".into())])
-                .spawn()
-                .expect("a writer starts")
+            command("write", dir.path(), &[
+                ("WRITER", w.to_string()),
+                ("COUNT", "200".into()),
+            ])
+            .spawn()
+            .expect("a writer starts")
         })
         .collect();
     for c in children {
@@ -194,7 +209,11 @@ fn writers_in_separate_processes_lose_and_corrupt_nothing() {
     let s = open(dir.path());
     for w in 0 .. 4u8 {
         for n in 0 .. 200u16 {
-            assert_eq!(s.replay(&key_of(&s, w, n)), Some(value_of(w, n)), "entry {w}/{n} survived whole");
+            assert_eq!(
+                s.replay(&key_of(&s, w, n)),
+                Some(value_of(w, n)),
+                "entry {w}/{n} survived whole"
+            );
         }
     }
 }
@@ -209,15 +228,38 @@ fn a_store_writing_after_a_process_died_mid_record_keeps_every_whole_record() {
         s.remember(&key_of(&s, 0, 0), &value_of(0, 0));
         let before = fs::metadata(pack_of(&s)).unwrap().len();
 
-        let out = run("die-mid-write", dir.path(), &[("CAP", (before + cut).to_string())]);
-        assert_eq!(out.status.signal(), Some(libc::SIGXFSZ), "the control: the child died writing");
-        assert_eq!(fs::metadata(pack_of(&s)).unwrap().len(), before + cut, "the control: it left {cut} bytes");
+        let out = run("die-mid-write", dir.path(), &[(
+            "CAP",
+            (before + cut).to_string(),
+        )]);
+        assert_eq!(
+            out.status.signal(),
+            Some(libc::SIGXFSZ),
+            "the control: the child died writing"
+        );
+        assert_eq!(
+            fs::metadata(pack_of(&s)).unwrap().len(),
+            before + cut,
+            "the control: it left {cut} bytes"
+        );
 
         s.remember(&key_of(&s, 0, 1), &value_of(0, 1));
         let again = open(dir.path());
-        assert_eq!(again.replay(&key_of(&again, 0, 0)), Some(value_of(0, 0)), "cut {cut}: the record before");
-        assert_eq!(again.replay(&big_key(&again, 0)), None, "cut {cut}: the cut record is no value");
-        assert_eq!(again.replay(&key_of(&again, 0, 1)), Some(value_of(0, 1)), "cut {cut}: the record after");
+        assert_eq!(
+            again.replay(&key_of(&again, 0, 0)),
+            Some(value_of(0, 0)),
+            "cut {cut}: the record before"
+        );
+        assert_eq!(
+            again.replay(&big_key(&again, 0)),
+            None,
+            "cut {cut}: the cut record is no value"
+        );
+        assert_eq!(
+            again.replay(&key_of(&again, 0, 1)),
+            Some(value_of(0, 1)),
+            "cut {cut}: the record after"
+        );
     }
 }
 
@@ -237,9 +279,16 @@ fn a_write_that_fails_part_way_leaves_the_pack_as_it_was() {
         // the cap leaves room for the small record and not for the big one
         let cap = before.len() as u64 + cut.max(small.len() as u64 + 1);
 
-        assert_ok(&run("fail-then-write", dir.path(), &[("CAP", cap.to_string())]), "the failing writer");
+        assert_ok(
+            &run("fail-then-write", dir.path(), &[("CAP", cap.to_string())]),
+            "the failing writer",
+        );
         let after = fs::read(pack_of(&s)).unwrap();
-        assert_eq!(after, [before.as_slice(), small.as_slice()].concat(), "cut {cut}: only the small record was added");
+        assert_eq!(
+            after,
+            [before.as_slice(), small.as_slice()].concat(),
+            "cut {cut}: only the small record was added"
+        );
         let again = open(dir.path());
         assert_eq!(again.replay(&big_key(&again, 0)), None);
         assert_eq!(again.replay(&key_of(&again, 9, 9)), Some(value_of(9, 9)));
@@ -256,11 +305,30 @@ fn a_reader_racing_failing_writes_replays_only_what_was_saved() {
     open(base).remember(&key_of(&open(base), 7, 0), &value_of(7, 0));
     let counts = [("WRITERS", "2".to_string()), ("COUNT", "300".into()), ("BIG", "200".into())];
     let mut children = vec![
-        command("flaky", base, &[("COUNT", "200".into()), ("PAUSE_US", "1500".into())]).spawn().unwrap(),
-        command("read", base, &[&counts[..], &[("ROUNDS", "40".into())]].concat()).spawn().unwrap(),
+        command("flaky", base, &[
+            ("COUNT", "200".into()),
+            ("PAUSE_US", "1500".into()),
+        ])
+        .spawn()
+        .unwrap(),
+        command(
+            "read",
+            base,
+            &[&counts[..], &[("ROUNDS", "40".into())]].concat(),
+        )
+        .spawn()
+        .unwrap(),
     ];
     for w in 0 .. 2u8 {
-        children.push(command("write", base, &[("WRITER", w.to_string()), ("COUNT", "300".into()), ("PAUSE_US", "1000".into())]).spawn().unwrap());
+        children.push(
+            command("write", base, &[
+                ("WRITER", w.to_string()),
+                ("COUNT", "300".into()),
+                ("PAUSE_US", "1000".into()),
+            ])
+            .spawn()
+            .unwrap(),
+        );
     }
     for c in children {
         assert_ok(&c.wait_with_output().unwrap(), "a child");
@@ -269,7 +337,11 @@ fn a_reader_racing_failing_writes_replays_only_what_was_saved() {
     check_replays(&s, 2, 300, 200);
     for w in 0 .. 2u8 {
         for n in 0 .. 300u16 {
-            assert_eq!(s.replay(&key_of(&s, w, n)), Some(value_of(w, n)), "entry {w}/{n} survived");
+            assert_eq!(
+                s.replay(&key_of(&s, w, n)),
+                Some(value_of(w, n)),
+                "entry {w}/{n} survived"
+            );
         }
     }
 }
@@ -281,8 +353,16 @@ fn a_sweep_in_another_process_does_not_lose_a_fresh_stores_write() {
     let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let s = open(dir.path());
     let repo_dir = s.dir.clone();
+    // as the store makes it on its first write, which it may not have reached yet
+    fs::create_dir_all(&repo_dir).unwrap();
     assert_ok(&run("open-other", dir.path(), &[]), "the sweeping process");
-    assert!(!repo_dir.exists(), "the control: the other process swept the empty directory");
+    assert!(
+        !repo_dir.exists(),
+        "the control: the other process swept the empty directory"
+    );
     s.remember(&key_of(&s, 0, 0), &value_of(0, 0));
-    assert_eq!(open(dir.path()).replay(&key_of(&s, 0, 0)), Some(value_of(0, 0)));
+    assert_eq!(
+        open(dir.path()).replay(&key_of(&s, 0, 0)),
+        Some(value_of(0, 0))
+    );
 }

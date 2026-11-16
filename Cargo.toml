@@ -86,8 +86,6 @@ serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 
 [dev-dependencies]
-# The cross-process verdict store tests cap a child's file size to cut a write part way.
-libc = "0.2"
 mockspace-store = { path = "mock/crates/mockspace-store", features = ["test-support"] }
 mockspace-registry = { path = "mock/crates/mockspace-registry", features = ["test-support"] }
 tempfile = "3"
@@ -96,6 +94,10 @@ mockspace-manifest = { path = "mockspace-manifest", features = ["_internal-test-
 # manifest in the tree. Already a normal dependency, so this adds nothing to
 # resolve.
 toml_edit = { version = "0.22", features = ["serde"] }
+
+# The cross-process verdict store tests cap a child's file size to cut a write part way.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = "0.2"
 
 # Release profile applies workspace-wide.
 [profile.release]
