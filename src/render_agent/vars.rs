@@ -73,6 +73,14 @@ pub(crate) fn compute_template_vars(crates: &CrateMap, cfg: &Config) -> Vec<(Str
     // {{macro_table}}
     vars.push(("macro_table".to_string(), compute_macro_table(crates, cfg)));
 
+    // {{commit_types}}, {{commit_rules}}, {{commit_examples}}: the convention the commit
+    // gate enforces, read from the same `[lints.commit-subject]` parameters the gate reads,
+    // so a consumer's own commit-style template lists the set the gate accepts.
+    let policy = super::commit_style::policy(cfg);
+    vars.push(("commit_types".to_string(), super::commit_style::types_text(&policy)));
+    vars.push(("commit_rules".to_string(), super::commit_style::rules_text(&policy)));
+    vars.push(("commit_examples".to_string(), super::commit_style::examples_text(&policy)));
+
     vars
 }
 

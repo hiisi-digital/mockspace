@@ -692,6 +692,26 @@ Glob patterns use bash `[[ == ]]` matching semantics: `*`, `?`, `[...]`. Pattern
 
 The `commit-msg` and `pre-push` hooks hand a pack's message lints the commit's author and committer as well as its message, read from `git var` at the commit and from each pushed commit at the push. A lint that judges bylines can then judge an agent identity under the same pattern, so a mode that permits no byline permits no agent author or committer either. When git cannot name either, the `commit-msg` hook blocks with the reason, and the engine refuses a pushed record whose header does not parse, so neither half of the gate falls open alone. A pull request body has neither and is handed none. How a lint pack recognises an agent is its own. A review sweep that reads an author, a committer or a `Co-Authored-By` out of a repository names an agent by the same rules as the pack that judges the commit at the gate, and both are held to one table of people and agents, `lint-rules/data/agent_identity_conformance.tsv`, so an identity is an agent to both or to neither.
 
+### The commit subject gate
+
+The `commit-msg` and `pre-push` hooks run one builtin message lint on every project, `commit-subject`, with no pack and no configuration needed. It reads the first authored line of the message and refuses it unless it opens with a type from the configured set, then `: `, then a message. By default the set is `feat`, `fix`, `refactor`, `docs`, `test`, `chore` and `bench`, the message starts lowercase, there is no parenthesised scope and no trailing period, and the subject is at most 71 characters. A subject git wrote itself (`Merge ...`, `Revert "..."`, `fixup! ...`) is not held to it. The mood of the verb is not checkable and is not checked. The agent hook declines, since it holds a shell command and not a message, and the `commit-msg` hook that follows reads the real message file.
+
+The convention is configured under `[lints.commit-subject]` in `mockspace.toml`, so a project adds a type without touching mockspace:
+
+```toml
+[lints.commit-subject]
+extra_types = "research,deploy"   # added to the default set
+# types = "feat,fix"              # replaces the default set instead
+# subject_case = "any"            # lower (default), sentence or any
+# allow_scope = "true"            # permit type(scope):
+# max_subject = "0"               # 71 by default, 0 turns the length check off
+# forbid_trailing_period = "false"
+# require_blank_line = "true"     # off by default
+# commit = "off"                  # the severity keys turn the whole check off
+```
+
+The same parameters render the `commit-style` skill, so the documentation an agent reads lists the set the gate accepts. The skill is a builtin and is on by default; `agent_commit_style_skill = false` in `mock/agent/config.toml` declines it, and a consumer skill named `commit-style` overrides it and may use `{{commit_types}}`, `{{commit_rules}}` and `{{commit_examples}}` to read the same configuration. A project that imports a pack carrying its own commit lint should set `[lints.commit-subject] commit = "off"` where the two would disagree.
+
 ## What mockspace does not do
 
 - It is not a project scaffolder. It assumes `mock/` already exists with a `mockspace.toml` and at least one crate.

@@ -318,6 +318,12 @@ pub struct AgentConfig {
     /// On by default, same reasoning as `sketching_skill`.
     pub benchmarking_skill: bool,
 
+    /// On by default: the commit-style skill, generated from the configuration of the
+    /// commit gate (`[lints.commit-subject]`), so what the skill says and what the gate
+    /// refuses are one set. A consumer template named `commit-style` overrides it, and may
+    /// read the same configuration through `{{commit_types}}` and `{{commit_rules}}`.
+    pub commit_style_skill: bool,
+
     /// On by default: a generated rule pointing at `mock tools` and
     /// `mock lints` rather than at a hand-maintained list of either. The knob
     /// exists for the same reason the other two do, no builtin prose lands in
@@ -364,6 +370,7 @@ impl Default for AgentConfig {
             accelerated_interactive_design_talks: false,
             sketching_skill: true,
             benchmarking_skill: true,
+            commit_style_skill: true,
             catalogues: true,
             panel_discipline: false,
             renamed_keys: Vec::new(),
@@ -477,6 +484,9 @@ struct RawAgentConfig {
 
     /// Opt out of the benchmarking skill builtin; absent means on.
     agent_benchmarking_skill: Option<bool>,
+
+    /// Opt out of the commit-style skill builtin; absent means on.
+    agent_commit_style_skill: Option<bool>,
 
     /// Opt out of the catalogues rule builtin; absent means on.
     ///
@@ -1062,6 +1072,7 @@ impl Config {
                 .unwrap_or(false),
             sketching_skill: raw_agent.agent_sketching_skill.unwrap_or(true),
             benchmarking_skill: raw_agent.agent_benchmarking_skill.unwrap_or(true),
+            commit_style_skill: raw_agent.agent_commit_style_skill.unwrap_or(true),
             catalogues: raw_agent.agent_catalogues.unwrap_or(true),
             panel_discipline: raw_agent.agent_panel_discipline.unwrap_or(false),
         };

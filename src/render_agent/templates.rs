@@ -21,6 +21,7 @@ pub(crate) const BUILTIN_SKILL_DIRS: &[&str] = &[
     "real-code-guard",
     "sketching",
     "benchmarking",
+    "commit-style",
     "design-talk",
     "canon-tiers",
     "reference-syntax",
@@ -734,6 +735,25 @@ When the mock is wrong, stop and run a design round (the `design-round` skill). 
                 &mock_rel,
                 project_name,
                 crate_prefix,
+            ),
+            files: vec![],
+        });
+    }
+
+    // On by default, from `mock/agent/config.toml`. Every consumer commits, and the
+    // gate refuses a subject outside the configured set, so the agent is told the
+    // set the gate holds, rendered from the gate's own configuration. A consumer
+    // skill of the same name overrides this one.
+    if cfg.agent.commit_style_skill {
+        let policy = super::commit_style::policy(cfg);
+        skills.push(BuiltinSkill {
+            dir_name: "commit-style".to_string(),
+            skill_name: "commit-style".to_string(),
+            skill_description: "Use this when making git commits, writing commit messages, or reviewing commit message style: the subject shape and the types the commit gate accepts.".to_string(),
+            body: super::commit_style::skill_body(
+                include_str!("skills/commit-style/SKILL.md"),
+                &policy,
+                &mock_rel,
             ),
             files: vec![],
         });
