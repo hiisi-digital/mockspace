@@ -17,11 +17,16 @@
 //! Pattern matching:
 //! - `"String"`: matches the word `String` as a type (word boundary, not in quotes)
 //! - `"dyn *"`: matches `dyn ` keyword in type position
-//! - `"std::*"`: matches `use std::` or `std::` in type paths
+//! - `"std::*"`: matches `use std::` or `std::` in type paths. A path inside the body of a
+//!   `#[macro_export]` macro is left out (also `#[cfg_attr(.., macro_export)]`): it expands in the
+//!   consumer's crate, where it resolves, and not in the crate that defines the macro. `dyn` and
+//!   type-name patterns are checked there as before.
 //! - `"f32"`, `"f64"`: matches these as type annotations
 //! - `"{prefix}_core::*"`: matches imports from sibling crates
 
 use std::collections::HashMap;
+
+use tree_sitter::Node;
 
 use crate::{CrateLint, Lint, LintContext, LintError, Severity};
 
@@ -185,106 +190,89 @@ fn scope_matches(scope: &str, crate_name: &str, crate_prefix: &str) -> bool {
     scope == crate_name
 }
 
-/// Which lines (indexed from zero) sit inside a `#[macro_export] macro_rules!` item.
+/// The byte ranges of every `#[macro_export]` macro in the parse.
 ///
 /// The tokens of an exported macro expand in the consumer's crate, so a path in its body names
-/// something that resolves there and not in the crate that defines the macro. The name line and the
-/// closing line count as inside. A `macro_rules!` with no `#[macro_export]` expands in its own crate
-/// and is not masked.
-fn exported_macro_lines(source: &str) -> Vec<bool> {
-    let lines: Vec<&str> = source.lines().collect();
-    let mut masked = vec![false; lines.len()];
-    let mut pending_export = false;
-    let mut idx = 0;
-
-    while idx < lines.len() {
-        let trimmed = lines[idx].trim();
-
-        if trimmed.contains("#[macro_export") {
-            pending_export = true;
-        }
-
-        if pending_export && trimmed.contains("macro_rules!") {
-            idx = mask_macro_item(&lines, idx, &mut masked);
-            pending_export = false;
-            continue;
-        }
-
-        let neutral = trimmed.is_empty()
-            || trimmed.starts_with("//")
-            || trimmed.starts_with("#[")
-            || trimmed.starts_with("/*")
-            || trimmed.starts_with('*');
-        if !neutral {
-            pending_export = false;
-        }
-        idx += 1;
-    }
-
-    masked
+/// something that resolves there and not in the crate that defines the macro. A `macro_rules!`
+/// that is not exported expands in its own crate and is not listed.
+fn exported_macro_ranges(root: Node, source: &str) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Vec::new();
+    collect_exported_macros(root, source, &mut ranges);
+    ranges
 }
 
-/// Mark the lines of the macro item starting on `start`, and return the index after its last line.
+fn collect_exported_macros(node: Node, source: &str, out: &mut Vec<std::ops::Range<usize>>) {
+    if node.kind() == "macro_definition" && is_exported(node, source) {
+        out.push(node.byte_range());
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_exported_macros(child, source, out);
+    }
+}
+
+/// Whether an attribute directly before the macro is `macro_export`, or a `cfg_attr` applying it.
 ///
-/// The item ends where its delimiters, counted over `(`, `[` and `{`, return to zero. Strings, char
-/// literals and comments are skipped so a delimiter inside one does not count.
-fn mask_macro_item(lines: &[&str], start: usize, masked: &mut [bool]) -> usize {
-    let mut depth: i64 = 0;
-    let mut opened = false;
-    let mut in_block_comment = false;
-    let mut in_string = false;
-    let mut idx = start;
-
-    while idx < lines.len() {
-        masked[idx] = true;
-        let bytes = lines[idx].as_bytes();
-        let mut i = 0;
-
-        while i < bytes.len() {
-            let b = bytes[i];
-            if in_block_comment {
-                if b == b'*' && bytes.get(i + 1) == Some(&b'/') {
-                    in_block_comment = false;
-                    i += 1;
+/// Comments between the attributes are skipped and never count, and an attribute earlier than a
+/// non-attribute item belongs to that item.
+fn is_exported(mac: Node, source: &str) -> bool {
+    let mut prev = mac.prev_sibling();
+    while let Some(sibling) = prev {
+        match sibling.kind() {
+            "attribute_item" => {
+                if attribute_exports(sibling, source) {
+                    return true;
                 }
-            } else if in_string {
-                if b == b'\\' {
-                    i += 1;
-                } else if b == b'"' {
-                    in_string = false;
-                }
-            } else if b == b'/' && bytes.get(i + 1) == Some(&b'/') {
-                break;
-            } else if b == b'/' && bytes.get(i + 1) == Some(&b'*') {
-                in_block_comment = true;
-                i += 1;
-            } else if b == b'"' {
-                in_string = true;
-            } else if b == b'\'' {
-                // A char literal; a lifetime has no closing quote and is left alone.
-                if bytes.get(i + 1) == Some(&b'\\') {
-                    if let Some(end) = bytes[i + 2 ..].iter().position(|c| *c == b'\'') {
-                        i += 2 + end;
-                    }
-                } else if bytes.get(i + 2) == Some(&b'\'') {
-                    i += 2;
-                }
-            } else if matches!(b, b'(' | b'[' | b'{') {
-                depth += 1;
-                opened = true;
-            } else if matches!(b, b')' | b']' | b'}') {
-                depth -= 1;
             }
-            i += 1;
+            "line_comment" | "block_comment" => {}
+            _ => return false,
         }
+        prev = sibling.prev_sibling();
+    }
+    false
+}
 
-        idx += 1;
-        if opened && depth <= 0 {
-            break;
+fn attribute_exports(item: Node, source: &str) -> bool {
+    let mut cursor = item.walk();
+    let Some(attr) = item.children(&mut cursor).find(|c| c.kind() == "attribute") else {
+        return false;
+    };
+    let mut cursor = attr.walk();
+    let mut children = attr.children(&mut cursor);
+    let Some(path) = children.next() else {
+        return false;
+    };
+    match &source[path.byte_range()] {
+        "macro_export" => true,
+        "cfg_attr" => children
+            .find(|c| c.kind() == "token_tree")
+            .is_some_and(|args| cfg_attr_applies_export(args, source)),
+        _ => false,
+    }
+}
+
+/// `cfg_attr(<condition>, <attributes...>)`: whether `macro_export` is among the attributes, after the
+/// first top-level comma, rather than inside the condition.
+fn cfg_attr_applies_export(args: Node, source: &str) -> bool {
+    let mut cursor = args.walk();
+    let mut after_condition = false;
+    for child in args.children(&mut cursor) {
+        if child.kind() == "," {
+            after_condition = true;
+        } else if after_condition && names_export(child, source) {
+            return true;
         }
     }
+    false
+}
 
-    idx
+fn names_export(node: Node, source: &str) -> bool {
+    if node.kind() == "identifier" && &source[node.byte_range()] == "macro_export" {
+        return true;
+    }
+    let mut cursor = node.walk();
+    node.children(&mut cursor).any(|c| names_export(c, source))
 }
 
 /// Check a single forbidden pattern against the source text.
@@ -319,15 +307,16 @@ fn check_module_path(
     module_prefix: &str,
     errors: &mut Vec<LintError>,
 ) {
-    let use_pattern = format!("use {module_prefix}::");
     let path_pattern = format!("{module_prefix}::");
+    // `use {module_prefix}::` contains the path pattern, so one search finds both.
+    let source = ctx.source();
+    let exported = exported_macro_ranges(ctx.tree().root_node(), source);
 
-    let exported = exported_macro_lines(ctx.source());
-    for (line_num, line) in ctx.source().lines().enumerate() {
-        // The body of an exported macro expands in the consumer's crate, not this one.
-        if exported[line_num] {
-            continue;
-        }
+    let mut line_start = 0;
+    for (line_num, line) in source.split_inclusive('\n').enumerate() {
+        let offset = line_start;
+        line_start += line.len();
+        let line = line.trim_end_matches(['\n', '\r']);
         let trimmed = line.trim();
 
         // Skip comments
@@ -345,8 +334,12 @@ fn check_module_path(
             continue;
         }
 
-        // Check for use statements
-        if trimmed.contains(&use_pattern) || trimmed.contains(&path_pattern) {
+        // A match inside an exported macro expands in the consumer's crate, so only one outside
+        // every exported macro counts.
+        let hit = line
+            .match_indices(&path_pattern)
+            .any(|(at, _)| !exported.iter().any(|r| r.contains(&(offset + at))));
+        if hit {
             errors.push(LintError::with_finding_kind(
                 ctx.crate_name.to_string(),
                 line_num + 1,
@@ -369,12 +362,7 @@ fn check_keyword_pattern(
     keyword: &str,
     errors: &mut Vec<LintError>,
 ) {
-    let exported = exported_macro_lines(ctx.source());
     for (line_num, line) in ctx.source().lines().enumerate() {
-        // The body of an exported macro expands in the consumer's crate, not this one.
-        if exported[line_num] {
-            continue;
-        }
         let trimmed = line.trim();
 
         // Skip comments
@@ -413,12 +401,7 @@ fn check_type_name(
     type_name: &str,
     errors: &mut Vec<LintError>,
 ) {
-    let exported = exported_macro_lines(ctx.source());
     for (line_num, line) in ctx.source().lines().enumerate() {
-        // The body of an exported macro expands in the consumer's crate, not this one.
-        if exported[line_num] {
-            continue;
-        }
         let trimmed = line.trim();
 
         // Skip comments
@@ -611,25 +594,31 @@ mod exported_macro_tests {
     use super::*;
     use crate::testkit::LintFixture;
 
-    fn lint_forbidding_std() -> ForbiddenImports {
+    fn lint_forbidding(forbidden: &str) -> ForbiddenImports {
         let mut lint = ForbiddenImports::new();
         let mut params = HashMap::new();
-        params.insert("rule.no-std.scope".to_string(), "test*".to_string());
-        params.insert("rule.no-std.forbidden".to_string(), "std::*".to_string());
-        params.insert("rule.no-std.reason".to_string(), "no_std".to_string());
+        params.insert("rule.r.scope".to_string(), "test*".to_string());
+        params.insert("rule.r.forbidden".to_string(), forbidden.to_string());
+        params.insert("rule.r.reason".to_string(), "no_std".to_string());
         lint.configure(&params);
         lint
     }
 
-    fn findings(src: &str) -> Vec<usize> {
+    fn findings_for(forbidden: &str, src: &str) -> Vec<usize> {
         let fixture = LintFixture::new(src).with_crate_name("test-crate", "test");
         let ctx = fixture.ctx();
-        lint_forbidding_std()
+        lint_forbidding(forbidden)
             .check(&ctx)
             .iter()
             .map(|e| e.line)
             .collect()
     }
+
+    fn findings(src: &str) -> Vec<usize> {
+        findings_for("std::*", src)
+    }
+
+    const BODY: &str = "    () => { ::std::vec::Vec::new() };\n";
 
     #[test]
     fn exported_macro_body_naming_std_is_not_flagged() {
@@ -638,26 +627,119 @@ mod exported_macro_tests {
     }
 
     #[test]
-    fn exported_macro_with_inner_attribute_and_doc_is_not_flagged() {
-        let src = "/// docs\n#[macro_export]\n#[doc(hidden)]\nmacro_rules! emit {\n    () => { ::std::vec::Vec::new() };\n}\n";
-        assert!(findings(src).is_empty());
+    fn exported_macro_with_doc_and_other_attribute_is_not_flagged() {
+        let src = format!("/// docs\n#[macro_export]\n#[doc(hidden)]\nmacro_rules! emit {{\n{BODY}}}\n");
+        assert!(findings(&src).is_empty());
     }
 
     #[test]
     fn real_use_of_std_is_still_flagged() {
-        let src = "use std::fmt;\n";
-        assert_eq!(findings(src), vec![1]);
+        assert_eq!(findings("use std::fmt;\n"), vec![1]);
     }
 
     #[test]
     fn real_use_after_an_exported_macro_is_still_flagged() {
-        let src = "#[macro_export]\nmacro_rules! emit {\n    () => { ::std::vec::Vec::new() };\n}\nuse std::fmt;\n";
-        assert_eq!(findings(src), vec![5]);
+        let src = format!("#[macro_export]\nmacro_rules! emit {{\n{BODY}}}\nuse std::fmt;\n");
+        assert_eq!(findings(&src), vec![5]);
     }
 
     #[test]
     fn local_macro_naming_std_is_still_flagged() {
-        let src = "macro_rules! local {\n    () => { ::std::vec::Vec::new() };\n}\n";
+        let src = format!("macro_rules! local {{\n{BODY}}}\n");
+        assert_eq!(findings(&src), vec![2]);
+    }
+
+    #[test]
+    fn raw_string_with_a_quote_in_the_body_does_not_end_the_mask_early() {
+        let src = "#[macro_export]\nmacro_rules! m {\n    () => { r#\"\"\"# };\n}\nuse std::fmt;\n";
+        assert_eq!(findings(src), vec![5]);
+    }
+
+    #[test]
+    fn raw_string_with_a_brace_in_the_body_does_not_end_the_mask_early() {
+        let src = "#[macro_export]\nmacro_rules! m {\n    () => { r#\"a\"}\"# };\n}\nuse std::fmt;\n";
+        assert_eq!(findings(src), vec![5]);
+    }
+
+    #[test]
+    fn code_after_the_closing_brace_on_the_same_line_is_still_flagged() {
+        let src = "#[macro_export]\nmacro_rules! m { () => { ::std::vec::Vec::new() }; } fn g() -> std::fmt::Result { Ok(()) }\n";
         assert_eq!(findings(src), vec![2]);
+    }
+
+    #[test]
+    fn a_non_exported_macro_beside_an_exported_one_on_one_line_is_flagged() {
+        let src = "#[macro_export] macro_rules! a { () => { ::std::x }; } macro_rules! b { () => { ::std::y }; }\n";
+        assert_eq!(findings(src), vec![1]);
+    }
+
+    #[test]
+    fn two_exported_macros_on_one_line_are_both_skipped() {
+        let src = "#[macro_export] macro_rules! a { () => { ::std::x }; } #[macro_export] macro_rules! b { () => { ::std::y }; }\n";
+        assert!(findings(src).is_empty());
+    }
+
+    #[test]
+    fn a_commented_out_export_does_not_export_a_local_macro() {
+        let src = format!("// #[macro_export]\nmacro_rules! m {{\n{BODY}}}\n");
+        assert_eq!(findings(&src), vec![3]);
+    }
+
+    #[test]
+    fn a_doc_comment_mentioning_the_export_does_not_export_a_local_macro() {
+        let src = format!("/// Not #[macro_export]ed\nmacro_rules! m {{\n{BODY}}}\n");
+        assert_eq!(findings(&src), vec![3]);
+    }
+
+    #[test]
+    fn a_multi_line_cfg_attr_between_the_export_and_the_macro_keeps_it_exported() {
+        let src = format!(
+            "#[macro_export]\n#[cfg_attr(\n    feature = \"x\",\n    doc(hidden)\n)]\nmacro_rules! m {{\n{BODY}}}\n"
+        );
+        assert!(findings(&src).is_empty());
+    }
+
+    #[test]
+    fn a_cfg_attr_that_applies_the_export_exports_the_macro() {
+        let src = format!("#[cfg_attr(feature = \"x\", macro_export)]\nmacro_rules! m {{\n{BODY}}}\n");
+        assert!(findings(&src).is_empty());
+    }
+
+    #[test]
+    fn a_cfg_attr_whose_condition_names_the_export_does_not_export() {
+        let src = format!("#[cfg_attr(macro_export, doc(hidden))]\nmacro_rules! m {{\n{BODY}}}\n");
+        assert_eq!(findings(&src), vec![3]);
+    }
+
+    #[test]
+    fn an_export_with_arguments_exports_the_macro() {
+        let src = format!("#[macro_export(local_inner_macros)]\nmacro_rules! m {{\n{BODY}}}\n");
+        assert!(findings(&src).is_empty());
+    }
+
+    #[test]
+    fn parenthesis_and_bracket_delimited_exported_macros_are_skipped() {
+        let paren = "#[macro_export]\nmacro_rules! m (\n    () => ( ::std::x )\n);\nuse std::fmt;\n";
+        assert_eq!(findings(paren), vec![5]);
+        let bracket = "#[macro_export]\nmacro_rules! m [\n    () => [ ::std::x ]\n];\nuse std::fmt;\n";
+        assert_eq!(findings(bracket), vec![5]);
+    }
+
+    #[test]
+    fn an_export_attribute_on_a_function_does_not_export_the_next_macro() {
+        let src = format!("#[macro_export]\nfn f() {{}}\nmacro_rules! m {{\n{BODY}}}\n");
+        assert_eq!(findings(&src), vec![4]);
+    }
+
+    #[test]
+    fn dyn_in_an_exported_body_is_still_flagged() {
+        let src = "#[macro_export]\nmacro_rules! m {\n    () => { Box<dyn Foo> };\n}\n";
+        assert_eq!(findings_for("dyn *", src), vec![3]);
+    }
+
+    #[test]
+    fn a_type_name_in_an_exported_body_is_still_flagged() {
+        let src = "#[macro_export]\nmacro_rules! m {\n    () => { String };\n}\n";
+        assert_eq!(findings_for("String", src), vec![3]);
     }
 }

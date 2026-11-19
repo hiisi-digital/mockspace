@@ -504,6 +504,8 @@ rules = [
 
 The `{prefix}` placeholder in `scope` / `forbidden` / `reason` expands to `crate_prefix`.
 
+The body of a `#[macro_export]` macro (also one exported through `#[cfg_attr(.., macro_export)]`) is left out of the module-path check, such as `std::*`: its tokens expand in the consumer's crate, where the path resolves, and not in the crate that defines the macro. A macro that is not exported expands in its own crate and is checked as before, and so are the `dyn` and type-name patterns.
+
 ### Tools
 
 A project tool, or a tool a `[lint-crates]` pack ships, takes its configuration from a table named as the tool is:
