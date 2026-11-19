@@ -185,6 +185,108 @@ fn scope_matches(scope: &str, crate_name: &str, crate_prefix: &str) -> bool {
     scope == crate_name
 }
 
+/// Which lines (indexed from zero) sit inside a `#[macro_export] macro_rules!` item.
+///
+/// The tokens of an exported macro expand in the consumer's crate, so a path in its body names
+/// something that resolves there and not in the crate that defines the macro. The name line and the
+/// closing line count as inside. A `macro_rules!` with no `#[macro_export]` expands in its own crate
+/// and is not masked.
+fn exported_macro_lines(source: &str) -> Vec<bool> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut masked = vec![false; lines.len()];
+    let mut pending_export = false;
+    let mut idx = 0;
+
+    while idx < lines.len() {
+        let trimmed = lines[idx].trim();
+
+        if trimmed.contains("#[macro_export") {
+            pending_export = true;
+        }
+
+        if pending_export && trimmed.contains("macro_rules!") {
+            idx = mask_macro_item(&lines, idx, &mut masked);
+            pending_export = false;
+            continue;
+        }
+
+        let neutral = trimmed.is_empty()
+            || trimmed.starts_with("//")
+            || trimmed.starts_with("#[")
+            || trimmed.starts_with("/*")
+            || trimmed.starts_with('*');
+        if !neutral {
+            pending_export = false;
+        }
+        idx += 1;
+    }
+
+    masked
+}
+
+/// Mark the lines of the macro item starting on `start`, and return the index after its last line.
+///
+/// The item ends where its delimiters, counted over `(`, `[` and `{`, return to zero. Strings, char
+/// literals and comments are skipped so a delimiter inside one does not count.
+fn mask_macro_item(lines: &[&str], start: usize, masked: &mut [bool]) -> usize {
+    let mut depth: i64 = 0;
+    let mut opened = false;
+    let mut in_block_comment = false;
+    let mut in_string = false;
+    let mut idx = start;
+
+    while idx < lines.len() {
+        masked[idx] = true;
+        let bytes = lines[idx].as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            let b = bytes[i];
+            if in_block_comment {
+                if b == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                    in_block_comment = false;
+                    i += 1;
+                }
+            } else if in_string {
+                if b == b'\\' {
+                    i += 1;
+                } else if b == b'"' {
+                    in_string = false;
+                }
+            } else if b == b'/' && bytes.get(i + 1) == Some(&b'/') {
+                break;
+            } else if b == b'/' && bytes.get(i + 1) == Some(&b'*') {
+                in_block_comment = true;
+                i += 1;
+            } else if b == b'"' {
+                in_string = true;
+            } else if b == b'\'' {
+                // A char literal; a lifetime has no closing quote and is left alone.
+                if bytes.get(i + 1) == Some(&b'\\') {
+                    if let Some(end) = bytes[i + 2 ..].iter().position(|c| *c == b'\'') {
+                        i += 2 + end;
+                    }
+                } else if bytes.get(i + 2) == Some(&b'\'') {
+                    i += 2;
+                }
+            } else if matches!(b, b'(' | b'[' | b'{') {
+                depth += 1;
+                opened = true;
+            } else if matches!(b, b')' | b']' | b'}') {
+                depth -= 1;
+            }
+            i += 1;
+        }
+
+        idx += 1;
+        if opened && depth <= 0 {
+            break;
+        }
+    }
+
+    idx
+}
+
 /// Check a single forbidden pattern against the source text.
 fn check_forbidden_pattern(
     ctx: &LintContext,
@@ -220,7 +322,12 @@ fn check_module_path(
     let use_pattern = format!("use {module_prefix}::");
     let path_pattern = format!("{module_prefix}::");
 
+    let exported = exported_macro_lines(ctx.source());
     for (line_num, line) in ctx.source().lines().enumerate() {
+        // The body of an exported macro expands in the consumer's crate, not this one.
+        if exported[line_num] {
+            continue;
+        }
         let trimmed = line.trim();
 
         // Skip comments
@@ -262,7 +369,12 @@ fn check_keyword_pattern(
     keyword: &str,
     errors: &mut Vec<LintError>,
 ) {
+    let exported = exported_macro_lines(ctx.source());
     for (line_num, line) in ctx.source().lines().enumerate() {
+        // The body of an exported macro expands in the consumer's crate, not this one.
+        if exported[line_num] {
+            continue;
+        }
         let trimmed = line.trim();
 
         // Skip comments
@@ -301,7 +413,12 @@ fn check_type_name(
     type_name: &str,
     errors: &mut Vec<LintError>,
 ) {
+    let exported = exported_macro_lines(ctx.source());
     for (line_num, line) in ctx.source().lines().enumerate() {
+        // The body of an exported macro expands in the consumer's crate, not this one.
+        if exported[line_num] {
+            continue;
+        }
         let trimmed = line.trim();
 
         // Skip comments
@@ -486,5 +603,61 @@ mod tests {
         assert!(contains_keyword("Box<dyn Trait>", "dyn "));
         // Comments are filtered at the caller level, not in contains_keyword
         assert!(contains_keyword("// dyn is not allowed", "dyn "));
+    }
+}
+
+#[cfg(test)]
+mod exported_macro_tests {
+    use super::*;
+    use crate::testkit::LintFixture;
+
+    fn lint_forbidding_std() -> ForbiddenImports {
+        let mut lint = ForbiddenImports::new();
+        let mut params = HashMap::new();
+        params.insert("rule.no-std.scope".to_string(), "test*".to_string());
+        params.insert("rule.no-std.forbidden".to_string(), "std::*".to_string());
+        params.insert("rule.no-std.reason".to_string(), "no_std".to_string());
+        lint.configure(&params);
+        lint
+    }
+
+    fn findings(src: &str) -> Vec<usize> {
+        let fixture = LintFixture::new(src).with_crate_name("test-crate", "test");
+        let ctx = fixture.ctx();
+        lint_forbidding_std()
+            .check(&ctx)
+            .iter()
+            .map(|e| e.line)
+            .collect()
+    }
+
+    #[test]
+    fn exported_macro_body_naming_std_is_not_flagged() {
+        let src = "#[macro_export]\nmacro_rules! emit {\n    () => {\n        ::std::println!(\"x\")\n    };\n}\n";
+        assert!(findings(src).is_empty());
+    }
+
+    #[test]
+    fn exported_macro_with_inner_attribute_and_doc_is_not_flagged() {
+        let src = "/// docs\n#[macro_export]\n#[doc(hidden)]\nmacro_rules! emit {\n    () => { ::std::vec::Vec::new() };\n}\n";
+        assert!(findings(src).is_empty());
+    }
+
+    #[test]
+    fn real_use_of_std_is_still_flagged() {
+        let src = "use std::fmt;\n";
+        assert_eq!(findings(src), vec![1]);
+    }
+
+    #[test]
+    fn real_use_after_an_exported_macro_is_still_flagged() {
+        let src = "#[macro_export]\nmacro_rules! emit {\n    () => { ::std::vec::Vec::new() };\n}\nuse std::fmt;\n";
+        assert_eq!(findings(src), vec![5]);
+    }
+
+    #[test]
+    fn local_macro_naming_std_is_still_flagged() {
+        let src = "macro_rules! local {\n    () => { ::std::vec::Vec::new() };\n}\n";
+        assert_eq!(findings(src), vec![2]);
     }
 }
