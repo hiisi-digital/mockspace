@@ -117,7 +117,9 @@ if [ -f '{measure}' ]; then
   # the caller names to it where the number of calls does not
   tmp='{sizes}'.$$
   cat > "$tmp"
-  echo "$sub $(printf %s "$*" | wc -c) $(wc -c < "$tmp")" >> '{sizes}'
+  # the process id of the caller, where a name holds it (the scratch ref `remote_holds` fetches
+  # into), counts as one byte, so the count is the same whatever number the system gave it
+  echo "$sub $(printf %s "$*" | sed "s/$PPID/P/g" | wc -c) $(sed "s/$PPID/P/g" "$tmp" | wc -c)" >> '{sizes}'
   exec 3< "$tmp"
   rm -f "$tmp"
   exec '{real}' "$@" <&3 3<&-
