@@ -1,0 +1,142 @@
+
+variant_shifted.dll:	file format coff-x86-64
+
+Disassembly of section .text:
+
+0000000180001000 <.text>:
+180001000:     	movzbl	(%rcx), %eax
+180001003:     	movl	%eax, %r8d
+180001006:     	shll	$0x5, %r8d
+18000100a:     	subq	%rax, %r8
+18000100d:     	movzbl	0x1(%rcx), %eax
+180001011:     	addq	%r8, %rax
+180001014:     	movl	%eax, %r8d
+180001017:     	shll	$0x5, %r8d
+18000101b:     	subq	%rax, %r8
+18000101e:     	movzbl	0x2(%rcx), %eax
+180001022:     	addq	%r8, %rax
+180001025:     	movl	%eax, %r8d
+180001028:     	shll	$0x5, %r8d
+18000102c:     	subq	%rax, %r8
+18000102f:     	movzbl	0x3(%rcx), %eax
+180001033:     	addq	%r8, %rax
+180001036:     	movq	%rax, %r8
+180001039:     	shlq	$0x5, %r8
+18000103d:     	subq	%rax, %r8
+180001040:     	movzbl	0x4(%rcx), %eax
+180001044:     	addq	%r8, %rax
+180001047:     	movq	%rax, %r8
+18000104a:     	shlq	$0x5, %r8
+18000104e:     	subq	%rax, %r8
+180001051:     	movzbl	0x5(%rcx), %eax
+180001055:     	addq	%r8, %rax
+180001058:     	movq	%rax, %r8
+18000105b:     	shlq	$0x5, %r8
+18000105f:     	subq	%rax, %r8
+180001062:     	movzbl	0x6(%rcx), %eax
+180001066:     	addq	%r8, %rax
+180001069:     	movq	%rax, %r8
+18000106c:     	shlq	$0x5, %r8
+180001070:     	subq	%rax, %r8
+180001073:     	movzbl	0x7(%rcx), %eax
+180001077:     	addq	%r8, %rax
+18000107a:     	movq	%rax, %rcx
+18000107d:     	shlq	$0x5, %rcx
+180001081:     	subq	%rax, %rcx
+180001084:     	movq	%rcx, (%rdx)
+180001087:     	retq
+180001088:     	int3
+180001089:     	int3
+18000108a:     	int3
+18000108b:     	int3
+18000108c:     	int3
+18000108d:     	int3
+18000108e:     	int3
+18000108f:     	int3
+
+0000000180001090 <bench_align>:
+180001090:     	movq	%rcx, %rax
+180001093:     	movq	%rdx, %r9
+180001096:     	andq	$0xf, %r9
+18000109a:     	je	0x180001123 <bench_align+0x93>
+1800010a0:     	movl	%edx, %ecx
+1800010a2:     	andl	$0x3, %ecx
+1800010a5:     	movabsq	$-0x61c8864680b583eb, %r8 # imm = 0x9E3779B97F4A7C15
+1800010af:     	cmpl	$0x4, %r9d
+1800010b3:     	jae	0x1800010ba <bench_align+0x2a>
+1800010b5:     	xorl	%r9d, %r9d
+1800010b8:     	jmp	0x180001110 <bench_align+0x80>
+1800010ba:     	andl	$0xc, %edx
+1800010bd:     	xorl	%r9d, %r9d
+1800010c0:     	movq	%r9, %r10
+1800010c3:     	rolq	$0x11, %rax
+1800010c7:     	imulq	%r8, %rax
+1800010cb:     	xorq	%r9, %rax
+1800010ce:     	rolq	$0x11, %rax
+1800010d2:     	imulq	%r8, %rax
+1800010d6:     	incq	%r9
+1800010d9:     	xorq	%rax, %r9
+1800010dc:     	rolq	$0x11, %r9
+1800010e0:     	imulq	%r8, %r9
+1800010e4:     	leaq	0x2(%r10), %r11
+1800010e8:     	xorq	%r9, %r11
+1800010eb:     	leaq	0x4(%r10), %r9
+1800010ef:     	rolq	$0x11, %r11
+1800010f3:     	imulq	%r8, %r11
+1800010f7:     	addq	$0x3, %r10
+1800010fb:     	movq	%r10, %rax
+1800010fe:     	xorq	%r11, %rax
+180001101:     	cmpq	%rdx, %r9
+180001104:     	jne	0x1800010c0 <bench_align+0x30>
+180001106:     	testq	%rcx, %rcx
+180001109:     	je	0x180001123 <bench_align+0x93>
+18000110b:     	nopl	(%rax,%rax)
+180001110:     	rolq	$0x11, %rax
+180001114:     	imulq	%r8, %rax
+180001118:     	xorq	%r9, %rax
+18000111b:     	incq	%r9
+18000111e:     	decq	%rcx
+180001121:     	jne	0x180001110 <bench_align+0x80>
+180001123:     	retq
+180001124:     	int3
+180001125:     	int3
+180001126:     	int3
+180001127:     	int3
+180001128:     	int3
+180001129:     	int3
+18000112a:     	int3
+18000112b:     	int3
+18000112c:     	int3
+18000112d:     	int3
+18000112e:     	int3
+18000112f:     	int3
+
+0000000180001130 <bench_entry>:
+180001130:     	subq	$0x28, %rsp
+180001134:     	cmpq	$0x8, %r8
+180001138:     	jne	0x180001146 <bench_entry+0x16>
+18000113a:     	callq	0x180001000 <.text>
+18000113f:     	xorl	%eax, %eax
+180001141:     	addq	$0x28, %rsp
+180001145:     	retq
+180001146:     	leaq	0xeb3(%rip), %rax       # 0x180002000
+18000114d:     	addq	$0x28, %rsp
+180001151:     	retq
+180001152:     	int3
+180001153:     	int3
+180001154:     	int3
+180001155:     	int3
+180001156:     	int3
+180001157:     	int3
+180001158:     	int3
+180001159:     	int3
+18000115a:     	int3
+18000115b:     	int3
+18000115c:     	int3
+18000115d:     	int3
+18000115e:     	int3
+18000115f:     	int3
+
+0000000180001160 <bench_name>:
+180001160:     	leaq	0xe99(%rip), %rax       # 0x180002000
+180001167:     	retq

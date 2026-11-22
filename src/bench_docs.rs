@@ -8,32 +8,25 @@
 //! When the consumer's `mock/benches/bench.toml` declares
 //! `[docgen] enabled = true`, the docs regeneration pass emits a
 //! succinct, human-readable `BENCHES.md` under `docs/` from the bench
-//! history, plus one graphviz visualisation per benchmark (a `.dot`
-//! rendered to PNG and embedded), so the latest measured numbers live
-//! in the same generated documentation tree as everything else. The
-//! doc points at `mock/benches/results/` for the full per-run data
-//! (CSV samples, meta, findings).
+//! runs, plus one graphviz visualisation per cell and machine class (a
+//! `.dot` rendered to PNG and embedded), so the latest measured numbers
+//! live in the same generated documentation tree as everything else. The
+//! doc points at `mock/benches/results/` for the full per-run data.
 //!
-//! The data source is the append-only bench history
-//! (`mock/benches/.bench_history/<benchmark>.tsv`, written by the
-//! bench driver on every run): the latest timestamp cohort per
-//! benchmark is the "current" number per variant.
+//! The data source is the runs under `results/`: for each cell and
+//! machine class, the latest run carrying a `summary.tsv` is the
+//! "current" number per variant. Machine classes are kept apart, since a
+//! number from one says nothing about another.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use mockspace_bench_harness::history::{HistoryEntry, parse_summary};
+use mockspace_bench_harness::layout;
+
 use crate::config::Config;
 use crate::render_design;
-
-/// One parsed history row (subset of the harness's schema).
-struct Row {
-    timestamp:  u64,
-    git_commit: String,
-    variant:    String,
-    median_ns:  f64,
-}
 
 /// Whether the consumer opted into bench docgen.
 fn docgen_enabled(bench_dir: &Path) -> bool {
@@ -49,81 +42,26 @@ fn docgen_enabled(bench_dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Every history ledger of a bench tree, in both layouts: the flat
-/// `.bench_history/<benchmark>.tsv` (keyed by stem) and the nested
-/// `history/<bench>/<sweep>_n<point>.tsv` (keyed `<bench>/<stem>` so
-/// the doc names the bench the cell belongs to). Sorted by key.
-fn discover_history_logs(bench_dir: &Path) -> Vec<(String, std::path::PathBuf)> {
-    let mut logs: Vec<(String, std::path::PathBuf)> = Vec::new();
-    if let Ok(rd) = fs::read_dir(bench_dir.join(".bench_history")) {
-        for p in rd.flatten().map(|e| e.path()) {
-            if p.extension().is_some_and(|e| e == "tsv") {
-                let key = p
-                    .file_stem()
-                    .and_then(|f| f.to_str())
-                    .unwrap_or("bench")
-                    .to_string();
-                logs.push((key, p));
-            }
-        }
-    }
-    if let Ok(benches) = fs::read_dir(bench_dir.join("history")) {
-        for bdir in benches.flatten().map(|e| e.path()).filter(|p| p.is_dir()) {
-            let bench = bdir
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or("bench")
-                .to_string();
-            if let Ok(rd) = fs::read_dir(&bdir) {
-                for p in rd.flatten().map(|e| e.path()) {
-                    if p.extension().is_some_and(|e| e == "tsv") {
-                        let stem = p.file_stem().and_then(|f| f.to_str()).unwrap_or("cell");
-                        logs.push((format!("{bench}/{stem}"), p));
-                    }
-                }
-            }
-        }
-    }
-    logs.sort();
-    logs
-}
-
-/// Parse one `<benchmark>.tsv` history log and keep the latest
-/// cohort (rows sharing the maximum timestamp) per variant.
-fn latest_cohort(path: &Path) -> Vec<Row> {
-    let Ok(text) = fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    let mut rows: Vec<Row> = Vec::new();
-    for line in text.lines() {
-        if line.starts_with('#') || line.trim().is_empty() {
-            continue;
-        }
-        let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 8 {
-            continue;
-        }
-        let (Ok(ts), Ok(median)) = (f[0].parse::<u64>(), f[6].parse::<f64>()) else {
+/// The latest run with a summary of every cell on every machine class:
+/// `(<bench>/<cell>, machine class, run, its rows)`, sorted by the first two.
+fn latest_runs(bench_dir: &Path) -> Vec<(String, String, String, Vec<HistoryEntry>)> {
+    let mut latest: std::collections::BTreeMap<(String, String), (String, Vec<HistoryEntry>)> =
+        std::collections::BTreeMap::new();
+    // Oldest first within a machine, so the last one seen is the latest.
+    for r in layout::runs(&bench_dir.join(layout::RESULTS_DIR)) {
+        let Ok(text) = fs::read_to_string(r.dir.join(layout::SUMMARY_FILE)) else {
             continue;
         };
-        rows.push(Row {
-            timestamp:  ts,
-            git_commit: f[1].to_string(),
-            variant:    f[3].to_string(),
-            median_ns:  median,
-        });
-    }
-    let max_ts = rows.iter().map(|r| r.timestamp).max().unwrap_or(0);
-    // The latest cohort: newest row per variant within a small window
-    // of the maximum timestamp (one run appends all variants within
-    // seconds of each other).
-    let mut latest: BTreeMap<String, Row> = BTreeMap::new();
-    for r in rows {
-        if max_ts.saturating_sub(r.timestamp) <= 300 {
-            latest.insert(r.variant.clone(), r);
+        let rows = parse_summary(&text);
+        if rows.is_empty() {
+            continue;
         }
+        latest.insert((format!("{}/{}", r.bench, r.cell.name()), r.machine), (r.run, rows));
     }
-    latest.into_values().collect()
+    latest
+        .into_iter()
+        .map(|((cell, machine), (run, rows))| (cell, machine, run, rows))
+        .collect()
 }
 
 fn fmt_ns(ns: f64) -> String {
@@ -139,8 +77,8 @@ fn fmt_ns(ns: f64) -> String {
 /// Build one benchmark's dot graph: variants ordered fastest to
 /// slowest, node colour graded by relative speed, edges labelled with
 /// the slowdown ratio to the previous rank.
-fn benchmark_dot(benchmark: &str, rows: &[Row]) -> String {
-    let mut sorted: Vec<&Row> = rows.iter().collect();
+fn benchmark_dot(benchmark: &str, rows: &[HistoryEntry]) -> String {
+    let mut sorted: Vec<&HistoryEntry> = rows.iter().collect();
     sorted.sort_by(|a, b| a.median_ns.total_cmp(&b.median_ns));
     let best = sorted.first().map(|r| r.median_ns).unwrap_or(1.0).max(1e-9);
     let mut dot = String::new();
@@ -184,12 +122,11 @@ pub fn generate(cfg: &Config) -> Vec<std::path::PathBuf> {
     if !docgen_enabled(&bench_dir) {
         return wrote;
     }
-    let logs = discover_history_logs(&bench_dir);
-    if logs.is_empty() {
+    let runs = latest_runs(&bench_dir);
+    if runs.is_empty() {
         eprintln!(
-            "  bench docgen enabled but no history at {} or {}",
-            bench_dir.join(".bench_history").display(),
-            bench_dir.join("history").display()
+            "  bench docgen enabled but no run carries a summary under {}",
+            bench_dir.join(layout::RESULTS_DIR).display()
         );
         return wrote;
     }
@@ -197,34 +134,24 @@ pub fn generate(cfg: &Config) -> Vec<std::path::PathBuf> {
     eprintln!("--- generating BENCHES.md ---");
     let mut md = render_design::generation_header_md(cfg);
     md.push_str(
-        "# Benchmarks\n\nLatest measured medians per benchmark, from the bench \
-         framework's history log. Succinct by design: for the full data behind \
+        "# Benchmarks\n\nLatest measured medians per cell and machine class, from \
+         the latest run of each. Succinct by design: for the full data behind \
          any number (per-sample CSVs, environment metadata, statistical \
          findings), see `mock/benches/results/` in the repository.\n\n",
     );
 
-    for (benchmark, log) in &logs {
-        let benchmark = benchmark.clone();
-        let rows = latest_cohort(log);
-        if rows.is_empty() {
-            continue;
-        }
-        let commit = rows
-            .iter()
-            .max_by_key(|r| r.timestamp)
-            .map(|r| r.git_commit.clone())
-            .unwrap_or_default();
+    for (cell, machine, run, rows) in &runs {
+        let benchmark = format!("{cell} on {machine}");
+        let file_key = format!("{}.{machine}", cell.replace('/', "."));
         md.push_str(&format!("## {benchmark}\n\n"));
-        if !commit.is_empty() {
-            md.push_str(&format!("Measured at commit `{commit}`.\n\n"));
-        }
+        md.push_str(&format!("Run `{run}`.\n\n"));
         md.push_str("| variant | median | vs best |\n|---|---|---|\n");
         let best = rows
             .iter()
             .map(|r| r.median_ns)
             .fold(f64::INFINITY, f64::min)
             .max(1e-9);
-        let mut sorted: Vec<&Row> = rows.iter().collect();
+        let mut sorted: Vec<&HistoryEntry> = rows.iter().collect();
         sorted.sort_by(|a, b| a.median_ns.total_cmp(&b.median_ns));
         for r in &sorted {
             md.push_str(&format!(
@@ -237,14 +164,14 @@ pub fn generate(cfg: &Config) -> Vec<std::path::PathBuf> {
         md.push('\n');
 
         // Dot + rendered PNG, embedded when the render succeeds.
-        let dot_name = render_design::ordered_doc_name(&format!("BENCHES.{benchmark}.dot"), cfg);
-        let png_name = render_design::ordered_doc_name(&format!("BENCHES.{benchmark}.png"), cfg);
+        let dot_name = render_design::ordered_doc_name(&format!("BENCHES.{file_key}.dot"), cfg);
+        let png_name = render_design::ordered_doc_name(&format!("BENCHES.{file_key}.png"), cfg);
         let dot_path = cfg.docs_dir.join(&dot_name);
         let png_path = cfg.docs_dir.join(&png_name);
         let dot_content = format!(
             "{}{}",
             render_design::generation_header_dot(cfg),
-            benchmark_dot(&benchmark, &rows)
+            benchmark_dot(&benchmark, rows)
         );
         render_design::write_generated(&dot_path, &dot_content);
         wrote.push(dot_path.clone());
@@ -279,21 +206,45 @@ pub fn generate(cfg: &Config) -> Vec<std::path::PathBuf> {
 mod tests {
     use super::*;
 
+    /// The latest run with a summary stands for its cell, per machine class:
+    /// a newer run on one class does not hide another class's run, and a run
+    /// with no summary is passed over rather than read as an empty table.
     #[test]
-    fn history_logs_are_discovered_in_both_layouts_with_bench_qualified_keys() {
-        let dir =
-            std::env::temp_dir().join(format!("mockspace-bench-docs-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join(".bench_history")).unwrap();
-        std::fs::create_dir_all(dir.join("history/warm")).unwrap();
-        std::fs::write(dir.join(".bench_history/hash_n64.tsv"), "").unwrap();
-        std::fs::write(dir.join("history/warm/width-l1_n80003.tsv"), "").unwrap();
-        std::fs::write(dir.join("history/warm/notes.md"), "").unwrap();
-        let keys: Vec<String> = discover_history_logs(&dir)
+    fn each_cell_shows_its_latest_summarised_run_per_machine_class() {
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
+        let results = dir.path().join(layout::RESULTS_DIR);
+        let cell = layout::Cell { sweep: "width-l1".into(), n: 80003 };
+        let put = |machine: &str, run: &str, median: f64, summary: bool| {
+            let d = results.join(layout::run_rel("warm", &cell, machine, run));
+            fs::create_dir_all(&d).unwrap();
+            if summary {
+                let e = HistoryEntry {
+                    timestamp:  1,
+                    git_commit: "a".into(),
+                    benchmark:  cell.name(),
+                    variant:    "fnv".into(),
+                    n:          80003,
+                    mode:       "warm".into(),
+                    median_ns:  median,
+                    ci_lo_ns:   median,
+                    ci_hi_ns:   median,
+                };
+                fs::write(d.join(layout::SUMMARY_FILE), mockspace_bench_harness::render_summary(&[e])).unwrap();
+            }
+        };
+        let linux = "linux-x86_64-c4-bare-amd";
+        let mac = "macos-aarch64-c8-bare-apple";
+        put(linux, "20261114T000000Z-a", 10.0, true);
+        put(linux, "20261115T000000Z-b", 11.0, true);
+        put(linux, "20261116T000000Z-c", 12.0, false);
+        put(mac, "20261101T000000Z-z", 5.0, true);
+        let got: Vec<(String, String, String, f64)> = latest_runs(dir.path())
             .into_iter()
-            .map(|(k, _)| k)
+            .map(|(c, m, r, rows)| (c, m, r, rows[0].median_ns))
             .collect();
-        assert_eq!(keys, vec!["hash_n64", "warm/width-l1_n80003"]);
-        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(got, vec![
+            ("warm/width-l1_n80003".into(), linux.into(), "20261115T000000Z-b".into(), 11.0),
+            ("warm/width-l1_n80003".into(), mac.into(), "20261101T000000Z-z".into(), 5.0),
+        ]);
     }
 }

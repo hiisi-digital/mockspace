@@ -153,7 +153,7 @@ impl Rig {
     }
 
     fn with(v: &Variant) -> Rig {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let base = tmp.path().canonicalize().unwrap();
         let root = base.join("repo");
         let home = base.join("cargo-home");

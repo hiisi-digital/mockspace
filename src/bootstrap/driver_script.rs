@@ -149,7 +149,7 @@ mod tests {
 
     impl Rig {
         fn new(with_dot: bool, probe_exit: i32) -> Self {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = mockspace_manifest::scratch::tempdir().unwrap();
             let root = dir.path().to_path_buf();
             let bin = root.join("bin");
             std::fs::create_dir_all(&bin).unwrap();

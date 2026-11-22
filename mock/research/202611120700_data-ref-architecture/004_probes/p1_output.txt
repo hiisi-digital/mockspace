@@ -1,0 +1,3 @@
+replaced old commit, forced trip: edit = EDIT
+new tip tracks: c.rs mock/research/M.md mock/research/N.md 
+after checkout -f of a NEW old-shape tip: edit = feat-edit  (EDIT2 would mean kept)

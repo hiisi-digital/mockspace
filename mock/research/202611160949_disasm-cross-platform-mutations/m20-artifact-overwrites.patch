@@ -1,0 +1,14 @@
+diff --git a/bench-harness/src/disasm/artifact.rs b/bench-harness/src/disasm/artifact.rs
+index 071ce22..5fa7a6e 100644
+--- a/bench-harness/src/disasm/artifact.rs
++++ b/bench-harness/src/disasm/artifact.rs
+@@ -73,7 +73,8 @@ fn write_new(
+             .map_err(|e| format!("creating {}: {e}", parent.display()))?;
+         match std::fs::OpenOptions::new()
+             .write(true)
+-            .create_new(true)
++            .create(true)
++            .truncate(true)
+             .open(&path)
+         {
+             Ok(mut file) => {

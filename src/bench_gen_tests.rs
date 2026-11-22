@@ -10,17 +10,12 @@ fn manifest(text: &str) -> BenchManifest {
     // the same strict-key path a consumer does. The directory is
     // unique per call: parallel tests sharing a constant would
     // otherwise race on create/remove.
-    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "mockspace-bench-gen-manifest-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-    ));
+    let dir_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let dir = dir_guard.path().to_path_buf();
     std::fs::create_dir_all(&dir).unwrap();
     let p = dir.join("bench.toml");
     std::fs::write(&p, text).unwrap();
     let m = BenchManifest::load(&p).expect("manifest parses");
-    std::fs::remove_dir_all(&dir).ok();
     m
 }
 
@@ -153,18 +148,15 @@ fn generated_manifests_carry_the_workspace_header_and_the_feature() {
         toml.contains("features = [\"std\"]"),
         "bench-core needs std"
     );
-    let driver = driver_cargo_toml(DEFAULT_MOCKSPACE_DEP, &[]).unwrap();
+    let driver = driver_cargo_toml(DEFAULT_MOCKSPACE_DEP, &[], "mockspace-bench-driver-0").unwrap();
     assert!(driver.contains("[workspace]"));
     assert!(driver.contains("mockspace-bench-harness"));
 }
 
 #[test]
 fn a_cdylib_under_support_is_refused_naming_the_rule() {
-    let dir = std::env::temp_dir().join(format!(
-        "mockspace-support-cdylib-test-{}",
-        std::process::id()
-    ));
-    std::fs::remove_dir_all(&dir).ok();
+    let dir_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let dir = dir_guard.path().to_path_buf();
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("Cargo.toml"),
@@ -180,7 +172,6 @@ fn a_cdylib_under_support_is_refused_naming_the_rule() {
     assert!(err.contains("belongs under arms/"), "{err}");
     std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"kit\"\n").unwrap();
     assert_eq!(support_package_name(&src).unwrap(), "kit");
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -199,8 +190,8 @@ fn a_path_dep_spec_expands_per_crate_and_a_git_spec_applies_verbatim() {
 
 #[test]
 fn write_if_changed_is_idempotent() {
-    let dir = std::env::temp_dir().join(format!("mockspace-gen-test-{}", std::process::id()));
-    std::fs::remove_dir_all(&dir).ok();
+    let dir_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let dir = dir_guard.path().to_path_buf();
     let p = dir.join("x/y.rs");
     write_if_changed(&p, "one").unwrap();
     let t1 = std::fs::metadata(&p).unwrap().modified().unwrap();
@@ -209,5 +200,52 @@ fn write_if_changed_is_idempotent() {
     assert_eq!(t1, t2, "unchanged content must not rewrite the file");
     write_if_changed(&p, "two").unwrap();
     assert_eq!(std::fs::read_to_string(&p).unwrap(), "two");
-    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Two trees' drivers never share a name, so building one into a target
+/// directory both use cannot replace the other's while it runs; one tree's
+/// name is stable across runs.
+#[test]
+fn every_tree_has_a_driver_name_of_its_own() {
+    let a = mockspace_manifest::scratch::tempdir().unwrap();
+    let b = mockspace_manifest::scratch::tempdir().unwrap();
+    assert_ne!(driver_name(a.path()), driver_name(b.path()));
+    assert_eq!(driver_name(a.path()), driver_name(a.path()));
+    assert!(driver_name(a.path()).starts_with("mockspace-bench-driver-"));
+    let toml = driver_cargo_toml(DEFAULT_MOCKSPACE_DEP, &[], &driver_name(a.path())).unwrap();
+    assert!(toml.contains(&format!("name = \"{}\"", driver_name(a.path()))), "{toml}");
+}
+
+/// While one run holds a tree's lock a second cannot take it, and it can once
+/// the first lets go.
+#[test]
+fn a_second_run_of_a_tree_waits_for_the_first() {
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
+    let held = lock_tree(dir.path()).unwrap();
+    let other = std::fs::OpenOptions::new().write(true).open(dir.path().join(".run-lock")).unwrap();
+    assert!(matches!(other.try_lock(), Err(std::fs::TryLockError::WouldBlock)));
+    drop(held);
+    assert!(other.try_lock().is_ok());
+}
+
+/// A Windows path in the `[build] mockspace` spec is escaped TOML, and is read
+/// back as the path it names before a crate's directory is joined to it, then
+/// written escaped again; slicing the text between the quotes doubled every
+/// backslash on each pass.
+#[test]
+fn a_windows_path_spec_expands_to_the_crate_under_that_path() {
+    let spec = format!(
+        "{{ path = {} }}",
+        mockspace_manifest::toml_text::basic_string(r"C:\repo\mockspace")
+    );
+    let expanded = dep_for_crate(&spec, "bench-core");
+    let doc: toml_edit::DocumentMut = format!("x = {expanded}").parse().unwrap();
+    let path = doc["x"]["path"].as_str().unwrap();
+    assert_eq!(
+        path,
+        std::path::Path::new(r"C:\repo\mockspace")
+            .join("bench-core")
+            .display()
+            .to_string()
+    );
 }

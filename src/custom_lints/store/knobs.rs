@@ -115,3 +115,7 @@ pub(crate) fn pause_between_write_and_build(dir: &Path) {
         std::thread::sleep(pause);
     }
 }
+
+/// Held by a case that changes what every build in the process reads, an environment variable or a
+/// cargo config above the working directory, and by a case whose build must not read that change.
+pub(crate) static PROCESS_ENV: Mutex<()> = Mutex::new(());

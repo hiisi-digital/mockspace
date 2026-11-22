@@ -5,7 +5,7 @@
 
 //! Per-call timing record + run-level result aggregate.
 //!
-//! Field shape mirrors polka-dots' `harness::Sample` so the CSV cache
+//! Field shape mirrors polka-dots' `harness::Sample` so the samples CSV
 //! and downstream analysis (Round 5) can read v1 caches written by
 //! polka-dots. Round 3 emits these from the orchestrator; Round 5
 //! aggregates them into `analysis::DataSet`.
@@ -86,7 +86,7 @@ pub struct Sample {
 ///
 /// Round 1 ships the shape; Round 3 starts populating
 /// [`Self::samples`]; Round 5 attaches analysis output; Round 6
-/// attaches the `findings.md` path.
+/// attaches the `report.md` path.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct BenchResult {
     /// Title of the bench run, copied from the [`crate::BenchConfig`].
@@ -98,7 +98,7 @@ pub struct BenchResult {
     /// Path to the CSV the orchestrator wrote, if any. Empty when
     /// the result has not yet been persisted.
     pub cache_path:  String,
-    /// Path to the `findings.md` produced by report generation.
+    /// Path to the `report.md` produced by report generation.
     /// Empty until [`crate::write_report`] runs.
     pub report_path: String,
 }
@@ -147,7 +147,7 @@ pub fn to_csv(samples: &[Sample]) -> String {
     csv
 }
 
-/// Load `Sample` rows from a CSV produced by [`crate::write_csv`].
+/// Load `Sample` rows from a CSV produced by [`crate::write_run`].
 ///
 /// Used by `mock bench report --report-only` and by tooling that
 /// wants to reuse a previous run's data without re-invoking the
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn csv_parses_perf_columns_and_is_backward_compatible() {
-        let dir = std::env::temp_dir().join(format!("perf_csv_{}", std::process::id()));
+        let dir = mockspace_manifest::scratch::held();
         std::fs::create_dir_all(&dir).unwrap();
 
         // newest format: 17 columns including the appended matrix columns
@@ -327,10 +327,11 @@ mod round_trip_tests {
                 report_path: String::new(),
             };
             let dir =
-                std::env::temp_dir().join(format!("mockspace-bh-roundtrip-{}", std::process::id()));
+                mockspace_manifest::scratch::held();
             std::fs::create_dir_all(&dir).unwrap();
-            let path = dir.join("rt.csv");
-            crate::harness::write_csv(&result, &path.display().to_string()).unwrap();
+            let _ = std::fs::remove_dir_all(&dir);
+            crate::harness::write_run(&result, &dir, "r").unwrap();
+            let path = dir.join(crate::layout::SAMPLES_FILE);
             let back = load_samples_csv(&path).unwrap();
             std::fs::remove_dir_all(&dir).ok();
 
@@ -374,10 +375,11 @@ mod round_trip_tests {
             report_path: String::new(),
         };
         let dir =
-            std::env::temp_dir().join(format!("mockspace-bh-roundtrip-bad-{}", std::process::id()));
+            mockspace_manifest::scratch::held();
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("rt.csv");
-        crate::harness::write_csv(&result, &path.display().to_string()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::harness::write_run(&result, &dir, "r").unwrap();
+        let path = dir.join(crate::layout::SAMPLES_FILE);
         let back = load_samples_csv(&path).unwrap();
         std::fs::remove_dir_all(&dir).ok();
 

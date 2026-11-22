@@ -23,7 +23,7 @@ fn engine_in(dir: &std::path::Path, args: &[&str]) -> Output {
 
 #[test]
 fn help_for_an_unknown_name_outside_a_project_prints_the_general_help() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let out = engine_in(tmp.path(), &["help", "nosuchthing"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -37,7 +37,7 @@ fn help_for_a_builtin_outside_a_project_describes_that_builtin() {
     // The control: a builtin is answered in full with no project, and not by
     // the general help, so the arm above is not passing by printing the
     // general help for every name.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let out = engine_in(tmp.path(), &["help", "lock"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(0));

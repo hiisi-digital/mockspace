@@ -73,7 +73,7 @@ fn stderr(out: &Output) -> String {
 /// looking for a name mismatch in a repository where nothing had been compiled.
 #[test]
 fn an_engine_invoked_without_the_dep_flag_says_nothing_was_built() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture(tmp.path(), "greet");
     let out = engine(&mock, &["greet"]);
     let err = stderr(&out);
@@ -103,7 +103,7 @@ fn an_engine_invoked_without_the_dep_flag_says_nothing_was_built() {
 /// that prints that message for every unrecognised word on the command line.
 #[test]
 fn a_word_that_is_not_a_tool_directory_is_not_reported_as_a_tool() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture(tmp.path(), "greet");
     let err = stderr(&engine(&mock, &["nosuchthing"]));
     assert!(
@@ -115,8 +115,11 @@ fn a_word_that_is_not_a_tool_directory_is_not_reported_as_a_tool() {
 // --- The two arms that need a real cdylib ------------------------------------
 
 fn dep_spec() -> String {
-    let lint_rules = concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules");
-    format!("{{ package = \"mockspace-lint-rules\", path = \"{lint_rules}\" }}")
+    let lint_rules = mockspace_manifest::toml_text::basic_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/lint-rules"
+    ));
+    format!("{{ package = \"mockspace-lint-rules\", path = {lint_rules} }}")
 }
 
 /// Write a tool crate whose `lint_pack!` registers `tools`, verbatim.
@@ -155,7 +158,7 @@ impl Tool for T {
 #[test]
 #[ignore = "runs cargo build; run with --ignored"]
 fn a_pack_that_built_and_registered_nothing_says_so() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture(tmp.path(), "greet");
     write_crate(&mock.join("tools"), "greet", "", "");
     let dep = dep_spec();
@@ -184,7 +187,7 @@ fn a_pack_that_built_and_registered_nothing_says_so() {
 #[test]
 #[ignore = "runs cargo build; run with --ignored"]
 fn a_pack_registering_another_name_says_mismatch() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = fixture(tmp.path(), "greet");
     write_crate(&mock.join("tools"), "greet", "T", A_TOOL);
     let dep = dep_spec();

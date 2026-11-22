@@ -1,0 +1,7 @@
+== control: no driver
+CONFLICT (content): Merge conflict in NOTES.md
+Automatic merge failed; fix conflicts and then commit the result.
+== custom driver from repo config + info/attributes
+ NOTES.md | 1 +
+ 1 file changed, 1 insertion(+)
+NOTES: a|b|c|x|y|

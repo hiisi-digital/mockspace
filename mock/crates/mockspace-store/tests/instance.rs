@@ -359,7 +359,7 @@ fn an_instance_in_a_linked_worktree_is_excluded_from_that_worktree() {
 fn an_instance_outside_the_repository_needs_no_exclusion() {
     let w = World::new();
     let a = seeded(&w);
-    let outside = tempfile::tempdir().unwrap();
+    let outside = mockspace_manifest::scratch::tempdir().unwrap();
     let dir = outside.path().join("registry");
     let i = Instance::new(&a, &dir).unwrap();
     i.materialize().unwrap();

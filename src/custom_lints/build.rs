@@ -13,7 +13,7 @@
 //! profile is pinned on the command line, where it outranks every config file. What cargo reads
 //! from config files is the one input left, and `identity` folds those files in.
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::SystemTime;
@@ -158,6 +158,9 @@ pub(crate) fn build_cdylib(
         .arg(gen_dir.join("Cargo.toml"))
         .arg("--message-format")
         .arg("json-render-diagnostics");
+    // Piped, cargo would drop its colour and progress for a terminal that is
+    // there all the same, so it is asked for where the relay writes to one.
+    command.args(colour_args(std::io::stderr().is_terminal()));
     // Only the generated crate gets these, so the dependencies stay shared between trees.
     // FIXME(3f67a1d5a1d0): a tool's or path package's own `file!()`, and the path a procedural macro of the
     // tree gets from `proc_macro2::Span::local_file()`, still name the tree, since the remap stops at
@@ -173,7 +176,7 @@ pub(crate) fn build_cdylib(
         .env_clear()
         .envs(std::env::vars_os().filter(|(k, _)| k.to_str().is_some_and(keeps_env)))
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::piped());
     let mut child = command
         .spawn()
         .map_err(|e| format!("could not run cargo build for the lint cdylib: {e}"))?;
@@ -182,6 +185,18 @@ pub(crate) fn build_cdylib(
         .stdout
         .take()
         .ok_or_else(|| "cargo build gave no stdout to read artifacts from".to_string())?;
+    // A build script of a dependency speaks to whoever builds that dependency
+    // as their own: here it is a library of the lint crate, so its warnings say
+    // nothing the committer can act on, and they are not passed on. Everything
+    // else cargo writes to stderr is, as it comes.
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "cargo build gave no stderr to pass on".to_string())?;
+    let own = crate_name.to_string();
+    let relay = std::thread::spawn(move || {
+        let _ = relay_stderr(stderr, &mut std::io::stderr().lock(), &own);
+    });
     let mut found = None;
     let mut fresh = false;
     let mut units: Vec<Unit> = Vec::new();
@@ -197,6 +212,7 @@ pub(crate) fn build_cdylib(
     let status = child
         .wait()
         .map_err(|e| format!("could not wait on cargo build for the lint cdylib: {e}"))?;
+    let _ = relay.join();
     if !status.success() {
         return Err("building the custom-lint cdylib failed; see cargo output above".to_string());
     }
@@ -295,6 +311,72 @@ pub(crate) fn cdylib_artifact(line: &str, crate_name: &str) -> Option<PathBuf> {
             p.extension()
                 .is_some_and(|e| e == "dylib" || e == "so" || e == "dll")
         })
+}
+
+/// Pass cargo's stderr on line by line, byte for byte, holding back only a
+/// dependency's build script warning. A line that is not UTF-8 cannot be one
+/// and passes unchanged; reading by text stopped at the first such line, and
+/// the pipe closing under cargo then failed its writes.
+fn relay_stderr(from: impl std::io::Read, to: &mut impl std::io::Write, own: &str) -> std::io::Result<()> {
+    let mut reader = BufReader::new(from);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            return Ok(());
+        }
+        let text = std::str::from_utf8(&line).ok().map(|t| t.trim_end_matches(['\n', '\r']));
+        if text.is_some_and(|t| is_dependency_build_script_warning(t, own)) {
+            continue;
+        }
+        to.write_all(&line)?;
+    }
+}
+
+/// The colour flag cargo is given: `always` where its stderr reaches a
+/// terminal through the relay, and cargo's own default otherwise.
+fn colour_args(terminal: bool) -> Vec<&'static str> {
+    if terminal { vec!["--color", "always"] } else { Vec::new() }
+}
+
+/// `line` with its terminal escape sequences (`ESC [ ... <letter>`) taken out,
+/// so a coloured line is read as the text it shows.
+fn without_escapes(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if chars.next() == Some('[') {
+                for d in chars.by_ref() {
+                    if d.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Whether a line of cargo's stderr is a `cargo::warning` from the build
+/// script of a package other than the lint crate itself: cargo writes those as
+/// `warning: <package>@<version>: <text>`, coloured on a terminal. `own` is
+/// the generated lint crate's package name, compared whole, `-` and `_` alike,
+/// so a dependency whose name is a prefix of it is still a dependency.
+fn is_dependency_build_script_warning(line: &str, own: &str) -> bool {
+    let line = without_escapes(line);
+    let Some((unit, _)) = line.strip_prefix("warning: ").and_then(|rest| rest.split_once(": ")) else {
+        return false;
+    };
+    let Some((package, version)) = unit.split_once('@') else {
+        return false;
+    };
+    let named = !package.is_empty()
+        && package.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    let versioned = version.starts_with(|c: char| c.is_ascii_digit());
+    named && versioned && own.replace('-', "_") != package.replace('-', "_")
 }
 
 #[cfg(test)]

@@ -42,11 +42,17 @@ use crate::render_design;
 // off leaves its file behind the same way. The replacement is a sweep keyed on
 // the generated marker `render_design::write_generated` already writes, which
 // needs its own pass because the directory also holds consumer-authored rules.
-const RENAMED_BUILTIN_RULES: &[(&str, &str)] = &[("tool-catalogue", "catalogues")];
+const RENAMED_BUILTIN_RULES: &[(&str, &str)] = &[
+    ("tool-catalogue", "catalogues"),
+    ("bench-and-sketch-discipline", "benches"),
+    ("generated", "generated-agent-rules"),
+];
 
 mod helpers;
 pub(crate) use helpers::*;
 mod builtins;
+mod guide_hook;
+pub(crate) use guide_hook::*;
 pub(crate) use builtins::*;
 mod wire;
 pub(crate) use wire::*;
@@ -127,6 +133,14 @@ pub fn generate_agent_rules(
 
     vars.push(("PREAMBLE".to_string(), preamble.clone()));
     vars.push(("POSTAMBLE".to_string(), postamble.clone()));
+
+    // The bookends are said once, in the always-loaded `mockspace` rule, and
+    // stamped on nothing else: every rule loaded beside it would repeat them.
+    let banner = BuiltinRule {
+        name:     "mockspace".to_string(),
+        apply_to: vec!["**".to_string()],
+        body:     format!("{preamble}\n\n{postamble}"),
+    };
     let mut count = 0;
 
     // --- MAIN.md.tmpl -> .claude/CLAUDE.md + .github/copilot-instructions.md ---
@@ -137,7 +151,7 @@ pub fn generate_agent_rules(
         // Claude: .claude/CLAUDE.md (discovered from .claude/ directory)
         let claude_dir = repo_root.join(".claude");
         let _ = fs::create_dir_all(&claude_dir);
-        let claude_content = format_with_bookends(&header_md, &preamble, &body, &postamble);
+        let claude_content = format_with_header(&header_md, &body);
         let claude_path = claude_dir.join("CLAUDE.md");
         render_design::write_generated(&claude_path, &claude_content);
         eprintln!("  {}", claude_path.display());
@@ -164,7 +178,7 @@ pub fn generate_agent_rules(
         // Copilot: .github/copilot-instructions.md
         let copilot_dir = repo_root.join(".github");
         let _ = fs::create_dir_all(&copilot_dir);
-        let copilot_content = format_with_bookends(&header_md, &preamble, &body, &postamble);
+        let copilot_content = format_with_header(&header_md, &body);
         let copilot_path = copilot_dir.join("copilot-instructions.md");
         render_design::write_generated(&copilot_path, &copilot_content);
         eprintln!("  {}", copilot_path.display());
@@ -201,7 +215,7 @@ pub fn generate_agent_rules(
         }
     }
 
-    for builtin_rule in &builtins.rules {
+    for builtin_rule in std::iter::once(&banner).chain(&builtins.rules) {
         // Skip if consumer has a template with the same name
         if consumer_rule_names.contains(&builtin_rule.name) {
             eprintln!("  {} (builtin, overridden by consumer)", builtin_rule.name);
@@ -212,7 +226,7 @@ pub fn generate_agent_rules(
         let claude_fm = format_claude_paths(&builtin_rule.apply_to);
         let claude_content = format!(
             "{claude_fm}\n{}",
-            format_with_bookends(&header_md, &preamble, &builtin_rule.body, &postamble)
+            format_with_header(&header_md, &builtin_rule.body)
         );
         let claude_path = claude_rules_dir.join(format!("{}.md", builtin_rule.name));
         render_design::write_generated(&claude_path, &claude_content);
@@ -223,7 +237,7 @@ pub fn generate_agent_rules(
         let copilot_fm = format_copilot_apply_to(&builtin_rule.apply_to);
         let copilot_content = format!(
             "{copilot_fm}\n{}",
-            format_with_bookends(&header_md, &preamble, &builtin_rule.body, &postamble)
+            format_with_header(&header_md, &builtin_rule.body)
         );
         let copilot_path =
             copilot_instructions_dir.join(format!("{}.instructions.md", builtin_rule.name));
@@ -242,8 +256,6 @@ pub fn generate_agent_rules(
         &claude_hooks_dir,
         &copilot_hooks_dir,
         &header_md,
-        &preamble,
-        &postamble,
     );
     count += derived_count;
 
@@ -254,8 +266,6 @@ pub fn generate_agent_rules(
         &copilot_instructions_dir,
         &vars,
         &header_md,
-        &preamble,
-        &postamble,
         registry,
     );
 
@@ -287,7 +297,7 @@ pub fn generate_agent_rules(
             let claude_fm = format_claude_paths(&apply_to);
             let claude_content = format!(
                 "{claude_fm}\n{}",
-                format_with_bookends(&header_md, &preamble, &body, &postamble)
+                format_with_header(&header_md, &body)
             );
             let claude_path = claude_rules_dir.join(format!("{stem}.md"));
             render_design::write_generated(&claude_path, &claude_content);
@@ -298,7 +308,7 @@ pub fn generate_agent_rules(
             let copilot_fm = format_copilot_apply_to(&apply_to);
             let copilot_content = format!(
                 "{copilot_fm}\n{}",
-                format_with_bookends(&header_md, &preamble, &body, &postamble)
+                format_with_header(&header_md, &body)
             );
             let copilot_path = copilot_instructions_dir.join(format!("{stem}.instructions.md"));
             render_design::write_generated(&copilot_path, &copilot_content);
@@ -331,7 +341,7 @@ pub fn generate_agent_rules(
         let _ = fs::create_dir_all(&claude_skill_dir);
         let claude_content = format!(
             "{skill_fm}\n{}",
-            format_with_bookends(&header_md, &preamble, &builtin_skill.body, &postamble)
+            format_with_header(&header_md, &builtin_skill.body)
         );
         let claude_path = claude_skill_dir.join("SKILL.md");
         render_design::write_generated(&claude_path, &claude_content);
@@ -343,7 +353,7 @@ pub fn generate_agent_rules(
         let _ = fs::create_dir_all(&copilot_skill_dir);
         let copilot_content = format!(
             "{skill_fm}\n{}",
-            format_with_bookends(&header_md, &preamble, &builtin_skill.body, &postamble)
+            format_with_header(&header_md, &builtin_skill.body)
         );
         let copilot_path = copilot_skill_dir.join("SKILL.md");
         render_design::write_generated(&copilot_path, &copilot_content);
@@ -439,7 +449,7 @@ pub fn generate_agent_rules(
             let _ = fs::create_dir_all(&claude_skill_dir);
             let claude_content = format!(
                 "{skill_fm}\n{}",
-                format_with_bookends(&header_md, &preamble, &body, &postamble)
+                format_with_header(&header_md, &body)
             );
             let claude_path = claude_skill_dir.join("SKILL.md");
             render_design::write_generated(&claude_path, &claude_content);
@@ -451,7 +461,7 @@ pub fn generate_agent_rules(
             let _ = fs::create_dir_all(&copilot_skill_dir);
             let copilot_content = format!(
                 "{skill_fm}\n{}",
-                format_with_bookends(&header_md, &preamble, &body, &postamble)
+                format_with_header(&header_md, &body)
             );
             let copilot_path = copilot_skill_dir.join("SKILL.md");
             render_design::write_generated(&copilot_path, &copilot_content);
@@ -611,14 +621,12 @@ pub fn generate_agent_rules(
     count
 }
 
-/// Assemble content with preamble before body and postamble after.
 /// Maximum word count for each of the built-in and consumer-authored
-/// preamble/postamble bookends. Bookends are re-stamped on every rule
-/// file and every skill body, so keeping them under this budget prevents
-/// context bloat when multiple rules load simultaneously.
+/// preamble/postamble bookends. They load every session, in the `mockspace`
+/// rule, so they stay constant reminders only.
 pub const BOOKEND_MAX_WORDS: usize = 25;
 
-/// Built-in preamble stamped before every rule body and MAIN instructions.
+/// Built-in preamble, the first half of the always-loaded `mockspace` rule.
 /// Must stay within `BOOKEND_MAX_WORDS`: enforced by unit test below.
 pub const BUILTIN_PREAMBLE: &str = concat!(
     "> **MOCKSPACE:** docs=design. source=untrusted. ",
@@ -627,11 +635,10 @@ pub const BUILTIN_PREAMBLE: &str = concat!(
     "No shortcuts.",
 );
 
-/// Built-in postamble stamped after every rule body and MAIN instructions.
+/// Built-in postamble, the second half of the always-loaded `mockspace` rule.
 /// Must stay within `BOOKEND_MAX_WORDS`: enforced by unit test below.
 pub const BUILTIN_POSTAMBLE: &str = concat!(
-    "---\n",
-    "> **VERIFY:** lint-only --commit green? src CL covers it? ",
+    "> **VERIFY:** `cargo mock --lint-only --commit` green? src CL covers it? ",
     "Never edit `.claude/`/`.github/` directly. ",
     "Deprecate, never addendum.",
 );

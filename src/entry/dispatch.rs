@@ -236,6 +236,15 @@ fn explain_lint_load_failure(cfg: &Config, err: &impl std::fmt::Display) -> Stri
     s
 }
 
+/// Configures a loaded pack from the project's config: each lint from `[lints.<name>]` and each
+/// tool from `[tools.<name>]`. A key a tool does not declare is not handed over here, and the run
+/// of that tool refuses it (`entry::tool`). One function so the dispatcher and its tests configure
+/// the same way.
+pub(crate) fn configure_pack(pack: &mut LintPack, cfg: &Config) {
+    pack.configure_from(&cfg.lint_overrides);
+    pack.configure_tools(&cfg.tool_params);
+}
+
 pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // The engine runs as a grandchild of git hooks, whose exported repo-location
     // GIT_* variables poison every `git` this process spawns from a different
@@ -339,6 +348,15 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         return crate::suite::history_guard::run(&cfg.repo_root, &cfg.mock_dir);
     }
 
+    // The pre-commit gate of a commit staging rows of the console's direct namespaces alone. It
+    // runs the registry check and nothing else, so it comes before the lint pack is loaded and
+    // before the gate is reinstalled, both of which cost far more than the check.
+    if first_positional(&args) == Some("rows-gate") {
+        return super::rows_gate::run(&cfg, |reg| {
+            registry_gate(&cfg, reg, &[], LintMode::Commit, pack)
+        });
+    }
+
     // A declared data ref with no instance reads as a directory with nothing in it, and a file a
     // ref holds that the branch still tracks is in two places. Either stops the run here, before
     // a lint or a tool reads the mock directory. The verbs that repair it are let through.
@@ -370,6 +388,23 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         );
     }
 
+    // These read the mock directory and no generated crate, so they run before the lint pack is
+    // loaded: loading it generates the crate and asks cargo whether it is fresh, which is most of
+    // the cost of a call and nothing these two read.
+    match first_positional(&args) {
+        Some("sketches") => {
+            let rest: Vec<String> =
+                subcommand_args(&args, "sketches").into_iter().map(str::to_string).collect();
+            return crate::sketches::cmd(&cfg, &rest);
+        },
+        Some("test-units") => {
+            let rest: Vec<String> =
+                subcommand_args(&args, "test-units").into_iter().map(str::to_string).collect();
+            return crate::suite::layout_report::run(&cfg, &rest);
+        },
+        _ => {},
+    }
+
     // Effective custom lints. The old proxy statically links them in and passes
     // them here; a launcher-run engine instead gets the pin-matched
     // `mockspace-lint-rules` dep via `--mockspace-lint-rules-dep` and loads this
@@ -380,16 +415,12 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         match arg_value(&args, "--mockspace-lint-rules-dep") {
             Some(dep) => {
                 let built = match scoped_tool(&args, &cfg.mock_dir.join("tools")) {
-                    Some(tool) => match crate::custom_lints::scoped_plan(&cfg, tool) {
-                        crate::custom_lints::ScopedPlan::Refuse(d) => {
+                    Some(tool) => match crate::custom_lints::load_tool(&cfg, &cfg.config_path, &dep, tool) {
+                        Ok(crate::custom_lints::ToolLoad::Refused(d)) => {
                             return super::tool::refuse_duplicates(&d);
                         },
-                        crate::custom_lints::ScopedPlan::OneTool => {
-                            crate::custom_lints::load_tool(&cfg, &cfg.config_path, &dep, tool)
-                        },
-                        crate::custom_lints::ScopedPlan::Whole => {
-                            crate::custom_lints::load(&cfg, &cfg.config_path, &dep)
-                        },
+                        Ok(crate::custom_lints::ToolLoad::Loaded(l)) => Ok(l),
+                        Err(e) => Err(e),
                     },
                     None => crate::custom_lints::load(&cfg, &cfg.config_path, &dep),
                 };
@@ -430,7 +461,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // and `configure` wants `&mut`. Here the pack is still owned, so this is
     // where it happens, once, for every kind.
     if let Some(l) = &mut loaded {
-        l.pack.configure_from(&cfg.lint_overrides);
+        configure_pack(&mut l.pack, &cfg);
     }
     let pack = match &loaded {
         Some(l) => &l.pack,
@@ -1907,7 +1938,7 @@ mod tests {
 
     /// A `<mock>` holding one tool directory, named, with nothing built.
     fn mock_with_tool_dir(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let mock = tmp.path().join("mock");
         let c = mock.join("tools").join(name);
         std::fs::create_dir_all(c.join("src")).unwrap();
@@ -1931,7 +1962,7 @@ mod tests {
         // one that still had its own copy of the same name, which is exactly
         // the copy adopting a pack deletes, so the check passed in the only
         // arrangement that made it meaningless.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let mock = tmp.path().join("mock");
         std::fs::create_dir_all(&mock).unwrap();
         let pack = pack_with(&["coverage"]);
@@ -1957,7 +1988,7 @@ mod tests {
     fn control_neither_source_invents_a_name() {
         // The vacuity control. An implementation returning some fixed list, or
         // one that never returned empty, would pass both arms above.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let empty = LintPack::default();
         assert_eq!(
             dispatchable_tool_names(tmp.path(), &empty),
@@ -2206,7 +2237,7 @@ fn registry_gate(
     let config_text = std::fs::read_to_string(&cfg.config_path);
     // The store lint verdicts live in, opened here as well because this phase runs before the lint
     // run opens its own; both are the same directory, salted by the same engine and pack.
-    let verdicts = crate::lint::verdicts::DiskVerdicts::open(&pack.identity);
+    let verdicts = crate::lint::verdicts::DiskVerdicts::open(&cfg.repo_root, &pack.identity);
     let saved = verdicts.as_ref().map(|v| v as &dyn registry::VerdictCache);
     let checked = registry::check(cfg, registry, cycles, config_text.as_deref().ok(), saved);
     let (gated, warned) = registry_scope::report(checked.findings, &changed);
@@ -2286,7 +2317,7 @@ mod scoped_tool_tests {
     }
 
     fn tools(names: &[&str]) -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         for n in names {
             let t = dir.path().join(n);
             std::fs::create_dir_all(&t).unwrap();
@@ -2341,7 +2372,7 @@ mod scoped_tool_law_tests {
         // `check` would pass a rule that only knew that one.
         let mut names: Vec<&str> = super::super::help::known_commands();
         names.extend(["help", "--help", "-h", "-?"]);
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         for n in names.iter().filter(|n| !n.starts_with('-')) {
             let t = dir.path().join(n);
             std::fs::create_dir_all(&t).unwrap();
@@ -2357,7 +2388,7 @@ mod scoped_tool_law_tests {
     #[test]
     fn a_value_flag_names_no_tool_even_with_that_directory_present() {
         // `--scope ticket-add` is a value, not a subcommand, and the run is a lint run.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let t = dir.path().join("ticket-add");
         std::fs::create_dir_all(&t).unwrap();
         std::fs::write(t.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();

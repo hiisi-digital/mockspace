@@ -33,7 +33,7 @@ fn nuke_verdicts(lib_rs: &[(&str, &str)]) -> (bool, bool) {
     (hook, engine)
 }
 
-const ENGINE_LIB: &str = "mock/crates/kaski-sim/src/lib.rs";
+const ENGINE_LIB: &str = "mock/crates/game-sim/src/lib.rs";
 const CONSOLE_LIB: &str = "mock/applets/console/crates/console-core/src/lib.rs";
 
 #[test]

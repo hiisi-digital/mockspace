@@ -38,7 +38,7 @@ fn git(root: &Path, args: &[&str]) -> String {
 
 /// A repository with `from` committed and then staged as moved to `to`.
 fn moved(from: &str, to: &str) -> tempfile::TempDir {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     git(root, &["init", "-q"]);
     std::fs::create_dir_all(root.join(from).parent().unwrap()).unwrap();

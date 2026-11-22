@@ -35,7 +35,7 @@ exit 0
 /// Run `ms_gate pre-commit --lint-only --commit` with the stub; returns the output and the files
 /// the run left in its temporary directory.
 fn run(env: &[(&str, &str)]) -> (Output, Vec<String>) {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let bin = tmp.path().join("bin");
     let scratch = tmp.path().join("tmp");
     fs::create_dir_all(&bin).unwrap();

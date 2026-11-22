@@ -1,0 +1,12 @@
+diff --git a/mockspace-manifest/src/toml_text.rs b/mockspace-manifest/src/toml_text.rs
+index 8d85b16..5b1d4a2 100644
+--- a/mockspace-manifest/src/toml_text.rs
++++ b/mockspace-manifest/src/toml_text.rs
+@@ -19,7 +19,6 @@ pub fn basic_string(s: &str) -> String {
+     out.push('"');
+     for c in s.chars() {
+         match c {
+-            '\\' => out.push_str("\\\\"),
+             '"' => out.push_str("\\\""),
+             c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
+             c => out.push(c),

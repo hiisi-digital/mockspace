@@ -156,7 +156,7 @@ const COMMANDS: &[Cmd] = &[
         name:    "check-edit",
         summary: "ask one crate lint whether an edit not yet made would leave its file clean",
         args:    &[],
-        help:    "Asks the per-crate lint named by --lint about the file named by --file (an absolute path), as it would read after an edit, through the same pass the gate gives every crate: the same configuration, binding, filters and lint:allow markers. The generated hook adds --lint-only, which skips the gate's own setup and changes no verdict. Stdin is the text the edit writes: with --replace <file> it replaces the text in that file in the target (every occurrence with --all, else the one), without it it is the target's whole new text. --edits <file> is a JSON list of {old_string, new_string, replace_all} applied in order, a first empty old_string creating the file, and stands in for stdin, --replace and --all. An edit whose old text is absent, or occurs more than once without --all, is one the editing tool refuses itself, so it gets no verdict and exits 0. Prints the lint's blocking findings in the target and exits 1 if there are any, 2 when it cannot answer: no per-crate lint of that name (a lint judging the crate as a whole is one), a missing argument, a relative --file, or an unreadable input. --gate selects commit (default), push or build severities and refuses any other value. This is how an agent hook named after a lint reaches the lint.",
+        help:    "Asks the per-crate lint named by --lint about the file named by --file (an absolute path), as it would read after an edit, through the same pass the gate gives every crate: the same configuration, binding, filters and lint:allow markers. The generated hook adds --lint-only, which skips the gate's own setup and changes no verdict. Stdin is the text the edit writes: with --replace <file> it replaces the text in that file in the target (every occurrence with --all, else the one), without it it is the target's whole new text. --edits <file> is a JSON list of {old_string, new_string, replace_all} applied in order, a first empty old_string creating the file, and stands in for stdin, --replace and --all. An edit whose old text is absent, or occurs more than once without --all, is one the editing tool refuses itself, so it gets no verdict and exits 0. Prints the lint's blocking findings in the target and exits 1 if there are any, 2 when it cannot answer: no per-crate lint of that name (a lint judging the crate as a whole is one), a missing argument, a relative --file, or an unreadable input. --gate selects commit (default), push or build severities and refuses any other value. One repository lint answers too, `changelist-required`, the design round's phase gate: outside IMPL it passes a source file that declares nothing (comments, module docs and inner attributes), which is how a round's doc phase adds a crate, and refuses one that declares an item. This is how an agent hook named after a lint reaches the lint.",
     },
     Cmd {
         name:    "query",
@@ -257,12 +257,55 @@ const COMMANDS: &[Cmd] = &[
                   written it. Exit status 0 passes, 1 refuses.",
     },
     Cmd {
+        name:    "rows-gate",
+        summary: "gate a commit of console-direct registry rows by the registry check alone",
+        args:    &[],
+        help:    "Run by the generated pre-commit hook when only registry rows are staged. \
+                  When every staged file is a registry file whose tables all belong to \
+                  namespaces marked `console_direct = true`, it runs the registry check and \
+                  nothing else (no lint pack is loaded, no crate parsed, no lint run) and \
+                  records the staged tree in `mockspace/gated-rows` under the git directory, \
+                  so the pre-push hook passes a range of such commits without linting it \
+                  again. Exit status 0 passes, 1 refuses, 3 says the staged set is more than \
+                  such rows and the hook runs its usual gate.",
+    },
+    Cmd {
         name:    "bench",
         summary: "run the bench harness",
         args:    &[],
-        help:    "Runs the bench harness. Everything after `bench` (a variant \
-                  name, flags such as --release) is forwarded to it verbatim, so \
-                  its own usage governs from that point on.",
+        help:    "Runs the bench harness: `init`, `add <bench> [<arm>]`, `run \
+                  [<bench>...]`, `report`, `list`, `test`, `migrate`, `disasm \
+                  <bench> <arm> <symbol>`. Everything after `bench` is forwarded \
+                  to it verbatim, so its own usage governs from that point on.",
+    },
+    Cmd {
+        name:    "sketches",
+        summary: "list every sketch with the outcome its findings record",
+        args:    &[],
+        help:    "Reads every directory under <mock>/research/sketches/ and prints \
+                  its name and the outcome its FINDINGS.md records on an \
+                  `**Outcome:**` line (WORKS, FAILS or INCONCLUSIVE), or that it has \
+                  no FINDINGS.md or no outcome line, and names a Rust source that \
+                  times something, which makes the sketch a bench. `--open` keeps \
+                  only the sketches wanting attention. A report: it changes nothing \
+                  and exits 0, or 1 on a flag it does not take.",
+    },
+    Cmd {
+        name:    "test-units",
+        summary: "show how each member's tests divide into binaries",
+        args:    &[ArgSpec {
+            name:        "member",
+            required:    false,
+            description: "a workspace member to report on, repeatable; every member when none",
+        }],
+        help:    "For each member named, or every member, prints each \
+                  integration-test binary with how many files it is built from, \
+                  marks the wide ones (they read the environment or file!(), or \
+                  declare a module that cannot be followed, so they rerun on every \
+                  test file of the member), and names the Rust files under tests/ no \
+                  binary claims, which move every binary. The same layout `mock test` \
+                  selects by. A report: it changes nothing, exits 0, or 1 when a \
+                  member named is not in the workspace.",
     },
     Cmd {
         name:    "panel",

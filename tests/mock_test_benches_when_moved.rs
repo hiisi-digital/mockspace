@@ -11,7 +11,7 @@
 //! with nothing changed alike. The tree here is the one `mock bench init`
 //! makes: a root `bench.toml`, a bench with a `bench.toml`, a manifest-less arm
 //! and a support crate that depends on a workspace crate by path, the way
-//! kaski's do. The assertions are on the `=== benches` header, which is printed
+//! consumers' trees do. The assertions are on the `=== benches` header, which is printed
 //! exactly when the tree is run, on the note printed when it is left out, and
 //! on the last line of the run.
 //!
@@ -74,11 +74,12 @@ fn fixture(root: &Path) {
     write(&root.join(DEP), DEP_OK);
 
     let repo = env!("CARGO_MANIFEST_DIR");
+    let repo_toml = mockspace_manifest::toml_text::basic_string(repo);
     let benches = root.join("mock/benches");
     write(
         &benches.join("bench.toml"),
         &format!(
-            "[build]\nmockspace = '{{ path = \"{repo}\" }}'\nopt-level = 0\nlto = \"off\"\n\
+            "[build]\nmockspace = '{{ path = {repo_toml} }}'\nopt-level = 0\nlto = \"off\"\n\
              codegen-units = 16\n\n[timing]\npasses = 1\nruns_per_pass = 20\nbatch_size = 5\n\
              harness_runs = 1\ncooldowns_ms = [0]\n"
         ),
@@ -133,7 +134,7 @@ fn last_line(t: &str) -> &str {
 
 #[test]
 fn the_benches_tree_runs_when_it_moved_or_is_asked_and_not_otherwise() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root);
 

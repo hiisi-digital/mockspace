@@ -3,12 +3,20 @@ use std::time::Duration;
 
 use super::*;
 
+/// Write `path` as the linker and cargo do: a new file put in place of the old, never the old one
+/// rewritten, so a hard link to the old file keeps what it had.
+fn replace(path: &Path, bytes: &str) {
+    let tmp = path.with_extension("new");
+    std::fs::write(&tmp, bytes).unwrap();
+    std::fs::rename(&tmp, path).unwrap();
+}
+
 /// A "build": a library and the dep-info cargo would leave beside it, naming `sources`.
 fn fake_build(out: &Path, bytes: &str, sources: &[&Path]) -> Built {
     let release = out.join("target").join("release");
     std::fs::create_dir_all(&release).unwrap();
     let dylib = release.join("libfake.so");
-    std::fs::write(&dylib, bytes).unwrap();
+    replace(&dylib, bytes);
     let list: Vec<String> = sources.iter().map(|p| p.display().to_string()).collect();
     std::fs::write(release.join("libfake.d"), format!("out.d: {}\n", list.join(" "))).unwrap();
     std::fs::create_dir_all(release.join("deps")).unwrap();
@@ -25,7 +33,7 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let source = tmp.path().join("lints").join("probe.rs");
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
     std::fs::write(&source, "v1").unwrap();
@@ -48,14 +56,14 @@ fn an_identity_built_once_is_not_built_again() {
         calls.set(calls.get() + 1);
         Ok(fake_build(&f.ran, "first", &[&f.source]))
     };
-    let first = dylib_for(&f.base, "key", &f.roots, &f.ran, Duration::ZERO, || true, build).unwrap();
+    let first = dylib_for(&f.base, "key", "rev", &f.roots, &f.ran, Duration::ZERO, || true, build).unwrap();
     assert_eq!(calls.get(), 1);
     assert_eq!(std::fs::read_to_string(&first.path).unwrap(), "first");
     assert!(first.identity.as_deref().is_some_and(|i| i.starts_with("key-")));
 
     // The build output is overwritten by another tree's run in between.
-    std::fs::write(&first.path, "something else").unwrap();
-    let second = dylib_for(&f.base, "key", &f.roots, &f.ran, Duration::ZERO, || true, build).unwrap();
+    replace(&first.path, "something else");
+    let second = dylib_for(&f.base, "key", "rev", &f.roots, &f.ran, Duration::ZERO, || true, build).unwrap();
     assert_eq!(calls.get(), 1, "a kept library is loaded, not rebuilt");
     assert_eq!(std::fs::read_to_string(second.path).unwrap(), "first");
     assert_eq!(second.identity, first.identity);
@@ -66,7 +74,7 @@ fn a_kept_library_is_not_replayed_for_a_file_that_changed_since() {
     let f = fixture();
     let calls = Cell::new(0);
     let load = |bytes: &'static str| {
-        dylib_for(&f.base, "key", &f.roots, &f.ran, Duration::ZERO, || true, || {
+        dylib_for(&f.base, "key", "rev", &f.roots, &f.ran, Duration::ZERO, || true, || {
             calls.set(calls.get() + 1);
             Ok(fake_build(&f.ran, bytes, &[&f.source]))
         })
@@ -91,7 +99,7 @@ fn another_key_is_built() {
     let f = fixture();
     let calls = Cell::new(0);
     for key in ["one", "two"] {
-        dylib_for(&f.base, key, &f.roots, &f.ran, Duration::ZERO, || true, || {
+        dylib_for(&f.base, key, "rev", &f.roots, &f.ran, Duration::ZERO, || true, || {
             calls.set(calls.get() + 1);
             Ok(fake_build(&f.ran, key, &[&f.source]))
         })
@@ -103,9 +111,9 @@ fn another_key_is_built() {
 #[test]
 fn a_failed_build_keeps_nothing() {
     let f = fixture();
-    assert!(dylib_for(&f.base, "key", &f.roots, &f.ran, Duration::ZERO, || true, || Err("no".to_string())).is_err());
+    assert!(dylib_for(&f.base, "key", "rev", &f.roots, &f.ran, Duration::ZERO, || true, || Err("no".to_string())).is_err());
     let calls = Cell::new(0);
-    dylib_for(&f.base, "key", &f.roots, &f.ran, Duration::ZERO, || true, || {
+    dylib_for(&f.base, "key", "rev", &f.roots, &f.ran, Duration::ZERO, || true, || {
         calls.set(1);
         Ok(fake_build(&f.ran, "x", &[&f.source]))
     })
@@ -118,7 +126,7 @@ fn a_build_that_cannot_be_tied_to_its_files_is_returned_and_not_kept() {
     let f = fixture();
     let calls = Cell::new(0);
     let build_late = || {
-        dylib_for(&f.base, "key", &f.roots, &f.ran, Duration::ZERO, || true, || {
+        dylib_for(&f.base, "key", "rev", &f.roots, &f.ran, Duration::ZERO, || true, || {
             calls.set(calls.get() + 1);
             let mut b = fake_build(&f.ran, "x", &[&f.source]);
             // A source modified after the build began.
@@ -138,14 +146,14 @@ fn a_build_that_cannot_be_tied_to_its_files_is_returned_and_not_kept() {
 fn only_files_unused_for_long_are_reaped() {
     let f = fixture();
     for key in ["old", "new"] {
-        dylib_for(&f.base, key, &f.roots, &f.ran, Duration::ZERO, || true, || Ok(fake_build(&f.ran, key, &[&f.source]))).unwrap();
+        dylib_for(&f.base, key, "rev", &f.roots, &f.ran, Duration::ZERO, || true, || Ok(fake_build(&f.ran, key, &[&f.source]))).unwrap();
     }
     let later = SystemTime::now() + Duration::from_secs(10 * 24 * 3600);
     assert_eq!(reap(&f.base, later, Duration::from_secs(14 * 24 * 3600)), 0, "inside the window");
     let much_later = SystemTime::now() + Duration::from_secs(20 * 24 * 3600);
     assert_eq!(reap(&f.base, much_later, Duration::from_secs(14 * 24 * 3600)), 4, "each is two files");
     let calls = Cell::new(0);
-    dylib_for(&f.base, "old", &f.roots, &f.ran, Duration::ZERO, || true, || {
+    dylib_for(&f.base, "old", "rev", &f.roots, &f.ran, Duration::ZERO, || true, || {
         calls.set(1);
         Ok(fake_build(&f.ran, "old", &[&f.source]))
     })
@@ -159,7 +167,7 @@ fn a_library_built_while_its_inputs_moved_is_not_kept_under_the_old_key() {
     let f = fixture();
     let calls = Cell::new(0);
     let load = |unchanged: bool| {
-        dylib_for(&f.base, "key", &f.roots, &f.ran, Duration::ZERO, move || unchanged, || {
+        dylib_for(&f.base, "key", "rev", &f.roots, &f.ran, Duration::ZERO, move || unchanged, || {
             calls.set(calls.get() + 1);
             Ok(fake_build(&f.ran, "built", &[&f.source]))
         })
@@ -171,4 +179,43 @@ fn a_library_built_while_its_inputs_moved_is_not_kept_under_the_old_key() {
     assert_eq!(calls.get(), 2, "it was not kept, so the next load builds");
     load(true);
     assert_eq!(calls.get(), 2, "a build under unchanged inputs is kept");
+}
+
+#[test]
+fn a_kept_library_is_the_built_file_and_not_a_copy() {
+    use std::os::unix::fs::MetadataExt;
+    let f = fixture();
+    let kept = dylib_for(&f.base, "key", "rev", &f.roots, &f.ran, Duration::ZERO, || true, || {
+        Ok(fake_build(&f.ran, "built", &[&f.source]))
+    })
+    .unwrap();
+    let name = kept.identity.unwrap();
+    let stored = f.base.join(DIR).join(format!("{name}.so"));
+    assert_eq!(
+        std::fs::metadata(&stored).unwrap().ino(),
+        std::fs::metadata(&kept.path).unwrap().ino(),
+        "the store holds the bytes the build left, once"
+    );
+}
+
+#[test]
+fn a_new_revision_removes_what_the_crate_kept_at_the_old_one() {
+    let f = fixture();
+    let kept = |rev: &str, bytes: &'static str| {
+        std::fs::write(&f.source, bytes).unwrap();
+        dylib_for(&f.base, "key", rev, &f.roots, &f.ran, Duration::ZERO, || true, || {
+            Ok(fake_build(&f.ran, bytes, &[&f.source]))
+        })
+        .unwrap()
+        .identity
+        .unwrap()
+    };
+    let exists = |name: &str| f.base.join(DIR).join(format!("{name}.so")).is_file();
+    let one = kept("old", "v1");
+    let two = kept("old", "v2");
+    assert!(exists(&one) && exists(&two), "two states of the sources at one revision are both kept");
+    let three = kept("new", "v3");
+    assert!(exists(&three));
+    assert!(!exists(&one) && !exists(&two), "nothing of the old revision is left");
+    assert!(!f.base.join(DIR).join(format!("{one}.{LIST}")).exists(), "nor its file list");
 }

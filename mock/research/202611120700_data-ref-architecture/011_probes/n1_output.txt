@@ -1,0 +1,15 @@
+git version 2.43.0
+[git~1]        error: Invalid path 'git~1/f' fatal: git update-index: --cacheinfo can
+[GIT~1]        error: Invalid path 'GIT~1/f' fatal: git update-index: --cacheinfo can
+[Git~1]        error: Invalid path 'Git~1/f' fatal: git update-index: --cacheinfo can
+[git~2]        tracked
+[.git~1]       tracked
+[~mock]        tracked
+[~git~1]       tracked
+[git~1x]       tracked
+[xgit~1]       tracked
+[.git ]        error: Invalid path '.git /f' fatal: git update-index: --cacheinfo can
+[.git.]        error: Invalid path '.git./f' fatal: git update-index: --cacheinfo can
+[@]            tracked
+[gitmod~1]     tracked
+[.gitmodules]  tracked

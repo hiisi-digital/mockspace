@@ -51,17 +51,17 @@ impl RepoLint for ChangelistDocGate {
         // there were no crates, which silently disabled the gate in a repo whose
         // taxonomy had not been settled yet.
         let workspace_root = ctx.mock_dir;
-        let layout = SrcLayout::new(workspace_root, ctx.src_dirs);
+        let layout = SrcLayout::new(workspace_root, ctx.src_dirs());
 
         let design_rounds = workspace_root.join("design_rounds");
-        let phase = changelist_helpers::current_phase(&design_rounds);
+        let phase = changelist_helpers::current_phase(ctx.view(), &design_rounds);
 
         // Doc templates are allowed only in Phase::Doc.
         if phase == Phase::Doc {
             return Vec::new();
         }
 
-        let violating_files = pending_doc_templates(workspace_root, ctx.src_dirs, ctx.ref_files);
+        let violating_files = pending_doc_templates(ctx.view(), workspace_root, ctx.src_dirs(), ctx.ref_files());
 
         violating_files
             .into_iter()
@@ -116,12 +116,13 @@ impl RepoLint for ChangelistDocGate {
 /// what ends the window they can still be committed in: after it, each one is
 /// either reverted or carried through a deprecation.
 pub fn pending_doc_templates(
+    view: &crate::View<'_>,
     mock_dir: &Path,
     src_dirs: &[PathBuf],
     refs: &src_layout::RefFiles,
 ) -> Vec<(String, String)> {
     let layout = SrcLayout::new(mock_dir, src_dirs);
-    src_layout::changed_files(mock_dir, &layout, refs, |f| is_doc_template(&layout, f))
+    src_layout::changed_files(view, mock_dir, &layout, refs, |f| is_doc_template(&layout, f))
 }
 
 /// A doc template is a `.md.tmpl` or `.md` file under a source directory, with

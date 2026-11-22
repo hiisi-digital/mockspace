@@ -22,8 +22,11 @@ use std::path::Path;
 /// The `mockspace-lint-rules` in this workspace, renamed to `mockspace` so a
 /// tool crate's source reads exactly as a consumer's would.
 fn dep_spec() -> String {
-    let lint_rules = concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules");
-    format!("{{ package = \"mockspace-lint-rules\", path = \"{lint_rules}\" }}")
+    let lint_rules = mockspace_manifest::toml_text::basic_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/lint-rules"
+    ));
+    format!("{{ package = \"mockspace-lint-rules\", path = {lint_rules} }}")
 }
 
 /// Write a tool crate at `<tools>/<dir>` whose package is `pkg` and whose
@@ -88,7 +91,7 @@ const REPORTS: &str = r#"fn purpose(&self) -> Purpose { Purpose::Check(NotALint:
 #[test]
 #[ignore = "runs cargo build; run with --ignored"]
 fn a_tool_crate_loads_and_dispatches_across_the_cdylib() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = project(tmp.path());
     write_tool(
         &mock.join("tools"),
@@ -150,7 +153,7 @@ fn a_tools_package_name_may_differ_from_its_directory() {
     // The case that fails if discovery infers the package from the directory:
     // the generated manifest would name `greet` and cargo would not resolve it,
     // so the build fails rather than the assertion.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = project(tmp.path());
     write_tool(
         &mock.join("tools"),
@@ -172,7 +175,7 @@ fn a_tool_declaring_a_name_that_is_not_its_directory_is_detectable() {
     // reachable under a name its own source does not contain is a tool nobody
     // can grep for. Here we pin that the two names genuinely differ after a
     // real load, which is what the dispatcher's refusal keys on.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = project(tmp.path());
     write_tool(
         &mock.join("tools"),
@@ -202,7 +205,7 @@ fn a_repo_whose_only_custom_content_is_a_tool_still_builds_a_cdylib() {
     // The early return in `load` short-circuits on "no lints and no packs". If
     // tools were not counted there, this returns `Ok(None)` and every tool in
     // the project is silently unreachable.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = project(tmp.path());
     assert!(!mock.join("lints").exists(), "no lints, deliberately");
     write_tool(&mock.join("tools"), "only", "probe-only", "only", REPORTS);
@@ -221,7 +224,7 @@ fn the_stdin_opt_in_survives_the_cdylib_boundary() {
     // closes, and it is read across a dlopen. A default that did not cross
     // correctly would reintroduce the hang for every dynamically loaded tool
     // while every unit test still passed.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = project(tmp.path());
     write_tool(
         &mock.join("tools"),
@@ -236,7 +239,7 @@ fn the_stdin_opt_in_survives_the_cdylib_boundary() {
         "a tool that did not ask must not be handed stdin"
     );
 
-    let tmp2 = tempfile::tempdir().unwrap();
+    let tmp2 = mockspace_manifest::scratch::tempdir().unwrap();
     let mock2 = project(tmp2.path());
     write_tool(
         &mock2.join("tools"),
@@ -258,7 +261,7 @@ fn a_tool_and_a_lint_can_ship_in_one_crate() {
     // Why there is no separate tool entry point: a tool crate may reasonably
     // carry a lint beside its tool, and two collector symbols would make that
     // two registrations to keep in step. One `collect(pack)` covers both.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = project(tmp.path());
     let root = mock.join("tools").join("both");
     fs::create_dir_all(root.join("src")).unwrap();

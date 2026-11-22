@@ -22,7 +22,7 @@ pub(crate) fn durable_hooks_dir() -> Option<PathBuf> {
     }
     #[cfg(not(test))]
     {
-        durable_hooks_dir_from(env::var_os("XDG_CONFIG_HOME"), env::var_os("HOME"))
+        durable_hooks_dir_from(std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME"))
     }
 }
 
@@ -30,11 +30,7 @@ pub(crate) fn durable_hooks_dir() -> Option<PathBuf> {
 /// two tests installing the hooks at once do not write the same files.
 #[cfg(test)]
 fn test_config_home() -> PathBuf {
-    env::temp_dir().join(format!(
-        "ms-lib-test-config-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ))
+    mockspace_manifest::scratch::held()
 }
 
 /// Pure core of [`durable_hooks_dir`]: resolves the config base from the

@@ -1,0 +1,19 @@
+== status
+?? mock/
+== worktree remove of the parent (from main)
+fatal: '/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/003/q4/w2' contains modified or untracked files, use --force to delete it
+parent exists=yes
+== git add -A
+warning: adding embedded git repository: mock/data/research
+hint: You've added another git repository inside your current repository.
+hint: Clones of the outer repository will not contain the contents of
+hint: the embedded repository and will not know how to obtain it.
+Am mock/data/research
+160000 commit abcdf5f61b93d2bcf2a6c22a4fd3073a7e5729b2	mock/data/research
+== stash -u
+Ignoring path mock/data/research/
+Saved working directory and index state WIP on feat: d571dd3 s
+edit survives=1
+== clean -fd
+Skipping repository mock/data/research
+edit survives=1

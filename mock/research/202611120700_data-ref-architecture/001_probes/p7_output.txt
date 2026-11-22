@@ -1,0 +1,12 @@
+== checkout OLD (replaced)
+edit survives: 1
+main.rs 
+after reset --hard OLD: edit survives: 1
+== fresh clone sees replacement?
+refs/replace in clone: 0
+== after fetching refs/replace explicitly:
+refs/replace in clone: 1
+== git log -1 --format=%H OLD vs replaced identity (blame/log see replaced object):
+tree 7fec927a011def947bdae6c7ce2a0748e98ced43
+author t <t@t> 1794466462 +0000
+committer t <t@t> 1794466462 +0000

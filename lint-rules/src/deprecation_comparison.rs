@@ -37,13 +37,14 @@ impl Lint for DeprecationComparison {
 
 impl WorkspaceLint for DeprecationComparison {
     fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
-        let workspace_root = match crates.first() {
-            Some((_, ctx)) => ctx.workspace_root,
-            None => return Vec::new(),
+        let Some((_, first)) = crates.first() else {
+            return Vec::new();
         };
+        let view = first.view();
+        let workspace_root = first.workspace_root();
 
         let design_rounds = workspace_root.join("design_rounds");
-        let all_cls = changelist_helpers::find_changelists(&design_rounds);
+        let all_cls = changelist_helpers::find_changelists(view, &design_rounds);
 
         let deprecated: Vec<&ParsedChangelist> = all_cls
             .iter()
@@ -59,7 +60,7 @@ impl WorkspaceLint for DeprecationComparison {
         // active CL filename (`## 202604191900_changelist.doc.lock.md`)
         // or the generic header `## deprecation-comparison` waives the
         // error for the CL in question.
-        let shame_blobs: Vec<&str> = crates.iter().filter_map(|(_, ctx)| ctx.shame_doc).collect();
+        let shame_blobs: Vec<&str> = crates.iter().filter_map(|(_, ctx)| ctx.shame_doc()).collect();
 
         let mut errors = Vec::new();
 
@@ -84,16 +85,14 @@ impl WorkspaceLint for DeprecationComparison {
             let dep_path = design_rounds.join(&dep_cl.filename);
             let active_path = design_rounds.join(&active_cl.filename);
 
-            let dep_content = match std::fs::read_to_string(&dep_path) {
-                Ok(s) => s,
-                Err(_) => continue,
+            let Some(dep_content) = view.text(&dep_path) else {
+                continue;
             };
             if !owes_a_comparison(&dep_content, active_cl.status) {
                 continue;
             }
-            let active_content = match std::fs::read_to_string(&active_path) {
-                Ok(s) => s,
-                Err(_) => continue,
+            let Some(active_content) = view.text(&active_path) else {
+                continue;
             };
 
             errors.extend(check_comparison(
@@ -294,7 +293,6 @@ mod tests {
 
     use std::fs;
 
-    use tempfile::TempDir;
 
     use super::*;
 
@@ -533,7 +531,7 @@ Mentions `Foo`.
 
     #[test]
     fn integration_no_deprecated_no_errors() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let dr = tmp.path().join("design_rounds");
         fs::create_dir_all(&dr).unwrap();
         write_cl(
@@ -542,7 +540,7 @@ Mentions `Foo`.
             "## Overview\nText.\n",
         );
 
-        let cls = changelist_helpers::find_changelists(&dr);
+        let cls = changelist_helpers::find_changelists(&crate::Reading::new(&dr).view(), &dr);
         let deprecated: Vec<_> = cls
             .iter()
             .filter(|c| c.status == ClStatus::Deprecated)
@@ -552,7 +550,7 @@ Mentions `Foo`.
 
     #[test]
     fn integration_deprecated_with_active_missing_comparison() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let dr = tmp.path().join("design_rounds");
         fs::create_dir_all(&dr).unwrap();
 
@@ -567,7 +565,7 @@ Mentions `Foo`.
             "## New approach\nDifferent design.\n",
         );
 
-        let all_cls = changelist_helpers::find_changelists(&dr);
+        let all_cls = changelist_helpers::find_changelists(&crate::Reading::new(&dr).view(), &dr);
         let deprecated: Vec<&ParsedChangelist> = all_cls
             .iter()
             .filter(|cl| cl.status == ClStatus::Deprecated)
@@ -603,7 +601,7 @@ Mentions `Foo`.
 
     #[test]
     fn integration_deprecated_with_complete_comparison() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let dr = tmp.path().join("design_rounds");
         fs::create_dir_all(&dr).unwrap();
 
@@ -629,7 +627,7 @@ Different design.
 ",
         );
 
-        let all_cls = changelist_helpers::find_changelists(&dr);
+        let all_cls = changelist_helpers::find_changelists(&crate::Reading::new(&dr).view(), &dr);
         let dep_cl = all_cls
             .iter()
             .find(|cl| cl.status == ClStatus::Deprecated)
@@ -659,7 +657,7 @@ Different design.
 
     #[test]
     fn integration_deprecated_without_active_no_error() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let dr = tmp.path().join("design_rounds");
         fs::create_dir_all(&dr).unwrap();
 
@@ -670,7 +668,7 @@ Different design.
             "## Overview\nOld stuff.\n",
         );
 
-        let all_cls = changelist_helpers::find_changelists(&dr);
+        let all_cls = changelist_helpers::find_changelists(&crate::Reading::new(&dr).view(), &dr);
         let deprecated: Vec<_> = all_cls
             .iter()
             .filter(|cl| cl.status == ClStatus::Deprecated)

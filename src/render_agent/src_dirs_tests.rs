@@ -54,7 +54,7 @@ fn matches_any(globs: &[String], path: &str) -> bool {
 
 #[test]
 fn a_crate_under_a_second_source_directory_gets_a_rule_that_reaches_its_files() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = tmp.path();
     let cfg = grouped_cfg(repo);
     write(&repo.join("mock/crates/sim/README.md.tmpl"), "# sim\n");
@@ -71,8 +71,6 @@ fn a_crate_under_a_second_source_directory_gets_a_rule_that_reaches_its_files() 
         &claude,
         &copilot,
         &[],
-        "",
-        "",
         "",
         &crate::registry::Registry::default(),
     );
@@ -124,15 +122,13 @@ fn generate_forbidden(repo: &Path, cfg: &Config) -> (PathBuf, PathBuf) {
         &hooks,
         &repo.join("chooks"),
         "",
-        "",
-        "",
     );
     (rules, hooks)
 }
 
 #[test]
 fn a_forbidden_imports_rule_reaches_a_crate_under_each_source_directory() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = forbidden_imports_cfg(tmp.path());
     let (rules, _) = generate_forbidden(tmp.path(), &cfg);
     let rule = fs::read_dir(&rules)
@@ -163,7 +159,7 @@ fn a_forbidden_imports_rule_reaches_a_crate_under_each_source_directory() {
 fn the_forbidden_imports_check_reaches_a_crate_under_each_source_directory() {
     // The hook hands the edit to the engine, and the engine finds the crate under
     // whichever declared directory holds the file.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = tmp.path();
     let mut cfg = forbidden_imports_cfg(repo);
     cfg.crate_prefix = "console".to_string();
@@ -182,6 +178,7 @@ fn the_forbidden_imports_check_reaches_a_crate_under_each_source_directory() {
             &crates,
             &cfg.src_dirs,
             &cfg.mock_dir,
+            &cfg.repo_root,
             &cfg.proc_macro_crates,
             cfg.lint_proc_macro_source,
             &cfg.crate_prefix,
@@ -226,7 +223,7 @@ fn the_write_guard_gates_source_under_every_declared_directory() {
 
 #[test]
 fn the_builtin_rules_name_and_reach_every_declared_directory() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = grouped_cfg(tmp.path());
     let builtins = generate_builtin_templates(&cfg, &mockspace_lint_rules::LintPack::default());
 
@@ -326,7 +323,7 @@ fn naming_crates_dir(texts: &[(String, String)]) -> Vec<String> {
 
 #[test]
 fn no_generated_rule_or_skill_names_a_directory_called_crates() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = renamed_cfg(tmp.path());
     let builtins = generate_builtin_templates(&cfg, &mockspace_lint_rules::LintPack::default());
     let texts = generated_texts(&builtins);

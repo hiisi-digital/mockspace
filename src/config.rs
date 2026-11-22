@@ -48,8 +48,9 @@ impl InstallMode {
 /// nothing in `mockspace.toml` sets it, so this default is the only value it takes.
 ///
 /// The engine's nuke detection and the generated hooks both read the marker the
-/// config resolves to, and this is the one place the default is spelled.
-pub const DEFAULT_NUKE_MARKER: &str = "Nuked by `cargo mock --nuke`";
+/// config resolves to. The default is spelled once, in the lint crate, because
+/// `changelist-required` judges the stub a nuke writes and has no config to read.
+pub const DEFAULT_NUKE_MARKER: &str = mockspace_lint_rules::changelist_required::NUKE_MARKER;
 
 /// Mockspace workspace configuration.
 #[derive(Clone, Debug)]
@@ -195,6 +196,11 @@ pub struct Config {
     /// Key: lint name (e.g. "no-float"), Value: configured severity.
     /// Empty if no `[lints]` section is present (all lints use defaults).
     pub lint_overrides: LintConfig,
+
+    // --- Tool parameters ---
+    /// What each tool is handed from its `[tools.<name>]` table. Empty where there is no `[tools]`
+    /// table, and every tool runs on its own defaults.
+    pub tool_params: mockspace_lint_rules::tool::ToolConfig,
 
     // --- Domain-specific config ---
     /// Macro icon+label for STRUCTURE.md domain items.
@@ -1007,6 +1013,7 @@ impl Config {
         let crate_colors = convert_color_section(raw.crate_colors);
 
         let lint_overrides = parse_lints_from_document(&toml_content, &crate_prefix, &toml_path);
+        let tool_params = crate::tool_config::parse(&toml_content, &crate_prefix, &toml_path);
 
         let primary_domain_label = raw
             .primary_domain_label
@@ -1112,6 +1119,7 @@ impl Config {
             deny_check: raw.deny_check.unwrap_or(true),
             agent,
             lint_overrides,
+            tool_params,
             domain_kinds,
             known_macros,
             agent_macros,
@@ -1704,7 +1712,7 @@ commit = "error"
 
     /// A `mock` dir carrying an `agent/config.toml` with the given body.
     fn mock_dir_with_agent_config(body: &str) -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
         let agent = tmp.path().join("agent");
         std::fs::create_dir_all(&agent).expect("create agent dir");
         std::fs::write(agent.join("config.toml"), body).expect("write agent config");
@@ -1764,7 +1772,7 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
 
     /// A `mock` dir carrying a `mockspace.toml` with the given body.
     fn mock_dir_with_config(body: &str) -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
         std::fs::write(tmp.path().join("mockspace.toml"), body).expect("write config");
         tmp
     }
@@ -2282,7 +2290,9 @@ mod key_lists_cannot_rot {
             // declaration as discarded. This guard is what catches the opposite
             // mistake, and it fired the moment the key was added, which is the
             // guard working.
-            if *k == "lints" || *k == "lint-crates" || launcher.iter().any(|l| l == k) {
+            // `tools` is read through toml_edit for the reason `lints` is, its values being a
+            // scalar or an array per key (`tool_config::parse`).
+            if *k == "lints" || *k == "lint-crates" || *k == "tools" || launcher.iter().any(|l| l == k) {
                 continue;
             }
             assert!(

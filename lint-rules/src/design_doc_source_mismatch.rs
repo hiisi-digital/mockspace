@@ -37,10 +37,6 @@ const NAMED_ITEM_KINDS: &[&str] = &[
 pub struct DesignDocSourceMismatch;
 
 impl Lint for DesignDocSourceMismatch {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::Crate
-    }
-
     /// Crate-scoped. It compares the design document against the whole crate
     /// surface. Per file, every name declared elsewhere would read as missing.
     fn per_file(&self) -> bool {
@@ -62,33 +58,30 @@ impl Lint for DesignDocSourceMismatch {
 
 impl CrateLint for DesignDocSourceMismatch {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
-        let design_doc = match ctx.design_doc {
+        let design_doc = match ctx.design_doc() {
             Some(d) => d,
             None => return Vec::new(),
         };
 
         // Skip nuked crates: no source to compare against
-        if ctx.source.contains("Nuked by") {
+        if ctx.source().contains("Nuked by") {
             return Vec::new();
         }
 
         // Collect all named items from every file in the crate. The lint is
-        // crate-scoped, so `ctx.source` is only `src/lib.rs`; a type defined in
+        // crate-scoped, so `ctx.source()` is only `src/lib.rs`; a type defined in
         // a module file and not named in the root would otherwise read as
         // missing from source.
         let mut source_names: Vec<String> = Vec::new();
-        collect_names(ctx.tree.root_node(), ctx.source, &mut source_names);
-        collect_macro_generated_names(ctx.source, &mut source_names);
-        let mut parser = crate::make_parser();
-        for file in ctx.all_sources {
-            if let Some(tree) = parser.parse(&file.text, None) {
-                collect_names(tree.root_node(), &file.text, &mut source_names);
-            }
-            collect_macro_generated_names(&file.text, &mut source_names);
+        collect_names(ctx.tree().root_node(), ctx.source(), &mut source_names);
+        collect_macro_generated_names(ctx.source(), &mut source_names);
+        for file in ctx.all_sources() {
+            collect_names(file.tree().root_node(), file.text, &mut source_names);
+            collect_macro_generated_names(file.text, &mut source_names);
         }
         let in_any_file = |name: &str| {
-            source_contains_name(ctx.source, name)
-                || ctx.all_sources.iter().any(|f| source_contains_name(&f.text, name))
+            source_contains_name(ctx.source(), name)
+                || ctx.all_sources().iter().any(|f| source_contains_name(f.text, name))
         };
 
         // Extract type names from DESIGN.md.tmpl tables
@@ -114,7 +107,7 @@ impl CrateLint for DesignDocSourceMismatch {
             // Escape hatch: SHAME.md.tmpl entry with a 50+ word explanation.
             // Mirrors the `undocumented-type` lint's SHAME handling so
             // consumers have one consistent way to document known gaps.
-            if let Some(shame) = ctx.shame_doc {
+            if let Some(shame) = ctx.shame_doc() {
                 if let Some(explanation) = find_shame_entry(shame, name) {
                     let word_count = explanation.split_whitespace().count();
                     if word_count >= 50 {
@@ -316,38 +309,15 @@ fn source_contains_name(source: &str, name: &str) -> bool {
 
 #[cfg(test)]
 mod whole_crate_tests {
-    use std::collections::{BTreeMap, BTreeSet};
-
     use super::*;
-    use crate::CrateSourceFile;
+    use crate::testkit::LintFixture;
 
     const DESIGN: &str = "| Type | Purpose |\n|---|---|\n| `OpenChest` | the chest held open |\n";
 
     /// A crate whose root declares a module and whose module defines the type the design names.
     fn ctx(root: &'static str, module: &'static str) -> LintContext<'static> {
-        let mut parser = crate::make_parser();
-        let tree = parser.parse(root, None).unwrap();
-        let files: &'static [CrateSourceFile] = Box::leak(Box::new([
-            CrateSourceFile { rel_path: "src/lib.rs".into(), text: root.to_string() },
-            CrateSourceFile { rel_path: "src/chest.rs".into(), text: module.to_string() },
-        ]));
-        LintContext {
-            crate_name: "test-crate",
-            short_name: "test-crate",
-            source: root,
-            tree: Box::leak(Box::new(tree)),
-            all_sources: files,
-            deps: &[],
-            all_crates: Box::leak(Box::new(BTreeSet::new())),
-            design_doc: Some(DESIGN),
-            all_doc_content: DESIGN,
-            shame_doc: None,
-            workspace_root: std::path::Path::new("/tmp"),
-            proc_macro_crates: &[],
-            crate_prefix: "test",
-            lint_proc_macro_source: false,
-            primitive_introductions: Box::leak(Box::new(BTreeMap::new())),
-        }
+        let fixture = LintFixture::new(root).with_module("src/chest.rs", module).with_design_doc(DESIGN);
+        Box::leak(Box::new(fixture)).ctx()
     }
 
     #[test]

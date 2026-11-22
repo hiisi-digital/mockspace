@@ -38,17 +38,8 @@ fn save(h: &History, mock: &Path, members: &[&str]) -> Result<(), String> {
     save_in(h, mock, "", members)
 }
 
-fn scratch(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!(
-        "mockspace-suite-hist-{tag}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    ));
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn scratch(_tag: &str) -> tempfile::TempDir {
+    mockspace_manifest::scratch::tempdir().unwrap()
 }
 
 fn live(entries: &[(&str, &[&str])]) -> crate::suite::live::Live {
@@ -65,7 +56,8 @@ fn remembered(h: &mut History, bin: &str, name: &str) {
 /// The record is tracked files: one per member per flavour, loaded back whole.
 #[test]
 fn a_saved_history_loads_back_from_one_file_per_member_and_flavour() {
-    let mock = scratch("roundtrip");
+    let mock_guard = scratch("roundtrip");
+    let mock = mock_guard.path().to_path_buf();
     let mut h = History::load(&mock);
     assert_eq!(h.version, VERSION);
     h.record_cases(
@@ -99,14 +91,14 @@ fn a_saved_history_loads_back_from_one_file_per_member_and_flavour() {
         assert!(dir.join(f).is_file(), "{f} was not written");
     }
     assert_eq!(History::load(&mock).flavours, h.flavours);
-    std::fs::remove_dir_all(&mock).ok();
 }
 
 /// A run that settled nothing leaves every file as it was, so a rerun does not
 /// show up as a change to commit.
 #[test]
 fn saving_what_is_already_there_writes_nothing() {
-    let mock = scratch("still");
+    let mock_guard = scratch("still");
+    let mock = mock_guard.path().to_path_buf();
     let mut h = History::default();
     h.record_cases(
         "",
@@ -130,14 +122,14 @@ fn saving_what_is_already_there_writes_nothing() {
         std::fs::metadata(&file).unwrap().modified().unwrap(),
         before
     );
-    std::fs::remove_dir_all(&mock).ok();
 }
 
 /// A member whose green a failure took away must not load it back from the
 /// file it was saved in.
 #[test]
 fn a_member_with_nothing_left_loses_its_file() {
-    let mock = scratch("stale");
+    let mock_guard = scratch("stale");
+    let mock = mock_guard.path().to_path_buf();
     let mut h = History::default();
     h.flavour_mut("")
         .green
@@ -150,12 +142,12 @@ fn a_member_with_nothing_left_loses_its_file() {
             .flavour("")
             .is_none_or(|f| f.green.is_empty())
     );
-    std::fs::remove_dir_all(&mock).ok();
 }
 
 #[test]
 fn a_file_of_another_version_or_none_is_passed_over() {
-    let mock = scratch("foreign");
+    let mock_guard = scratch("foreign");
+    let mock = mock_guard.path().to_path_buf();
     let dir = History::dir(&mock).join("default");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
@@ -165,12 +157,12 @@ fn a_file_of_another_version_or_none_is_passed_over() {
     .unwrap();
     std::fs::write(dir.join("b.json"), "not json").unwrap();
     assert!(History::load(&mock).flavours.is_empty());
-    std::fs::remove_dir_all(&mock).ok();
 }
 
 #[test]
 fn the_pruned_record_is_what_a_save_leaves_on_disk() {
-    let dir = scratch("prune-save");
+    let dir_guard = scratch("prune-save");
+    let dir = dir_guard.path().to_path_buf();
     let mut h = History::default();
     remembered(&mut h, "village", "drawn");
     remembered(&mut h, "village::example/figure_preview", "draws");
@@ -186,14 +178,14 @@ fn the_pruned_record_is_what_a_save_leaves_on_disk() {
         text.contains("drawn") && !text.contains("figure_preview"),
         "{text}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A pass is kept per test binary, in the file of the member it belongs to,
 /// and comes back from it.
 #[test]
 fn the_binaries_that_passed_are_kept_in_their_members_files() {
-    let mock = scratch("bins");
+    let mock_guard = scratch("bins");
+    let mock = mock_guard.path().to_path_buf();
     let mut h = History::default();
     let f = h.flavour_mut("");
     f.bins.insert("render".to_string(), "base1".to_string());
@@ -219,7 +211,6 @@ fn the_binaries_that_passed_are_kept_in_their_members_files() {
     save(&h, &mock, &["render", "web"]).unwrap();
     assert!(!dir.join("web.json").exists());
     assert_eq!(History::load(&mock).flavours[""].bins.len(), 1);
-    std::fs::remove_dir_all(&mock).ok();
 }
 
 fn names_of(members: &[&str]) -> Vec<String> {
@@ -230,7 +221,8 @@ fn names_of(members: &[&str]) -> Vec<String> {
 /// they are whatever they hold: blank, of another version, or not a record.
 #[test]
 fn a_save_leaves_the_files_of_members_that_did_not_run() {
-    let mock = scratch("not-ours");
+    let mock_guard = scratch("not-ours");
+    let mock = mock_guard.path().to_path_buf();
     let dir = History::dir(&mock).join("default");
     std::fs::create_dir_all(&dir).unwrap();
     let files = [
@@ -271,14 +263,14 @@ fn a_save_leaves_the_files_of_members_that_did_not_run() {
         );
     }
     assert!(dir.join("render.json").is_file());
-    std::fs::remove_dir_all(&mock).ok();
 }
 
 /// What a member that is not in the workspace holds is no one's, and a save
 /// takes it away in every flavour, whether or not the run loaded it.
 #[test]
 fn a_record_goes_when_its_member_does_and_not_before() {
-    let mock = scratch("gone");
+    let mock_guard = scratch("gone");
+    let mock = mock_guard.path().to_path_buf();
     let mut h = History::default();
     remembered(&mut h, "gone", "drawn");
     remembered(&mut h, "kept", "drawn");
@@ -309,7 +301,6 @@ fn a_record_goes_when_its_member_does_and_not_before() {
     .unwrap();
     assert!(gone.iter().all(|p| !p.exists()), "its member is gone");
     assert!(dir.join("default/kept.json").is_file(), "its member is not");
-    std::fs::remove_dir_all(&mock).ok();
 }
 
 /// A run is made in one flavour. Its member's files in the other flavours are
@@ -317,7 +308,8 @@ fn a_record_goes_when_its_member_does_and_not_before() {
 /// run's memory holds of them.
 #[test]
 fn a_run_in_one_flavour_leaves_its_members_files_in_the_others() {
-    let mock = scratch("other-flavours");
+    let mock_guard = scratch("other-flavours");
+    let mock = mock_guard.path().to_path_buf();
     let other = History::dir(&mock).join("features-editor");
     std::fs::create_dir_all(&other).unwrap();
     let older = r#"{"version": 1, "flavour": "--features editor", "member": "render", "green": {"full": "x", "own": {}}, "tests": {"render": {"drawn": {"secs": 40.0, "passed": true, "passed_at": "x"}}}}"#;
@@ -340,14 +332,14 @@ fn a_run_in_one_flavour_leaves_its_members_files_in_the_others() {
     assert_eq!(kept(&other).as_deref(), Some(older), "the older record");
     assert_eq!(kept(&release).as_deref(), Some(blank), "the blank record");
     assert!(History::dir(&mock).join("default/render.json").is_file());
-    std::fs::remove_dir_all(&mock).ok();
 }
 
 /// A member the workspace no longer has loses its file in every flavour's
 /// directory, including one where nothing of it could be read.
 #[test]
 fn a_gone_members_unreadable_file_goes_too() {
-    let mock = scratch("gone-unread");
+    let mock_guard = scratch("gone-unread");
+    let mock = mock_guard.path().to_path_buf();
     let dir = History::dir(&mock).join("features-editor");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("gone.json"), "<<<<<<< ours\n").unwrap();
@@ -363,7 +355,6 @@ fn a_gone_members_unreadable_file_goes_too() {
         .unwrap();
     assert!(!dir.join("gone.json").exists());
     assert!(dir.join("kept.json").exists());
-    std::fs::remove_dir_all(&mock).ok();
 }
 
 fn red(at: &str, names: &[&str]) -> Red {
@@ -378,7 +369,8 @@ fn red(at: &str, names: &[&str]) -> Red {
 /// and a pass or a vanished test must take it away.
 #[test]
 fn the_red_set_of_a_binary_survives_the_file_and_a_prune() {
-    let dir = scratch("red");
+    let dir_guard = scratch("red");
+    let dir = dir_guard.path().to_path_buf();
     let mut h = History::default();
     h.flavour_mut("").red.insert("render::b".to_string(), red("fp", &["two"]));
     save(&h, &dir, &["render"]).unwrap();
@@ -401,7 +393,8 @@ fn the_red_set_of_a_binary_survives_the_file_and_a_prune() {
     // as before.
     let mut empty = History::default();
     empty.flavour_mut("").bins.insert("render".to_string(), "fp".to_string());
-    let dir2 = scratch("red-none");
+    let dir2_guard = scratch("red-none");
+    let dir2 = dir2_guard.path().to_path_buf();
     save(&empty, &dir2, &["render"]).unwrap();
     let text = std::fs::read_to_string(dir2.join("test-history/default/render.json")).unwrap();
     assert!(!text.contains("red"), "{text}");
@@ -411,7 +404,8 @@ fn the_red_set_of_a_binary_survives_the_file_and_a_prune() {
 /// narrowing either: its fingerprints were made of other inputs.
 #[test]
 fn an_older_record_gives_no_red_set() {
-    let dir = scratch("red-older");
+    let dir_guard = scratch("red-older");
+    let dir = dir_guard.path().to_path_buf();
     let d = dir.join("test-history/default");
     std::fs::create_dir_all(&d).unwrap();
     let file = |version: u32| {

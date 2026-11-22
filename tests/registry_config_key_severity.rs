@@ -74,7 +74,7 @@ fn run(root: &Path) -> std::process::Output {
 /// The control: with no `[lints]` override, `prefix` is reported and never blocks.
 #[test]
 fn the_default_is_a_warning_that_does_not_block() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), "");
     let out = run(tmp.path());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -91,7 +91,7 @@ fn the_default_is_a_warning_that_does_not_block() {
 
 #[test]
 fn silencing_it_removes_the_warning_and_still_does_not_block() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(
         tmp.path(),
         "[lints.registry-config-keys]\nseverity = \"off\"\n",
@@ -112,7 +112,7 @@ fn silencing_it_removes_the_warning_and_still_does_not_block() {
 /// to make the point.
 #[test]
 fn escalating_it_blocks_the_command() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(
         tmp.path(),
         "[lints.registry-config-keys]\nseverity = \"error\"\n",

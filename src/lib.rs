@@ -19,9 +19,15 @@
 pub mod agent_mode;
 pub mod autofix;
 pub mod bench;
+mod bench_arms;
+mod bench_builds;
+mod bench_commit;
+mod bench_disasm;
 pub mod bench_docs;
+mod bench_migrate;
 pub mod bench_gen;
 mod bench_rev;
+mod bench_variants;
 pub mod bootstrap;
 pub mod build_dir;
 pub mod config;
@@ -53,8 +59,10 @@ pub mod render;
 pub mod render_agent;
 pub mod render_design;
 pub mod render_md;
+pub mod sketches;
 pub mod suite;
 pub mod tool_catalogue;
+pub mod tool_config;
 
 /// Writes a script the tests then run, free of the exec-after-write race.
 #[cfg(all(test, unix))]

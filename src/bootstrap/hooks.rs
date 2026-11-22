@@ -458,6 +458,18 @@ else
         # `--doc-only` claims, and the engine checks that claim against the staged index (`verify_doc_only`).
         # It is the claim a staged registry row made before the registry stopped being a shared input.
         if [ -n "$STAGED_REGISTRY" ] && [ -z "$STAGED_NON_REGISTRY" ]; then
+            # Rows of the namespaces the console commits straight onto the trunk, and nothing
+            # else in the whole index: `rows-gate` holds them to the registry check alone and
+            # records the tree for the pre-push hook. It answers 3 when the index holds more,
+            # and the commit takes the gate below.
+            ROWS_RC=0
+            MS_GATE_SOFT=3 ms_gate pre-commit rows-gate || ROWS_RC=$?
+            if [ "$ROWS_RC" = "0" ]; then
+                ms_say "pre-commit: console-direct rows passed the registry check."
+                ms_chain "$@"
+            elif [ "$ROWS_RC" != "3" ]; then
+                exit 1
+            fi
             ARGS+=(--doc-only)
         fi
     fi
@@ -559,6 +571,23 @@ PUSH_REPO_ONLY=""
 PUSH_NOT_REGISTRY=""
 PUSH_REFS=0
 PUSH_DELETES=0
+PUSH_ROWS_GATED=0
+# The trees `mock rows-gate` passed at commit, one to a line, in this worktree's git directory.
+MS_ROWS_RECORD=$(git rev-parse --git-path mockspace/gated-rows 2>/dev/null || true)
+ms_rows_gated() {{
+    local c n=0
+    if [ -z "$MS_ROWS_RECORD" ] || [ ! -f "$MS_ROWS_RECORD" ]; then
+        return 1
+    fi
+    if [ -n "$(git rev-list --min-parents=2 "$1..$2" 2>/dev/null)" ]; then
+        return 1
+    fi
+    for c in $(git rev-list "$1..$2" 2>/dev/null); do
+        grep -qxF "$(git rev-parse "$c^{{tree}}")" "$MS_ROWS_RECORD" || return 1
+        n=$((n + 1))
+    done
+    [ "$n" -gt 0 ]
+}}
 while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     if [ -z "$local_sha" ]; then
         continue
@@ -581,6 +610,13 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     if ! git cat-file -e "$remote_sha" 2>/dev/null; then
         FULL_REASON="remote sha not fetched"
         break
+    fi
+    # Every commit of the range passed `rows-gate` at commit on the very tree it carries, and
+    # none is a merge: the range is console-direct rows alone, already held to the registry
+    # check on each tree, so the push lints none of it again.
+    if ms_rows_gated "$remote_sha" "$local_sha"; then
+        PUSH_ROWS_GATED=$((PUSH_ROWS_GATED + 1))
+        continue
     fi
     # A pushed shared input (the project lints, the config) reaches every crate,
     # so it forces the full scope, under its own reason.
@@ -642,6 +678,15 @@ if [ "$PUSH_REFS" -gt 0 ] && [ "$PUSH_REFS" -eq "$PUSH_DELETES" ]; then
     ms_chain "$@"
 fi
 
+# Every ref publishes only commits the rows gate passed (or deletes): nothing is left to lint.
+if [ "$PUSH_ROWS_GATED" -gt 0 ] && [ -z "$FULL_REASON" ] && [ -z "$CHANGED_CRATES" ] \
+    && [ -z "$PUSH_REPO_ONLY" ] && [ -z "$PUSH_NOT_REGISTRY" ] \
+    && [ $((PUSH_DELETES + PUSH_ROWS_GATED)) -eq "$PUSH_REFS" ]; then
+    ms_say "  scope: none (every pushed commit passed the rows gate on its own tree)"
+    ms_say "pre-push: validation passed."
+    ms_chain "$@"
+fi
+
 if ms_nuked; then
     ms_say "  nuked workspace: skipping source checks"
     ARGS=(--lint-only --strict --doc-only)
@@ -679,18 +724,11 @@ mod byline_hook_tests {
     use std::io::Write;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
-    use std::sync::atomic::{AtomicU32, Ordering};
 
     use super::*;
 
-    static SEQ: AtomicU32 = AtomicU32::new(0);
-
-    fn scratch(tag: &str) -> PathBuf {
-        let n = SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("mock_byline_{tag}_{}_{n}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn scratch(_tag: &str) -> tempfile::TempDir {
+        mockspace_manifest::scratch::tempdir().unwrap()
     }
 
     /// Write `content` as an executable hook and run it (args, stdin, cwd, PATH
@@ -702,7 +740,8 @@ mod byline_hook_tests {
         cwd: Option<&Path>,
         path_env: Option<&str>,
     ) -> i32 {
-        let dir = scratch("hook");
+        let dir_guard = scratch("hook");
+        let dir = dir_guard.path().to_path_buf();
         let hook = dir.join("hook.sh");
         crate::test_exec::write_executable(&hook, content);
         let mut cmd = Command::new(&hook);
@@ -760,8 +799,9 @@ mod byline_hook_tests {
     }
 
     /// A temp git repo with one commit carrying `msg`. Returns (dir, head_sha).
-    fn repo_with_commit(msg: &str) -> (PathBuf, String) {
-        let dir = scratch("repo");
+    fn repo_with_commit(msg: &str) -> (tempfile::TempDir, PathBuf, String) {
+        let dir_guard = scratch("repo");
+        let dir = dir_guard.path().to_path_buf();
         let git = |args: &[&str]| {
             Command::new("git")
                 .current_dir(&dir)
@@ -781,13 +821,13 @@ mod byline_hook_tests {
         git(&["commit", "-q", "--no-verify", "-F", mf.to_str().unwrap()]);
         let out = git(&["rev-parse", "HEAD"]);
         let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        (dir, sha)
+        (dir_guard, dir, sha)
     }
 
     /// Run the durable pre-push hook against a repo whose HEAD carries `msg`,
     /// as a new-branch push (remote-sha all zeros). Returns the exit code.
     fn run_durable_pre_push(msg: &str) -> i32 {
-        let (repo, sha) = repo_with_commit(msg);
+        let (_g, repo, sha) = repo_with_commit(msg);
         let zero = "0".repeat(40);
         let stdin = format!("refs/heads/main {sha} refs/heads/main {zero}\n");
         let code = run_script(
@@ -811,7 +851,8 @@ mod byline_hook_tests {
     /// `launcher` is a stub script standing in for `mock`, so the hook's own
     /// behaviour is observable without building or invoking the real engine.
     fn run_commit_msg_with_launcher(msg: &str, stub: Option<&str>) -> i32 {
-        let dir = scratch("msg");
+        let dir_guard = scratch("msg");
+        let dir = dir_guard.path().to_path_buf();
         let msgfile = dir.join("COMMIT_EDITMSG");
         std::fs::write(&msgfile, msg).unwrap();
 
@@ -839,7 +880,8 @@ mod byline_hook_tests {
     fn the_commit_msg_hook_hands_the_message_to_the_launcher() {
         // The stub records its arguments and passes, so this asserts the exact
         // command shape the engine is invoked with.
-        let dir = scratch("args");
+        let dir_guard = scratch("args");
+        let dir = dir_guard.path().to_path_buf();
         let out = dir.join("args.txt");
         let stub = format!(
             "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" > {}\nexit 0\n",
@@ -875,7 +917,8 @@ mod byline_hook_tests {
     fn an_empty_or_missing_message_file_is_not_the_hooks_business() {
         // git calls commit-msg with a path; if there is nothing there, there is
         // nothing to lint, and erroring would block on git's own behaviour.
-        let dir = scratch("nofile");
+        let dir_guard = scratch("nofile");
+        let dir = dir_guard.path().to_path_buf();
         let missing = dir.join("does-not-exist");
         let code = run_script(
             &gen_commit_msg(&dir.join("no-user-hook")),
@@ -901,7 +944,7 @@ mod byline_hook_tests {
     /// A repo with a `mockspace.toml`, optionally with an executable generated
     /// hook stub, run through the durable pre-push. Returns the exit code.
     fn durable_in_project(config: &str, stub: Option<&str>) -> i32 {
-        let (repo, sha) = repo_with_commit("fix: whatever");
+        let (_g, repo, sha) = repo_with_commit("fix: whatever");
         std::fs::write(repo.join("mockspace.toml"), config).unwrap();
         if let Some(body) = stub {
             let hooks = repo.join("mock/target/hooks");
@@ -982,7 +1025,7 @@ mod byline_hook_tests {
         config: Option<&str>,
         generated: Option<&str>,
     ) -> (i32, Option<String>) {
-        let (repo, sha) = repo_with_commit("fix: whatever");
+        let (_g, repo, sha) = repo_with_commit("fix: whatever");
         if let Some(c) = config {
             std::fs::write(repo.join("mockspace.toml"), c).unwrap();
         }
@@ -1040,9 +1083,10 @@ mod byline_hook_tests {
     fn durable_chains_from_a_linked_worktree_to_the_clones_own_hook() {
         // Every agent here works from a worktree, whose own git dir has no
         // hooks; the clone's does, and that is where the chain has to look.
-        let (clone, sha) = repo_with_commit("fix: whatever");
+        let (_g, clone, sha) = repo_with_commit("fix: whatever");
         plant_own_hook(&clone, "pre-push", 42);
-        let wt = scratch("wt");
+        let wt_guard = scratch("wt");
+        let wt = wt_guard.path().to_path_buf();
         let _ = std::fs::remove_dir(&wt);
         let out = Command::new("git")
             .args(["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "side"])
@@ -1074,7 +1118,7 @@ mod byline_hook_tests {
     fn the_generated_commit_msg_chains_on_its_two_early_passes() {
         // no message file, or a path that is not one: passes that used to be
         // bare exits, and the own hook runs on them too
-        let (repo, _) = repo_with_commit("fix: whatever");
+        let (_g, repo, _) = repo_with_commit("fix: whatever");
         let own = plant_own_hook(&repo, "commit-msg", 42);
         let hook = gen_commit_msg(&own);
         assert_eq!(
@@ -1111,7 +1155,7 @@ mod byline_hook_tests {
     fn the_generated_pre_commit_chains_on_the_pass_with_nothing_staged() {
         // The early pass, which used to be a bare exit, is where a commit with
         // nothing on the design surface leaves; the own hook runs there too.
-        let (repo, _) = repo_with_commit("fix: whatever");
+        let (_g, repo, _) = repo_with_commit("fix: whatever");
         let own = plant_own_hook(&repo, "pre-commit", 42);
         let hook = gen_pre_commit("mock", &HookLayout::of(&["crates"]), &own);
         let code = run_script(&hook, &[], "", Some(&repo), Some(&launcher_free_path()));
@@ -1162,7 +1206,7 @@ mod byline_hook_tests {
         // so a hook that reads the refs, which a release gate does, took them
         // from the scan. Now the scan captures, the gate runs, and the own hook
         // gets the same refs replayed.
-        let (repo, sha) = repo_with_commit("fix: whatever");
+        let (_g, repo, sha) = repo_with_commit("fix: whatever");
         std::fs::write(repo.join("mockspace.toml"), "mock_dir = \"mock\"\n").unwrap();
         let own = plant_own_hook(&repo, "pre-push", 0);
         let hook = gen_pre_push("mock", &HookLayout::of(&["crates"]), &own);
@@ -1188,7 +1232,7 @@ mod byline_hook_tests {
 
     #[test]
     fn the_generated_commit_msg_hands_the_message_file_to_the_own_hook_after_the_lints() {
-        let (repo, _) = repo_with_commit("fix: whatever");
+        let (_g, repo, _) = repo_with_commit("fix: whatever");
         let msgfile = repo.join("COMMIT_EDITMSG");
         std::fs::write(&msgfile, "fix: a message\n").unwrap();
         let own = plant_own_hook(&repo, "commit-msg", 42);
@@ -1224,7 +1268,7 @@ mod byline_hook_tests {
     fn a_push_of_nothing_but_the_stores_data_ref_is_not_gated() {
         // With no launcher on PATH the gate fails closed, so an exit of 0 here is the hook
         // standing down and nothing else.
-        let (repo, sha) = repo_with_commit("data: mock\n");
+        let (_g, repo, sha) = repo_with_commit("data: mock\n");
         let zero = "0".repeat(40);
         let data = "refs/heads/mock/research";
         let hook = gen_pre_push("mock", &HookLayout::of(&["crates"]), std::path::Path::new("/dev/null"));
@@ -1258,16 +1302,18 @@ mod byline_hook_tests {
         // The empty-message commit is the point: `empty-subject` is the only
         // finding a permissive commit-style config can produce, so a gate that
         // drops empty records checks nothing at all.
-        let dir = scratch("prepush_records");
+        let dir_guard = scratch("prepush_records");
+        let dir = dir_guard.path().to_path_buf();
         let out = dir.join("stdin.bin");
-        let bin = scratch("prepush_bin");
+        let bin_guard = scratch("prepush_bin");
+        let bin = bin_guard.path().to_path_buf();
         let stub = bin.join("mock");
         crate::test_exec::write_executable(
             &stub,
             format!("#!/usr/bin/env bash\ncat > {}\nexit 0\n", out.display()),
         );
 
-        let (repo, _sha) = repo_with_commit("feat: first subject\n");
+        let (_g, repo, _sha) = repo_with_commit("feat: first subject\n");
         let git = |args: &[&str]| {
             Command::new("git")
                 .current_dir(&repo)
@@ -1338,24 +1384,27 @@ mod byline_hook_tests {
 
     /// A launcher stub standing in for the push-tier policy: it refuses any
     /// batch carrying a record that contains `BADMSG`.
-    fn policy_stub_path() -> (PathBuf, String) {
-        let bin = scratch("policy_bin");
+    fn policy_stub_path() -> (tempfile::TempDir, PathBuf, String) {
+        let bin_guard = scratch("policy_bin");
+        let bin = bin_guard.path().to_path_buf();
         let stub = bin.join("mock");
         crate::test_exec::write_executable(
             &stub,
             "#!/usr/bin/env bash\nif cat | tr '\\0' '\\n' | grep -q BADMSG; then exit 1; fi\nexit 0\n",
         );
         let path = format!("{}:{}", bin.display(), launcher_free_path());
-        (bin, path)
+        (bin_guard, bin, path)
     }
 
     /// A clone with a bare `origin`, trunk `main` carrying a published commit
     /// whose message the policy rejects, and `feature` already pushed and then
     /// merged with the trunk. Returns (clone, remote, old feature tip on the
     /// remote, local feature tip).
-    fn feature_that_merged_a_bad_published_trunk_commit() -> (PathBuf, PathBuf, String, String) {
-        let remote = scratch("remote");
-        let clone = scratch("clone");
+    fn feature_that_merged_a_bad_published_trunk_commit() -> (tempfile::TempDir, tempfile::TempDir, PathBuf, PathBuf, String, String) {
+        let remote_guard = scratch("remote");
+        let remote = remote_guard.path().to_path_buf();
+        let clone_guard = scratch("clone");
+        let clone = clone_guard.path().to_path_buf();
         let env = |c: &mut Command| {
             c.env("GIT_AUTHOR_NAME", "t")
                 .env("GIT_AUTHOR_EMAIL", "t@t")
@@ -1385,7 +1434,7 @@ mod byline_hook_tests {
         git_in(&clone, &["switch", "-q", "feature"]);
         git_in(&clone, &["merge", "-q", "--no-ff", "-m", "chore: merge main", "main"]);
         let tip = git_in(&clone, &["rev-parse", "HEAD"]);
-        (clone, remote, pushed, tip)
+        (clone_guard, remote_guard, clone, remote, pushed, tip)
     }
 
     #[test]
@@ -1394,8 +1443,8 @@ mod byline_hook_tests {
         // push can change it. Re-validating it blocked every push of every
         // branch that merged the trunk. Runs the real body against a real
         // clone and remote, with a stub launcher applying the policy.
-        let (clone, remote, pushed, tip) = feature_that_merged_a_bad_published_trunk_commit();
-        let (bin, path) = policy_stub_path();
+        let (_cg, _rg, clone, remote, pushed, tip) = feature_that_merged_a_bad_published_trunk_commit();
+        let (_bg, bin, path) = policy_stub_path();
         let script = format!(
             "#!/usr/bin/env bash\nset -u\nPREPUSH_STDIN=$(cat)\n{}",
             message_prepush_scan_body()
@@ -1445,7 +1494,7 @@ mod generated_pre_commit_tests {
     /// which is the defect being fixed: the hook was syntactically fine and
     /// exited 0 before reaching anything.
     fn run_hook(stage: &[(&str, &str)], mock_rel: &str) -> String {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         let git = |args: &[&str]| {
             Command::new("git")
@@ -1536,7 +1585,7 @@ mod generated_pre_commit_tests {
     /// satisfy both. They ask the same question now, and every arm below
     /// asserts that rather than asserting either answer on its own.
     fn both_sides(stage: &[(&str, &str)]) -> (bool, bool) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         let git = |args: &[&str]| {
             Command::new("git")
@@ -1652,7 +1701,7 @@ mod generated_pre_commit_tests {
     /// `["crates", "libs"]`, so the shape is real rather than hypothetical.
     #[test]
     fn the_hook_and_the_engine_agree_on_a_declared_source_directory_outside_crates() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         let git = |args: &[&str]| {
             Command::new("git")
@@ -1724,7 +1773,7 @@ mod generated_pre_commit_tests {
     /// named and the branch not taken.
     #[test]
     fn source_under_a_declared_directory_alone_is_scoped_to_its_crate() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         let git = |args: &[&str]| {
             Command::new("git")

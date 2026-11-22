@@ -1,0 +1,85 @@
+
+variant_unrolled_x4.dll:	file format coff-x86-64
+
+Disassembly of section .text:
+
+0000000190001000 <.text>:
+190001000:     	movzbl	(%rcx), %eax
+190001003:     	movl	%eax, %r8d
+190001006:     	shll	$0x5, %r8d
+19000100a:     	subq	%rax, %r8
+19000100d:     	movzbl	0x1(%rcx), %eax
+190001011:     	addq	%r8, %rax
+190001014:     	movl	%eax, %r8d
+190001017:     	shll	$0x5, %r8d
+19000101b:     	subq	%rax, %r8
+19000101e:     	movzbl	0x2(%rcx), %eax
+190001022:     	addq	%r8, %rax
+190001025:     	movl	%eax, %r8d
+190001028:     	shll	$0x5, %r8d
+19000102c:     	subq	%rax, %r8
+19000102f:     	movzbl	0x3(%rcx), %eax
+190001033:     	addq	%r8, %rax
+190001036:     	movq	%rax, %r8
+190001039:     	shlq	$0x5, %r8
+19000103d:     	subq	%rax, %r8
+190001040:     	movzbl	0x4(%rcx), %eax
+190001044:     	addq	%r8, %rax
+190001047:     	movq	%rax, %r8
+19000104a:     	shlq	$0x5, %r8
+19000104e:     	subq	%rax, %r8
+190001051:     	movzbl	0x5(%rcx), %eax
+190001055:     	addq	%r8, %rax
+190001058:     	movq	%rax, %r8
+19000105b:     	shlq	$0x5, %r8
+19000105f:     	subq	%rax, %r8
+190001062:     	movzbl	0x6(%rcx), %eax
+190001066:     	addq	%r8, %rax
+190001069:     	movq	%rax, %r8
+19000106c:     	shlq	$0x5, %r8
+190001070:     	subq	%rax, %r8
+190001073:     	movzbl	0x7(%rcx), %eax
+190001077:     	addq	%r8, %rax
+19000107a:     	movq	%rax, %rcx
+19000107d:     	shlq	$0x5, %rcx
+190001081:     	subq	%rax, %rcx
+190001084:     	movq	%rcx, (%rdx)
+190001087:     	retq
+190001088:     	int3
+190001089:     	int3
+19000108a:     	int3
+19000108b:     	int3
+19000108c:     	int3
+19000108d:     	int3
+19000108e:     	int3
+19000108f:     	int3
+
+0000000190001090 <bench_entry>:
+190001090:     	subq	$0x28, %rsp
+190001094:     	cmpq	$0x8, %r8
+190001098:     	jne	0x1900010a6 <bench_entry+0x16>
+19000109a:     	callq	0x190001000 <.text>
+19000109f:     	xorl	%eax, %eax
+1900010a1:     	addq	$0x28, %rsp
+1900010a5:     	retq
+1900010a6:     	leaq	0xf53(%rip), %rax       # 0x190002000
+1900010ad:     	addq	$0x28, %rsp
+1900010b1:     	retq
+1900010b2:     	int3
+1900010b3:     	int3
+1900010b4:     	int3
+1900010b5:     	int3
+1900010b6:     	int3
+1900010b7:     	int3
+1900010b8:     	int3
+1900010b9:     	int3
+1900010ba:     	int3
+1900010bb:     	int3
+1900010bc:     	int3
+1900010bd:     	int3
+1900010be:     	int3
+1900010bf:     	int3
+
+00000001900010c0 <bench_name>:
+1900010c0:     	leaq	0xf39(%rip), %rax       # 0x190002000
+1900010c7:     	retq

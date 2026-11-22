@@ -54,7 +54,7 @@ fn local_value(repo: &Path, config: &Path, key: &str) -> Option<String> {
 
 #[test]
 fn registering_in_the_user_config_registers_every_driver_and_a_second_run_changes_nothing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let file = tmp.path().join("gitconfig");
     let mut first = Vec::new();
     register_all_drivers(&ConfigTarget::User(Some(&file)), &mut first);
@@ -70,7 +70,7 @@ fn registering_in_the_user_config_registers_every_driver_and_a_second_run_change
 
 #[test]
 fn no_registered_command_names_a_path_of_the_clone_it_was_written_from() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let config = empty_config(tmp.path());
     let repo = tmp.path().join("a-clone-with-a-distinctive-name");
     fs::create_dir_all(&repo).unwrap();
@@ -125,7 +125,7 @@ fn file(repo: &Path, name: &str) -> String {
 
 #[test]
 fn the_generated_driver_still_runs_in_a_copy_of_the_clone_it_was_registered_in() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let config = empty_config(tmp.path());
     let repo = tmp.path().join("one");
     a_conflict_under_the_generated_driver(&repo, &config);
@@ -140,7 +140,7 @@ fn the_generated_driver_still_runs_in_a_copy_of_the_clone_it_was_registered_in()
 
 #[test]
 fn the_generated_driver_registered_for_the_user_runs_in_a_clone_that_never_registered_it() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let config = registered_for_the_user(tmp.path());
     let repo = tmp.path().join("one");
     a_conflict_under_the_generated_driver(&repo, &config);
@@ -151,7 +151,7 @@ fn the_generated_driver_registered_for_the_user_runs_in_a_clone_that_never_regis
 
 #[test]
 fn with_no_script_the_generated_driver_leaves_a_conflict_a_conflict() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let config = registered_for_the_user(tmp.path());
     let repo = tmp.path().join("one");
     a_conflict_under_the_generated_driver(&repo, &config);
@@ -165,7 +165,7 @@ fn with_no_script_the_generated_driver_leaves_a_conflict_a_conflict() {
 
 #[test]
 fn with_no_script_a_merge_that_does_not_conflict_is_clean() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let config = registered_for_the_user(tmp.path());
     let repo = tmp.path().join("one");
     a_conflict_under_the_generated_driver(&repo, &config);
@@ -182,7 +182,7 @@ fn with_no_script_a_merge_that_does_not_conflict_is_clean() {
 
 #[test]
 fn a_linked_worktree_finds_the_script_of_the_clone_it_hangs_off() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let config = registered_for_the_user(tmp.path());
     let repo = tmp.path().join("one");
     a_conflict_under_the_generated_driver(&repo, &config);
@@ -195,7 +195,7 @@ fn a_linked_worktree_finds_the_script_of_the_clone_it_hangs_off() {
 
 #[test]
 fn a_submodule_finds_the_script_in_its_own_git_directory() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let config = registered_for_the_user(tmp.path());
     let inner = tmp.path().join("inner");
     a_conflict_under_the_generated_driver(&inner, &config);
@@ -213,7 +213,7 @@ fn a_submodule_finds_the_script_in_its_own_git_directory() {
 
 #[test]
 fn a_bare_repository_runs_the_driver_for_merge_tree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let config = registered_for_the_user(tmp.path());
     let repo = tmp.path().join("one");
     a_conflict_under_the_generated_driver(&repo, &config);
@@ -228,7 +228,7 @@ fn a_bare_repository_runs_the_driver_for_merge_tree() {
 
 #[test]
 fn the_script_is_written_where_the_driver_looks_from_a_worktree_run_below_its_root() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let config = empty_config(tmp.path());
     let repo = tmp.path().join("one");
     a_conflict_under_the_generated_driver(&repo, &config);
@@ -242,7 +242,7 @@ fn the_script_is_written_where_the_driver_looks_from_a_worktree_run_below_its_ro
 
 #[test]
 fn a_script_that_cannot_be_written_is_reported_and_the_driver_is_not_registered() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let config = empty_config(tmp.path());
     let repo = tmp.path().join("one");
     fs::create_dir_all(&repo).unwrap();
@@ -262,7 +262,7 @@ fn the_old_entry(clone: &Path) -> String {
 
 #[test]
 fn a_clone_still_naming_its_own_path_has_that_entry_retired_and_the_user_one_takes_over() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let config = registered_for_the_user(tmp.path());
     let repo = tmp.path().join("one");
     a_conflict_under_the_generated_driver(&repo, &config);
@@ -278,7 +278,7 @@ fn a_clone_still_naming_its_own_path_has_that_entry_retired_and_the_user_one_tak
 
 #[test]
 fn a_clone_entry_that_names_no_path_of_ours_is_left_alone() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let config = empty_config(tmp.path());
     let repo = tmp.path().join("one");
     fs::create_dir_all(&repo).unwrap();
@@ -295,7 +295,7 @@ fn a_clone_entry_that_names_no_path_of_ours_is_left_alone() {
 
 #[test]
 fn registering_in_a_submodule_writes_the_script_where_its_command_looks() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let config = empty_config(tmp.path());
     let inner = tmp.path().join("inner");
     a_conflict_under_the_generated_driver(&inner, &config);

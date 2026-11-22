@@ -1,0 +1,135 @@
+U    checkout OLD; checkout dev                       kept=1 wt=mock/research
+U    checkout -f OLD; checkout -f dev                 kept=1 wt=mock/research
+U    reset --hard OLD; reset --hard dev               kept=1 wt=mock/research
+U    reset --hard                                     kept=1 wt=mock/research
+U    reset --keep OLD; reset --keep dev@{1}           kept=1 wt=mock/research
+U    reset --merge OLD                                kept=1 wt=mock/research
+U    switch --detach OLD; switch dev                  kept=1 wt=mock/research
+U    switch --discard-changes OLD and back            kept=1 wt=mock/research
+U    switch -C dev OLD                                kept=1 wt=mock/research
+U    checkout OLD -- .                                kept=1 wt=mock/research
+U    checkout -- . / checkout .                       kept=1 wt=mock/research
+U    restore --source OLD -SW .                       kept=1 wt=mock/research
+U    restore -SW .                                    kept=1 wt=mock/research
+U    restore --source OLD -W :/                       kept=1 wt=mock/research
+U    stash -u; stash pop                              kept=1 wt=mock/research
+U    stash -a; stash pop                              kept=1 wt=mock/research
+U    stash push -u -- mock/rdata                      kept=1 wt=mock/research
+U    clean -fd                                        kept=1 wt=mock/research
+U    clean -fdx                                       kept=1 wt=mock/research
+U    clean -fdX                                       kept=1 wt=mock/research
+U    clean -ffd                                       kept=0 wt=NOT-A-WORKTREE
+U    clean -ffdX                                      kept=1 wt=mock/research
+U    clean -ffdx                                      kept=0 wt=NOT-A-WORKTREE
+U    merge oldbranch                                  kept=1 wt=mock/research
+U    merge oldbranch -X theirs; reset --hard          kept=1 wt=mock/research
+U    cherry-pick oldbranch; abort                     kept=1 wt=mock/research
+U    revert MIG                                       kept=1 wt=mock/research
+U    rebase --onto OLD (dev replayed)                 kept=1 wt=mock/research
+U    rebase -i root (autosquash, no-op)               kept=1 wt=mock/research
+U    am of an old-path patch                          kept=1 wt=mock/research
+U    bisect start dev OLD; reset                      kept=1 wt=mock/research
+U    read-tree -u --reset OLD and back                kept=1 wt=mock/research
+U    checkout-index -a -f                             kept=1 wt=mock/research
+U    sparse-checkout set main.rs; disable             kept=1 wt=mock/research
+U    rm -r --cached .; reset                          kept=1 wt=mock/research
+U    gc --prune=now --aggressive                      kept=1 wt=mock/research
+U    worktree prune                                   kept=1 wt=mock/research
+U    add -A; commit (gitlink lands on dev)            kept=1 wt=mock/research
+U    checkout gitlinked; checkout dev                 kept=1 wt=mock/research
+U    checkout -f gitlinked; checkout -f dev           kept=1 wt=mock/research
+U    checkout polluted (regular file at path)         kept=1 wt=mock/research
+U    checkout -f polluted; checkout -f dev            kept=0 wt=mock/research
+U    reset --hard polluted; reset --hard dev          kept=0 wt=mock/research
+U    merge polluted                                   kept=1 wt=mock/research
+U    submodule update --init --force (gitlinked)      kept=1 wt=mock/research
+H    checkout OLD; checkout dev                       kept=1 wt=mock/research
+H    checkout -f OLD; checkout -f dev                 kept=1 wt=mock/research
+H    reset --hard OLD; reset --hard dev               kept=1 wt=mock/research
+H    reset --hard                                     kept=1 wt=mock/research
+H    reset --keep OLD; reset --keep dev@{1}           kept=1 wt=mock/research
+H    reset --merge OLD                                kept=1 wt=mock/research
+H    switch --detach OLD; switch dev                  kept=1 wt=mock/research
+H    switch --discard-changes OLD and back            kept=1 wt=mock/research
+H    switch -C dev OLD                                kept=1 wt=mock/research
+H    checkout OLD -- .                                kept=1 wt=mock/research
+H    checkout -- . / checkout .                       kept=1 wt=mock/research
+H    restore --source OLD -SW .                       kept=1 wt=mock/research
+H    restore -SW .                                    kept=1 wt=mock/research
+H    restore --source OLD -W :/                       kept=1 wt=mock/research
+H    stash -u; stash pop                              kept=1 wt=mock/research
+H    stash -a; stash pop                              kept=1 wt=mock/research
+H    stash push -u -- mock/rdata                      kept=1 wt=mock/research
+H    clean -fd                                        kept=1 wt=mock/research
+H    clean -fdx                                       kept=1 wt=mock/research
+H    clean -fdX                                       kept=1 wt=mock/research
+H    clean -ffd                                       kept=1 wt=mock/research
+H    clean -ffdX                                      kept=0 wt=NOT-A-WORKTREE
+H    clean -ffdx                                      kept=0 wt=NOT-A-WORKTREE
+H    merge oldbranch                                  kept=1 wt=mock/research
+H    merge oldbranch -X theirs; reset --hard          kept=1 wt=mock/research
+H    cherry-pick oldbranch; abort                     kept=1 wt=mock/research
+H    revert MIG                                       kept=1 wt=mock/research
+H    rebase --onto OLD (dev replayed)                 kept=1 wt=mock/research
+H    rebase -i root (autosquash, no-op)               kept=1 wt=mock/research
+H    am of an old-path patch                          kept=1 wt=mock/research
+H    bisect start dev OLD; reset                      kept=1 wt=mock/research
+H    read-tree -u --reset OLD and back                kept=1 wt=mock/research
+H    checkout-index -a -f                             kept=1 wt=mock/research
+H    sparse-checkout set main.rs; disable             kept=1 wt=mock/research
+H    rm -r --cached .; reset                          kept=1 wt=mock/research
+H    gc --prune=now --aggressive                      kept=1 wt=mock/research
+H    worktree prune                                   kept=1 wt=mock/research
+H    add -A; commit (gitlink lands on dev)            kept=1 wt=mock/research
+H    checkout gitlinked; checkout dev                 kept=1 wt=mock/research
+H    checkout -f gitlinked; checkout -f dev           kept=1 wt=mock/research
+H    checkout polluted (regular file at path)         kept=0 wt=mock/research
+H    checkout -f polluted; checkout -f dev            kept=0 wt=mock/research
+H    reset --hard polluted; reset --hard dev          kept=0 wt=mock/research
+H    merge polluted                                   kept=0 wt=mock/research
+H    submodule update --init --force (gitlinked)      kept=1 wt=mock/research
+T    checkout OLD; checkout dev                       kept=1 wt=mock/research
+T    checkout -f OLD; checkout -f dev                 kept=1 wt=mock/research
+T    reset --hard OLD; reset --hard dev               kept=1 wt=mock/research
+T    reset --hard                                     kept=1 wt=mock/research
+T    reset --keep OLD; reset --keep dev@{1}           kept=1 wt=mock/research
+T    reset --merge OLD                                kept=1 wt=mock/research
+T    switch --detach OLD; switch dev                  kept=1 wt=mock/research
+T    switch --discard-changes OLD and back            kept=1 wt=mock/research
+T    switch -C dev OLD                                kept=1 wt=mock/research
+T    checkout OLD -- .                                kept=1 wt=mock/research
+T    checkout -- . / checkout .                       kept=1 wt=mock/research
+T    restore --source OLD -SW .                       kept=1 wt=mock/research
+T    restore -SW .                                    kept=1 wt=mock/research
+T    restore --source OLD -W :/                       kept=1 wt=mock/research
+T    stash -u; stash pop                              kept=1 wt=mock/research
+T    stash -a; stash pop                              kept=1 wt=mock/research
+T    stash push -u -- mock/rdata                      kept=1 wt=mock/research
+T    clean -fd                                        kept=1 wt=mock/research
+T    clean -fdx                                       kept=1 wt=mock/research
+T    clean -fdX                                       kept=1 wt=mock/research
+T    clean -ffd                                       kept=1 wt=mock/research
+T    clean -ffdX                                      kept=0 wt=NOT-A-WORKTREE
+T    clean -ffdx                                      kept=0 wt=NOT-A-WORKTREE
+T    merge oldbranch                                  kept=1 wt=mock/research
+T    merge oldbranch -X theirs; reset --hard          kept=1 wt=mock/research
+T    cherry-pick oldbranch; abort                     kept=1 wt=mock/research
+T    revert MIG                                       kept=1 wt=mock/research
+T    rebase --onto OLD (dev replayed)                 kept=1 wt=mock/research
+T    rebase -i root (autosquash, no-op)               kept=1 wt=mock/research
+T    am of an old-path patch                          kept=1 wt=mock/research
+T    bisect start dev OLD; reset                      kept=1 wt=mock/research
+T    read-tree -u --reset OLD and back                kept=1 wt=mock/research
+T    checkout-index -a -f                             kept=1 wt=mock/research
+T    sparse-checkout set main.rs; disable             kept=1 wt=mock/research
+T    rm -r --cached .; reset                          kept=1 wt=mock/research
+T    gc --prune=now --aggressive                      kept=1 wt=mock/research
+T    worktree prune                                   kept=1 wt=mock/research
+T    add -A; commit (gitlink lands on dev)            kept=1 wt=mock/research
+T    checkout gitlinked; checkout dev                 kept=1 wt=mock/research
+T    checkout -f gitlinked; checkout -f dev           kept=1 wt=mock/research
+T    checkout polluted (regular file at path)         kept=0 wt=mock/research
+T    checkout -f polluted; checkout -f dev            kept=0 wt=mock/research
+T    reset --hard polluted; reset --hard dev          kept=0 wt=mock/research
+T    merge polluted                                   kept=0 wt=mock/research
+T    submodule update --init --force (gitlinked)      kept=1 wt=mock/research

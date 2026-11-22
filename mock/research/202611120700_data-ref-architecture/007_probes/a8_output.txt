@@ -1,0 +1,6 @@
+clone --recurse-submodules rc=0 lib populated=l.rs 
+submodule update --init rc=128 lib populated=
+submodule status rc=128
+submodule foreach rc=128
+fatal: not a git repository: ../.git/modules/lib
+recurse checkout rc=141

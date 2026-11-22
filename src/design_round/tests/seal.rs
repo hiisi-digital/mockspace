@@ -18,7 +18,7 @@ const OPTS: SubcmdOpts = SubcmdOpts {
 };
 
 fn mock(files: &[(&str, &str)]) -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("design_rounds")).unwrap();
     for (name, text) in files {
         std::fs::write(dir.path().join("design_rounds").join(name), text).unwrap();
@@ -102,7 +102,7 @@ const DOC_CL: &str = "202609190100_changelist.doc.md";
 /// A repository in DOC, with a doc changelist that says something and one
 /// crate template, everything committed. Returns the repo and its mock dir.
 fn repo_in_doc() -> (tempfile::TempDir, std::path::PathBuf) {
-    let repo = tempfile::tempdir().unwrap();
+    let repo = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = repo.path().join("mock");
     std::fs::create_dir_all(mock.join("design_rounds")).unwrap();
     std::fs::create_dir_all(mock.join("crates/x")).unwrap();
@@ -365,7 +365,7 @@ fn a_committed_transition_keeps_unrelated_staged_work_staged() {
 // holds the round open: `changelist-seal` refuses the lock, `changelist-immutability` refuses
 // deleting an unlocked changelist outside its window, and `deprecate` answered "both CLs locked" in
 // the phase the stub made, so the only way out was unlock, relock and a fresh changelist
-// (kaski, 30 October).
+// (a consumer, 30 October).
 
 const DOC_LOCK: &str = "202610301702_changelist.doc.lock.md";
 const SRC_LOCK: &str = "202610301702_changelist.src.lock.md";
@@ -450,10 +450,10 @@ fn reading_the_phase_writes_nothing() {
         v
     };
     let before = snapshot(&dr);
-    let _ = h::current_phase(&dr);
-    let _ = h::find_changelists(&dr);
-    let _ = h::stray_active_changelists(&dr);
-    let _ = mockspace_lint_rules::active_round_findings(&dr);
+    let _ = h::current_phase(&crate::design_round::reading_of(&dr).view(), &dr);
+    let _ = h::find_changelists(&crate::design_round::reading_of(&dr).view(), &dr);
+    let _ = h::stray_active_changelists(&crate::design_round::reading_of(&dr).view(), &dr);
+    let _ = mockspace_lint_rules::active_round_findings(&crate::design_round::reading_of(&dr).view(), &dr);
     assert_eq!(snapshot(&dr), before);
 }
 

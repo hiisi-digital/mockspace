@@ -1,0 +1,23 @@
+--- status after setup
+=== A: plain checkout OLD with dirty nested worktree
+rc=0
+NOTES now: old|
+=== B: checkout -f OLD
+rc=0
+NOTES now: old|
+.
+..
+.git
+NOTES.md
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/001/p1/main                6683eef (detached HEAD)
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/001/p1/main/mock/research  420588e [mock/research]
+back rc=0
+./p1_nested_worktree_vs_old_history.sh: line 23: mock/research/NOTES.md: No such file or directory
+NOTES: 
+=== C: reset --hard
+rc=0
+NOTES: old|
+=== D: git clean -fdx and -ffdx on nested worktree
+NOTES.md
+=== E: git add -A / add . with nested worktree (exclude present)
+=== F: same without exclude

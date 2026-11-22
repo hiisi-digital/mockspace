@@ -1,0 +1,3 @@
+fresh temp index (read-tree HEAD): .211268927 s
+copy of the real index:            .017690523 s
+trees equal: yes

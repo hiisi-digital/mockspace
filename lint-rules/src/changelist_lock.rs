@@ -53,10 +53,10 @@ impl RepoLint for ChangelistLock {
         // there were no crates, which silently disabled the gate in a repo whose
         // taxonomy had not been settled yet.
         let workspace_root = ctx.mock_dir;
-        let layout = SrcLayout::new(workspace_root, ctx.src_dirs);
+        let layout = SrcLayout::new(workspace_root, ctx.src_dirs());
 
         let design_rounds = workspace_root.join("design_rounds");
-        let phase = changelist_helpers::current_phase(&design_rounds);
+        let phase = changelist_helpers::current_phase(ctx.view(), &design_rounds);
 
         let doc_locked = matches!(phase, Phase::SrcPlan | Phase::Src | Phase::Done);
         let src_locked = matches!(phase, Phase::Done);
@@ -68,15 +68,15 @@ impl RepoLint for ChangelistLock {
 
         // Identify the locked CL names for error messages.
         let locked_doc_name =
-            changelist_helpers::find_locked_doc_cl(&design_rounds).map(|cl| cl.filename);
+            changelist_helpers::find_locked_doc_cl(ctx.view(), &design_rounds).map(|cl| cl.filename);
         let locked_src_name =
-            changelist_helpers::find_locked_src_cl(&design_rounds).map(|cl| cl.filename);
+            changelist_helpers::find_locked_src_cl(ctx.view(), &design_rounds).map(|cl| cl.filename);
 
         let mut errors = Vec::new();
 
         // Check doc templates if doc CL is locked.
         if doc_locked {
-            let doc_files = get_modified_crate_files(workspace_root, &layout, ctx.ref_files, true);
+            let doc_files = get_modified_crate_files(ctx.view(), workspace_root, &layout, ctx.ref_files(), true);
             let cl_name = locked_doc_name.as_deref().unwrap_or("doc changelist");
 
             for (file, source) in doc_files {
@@ -102,8 +102,9 @@ impl RepoLint for ChangelistLock {
         // Check source files if src CL is locked.
         if src_locked {
             let src_files = crate::fmt_only::drop_fmt_only(
+                ctx.view(),
                 workspace_root,
-                get_modified_crate_files(workspace_root, &layout, ctx.ref_files, false),
+                get_modified_crate_files(ctx.view(), workspace_root, &layout, ctx.ref_files(), false),
             );
             let cl_name = locked_src_name.as_deref().unwrap_or("src changelist");
 
@@ -132,12 +133,13 @@ impl RepoLint for ChangelistLock {
 /// Modified files under the project's source directories. `docs` picks the doc
 /// templates a lock freezes; otherwise the source a lock closes.
 fn get_modified_crate_files(
+    view: &crate::View<'_>,
     workspace_root: &Path,
     layout: &SrcLayout,
     refs: &src_layout::RefFiles,
     docs: bool,
 ) -> Vec<(String, String)> {
-    src_layout::changed_files(workspace_root, layout, refs, |f| {
+    src_layout::changed_files(view, workspace_root, layout, refs, |f| {
         if docs { is_locked_doc(layout, f) } else { is_source(layout, f) }
     })
 }

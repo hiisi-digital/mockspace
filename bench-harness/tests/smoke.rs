@@ -201,7 +201,7 @@ fn a_cached_variant_is_reloaded_and_a_changed_one_is_rerun() {
     // unconditionally on its first line. It was named for a round trip and
     // completed none. It also `set_current_dir`, which is process-global in a
     // test binary whose tests run on parallel threads.
-    let tmp = std::env::temp_dir().join(format!("mockspace_bench_cache_{}", std::process::id()));
+    let tmp = mockspace_manifest::scratch::held();
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).unwrap();
 
@@ -266,7 +266,7 @@ fn a_cached_variant_is_reloaded_and_a_changed_one_is_rerun() {
 
 #[test]
 fn manifest_loads_and_converts_to_config() {
-    let tmp = std::env::temp_dir().join(format!("mockspace_bench_manifest_{}", std::process::id()));
+    let tmp = mockspace_manifest::scratch::held();
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).unwrap();
 
@@ -308,14 +308,11 @@ cooldowns_ms = [0, 100]
 #[test]
 fn report_from_csv_round_trip_emits_findings_md() {
     // #604: CSV cache to findings.md generator. Round-trip
-    // synthetic samples through `write_csv` then
+    // synthetic samples through `write_run` then
     // `report_from_csv`; assert the resulting markdown is non-
     // empty and carries the title from the call.
-    use mockspace_bench_harness::{report_from_csv, write_csv};
-    let tmp = std::env::temp_dir().join(format!(
-        "mockspace_bench_csv_to_findings_{}",
-        std::process::id()
-    ));
+    use mockspace_bench_harness::{report_from_csv, write_run};
+    let tmp = mockspace_manifest::scratch::held();
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).expect("create tempdir");
     let csv_path = tmp.join("samples.csv");
@@ -327,8 +324,7 @@ fn report_from_csv_round_trip_emits_findings_md() {
         cache_path:  String::new(),
         report_path: String::new(),
     };
-    write_csv(&result, csv_path.to_str().expect("utf-8 path"))
-        .expect("write csv from synthetic result");
+    write_run(&result, &tmp, "20261115T000000Z-a").expect("write the run from synthetic result");
     report_from_csv(
         &csv_path,
         findings_path.to_str().expect("utf-8 path"),

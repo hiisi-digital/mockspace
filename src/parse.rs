@@ -559,7 +559,7 @@ widget-contract = { workspace = true }
     /// own `extract_deps` comment already records as having shipped once.
     #[test]
     fn every_source_directory_contributes_its_packages() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let mock = tmp.path();
         for (group, crate_name) in
             [("abi", "proj-abi-bus"), ("sys", "proj-pwmon"), ("boot", "proj-pid1")]
@@ -601,7 +601,7 @@ widget-contract = { workspace = true }
     /// here; it is refused earlier, where the name is known.
     #[test]
     fn a_source_directory_with_nothing_in_it_contributes_nothing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let empty = tmp.path().join("empty");
         std::fs::create_dir_all(&empty).unwrap();
         assert!(discover_crates_in(&[empty], "proj").is_empty());

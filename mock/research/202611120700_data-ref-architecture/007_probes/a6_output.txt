@@ -1,0 +1,8 @@
+G recurse: git checkout -f OLD; git checkout -f dev -> kept=1 data HEAD=fatal: not a git repository: <scratch>/a6/c/m/mock/rdata/../../.git/modules/rdata {fatal: could not reset submodule index}
+G recurse: git reset --hard OLD; git reset --hard dev@{1} -> kept=1 data HEAD=fatal: not a git repository: <scratch>/a6/c/m/mock/rdata/../../.git/modules/rdata {fatal: could not reset submodule index}
+G recurse: git checkout OLD; git checkout dev -> kept=1 data HEAD=past-pin {Already on 'dev'}
+G recurse: git reset --hard -> kept=1 data HEAD=fatal: not a git repository: <scratch>/a6/c/m/mock/rdata/../../.git/modules/rdata {fatal: Could not reset index file to revision 'HEAD'.}
+G recurse: git switch --discard-changes --detach OLD; git switch --discard-changes dev -> kept=1 data HEAD=fatal: not a git repository: <scratch>/a6/c/m/mock/rdata/../../.git/modules/rdata {fatal: could not reset submodule index}
+G recurse: git read-tree -u --reset HEAD -> kept=1 data HEAD=fatal: not a git repository: <scratch>/a6/c/m/mock/rdata/../../.git/modules/rdata {error: Submodule 'mock/rdata' could not be updated.}
+G recurse: git submodule update -> kept=1 data HEAD=past-pin {Skipping submodule 'mock/rdata'}
+G recurse: git pull --no-rebase . dev -> kept=1 data HEAD=data {Submodule path 'mock/rdata': checked out 'a32930657ac0ecec1e06fb93cdd40da5748036e2'}

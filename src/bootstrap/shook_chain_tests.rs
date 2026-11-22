@@ -16,7 +16,8 @@ fn adopting_shook_in_a_gated_repo_runs_the_gate_once() {
         eprintln!("SKIPPED: git shook is not on the path");
         return;
     }
-    let dir = repo("once");
+    let dir_guard = repo("once");
+    let dir = dir_guard.path().to_path_buf();
     let log = dir.join("user.log");
     // the real durable hooks, which in a repository that is not a mockspace
     // project pass and chain to the repository's own hook: the chain is what a
@@ -55,7 +56,10 @@ fn adopting_shook_in_a_gated_repo_runs_the_gate_once() {
 /// registered, and the repository's own `pre-commit` written by `own_hook`
 /// before or after the adoption. Returns the log the hook appends to.
 fn adopted_with_own_hook(tag: &str, own_before_adoption: bool) -> (PathBuf, PathBuf) {
-    let dir = repo(tag);
+    let dir = mockspace_manifest::scratch::held();
+    git(&dir, &["init", "-q"]);
+    git(&dir, &["config", "user.email", "t@t"]);
+    git(&dir, &["config", "user.name", "t"]);
     let log = dir.join("user.log");
     let hooks = dir.join("durable");
     let _ = mockspace_manifest::gate::install_durable_hooks(&hooks, HOOK_VERSION);
@@ -120,7 +124,8 @@ fn a_kept_hook_that_is_not_ours_survives_registration() {
         eprintln!("SKIPPED: git shook is not on the path");
         return;
     }
-    let dir = repo("kept");
+    let dir_guard = repo("kept");
+    let dir = dir_guard.path().to_path_buf();
     let hooks = dir.join("durable");
     fs::create_dir_all(&hooks).unwrap();
     for event in events() {
@@ -142,7 +147,8 @@ fn a_kept_hook_that_is_not_ours_survives_registration() {
 
 #[test]
 fn deactivating_after_shook_gave_up_the_key_takes_the_gate_off_it() {
-    let dir = repo("stale");
+    let dir_guard = repo("stale");
+    let dir = dir_guard.path().to_path_buf();
     let sd = shook_dir(&dir);
     fs::create_dir_all(sd.join("manifests")).unwrap();
     fs::write(manifest_path(&dir), "name = \"mockspace\"\n").unwrap();
@@ -159,7 +165,8 @@ fn deactivating_after_shook_gave_up_the_key_takes_the_gate_off_it() {
 
 #[test]
 fn a_manifest_alone_is_not_an_active_gate() {
-    let dir = repo("alone");
+    let dir_guard = repo("alone");
+    let dir = dir_guard.path().to_path_buf();
     let sd = shook_dir(&dir);
     fs::create_dir_all(sd.join("manifests")).unwrap();
     fs::write(manifest_path(&dir), "name = \"mockspace\"\n").unwrap();
@@ -170,7 +177,8 @@ fn a_manifest_alone_is_not_an_active_gate() {
 
 #[test]
 fn a_repository_without_shook_is_not_reported_active_by_the_shook_path() {
-    let dir = repo("plain");
+    let dir_guard = repo("plain");
+    let dir = dir_guard.path().to_path_buf();
     assert!(!is_active(&dir));
     assert!(!has_manifest(&dir));
     let _ = fs::remove_dir_all(&dir);
@@ -182,7 +190,8 @@ fn a_hook_git_shook_declined_because_a_manifest_runs_it_is_not_chained_to_either
         eprintln!("SKIPPED: git shook is not on the path");
         return;
     }
-    let dir = repo("declined");
+    let dir_guard = repo("declined");
+    let dir = dir_guard.path().to_path_buf();
     let log = dir.join("tool.log");
     let tool = dir.join("tool");
     crate::test_exec::write_executable(
@@ -249,7 +258,8 @@ fn a_hook_adopted_from_another_hooks_directory_leaves_git_hooks_to_the_chain() {
         eprintln!("SKIPPED: git shook is not on the path");
         return;
     }
-    let dir = repo("otherdir");
+    let dir_guard = repo("otherdir");
+    let dir = dir_guard.path().to_path_buf();
     let log = dir.join("user.log");
     let hooks = dir.join("durable");
     let _ = mockspace_manifest::gate::install_durable_hooks(&hooks, HOOK_VERSION);
@@ -318,7 +328,8 @@ fn a_tool_run_by_a_manifest_and_by_the_hook_in_git_hooks_runs_once_after_the_gat
     // the order a gated repository meets: the gate holds `core.hooksPath`, the
     // tool's entrypoint sits in `.git/hooks`, a tracked manifest declares the
     // same tool, and then git-shook is installed and the gate registered
-    let dir = repo("gateheld");
+    let dir_guard = repo("gateheld");
+    let dir = dir_guard.path().to_path_buf();
     let log = dir.join("tool.log");
     let tool = dir.join("tool");
     crate::test_exec::write_executable(

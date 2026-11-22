@@ -33,7 +33,7 @@ fn macro_build_kinded(
     libs: &[(PathBuf, Option<String>)],
     lib_kind: UnitKind,
 ) -> bool {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     let crate_dir = tmp.path().join("derive");
     std::fs::create_dir_all(&crate_dir).unwrap();
@@ -140,7 +140,7 @@ fn helper(tmp: &Path, files: &[(&str, &str)], listed: &[&str]) -> (PathBuf, Opti
 
 #[test]
 fn a_macro_that_uses_a_crate_of_the_tree_that_can_read_a_file_leaves_nothing_kept() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let bad = helper(tmp.path(), &[("src/lib.rs", "pub fn h() { let _ = std::fs::read(\"Cargo.toml\"); }")], &["src/lib.rs"]);
     assert!(!macro_build_with(Some(LISTED), Some(PURE), Some(vec![bad.0.clone()]), &[], &[bad]));
     let good = helper(tmp.path(), &[("src/lib.rs", "pub fn h() {}")], &["src/lib.rs"]);
@@ -149,7 +149,7 @@ fn a_macro_that_uses_a_crate_of_the_tree_that_can_read_a_file_leaves_nothing_kep
 
 #[test]
 fn a_crate_of_the_tree_that_reaches_files_through_include_and_path_leaves_nothing_kept() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let files = [
         ("src/lib.rs", "include!(\"impl.inc\");\n#[path = \"../../shared.rs\"]\nmod shared;\n"),
         ("src/impl.inc", "pub fn a() { let _ = std::fs::read(\"x\"); }"),
@@ -161,7 +161,7 @@ fn a_crate_of_the_tree_that_reaches_files_through_include_and_path_leaves_nothin
 
 #[test]
 fn a_crate_of_the_tree_in_the_closure_with_no_library_dep_info_leaves_nothing_kept() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mut crate_ = helper(tmp.path(), &[("src/lib.rs", "pub fn h() {}")], &["src/lib.rs"]);
     crate_.1 = None;
     assert!(!macro_build_with(Some(LISTED), Some(PURE), Some(vec![crate_.0.clone()]), &[], &[crate_]));
@@ -173,7 +173,7 @@ fn a_crate_of_the_tree_in_the_closure_with_no_library_dep_info_leaves_nothing_ke
 
 #[test]
 fn a_crate_of_the_tree_in_the_closure_that_is_only_a_proc_macro_unit_leaves_nothing_kept() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let crate_ = helper(tmp.path(), &[("src/lib.rs", "pub fn h() {}")], &["src/lib.rs"]);
     let kept = macro_build_kinded(Some(LISTED), Some(PURE), Some(vec![crate_.0.clone()]), &[], &[crate_], UnitKind::ProcMacro);
     assert!(!kept);

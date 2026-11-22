@@ -61,7 +61,7 @@ fn tree(root: &Path, body: &str) {
 
 #[test]
 fn a_tree_digest_is_its_content_and_not_where_it_sits() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let a = tmp.path().join("one").join("tool");
     let b = tmp.path().join("a-much-longer-parent").join("tool");
     tree(&a, "fn x() {}");
@@ -79,7 +79,7 @@ fn a_tree_digest_is_its_content_and_not_where_it_sits() {
 
 #[test]
 fn build_output_and_git_state_are_not_part_of_a_tree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let a = tmp.path().join("a");
     tree(&a, "fn x() {}");
     let before = digest_tree(&a).unwrap();
@@ -118,7 +118,7 @@ fn metadata(prefix: &Path) -> serde_json::Value {
 
 #[test]
 fn a_graph_read_from_two_trees_of_the_same_content_is_one_graph() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let one = tmp.path().join("one");
     let two = tmp.path().join("two-with-a-longer-name");
     for t in [&one, &two] {
@@ -139,7 +139,7 @@ fn a_graph_read_from_two_trees_of_the_same_content_is_one_graph() {
 
 #[test]
 fn a_changed_path_dependency_changes_the_graph() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let one = tmp.path().join("one");
     tree(&one.join("tool"), "fn tool() {}");
     tree(&one.join("gen"), "");
@@ -152,7 +152,7 @@ fn a_changed_path_dependency_changes_the_graph() {
 
 #[test]
 fn a_module_called_target_below_the_package_root_is_part_of_the_package() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let a = tmp.path().join("a");
     tree(&a, "fn x() {}");
     let before = digest_tree(&a).unwrap();
@@ -164,7 +164,7 @@ fn a_module_called_target_below_the_package_root_is_part_of_the_package() {
 #[cfg(unix)]
 #[test]
 fn a_link_is_part_of_the_package_and_a_dead_one_is_not_skipped() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let a = tmp.path().join("a");
     tree(&a, "fn x() {}");
     let before = digest_tree(&a).unwrap();
@@ -183,7 +183,7 @@ fn write(path: &Path, text: &str) {
 
 #[test]
 fn the_cargo_config_files_the_build_meets_are_part_of_the_identity() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let work = tmp.path().join("repo").join("mock");
     let home = tmp.path().join("home");
     let none = config_digest(&work, &home);
@@ -222,7 +222,7 @@ fn generated(tmp: &Path, manifest_extra: &str) -> PathBuf {
 
 #[test]
 fn every_input_is_read_where_it_is_collected() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let manifest = generated(tmp.path(), &format!("# {}/repo/tool\n", tmp.path().display()));
     let lints_dir = tmp.path().join("lints");
     write(&lints_dir.join("one.rs"), "fn one() {}");
@@ -274,7 +274,7 @@ fn every_input_is_read_where_it_is_collected() {
 
 #[test]
 fn a_generated_manifest_that_differs_only_by_the_tree_is_one_manifest() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let text = |root: &Path| {
         let manifest = generated(&tmp.path().join(root.file_name().unwrap()), &format!("# {}/tool\n", root.display()));
         manifest_text(&manifest, root).unwrap()
@@ -284,7 +284,7 @@ fn a_generated_manifest_that_differs_only_by_the_tree_is_one_manifest() {
 
 #[test]
 fn collecting_nothing_unreadable_is_none_and_never_a_partial_identity() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let manifest = generated(tmp.path(), "");
     let lints_dir = tmp.path().join("lints");
     let lints = vec![("missing".to_string(), lints_dir.join("missing.rs"))];
@@ -316,7 +316,7 @@ fn tracked_package(repo: &Path) -> std::path::PathBuf {
 
 #[test]
 fn a_file_git_does_not_track_is_not_part_of_a_package_in_a_repository() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     let pkg = tracked_package(&repo);
     let before = digest_tree(&pkg).unwrap();
@@ -333,7 +333,7 @@ fn a_file_git_does_not_track_is_not_part_of_a_package_in_a_repository() {
 
 #[test]
 fn a_tracked_file_is_part_of_a_package_whatever_its_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     let pkg = tracked_package(&repo);
     let before = digest_tree(&pkg).unwrap();
@@ -355,7 +355,7 @@ fn a_tracked_file_is_part_of_a_package_whatever_its_state() {
 
 #[test]
 fn a_package_outside_any_repository_is_read_whole() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let pkg = tmp.path().join("pkg");
     tree(&pkg, "fn x() {}");
     let before = digest_tree(&pkg).unwrap();
@@ -365,7 +365,7 @@ fn a_package_outside_any_repository_is_read_whole() {
 
 #[test]
 fn a_package_git_does_not_track_at_all_is_read_whole() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     git_in(tmp.path(), &["init", "-q", repo.to_str().unwrap()]);
     let pkg = repo.join("pkg");
@@ -383,7 +383,7 @@ fn a_package_git_does_not_track_at_all_is_read_whole() {
 fn a_build_script_git_does_not_track_yet_still_moves_the_digest() {
     // Cargo finds `build.rs` at the package root by itself, so neither the manifest nor an earlier
     // build's dep-info names a new one, and a scratch file beside the package is not the same thing.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     let pkg = tracked_package(&repo);
     let before = digest_tree(&pkg).unwrap();

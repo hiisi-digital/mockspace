@@ -1,0 +1,13 @@
+diff --git a/bench-harness/src/disasm/format.rs b/bench-harness/src/disasm/format.rs
+index a2fc78e..7cdf690 100644
+--- a/bench-harness/src/disasm/format.rs
++++ b/bench-harness/src/disasm/format.rs
+@@ -106,7 +106,7 @@ impl ObjectFormat {
+             Self::Coff {
+                 i386: true,
+                 image: true,
+-            } => vec![bare, underscored],
++            } => vec![underscored],
+             Self::Elf
+             | Self::Coff {
+                 i386: false,

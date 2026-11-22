@@ -18,7 +18,7 @@ use crate::config::Config;
 
 /// The rule body for `cfg` against the loaded `pack`.
 ///
-/// Names only: a project tool's usage and summary, and a lint's reach and source column, are
+/// Names only: a project tool's usage and summary, and a lint's source column, are
 /// what `mock tools` and `mock lints` print on demand, and the rule is read again for every
 /// worktree path a session touches. A tool is named, a lint is named under the severity it
 /// runs at, and the rest is one command away.
@@ -60,9 +60,93 @@ pub(crate) fn body(cfg: &Config, pack: &LintPack) -> String {
     } else {
         tool_names.join(", ")
     };
+    let mut tools_set = String::new();
+    for (name, params) in &cfg.tool_params.params {
+        let keys: Vec<&str> = params.keys().collect();
+        let _ = writeln!(tools_set, "{name}: {}", keys.join(", "));
+    }
+    let tools_absent = cfg.tool_params.absent(&pack.tools);
+    if !tools_absent.is_empty() {
+        let _ = writeln!(
+            tools_set,
+            "configured and matching no tool: {}",
+            tools_absent.join(", ")
+        );
+    }
+    let tools_set = if tools_set.is_empty() {
+        String::new()
+    } else {
+        format!("\nTOOLS SET HERE, under [tools.<name>] in mockspace.toml\n{tools_set}")
+    };
     format!(
-        "## What is available here, and what is checking you\n\n\
-         `mock tools` says what each tool does and `mock lints` lists every lint with its severity and reach. Below are only the names this repository declares, as of the last `cargo mock`; the lints that run at the pack's default are not listed.\n\n\
-         ```\nPROJECT TOOLS: {tools_line}\n\nLINTS SET HERE\n{set_here}```\n"
+        "## Tools and lints declared here\n\n\
+         As of the last `cargo mock`; pack defaults are not listed. `mock tools` and `mock lints` give the live lists. A tool reads `[tools.<name>]` in `mockspace.toml`; `mock help <tool>` names its keys, and an unknown key stops it.\n\n\
+         ```\nPROJECT TOOLS: {tools_line}\n{tools_set}\nLINTS SET HERE\n{set_here}```\n"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use mockspace_lint_rules::tool::{ConfigKey, NotALint, Purpose, Tool, ToolContext, ToolReport};
+
+    use super::*;
+
+    struct Probe;
+
+    impl Tool for Probe {
+        fn name(&self) -> &'static str {
+            "probe"
+        }
+
+        fn description(&self) -> &'static str {
+            ""
+        }
+
+        fn purpose(&self) -> Purpose {
+            Purpose::Check(NotALint::TakesAQuestion)
+        }
+
+        fn config_keys(&self) -> &[ConfigKey] {
+            &[ConfigKey {
+                name:        "subjects",
+                description: "",
+            }]
+        }
+
+        fn run(&self, _ctx: &ToolContext<'_>) -> ToolReport {
+            unreachable!()
+        }
+    }
+
+    fn body_for(toml: &str) -> String {
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("mock/crates")).unwrap();
+        std::fs::write(
+            repo.join("mockspace.toml"),
+            format!("src_dirs = [\"crates\"]\n{toml}"),
+        )
+        .unwrap();
+        let cfg = Config::from_dir(&repo.join("mock"));
+        let mut pack = LintPack::default();
+        pack.tools.push(Box::new(Probe));
+        body(&cfg, &pack)
+    }
+
+    #[test]
+    fn the_rule_names_each_tool_this_repository_configures_and_a_table_matching_none() {
+        let b = body_for("\n[tools.probe]\nsubjects = [\"workflow\"]\n\n[tools.gone]\nx = 1\n");
+        assert!(b.contains("TOOLS SET HERE"), "{b}");
+        assert!(b.contains("probe: subjects"), "{b}");
+        assert!(b.contains("configured and matching no tool: gone"), "{b}");
+    }
+
+    #[test]
+    fn a_repository_that_configures_no_tool_gets_no_such_block() {
+        // THE CONTROL: the block is the tables' doing.
+        let b = body_for("");
+        assert!(!b.contains("TOOLS SET HERE"), "{b}");
+        assert!(b.contains("PROJECT TOOLS: probe"), "{b}");
+    }
 }

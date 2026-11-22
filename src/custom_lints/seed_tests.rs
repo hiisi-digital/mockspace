@@ -10,7 +10,7 @@ fn lock_with(pin: &str) -> String {
 
 #[test]
 fn the_consumers_pin_replaces_an_older_one_in_the_generated_dir() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let (gen_dir, consumer) = (tmp.path().join("gen"), tmp.path().join("Cargo.lock"));
     std::fs::create_dir_all(&gen_dir).unwrap();
     std::fs::write(gen_dir.join("Cargo.lock"), lock_with("f700f75")).unwrap();
@@ -22,7 +22,7 @@ fn the_consumers_pin_replaces_an_older_one_in_the_generated_dir() {
 
 #[test]
 fn a_fresh_generated_dir_is_given_the_consumers_lock() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let (gen_dir, consumer) = (tmp.path().join("gen"), tmp.path().join("Cargo.lock"));
     std::fs::create_dir_all(&gen_dir).unwrap();
     std::fs::write(&consumer, lock_with("5dd2ab8f")).unwrap();
@@ -32,7 +32,7 @@ fn a_fresh_generated_dir_is_given_the_consumers_lock() {
 
 #[test]
 fn an_unmoved_consumer_lock_leaves_cargos_own_lock_alone() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let (gen_dir, consumer) = (tmp.path().join("gen"), tmp.path().join("Cargo.lock"));
     std::fs::create_dir_all(&gen_dir).unwrap();
     std::fs::write(&consumer, lock_with("5dd2ab8f")).unwrap();
@@ -47,7 +47,7 @@ fn an_unmoved_consumer_lock_leaves_cargos_own_lock_alone() {
 
 #[test]
 fn no_consumer_lock_keeps_what_the_generated_dir_has() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let gen_dir = tmp.path().join("gen");
     std::fs::create_dir_all(&gen_dir).unwrap();
     std::fs::write(gen_dir.join("Cargo.lock"), lock_with("f700f75")).unwrap();
@@ -102,7 +102,7 @@ fn dep_source(gen_dir: &Path) -> String {
 /// kept library is not loaded for the new pin.
 #[test]
 fn a_moved_consumer_pin_moves_the_resolution_the_identity_reads() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = tmp.path().join("dep");
     std::fs::create_dir_all(&repo).unwrap();
     run(&repo, &["git", "init", "-q", "-b", "dev"]);

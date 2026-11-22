@@ -1,0 +1,13 @@
+== (a) verbs run in the git tree cannot reach it
+git clean -ffdx -> edit survives=1
+git checkout -qf fd75040f94f769406b899f22cfff99426bafa49e -> edit survives=1
+git reset -q --hard fd75040f94f769406b899f22cfff99426bafa49e -> edit survives=1
+git stash -u -> edit survives=1
+git checkout -q dev -> edit survives=1
+== (b) relative paths out of the data: at the state path, and through a link at .mock/research
+state path: cargo FAILED
+link .mock/research: cargo FAILED
+== (c) the clone is deleted: what is left at the state dir
+files still there: N.md sketch  edit bytes: 1
+fatal: not a git repository: /tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpa
+(the data's own commits lived in the deleted object database; only the bytes on disk survive)

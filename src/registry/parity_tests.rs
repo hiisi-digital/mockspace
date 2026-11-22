@@ -70,7 +70,7 @@ enum At {
 /// A project under a fresh directory: `mock/` below a root that holds `.git` or does not, with the
 /// config where `at` says. Gives the directory and the mock directory.
 fn layout(git: bool, at: At) -> (tempfile::TempDir, PathBuf) {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path().join("project");
     let mock = root.join("mock");
     std::fs::create_dir_all(&mock).unwrap();

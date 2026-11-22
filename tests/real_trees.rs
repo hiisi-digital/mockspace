@@ -106,7 +106,6 @@ fn every_real_bench_tree_loads_and_resolves_through_the_benchspace_path() {
                     composed_member_cells += 1;
                     // member cells carry the member/section split and
                     // member-relative resolution
-                    assert!(cell.nested);
                     assert_ne!(cell.bench, cell.bench_name);
                     let member_dir = root.join(&cell.bench);
                     assert!(
@@ -115,7 +114,6 @@ fn every_real_bench_tree_loads_and_resolves_through_the_benchspace_path() {
                     );
                 } else {
                     // root sections keep flat semantics exactly
-                    assert!(!cell.nested);
                     assert_eq!(cell.bench, cell.bench_name);
                     assert_eq!(cell.sweep, cell.bench_name);
                 }
@@ -146,7 +144,6 @@ fn every_real_bench_tree_loads_and_resolves_through_the_benchspace_path() {
             .find(|k| k.starts_with(&format!("{member}/")))
             .expect("the member contributes keys");
         let cell = tree.manifest.for_size(&key, 0, root).unwrap();
-        assert!(cell.nested);
         assert_eq!(cell.bench, member);
         let member_manifest = mockspace_bench_harness::config::BenchManifest::load(
             &root.join(&member).join("bench.toml"),

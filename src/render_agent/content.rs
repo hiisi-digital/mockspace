@@ -25,8 +25,6 @@ pub(crate) fn generate_lint_derived_content(
     claude_hooks_dir: &Path,
     copilot_hooks_dir: &Path,
     header_md: &str,
-    preamble: &str,
-    postamble: &str,
 ) -> (usize, Vec<HookMeta>) {
     use std::collections::{BTreeMap as Map, BTreeSet as Set};
 
@@ -180,8 +178,10 @@ pub(crate) fn generate_lint_derived_content(
         let copilot_fm = format!("---\napplyTo: [{apply_to_list}]\n---\n\n");
 
         let rule_name = format!("lint-forbidden-{slug}");
-        let claude_content = format!("{claude_fm}{header_md}\n{preamble}\n\n{body}\n{postamble}");
-        let copilot_content = format!("{copilot_fm}{header_md}\n{preamble}\n\n{body}\n{postamble}");
+        let claude_content =
+            format!("{claude_fm}{}", format_with_header(header_md, &body));
+        let copilot_content =
+            format!("{copilot_fm}{}", format_with_header(header_md, &body));
 
         let claude_path = claude_rules_dir.join(format!("{rule_name}.md"));
         render_design::write_generated_ok(&claude_path, &claude_content);
@@ -211,9 +211,7 @@ pub(crate) fn generate_lint_derived_content(
     // named: the lint holds the scopes itself, so a hook per scope ran the whole
     // lint once for each of them.
     let hook_name = format!("{FORBIDDEN_IMPORTS_LINT}.sh");
-    let launcher_lookup = super::helpers::find_launcher(
-        "the forbidden-imports gate cannot run: no mockspace launcher on PATH. The verdict is the lint's and the engine gives it, so guessing a weaker rule here would contradict it. Install with: cargo install cargo-mock",
-    );
+    let ask = super::helpers::ask_check_edit(FORBIDDEN_IMPORTS_LINT, "forbidden-imports", "__HOOK_REPO_ROOT");
     let hook_body = format!(
         "#!/usr/bin/env bash\n\
          # Auto-generated: the `{FORBIDDEN_IMPORTS_LINT}` lint, asked about this edit.\n\
@@ -236,34 +234,7 @@ pub(crate) fn generate_lint_derived_content(
          # or by an alias to it, lies outside the repository's prefix and is still read by the\n\
          # gate. The engine says whether the path is in a crate, and passes it when it is not.\n\
          case \"$FILE_PATH\" in *.rs) ;; *) allow ;; esac\n\
-         # A field goes to a file byte for byte. `$(...)` strips trailing newlines, and an\n\
-         # old_string that is only newlines, or a new_string ending in one, would then name a\n\
-         # different file than the one the edit makes. `_extract` ends with the one newline\n\
-         # jq adds, which is the only one removed.\n\
-         _extract_to() {{\n\
-             local v\n\
-             v=$(_extract \"$1\"; printf x)\n\
-             v=${{v%x}}\n\
-             printf '%s' \"${{v%$'\\n'}}\" > \"$2\"\n\
-         }}\n\
-         {launcher_lookup}\
-         [ -d \"$__HOOK_REPO_ROOT\" ] \\\n\
-             || deny \"the forbidden-imports gate cannot run: its repository $__HOOK_REPO_ROOT is not there. Regenerate the hooks with cargo mock from where the repository now is.\"\n\
-         WORK=$(mktemp -d) || deny \"the forbidden-imports gate cannot run: no temporary directory.\"\n\
-         trap 'rm -rf \"$WORK\"' EXIT\n\
-         _extract_to old_string \"$WORK/old\"\n\
-         _extract_to new_string \"$WORK/new\"\n\
-         if [[ ! -s \"$WORK/old\" && ! -s \"$WORK/new\" ]]; then _extract_to content \"$WORK/new\"; fi\n\
-         ARGS=(check-edit --lint {FORBIDDEN_IMPORTS_LINT} --file \"$FILE_PATH\" --lint-only)\n\
-         _extract_to edits \"$WORK/edits\"\n\
-         if [[ \"$(head -c 1 \"$WORK/edits\")\" == \"[\" ]]; then\n\
-             ARGS+=(--edits \"$WORK/edits\")\n\
-         elif [[ -s \"$WORK/old\" ]]; then\n\
-             ARGS+=(--replace \"$WORK/old\")\n\
-             if [[ \"$(_extract replace_all)\" == \"true\" ]]; then ARGS+=(--all); fi\n\
-         fi\n\
-         _OUT=$(cd \"$__HOOK_REPO_ROOT\" 2>/dev/null && \"$launcher\" \"${{ARGS[@]}}\" < \"$WORK/new\" 2>&1)\n\
-         _RC=$?\n\
+         {ask}\
          if [ \"$_RC\" -eq 0 ]; then allow; fi\n\
          deny \"$_OUT\"\n"
     );
@@ -384,8 +355,6 @@ pub(crate) fn generate_crate_readme_rules(
     copilot_instructions_dir: &Path,
     vars: &[(String, String)],
     header_md: &str,
-    preamble: &str,
-    postamble: &str,
     registry: &crate::registry::Registry,
 ) -> usize {
     use std::collections::BTreeSet as Set;
@@ -430,7 +399,7 @@ pub(crate) fn generate_crate_readme_rules(
         let claude_content = format!(
             "{}\n{}",
             format_claude_paths(&apply_to),
-            format_with_bookends(header_md, preamble, &body, postamble)
+            format_with_header(header_md, &body)
         );
         let claude_path = claude_rules_dir.join(format!("{rule_name}.md"));
         render_design::write_generated(&claude_path, &claude_content);
@@ -440,7 +409,7 @@ pub(crate) fn generate_crate_readme_rules(
         let copilot_content = format!(
             "{}\n{}",
             format_copilot_apply_to(&apply_to),
-            format_with_bookends(header_md, preamble, &body, postamble)
+            format_with_header(header_md, &body)
         );
         let copilot_path = copilot_instructions_dir.join(format!("{rule_name}.instructions.md"));
         render_design::write_generated(&copilot_path, &copilot_content);

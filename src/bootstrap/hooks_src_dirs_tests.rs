@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use super::*;
 
-/// The kaski shape: the default directory and a nested group beside it.
+/// A consumer's shape: the default directory and a nested group beside it.
 pub(super) const KASKI: &[&str] = &["crates", "applets/console/crates"];
 
 pub(super) const CONSOLE_SRC: &str = "mock/applets/console/crates/console-core/src/x.rs";
@@ -51,7 +51,7 @@ pub(super) fn git(root: &Path, args: &[&str]) -> String {
 }
 
 pub(super) fn fixture() -> tempfile::TempDir {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     git(tmp.path(), &["init", "-q"]);
     tmp
 }
@@ -72,24 +72,29 @@ pub(super) fn stage(root: &Path, files: &[(&str, &str)]) {
 /// The stub drains its stdin before it exits. The scan pipes every commit
 /// message into the launcher under `pipefail`, so a stub that exits without
 /// reading is killed on the other end by SIGPIPE and the hook ends silently,
-/// which is a refusal that looks like an empty output. Written once per process.
-fn stub_bin() -> &'static Path {
-    static BIN: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-    BIN.get_or_init(|| {
-        let bin = std::env::temp_dir().join(format!("ms_hook_stubs_{}", std::process::id()));
+/// which is a refusal that looks like an empty output. Written per call, into a directory the calling thread holds.
+fn stub_bin() -> std::path::PathBuf {
+    {
+        let bin = mockspace_manifest::scratch::held();
         fs::create_dir_all(&bin).unwrap();
         // `cargo` records its arguments, one call to a line, in the file the run
-        // names, and passes. The others serve the byline scan.
+        // names, and passes. A `rows-gate` call exits with the number in `rows-gate.rc` beside
+        // that file, and with 3 (not rows alone) where there is none. The others serve the
+        // byline scan.
         for name in ["mock", "cargo-mock", "cargo"] {
             let path = bin.join(name);
             crate::test_exec::write_executable(
                 &path,
                 b"#!/usr/bin/env bash\ncat >/dev/null\n\
-                  [ -n \"$MS_STUB_ARGS\" ] && echo \"$*\" >> \"$MS_STUB_ARGS\"\nexit 0\n",
+                  [ -n \"$MS_STUB_ARGS\" ] && echo \"$*\" >> \"$MS_STUB_ARGS\"\n\
+                  case \" $* \" in *\" rows-gate \"*)\n\
+                  rc=$(cat \"$(dirname \"$MS_STUB_ARGS\")/rows-gate.rc\" 2>/dev/null || echo 3)\n\
+                  exit \"$rc\";; esac\n\
+                  exit 0\n",
             );
         }
         bin
-    })
+    }
 }
 
 /// What the hook printed, and the arguments of each `cargo` call it made.
@@ -251,10 +256,10 @@ fn the_old_literal_fails_the_arm_above() {
 fn crates_under_both_directories_are_scoped_together() {
     let out = commit_says(KASKI, &[
         (CONSOLE_SRC, "fn x() {}\n"),
-        ("mock/crates/kaski-sim/src/lib.rs", "fn s() {}\n"),
+        ("mock/crates/game-sim/src/lib.rs", "fn s() {}\n"),
     ]);
     assert!(
-        out.contains("crates: console-core,kaski-sim"),
+        out.contains("crates: console-core,game-sim"),
         "hook said:\n{out}"
     );
 }

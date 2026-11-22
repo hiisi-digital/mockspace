@@ -18,7 +18,7 @@ fn mkcrate_with_target(root: &Path, rel: &str) {
 
 #[test]
 fn collects_nested_bench_and_sketch_targets_only() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let root = dir.path();
     // cleanable: real cargo crates (Cargo.toml beside target) nested under
     // benches / tests / sketches
@@ -76,7 +76,7 @@ fn collects_nested_bench_and_sketch_targets_only() {
 
 #[test]
 fn spares_research_targets_outside_sketches() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let root = dir.path();
     // A research memo crate NOT under sketches/ is audit-trail, not a
     // disposable sketch. It must be spared even with a manifest present.
@@ -102,7 +102,7 @@ fn spares_research_targets_outside_sketches() {
 
 #[test]
 fn requires_sibling_manifest() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let root = dir.path();
     // A `target` dir under benches/ with NO Cargo.toml beside it is not a
     // cargo build dir; do not delete it.
@@ -112,7 +112,7 @@ fn requires_sibling_manifest() {
 
 #[test]
 fn does_not_descend_into_target_dirs() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let root = dir.path();
     // a real crate whose target nests an inner target (cargo nesting)
     mkcrate_with_target(root, "mock/benches/foo");
@@ -129,7 +129,7 @@ fn does_not_descend_into_target_dirs() {
 
 #[test]
 fn empty_when_no_nested_targets() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let root = dir.path();
     mkdir(root, "target");
     mkdir(root, "mock/target");
@@ -182,10 +182,44 @@ fn every_dispatched_subcommand_is_in_the_known_list() {
         "rename-round",
         "merge-round-meta",
         "bench",
+        "sketches",
+        "test-units",
     ] {
         assert!(
             super::known_subcommands().contains(&name),
             "{name} dispatched but missing from known_subcommands"
+        );
+    }
+}
+
+#[test]
+fn every_surface_listing_the_bench_subcommands_names_each_one() {
+    // `bench::SUBCOMMANDS` is what `mock bench` dispatches; each place a
+    // reader learns the subcommands from is held to name every one of them.
+    let help = crate::entry::help::commands()
+        .iter()
+        .find(|c| c.name == "bench")
+        .expect("bench is a command")
+        .help;
+    let guide_row = include_str!("../../docs/USAGE_GUIDE.md")
+        .lines()
+        .find(|l| l.starts_with("| `cargo mock bench` |"))
+        .expect("the usage guide has a `cargo mock bench` row");
+    for (sub, _) in crate::bench::SUBCOMMANDS {
+        let named = format!("`{sub}");
+        assert!(
+            help.contains(&named),
+            "`mock help bench` does not name `{sub}`: {help}"
+        );
+        assert!(
+            guide_row.contains(&named),
+            "docs/USAGE_GUIDE.md does not name `{sub}`: {guide_row}"
+        );
+        assert!(
+            crate::bench::HELP
+                .lines()
+                .any(|l| l.trim_start().starts_with(&format!("{sub} "))),
+            "`mock bench` help does not name `{sub}`"
         );
     }
 }

@@ -28,7 +28,7 @@ const PARKED_OLDER: &str = "202610221816_topic.parked-before-the-round.md";
 const PARKED_LATER: &str = "202610230600_topic.filed-while-the-round-was-open.md";
 
 fn mock(files: &[(&str, &str)]) -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("design_rounds")).unwrap();
     for (name, text) in files {
         std::fs::write(dir.path().join("design_rounds").join(name), text).unwrap();
@@ -655,7 +655,7 @@ fn commit_at_noon(dir: &Path) -> String {
 
 #[test]
 fn a_topic_stamped_the_same_day_but_after_the_closing_commit_stays_flat() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let dr = dir.path().join("design_rounds");
     std::fs::create_dir_all(&dr).unwrap();
     let sha = commit_at_noon(dir.path());

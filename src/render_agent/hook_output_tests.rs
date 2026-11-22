@@ -13,15 +13,8 @@ use std::process::Command;
 
 use super::*;
 
-fn scratch() -> std::path::PathBuf {
-    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let d = std::env::temp_dir().join(format!(
-        "ms_hookout_{}_{}",
-        std::process::id(),
-        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn scratch() -> tempfile::TempDir {
+    mockspace_manifest::scratch::tempdir().unwrap()
 }
 
 fn cfg_at(repo_root: &std::path::Path) -> Config {
@@ -46,10 +39,11 @@ fn every_hook_for(repo_root: &std::path::Path, helpers: &str) -> Vec<(&'static s
         ("reminder", subst(builtin_reminder(&cfg))),
         ("mockspace-gate", subst(builtin_mockspace_gate())),
         ("no-yagni", subst(builtin_no_yagni())),
+        ("guide", subst(builtin_guide(&cfg))),
     ]
 }
 
-/// Both platforms, since the same five hooks are written twice and only one of
+/// Both platforms, since the same six hooks are written twice and only one of
 /// them was ever swept.
 fn every_hook_everywhere(repo_root: &std::path::Path) -> Vec<(String, String)> {
     let mut out = Vec::new();
@@ -156,7 +150,8 @@ fn the_reminder_emits_one_object_when_it_has_something_to_say() {
     // The reminder speaks when the command names the mock directory, and that
     // path is the one that carried the defect: it printed its context and then
     // fell through to a second emit.
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     let script = every_hook_for(&root, crate::render_agent::CLAUDE_HOOK_HELPERS)
         .into_iter()
         .find(|(n, _)| *n == "reminder")
@@ -182,7 +177,8 @@ fn the_yagni_guard_emits_one_object_when_it_has_something_to_say() {
     // The second site of the same shape, and the one the first version of this
     // sweep never reached: it takes a `git commit` whose message carries one of
     // the flagged words, and nothing else wakes it.
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     let script = every_hook_for(&root, crate::render_agent::CLAUDE_HOOK_HELPERS)
         .into_iter()
         .find(|(n, _)| *n == "no-yagni")
@@ -211,7 +207,8 @@ fn no_hook_on_either_platform_ever_writes_two_values() {
     // on purpose: Claude's `allow` prints an object, Copilot's prints nothing
     // and its `context` prints plain text rather than JSON. Zero values is a
     // correct Copilot answer and a wrong Claude one, which the next arm pins.
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     let mut failures = Vec::new();
     for (name, script) in every_hook_everywhere(&root) {
         for (what, payload) in the_payloads(&root) {
@@ -231,7 +228,8 @@ fn every_claude_hook_writes_exactly_one_value_on_every_payload() {
     // Stronger than the sweep above and true only on this platform: every path
     // out of a Claude hook prints an object, so zero is a hook that stopped
     // deciding, which `at most one` would wave through.
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     let mut failures = Vec::new();
     for (name, script) in every_hook_for(&root, crate::render_agent::CLAUDE_HOOK_HELPERS) {
         for (what, payload) in the_payloads(&root) {
@@ -348,7 +346,8 @@ fn a_returning_helper_is_caught() {
 
 #[test]
 fn the_reminder_is_said_once_per_session_and_again_for_another() {
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     let script = every_hook_for(&root, crate::render_agent::CLAUDE_HOOK_HELPERS)
         .into_iter()
         .find(|(n, _)| *n == "reminder")
@@ -368,7 +367,8 @@ fn the_reminder_is_said_once_per_session_and_again_for_another() {
 
 #[test]
 fn the_reminder_returns_after_an_hour_and_without_a_usable_session_id() {
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     let script = every_hook_for(&root, crate::render_agent::CLAUDE_HOOK_HELPERS)
         .into_iter()
         .find(|(n, _)| *n == "reminder")
@@ -394,7 +394,8 @@ fn the_reminder_returns_after_an_hour_and_without_a_usable_session_id() {
 fn a_deny_reason_written_with_backslash_n_carries_real_line_breaks() {
     // The write guard writes its reasons with `\n` between the lines. The JSON must
     // carry a line break there, not a backslash and an n the reader sees as text.
-    let root = scratch();
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
     for helpers in [
         crate::render_agent::CLAUDE_HOOK_HELPERS,
         crate::render_agent::COPILOT_HOOK_HELPERS,
@@ -412,5 +413,149 @@ fn a_deny_reason_written_with_backslash_n_carries_real_line_breaks() {
             .expect(&out);
         assert_eq!(reason, "BLOCKED: x.\n\nPhase: TOPIC.");
     }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn write_payload(path: &std::path::Path, content: &str) -> String {
+    serde_json::json!({
+        "session_id": "t",
+        "transcript_path": "/tmp/t",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Write",
+        "tool_input": { "file_path": path.display().to_string(), "content": content }
+    })
+    .to_string()
+}
+
+/// A Claude-shaped hook payload as Copilot sends it: the tool's arguments under
+/// `toolArgs`, which is where Copilot's `_extract` reads them from.
+fn copilot_shape(payload: &str) -> String {
+    let v: serde_json::Value = serde_json::from_str(payload).unwrap();
+    serde_json::json!({
+        "session_id": v["session_id"],
+        "toolName": v["tool_name"],
+        "toolArgs": v["tool_input"],
+    })
+    .to_string()
+}
+
+/// The payload as `platform` sends it.
+fn shaped(platform: &str, payload: &str) -> String {
+    if platform == "copilot" { copilot_shape(payload) } else { payload.to_string() }
+}
+
+fn with_session(payload: &str, session: &str) -> String {
+    payload.replace("\"session_id\":\"t\"", &format!("\"session_id\":\"{session}\""))
+}
+
+/// Each subject wakes on what it should, says its own line in one object on
+/// both platforms, and an unrelated call stays silent.
+#[test]
+fn the_guide_speaks_once_per_subject_in_one_object() {
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
+    let cases = [
+        (
+            write_payload(&root.join("mock/benches/hash/arms/fnv/src/lib.rs"), "pub fn f() {}"),
+            "MOCKSPACE BENCHES",
+        ),
+        (
+            write_payload(&root.join("mock/research/probe/timing.rs"), "let t = std::time::Instant::now();"),
+            "MOCKSPACE BENCHES",
+        ),
+        (
+            bash_payload(&format!("cd {} && cargo mock bench run hash", root.display())),
+            "MOCKSPACE BENCHES",
+        ),
+        (
+            write_payload(&root.join("mock/research/sketches/202601010000_x/FINDINGS.md"), "x"),
+            "MOCKSPACE SKETCHES",
+        ),
+        (
+            bash_payload(&format!("cd {} && rustc probe.rs", root.display())),
+            "MOCKSPACE SKETCHES",
+        ),
+        (
+            write_payload(&root.join("mock/crates/x/tests/one.rs"), "#[test] fn t() {}"),
+            "MOCKSPACE TESTS",
+        ),
+        (
+            bash_payload(&format!("cd {} && cargo test -p x", root.display())),
+            "MOCKSPACE TESTS",
+        ),
+    ];
+    for (platform, helpers) in [
+        ("claude", crate::render_agent::CLAUDE_HOOK_HELPERS),
+        ("copilot", crate::render_agent::COPILOT_HOOK_HELPERS),
+    ] {
+        let script = every_hook_for(&root, helpers)
+            .into_iter()
+            .find(|(n, _)| *n == "guide")
+            .unwrap()
+            .1;
+        for (i, (payload, want)) in cases.iter().enumerate() {
+            // A fresh session per case, so the once-per-session memory does not
+            // silence a later case of the same subject.
+            let session = format!("{platform}{i}");
+            let out = run(&root, &script, &with_session(&shaped(platform, payload), &session));
+            // Copilot's `context` prints the text bare and Claude's wraps it in
+            // one object; both say the subject.
+            assert!(out.contains(want), "{platform} case {i} did not say {want}:\n{out}");
+            if platform == "claude" {
+                assert_eq!(value_count(&out), 1, "{platform} case {i} wrote:\n{out}");
+            }
+        }
+        // The control: nothing about benches, sketches or tests, no word.
+        let quiet = run(
+            &root,
+            &script,
+            &with_session(&shaped(platform, &bash_payload(&format!("cd {} && ls", root.display()))), "quiet"),
+        );
+        assert!(!quiet.contains("MOCKSPACE"), "{platform} spoke on ls:\n{quiet}");
+        // `cargo mock test` is the right command, said once; a bare word in a path is not.
+        let other = run(
+            &root,
+            &script,
+            &with_session(
+                &shaped(platform, &write_payload(&root.join("mock/crates/x/src/testing.rs"), "x")),
+                "o",
+            ),
+        );
+        assert!(!other.contains("MOCKSPACE"), "{platform} spoke on a plain source:\n{other}");
+        // A timer in plain runtime code is not a bench: only a test, sketch or
+        // research path makes `Instant::now` one.
+        let runtime = run(
+            &root,
+            &script,
+            &with_session(
+                &shaped(
+                    platform,
+                    &write_payload(&root.join("mock/crates/x/src/lib.rs"), "let t = std::time::Instant::now();"),
+                ),
+                "rt",
+            ),
+        );
+        assert!(!runtime.contains("MOCKSPACE"), "{platform} called runtime code a bench:\n{runtime}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_guide_says_each_subject_once_per_session() {
+    let root_guard = scratch();
+    let root = root_guard.path().to_path_buf();
+    let script = every_hook_for(&root, crate::render_agent::CLAUDE_HOOK_HELPERS)
+        .into_iter()
+        .find(|(n, _)| *n == "guide")
+        .unwrap()
+        .1;
+    let bench = write_payload(&root.join("mock/benches/b/bench.toml"), "x");
+    let test = bash_payload(&format!("cd {} && cargo test", root.display()));
+    let says = |p: &str, s: &str, want: &str| run(&root, &script, &with_session(p, s)).contains(want);
+    assert!(says(&bench, "s", "MOCKSPACE BENCHES"));
+    assert!(!says(&bench, "s", "MOCKSPACE BENCHES"), "the second time in a session is silent");
+    // The control: another subject in the same session is still said.
+    assert!(says(&test, "s", "MOCKSPACE TESTS"), "a second subject is its own memory");
+    assert!(says(&bench, "other", "MOCKSPACE BENCHES"), "another session hears it");
     let _ = std::fs::remove_dir_all(&root);
 }

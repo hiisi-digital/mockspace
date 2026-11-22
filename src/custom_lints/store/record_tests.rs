@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn the_crate_is_tested_only_by_the_worktree_that_last_wrote_it() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let gen_dir = tmp.path().join("shared").join("k");
     std::fs::create_dir_all(&gen_dir).unwrap();
     std::fs::write(gen_dir.join("Cargo.toml"), "").unwrap();
@@ -35,7 +35,7 @@ fn a_scoped_build_never_moves_the_pointer_the_test_run_reads() {
     // `mock test` takes the lints tree from the pointer. A one-tool crate behind it has no lint modules, so
     // the run would be green over nothing, the outcome entry/test.rs refuses. Mutation: the scoped build
     // records the pointer like the whole one, and the second assertion names the one-tool directory.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let whole = tmp.path().join("shared").join("whole");
     let scoped = tmp.path().join("shared").join("scoped");
     for d in [&whole, &scoped] {
@@ -59,7 +59,7 @@ fn a_scoped_build_never_moves_the_pointer_the_test_run_reads() {
 
 #[test]
 fn a_whole_build_records_its_duplicate_tool_names_beside_the_pointer() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = tmp.path().join("mock");
     assert_eq!(duplicates_of(&mock), None, "nothing is recorded before a whole build");
     record_duplicates(&mock, &["audit".to_string(), "sweep".to_string()]).unwrap();
@@ -78,6 +78,47 @@ fn a_scoped_run_refuses_a_recorded_duplicate_and_builds_the_rest_alone() {
 }
 
 #[test]
-fn a_scoped_run_with_no_record_takes_the_whole_build_once() {
-    assert_eq!(plan_scoped(None, "ticket-add"), ScopedPlan::Whole);
+fn a_scoped_run_with_no_record_builds_the_tool_with_the_packs_only() {
+    assert_eq!(plan_scoped(None, "ticket-add"), ScopedPlan::OneToolAndPacks);
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let ok = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+        .args(args)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "git {args:?}");
+}
+
+#[test]
+fn a_worktree_with_no_record_reads_the_newest_a_sibling_left() {
+    // A ticket seat or a helper's clone has never run a whole build. With no record its first run of one
+    // tool took the whole build, every lint and tool in release, past an hour in a helper container.
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
+    let main = tmp.path().join("main");
+    std::fs::create_dir_all(main.join("mock")).unwrap();
+    git(&main, &["init", "-q"]);
+    git(&main, &["commit", "-q", "--allow-empty", "-m", "root"]);
+    let seat = tmp.path().join("seat");
+    git(&main, &["worktree", "add", "-q", seat.to_str().unwrap()]);
+    let seat_mock = seat.join("mock");
+    // the control: nothing recorded anywhere, so the run builds the tool with the packs
+    assert_eq!(duplicates_for_run(&seat, &seat_mock), None);
+    assert_eq!(plan_scoped(duplicates_for_run(&seat, &seat_mock), "ticket-add"), ScopedPlan::OneToolAndPacks);
+    record_duplicates(&main.join("mock"), &["check".to_string()]).unwrap();
+    assert_eq!(duplicates_for_run(&seat, &seat_mock), Some(vec!["check".to_string()]));
+    assert_eq!(plan_scoped(duplicates_for_run(&seat, &seat_mock), "ticket-add"), ScopedPlan::OneTool);
+    assert_eq!(
+        plan_scoped(duplicates_for_run(&seat, &seat_mock), "check"),
+        ScopedPlan::Refuse(vec!["check".to_string()]),
+        "a name the sibling's whole build found twice is still refused"
+    );
+    // the worktree's own record wins over a sibling's
+    std::fs::create_dir_all(&seat_mock).unwrap();
+    record_duplicates(&seat_mock, &[]).unwrap();
+    assert_eq!(duplicates_for_run(&seat, &seat_mock), Some(vec![]));
 }

@@ -1,0 +1,82 @@
+
+variant_scalar.dll:     file format pei-x86-64
+
+
+Disassembly of section .text:
+
+0000000180001000 <.text>:
+   180001000:	movzbl (%rcx),%eax
+   180001003:	mov    %eax,%r8d
+   180001006:	shl    $0x5,%r8d
+   18000100a:	sub    %rax,%r8
+   18000100d:	movzbl 0x1(%rcx),%eax
+   180001011:	add    %r8,%rax
+   180001014:	mov    %eax,%r8d
+   180001017:	shl    $0x5,%r8d
+   18000101b:	sub    %rax,%r8
+   18000101e:	movzbl 0x2(%rcx),%eax
+   180001022:	add    %r8,%rax
+   180001025:	mov    %eax,%r8d
+   180001028:	shl    $0x5,%r8d
+   18000102c:	sub    %rax,%r8
+   18000102f:	movzbl 0x3(%rcx),%eax
+   180001033:	add    %r8,%rax
+   180001036:	mov    %rax,%r8
+   180001039:	shl    $0x5,%r8
+   18000103d:	sub    %rax,%r8
+   180001040:	movzbl 0x4(%rcx),%eax
+   180001044:	add    %r8,%rax
+   180001047:	mov    %rax,%r8
+   18000104a:	shl    $0x5,%r8
+   18000104e:	sub    %rax,%r8
+   180001051:	movzbl 0x5(%rcx),%eax
+   180001055:	add    %r8,%rax
+   180001058:	mov    %rax,%r8
+   18000105b:	shl    $0x5,%r8
+   18000105f:	sub    %rax,%r8
+   180001062:	movzbl 0x6(%rcx),%eax
+   180001066:	add    %r8,%rax
+   180001069:	mov    %rax,%r8
+   18000106c:	shl    $0x5,%r8
+   180001070:	sub    %rax,%r8
+   180001073:	movzbl 0x7(%rcx),%eax
+   180001077:	add    %r8,%rax
+   18000107a:	mov    %rax,%rcx
+   18000107d:	shl    $0x5,%rcx
+   180001081:	sub    %rax,%rcx
+   180001084:	mov    %rcx,(%rdx)
+   180001087:	ret
+   180001088:	int3
+   180001089:	int3
+   18000108a:	int3
+   18000108b:	int3
+   18000108c:	int3
+   18000108d:	int3
+   18000108e:	int3
+   18000108f:	int3
+   180001090:	sub    $0x28,%rsp
+   180001094:	cmp    $0x8,%r8
+   180001098:	jne    0x1800010a6
+   18000109a:	call   0x180001000
+   18000109f:	xor    %eax,%eax
+   1800010a1:	add    $0x28,%rsp
+   1800010a5:	ret
+   1800010a6:	lea    0xf53(%rip),%rax        # 0x180002000
+   1800010ad:	add    $0x28,%rsp
+   1800010b1:	ret
+   1800010b2:	int3
+   1800010b3:	int3
+   1800010b4:	int3
+   1800010b5:	int3
+   1800010b6:	int3
+   1800010b7:	int3
+   1800010b8:	int3
+   1800010b9:	int3
+   1800010ba:	int3
+   1800010bb:	int3
+   1800010bc:	int3
+   1800010bd:	int3
+   1800010be:	int3
+   1800010bf:	int3
+   1800010c0:	lea    0xf39(%rip),%rax        # 0x180002000
+   1800010c7:	ret

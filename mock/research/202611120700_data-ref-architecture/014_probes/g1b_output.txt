@@ -1,0 +1,3 @@
+control, no fsmonitor: the read loop visited 6 of 6 files
+fsmonitor via git-shook: the read loop visited 1 of 6 files
+same loop with git's stdin closed (</dev/null): 6

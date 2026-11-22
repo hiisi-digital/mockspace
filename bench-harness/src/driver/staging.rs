@@ -5,9 +5,9 @@
 
 //! Transactional result staging: crash-borne outputs void themselves.
 //!
-//! A run writes every per-stage output (CSV, meta, findings) under
-//! `results/.inflight/<runid>/<bench>/` and promotes the whole tree
-//! into `results/<bench>/` only when the run loop completes in an
+//! A run writes every cell's run directory under
+//! `results/.inflight/<stage>/` and promotes the whole tree into the same
+//! relative paths under `results/` only when the run loop completes in an
 //! orderly way. A run that dies mid-way (panic, abort, kill, OOM)
 //! leaves its staging directory behind, and the next orchestrator
 //! start quarantines it into `results/void/<runid>/` with a notice.
@@ -27,10 +27,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Subdirectory of the results root holding in-flight run staging.
-pub(super) const INFLIGHT_DIR: &str = ".inflight";
+pub(super) const INFLIGHT_DIR: &str = mockspace_bench_layout::INFLIGHT_DIR;
 /// Subdirectory of the results root holding quarantined crash-borne
 /// output trees.
-pub(super) const VOID_DIR: &str = "void";
+pub(super) const VOID_DIR: &str = mockspace_bench_layout::VOID_DIR;
 
 /// Upper age for an in-flight tree to be considered possibly live.
 /// A recorded pid can be reused by an unrelated process after a
@@ -108,6 +108,12 @@ pub(super) fn create_stage_root(results_root: &Path) -> std::io::Result<PathBuf>
 /// in an orderly way; a crash never reaches this point, which is the
 /// entire mechanism.
 ///
+/// Each staged file moves to the same relative path under the results root,
+/// and a file already there is refused, never replaced: a run directory is
+/// written once, so a target that exists is a collision to report and not a
+/// file to overwrite. The previous form moved files into `results/<bench>/`
+/// by name and replaced whatever an earlier run had left there.
+///
 /// Promotion is all-or-nothing toward canonical: if any move fails
 /// partway, every file already promoted is rolled back into staging
 /// so canonical never shows a partial run, and the intact staged
@@ -116,25 +122,26 @@ pub(super) fn create_stage_root(results_root: &Path) -> std::io::Result<PathBuf>
 pub(super) fn promote(results_root: &Path, stage_root: &Path) -> std::io::Result<()> {
     let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
     let result = (|| -> std::io::Result<()> {
-        for bench_entry in std::fs::read_dir(stage_root)? {
-            let bench_dir = bench_entry?.path();
-            if !bench_dir.is_dir() {
-                continue;
-            }
-            let Some(bench_name) = bench_dir.file_name().map(|n| n.to_owned()) else {
+        for staged in staged_files(stage_root)? {
+            let Ok(rel) = staged.strip_prefix(stage_root) else {
                 continue;
             };
-            let final_dir = results_root.join(&bench_name);
-            std::fs::create_dir_all(&final_dir)?;
-            for file_entry in std::fs::read_dir(&bench_dir)? {
-                let staged = file_entry?.path();
-                let Some(file_name) = staged.file_name().map(|n| n.to_owned()) else {
-                    continue;
-                };
-                let target = final_dir.join(&file_name);
-                std::fs::rename(&staged, &target)?;
-                moved.push((target, staged));
+            let target = results_root.join(rel);
+            if target.exists() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!(
+                        "{} already exists; a run directory is written once and \
+                         this run would have replaced it",
+                        target.display()
+                    ),
+                ));
             }
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::rename(&staged, &target)?;
+            moved.push((target, staged));
         }
         Ok(())
     })();
@@ -157,6 +164,23 @@ pub(super) fn promote(results_root: &Path, stage_root: &Path) -> std::io::Result
     Ok(())
 }
 
+/// Every file under `dir`, at any depth, sorted.
+fn staged_files(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for entry in std::fs::read_dir(&d)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
 /// Parse the pid component out of a `<timestamp>-<pid>` runid.
 fn pid_from_runid(runid: &str) -> Option<u32> {
     runid.rsplit('-').next()?.parse().ok()
@@ -191,11 +215,7 @@ mod tests {
     use super::*;
 
     fn temp_results_root(tag: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "mockspace-staging-test-{}-{}",
-            tag,
-            std::process::id()
-        ));
+        let root = mockspace_manifest::scratch::held();
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         root
@@ -281,6 +301,41 @@ mod tests {
         assert!(!root.join("bench_a").join("bench_a_n64.csv").exists());
         assert!(stage.join("bench_a/bench_a_n64.csv").exists());
         assert!(stage.join("bench_b/bench_b_n64.csv").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A run directory promotes at its full depth, beside an earlier run of
+    /// the same cell, and the earlier run is untouched.
+    #[test]
+    fn a_run_promotes_beside_an_earlier_one() {
+        let root = temp_results_root("beside");
+        let cell = "hash/hash_n64/linux-x86_64-c4-bare-amd";
+        std::fs::create_dir_all(root.join(cell).join("20261114T000000Z-a")).unwrap();
+        std::fs::write(root.join(cell).join("20261114T000000Z-a/samples.csv"), "old\n").unwrap();
+        let stage = create_stage_root(&root).unwrap();
+        std::fs::create_dir_all(stage.join(cell).join("20261115T000000Z-b")).unwrap();
+        std::fs::write(stage.join(cell).join("20261115T000000Z-b/samples.csv"), "new\n").unwrap();
+        promote(&root, &stage).unwrap();
+        assert_eq!(std::fs::read_to_string(root.join(cell).join("20261114T000000Z-a/samples.csv")).unwrap(), "old\n");
+        assert_eq!(std::fs::read_to_string(root.join(cell).join("20261115T000000Z-b/samples.csv")).unwrap(), "new\n");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The defect this exists for: a re-run replaced the earlier run's files in
+    /// place. A staged file whose target exists is refused, the existing bytes
+    /// stand, and the staged run stays whole for the next start to void.
+    #[test]
+    fn promote_never_replaces_an_existing_file() {
+        let root = temp_results_root("never-replace");
+        std::fs::create_dir_all(root.join("hash")).unwrap();
+        std::fs::write(root.join("hash/hash_n64.csv"), "earlier run\n").unwrap();
+        let stage = create_stage_root(&root).unwrap();
+        std::fs::create_dir_all(stage.join("hash")).unwrap();
+        std::fs::write(stage.join("hash/hash_n64.csv"), "this run\n").unwrap();
+        let err = promote(&root, &stage).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists, "{err}");
+        assert_eq!(std::fs::read_to_string(root.join("hash/hash_n64.csv")).unwrap(), "earlier run\n");
+        assert!(stage.join("hash/hash_n64.csv").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

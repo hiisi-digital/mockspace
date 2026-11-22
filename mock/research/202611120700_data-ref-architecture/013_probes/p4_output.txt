@@ -1,0 +1,6 @@
+[git~1       ] cargo from inside the instance: resolves | git add -A: ok (nothing staged: 0) | git add -f of a file under it: no message; staged=0                                         | update-index: error: Invalid path 'git~1/research/N.md
+[.mockroot   ] cargo from inside the instance: resolves | git add -A: ok (nothing staged: 0) | git add -f of a file under it: no message; staged=0                                         | update-index: ACCEPTED
+[deep/root   ] cargo from inside the instance: BREAKS   | git add -A: ok (nothing staged: 0) | git add -f of a file under it: no message; staged=0                                         | update-index: ACCEPTED
+[GIT~1       ] cargo from inside the instance: resolves | git add -A: ok (nothing staged: 0) | git add -f of a file under it: no message; staged=0                                         | update-index: error: Invalid path 'GIT~1/research/N.md
+[.git        ] cargo from inside the instance: resolves | git add -A: ok (nothing staged: 0) | git add -f of a file under it: no message; staged=0                                         | update-index: error: Invalid path '.git /research/N.md
+== a commit that DOES carry the refused path (crafted tree, as a hostile or careless clone could push): can the main tree check it out?

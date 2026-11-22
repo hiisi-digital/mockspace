@@ -1,0 +1,9 @@
+ 1278  1275    1028 /bin/sh <scratch>/012/f1b/r/.shook/hooks/fsmonitor-watchman 2 1794471499011534682
+ 1292  1278    1028 cat
+25877 25873     147 /bin/bash ./g1_shook_stdin_in_a_read_loop.sh <scratch>/003/p14/g1
+25979 25877     147 /bin/bash ./g1_shook_stdin_in_a_read_loop.sh <scratch>/003/p14/g1
+25980 25979     147 git ls-files
+25981 25979     147 /bin/bash ./g1_shook_stdin_in_a_read_loop.sh <scratch>/003/p14/g1
+25983 25980     147 /bin/sh <scratch>/003/p14/g1/r/.shook/hooks/fsmonitor-watchman 2 1794472380516724910
+25987 25983     147 cat
+fd0 of the harness shell: socket (never closes); git ls-files -> fsmonitor-watchman dispatcher -> cat, all waiting

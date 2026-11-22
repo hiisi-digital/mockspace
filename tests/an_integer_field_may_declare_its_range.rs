@@ -75,7 +75,7 @@ fn outcome(field: &str, value: &str) -> (bool, String) {
         taplo_present(),
         "the range is enforced by taplo. Install taplo to run this suite."
     );
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), field, value);
     let out = run(tmp.path());
     (

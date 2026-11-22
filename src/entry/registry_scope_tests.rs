@@ -79,7 +79,7 @@ fn spike() -> RegistryNamespace {
 /// staged. It names the first file, so a scope inferred from `source` would warn here.
 #[test]
 fn a_duplicate_with_only_its_second_file_staged_still_gates() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let dir = d.path().join("registry");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.toml"), "[[spike]]\nid = \"one\"\n").unwrap();
@@ -110,7 +110,7 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 fn repo() -> tempfile::TempDir {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     git(d.path(), &["init", "-q"]);
     d
 }
@@ -135,7 +135,7 @@ fn the_commit_scope_is_what_the_index_changes() {
 
 #[test]
 fn the_push_scope_is_what_the_commits_not_on_a_remote_change() {
-    let remote = tempfile::tempdir().unwrap();
+    let remote = mockspace_manifest::scratch::tempdir().unwrap();
     git(remote.path(), &["init", "-q", "--bare"]);
     let d = repo();
     let root = d.path();
@@ -162,7 +162,7 @@ fn the_push_scope_is_what_the_commits_not_on_a_remote_change() {
 
 #[test]
 fn a_run_whose_files_git_cannot_name_gates_everything() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     // a `.git` that is not a repository, as a fixture without `git init` has
     std::fs::create_dir(d.path().join(".git")).unwrap();
     for mode in [LintMode::Commit, LintMode::Push] {
@@ -211,7 +211,7 @@ fn the_commit_scope_reads_the_index_the_hook_was_given() {
 /// is its diff against the first parent.
 #[test]
 fn the_push_scope_sees_a_merge_of_a_branch_a_remote_has() {
-    let remote = tempfile::tempdir().unwrap();
+    let remote = mockspace_manifest::scratch::tempdir().unwrap();
     git(remote.path(), &["init", "-q", "--bare"]);
     let d = repo();
     let root = d.path();

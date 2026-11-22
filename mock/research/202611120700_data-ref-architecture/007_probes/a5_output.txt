@@ -1,0 +1,16 @@
+U recurse: git checkout -f OLD; git checkout -f dev -> kept=1 data HEAD=past-pin {Switched to branch 'dev'}
+U recurse: git reset --hard OLD; git reset --hard dev@{1} -> kept=1 data HEAD=past-pin {fatal: log for 'dev' only has 1 entries}
+U recurse: git checkout OLD; git checkout dev -> kept=1 data HEAD=past-pin {Switched to branch 'dev'}
+U recurse: git reset --hard -> kept=1 data HEAD=past-pin {HEAD is now at fd5bd0e s}
+U recurse: git switch --discard-changes --detach OLD; git switch --discard-changes dev -> kept=1 data HEAD=past-pin {Switched to branch 'dev'}
+U recurse: git read-tree -u --reset HEAD -> kept=1 data HEAD=past-pin {}
+U recurse: git submodule update -> kept=1 data HEAD=past-pin {}
+U recurse: git pull --no-rebase . dev -> kept=1 data HEAD=past-pin {Already up to date.}
+G recurse: git checkout -f OLD; git checkout -f dev -> kept=1 data HEAD=past-pin {Switched to branch 'dev'}
+G recurse: git reset --hard OLD; git reset --hard dev@{1} -> kept=1 data HEAD=past-pin {HEAD is now at 1ea8c41 placeholder}
+G recurse: git checkout OLD; git checkout dev -> kept=1 data HEAD=past-pin {Switched to branch 'dev'}
+G recurse: git reset --hard -> kept=1 data HEAD=past-pin {HEAD is now at 1ea8c41 placeholder}
+G recurse: git switch --discard-changes --detach OLD; git switch --discard-changes dev -> kept=1 data HEAD=past-pin {Switched to branch 'dev'}
+G recurse: git read-tree -u --reset HEAD -> kept=1 data HEAD=past-pin {}
+G recurse: git submodule update -> kept=1 data HEAD=past-pin {Skipping submodule 'mock/rdata'}
+G recurse: git pull --no-rebase . dev -> kept=1 data HEAD=past-pin {Already up to date.}

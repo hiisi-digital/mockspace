@@ -1,0 +1,1 @@
+fetch with shared name checked out: {fatal: refusing to fetch into branch 'refs/heads/mock/research' checked out at '<scratch>/a13/w1/mock/rdata'} dev updated=no

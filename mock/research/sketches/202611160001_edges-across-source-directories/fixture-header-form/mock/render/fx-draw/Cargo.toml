@@ -1,0 +1,12 @@
+[package]
+name = "fx-draw"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+fx-ids.workspace = true
+
+# The same forbidden edge as fixture-red, written as a table header instead of a key.
+[dependencies.fx-ground]
+path = "../../sim/fx-ground"

@@ -590,7 +590,7 @@ mod closed_value_set_placement {
                 max,
             }],
         };
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let n = generate_schemas(tmp.path(), &tmp.path().join("mock"), &[ns]);
         assert!(n > 0, "control: the generator wrote something");
         let dir = tmp
@@ -693,7 +693,7 @@ mod the_editor_binding_is_not_written_over_somebody_elses {
         // found. The other two were `.claude/settings.json` and the documents
         // directory, and both were fixed by reading the file before writing
         // it. This one was not.
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let theirs = d.path().join(".taplo.toml");
         let before = "[[rule]]\ninclude = [\"my.toml\"]\nschema.path = \"mine.json\"\n";
         fs::write(&theirs, before).unwrap();
@@ -710,7 +710,7 @@ mod the_editor_binding_is_not_written_over_somebody_elses {
         // The permit half. A guard that refused every existing file would pass
         // the test above and freeze the binding at whatever the first run
         // produced, so a namespace added later would never reach an editor.
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let ours = d.path().join(".taplo.toml");
 
         assert!(
@@ -735,7 +735,7 @@ mod the_editor_binding_is_not_written_over_somebody_elses {
         // carries the plain sentence instead. Reading that as somebody else's
         // file would freeze its binding forever, on exactly the repositories
         // that have been using this longest.
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         let ours = d.path().join(".taplo.toml");
         fs::write(
             &ours,

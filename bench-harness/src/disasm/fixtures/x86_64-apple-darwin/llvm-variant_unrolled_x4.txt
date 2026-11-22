@@ -1,0 +1,71 @@
+
+libvariant_unrolled_x4.dylib:	file format mach-o 64-bit x86-64
+
+Disassembly of section __TEXT,__text:
+
+0000000000000290 <__RNvCs4H3057i2QET_19variant_unrolled_x47do_work>:
+     290:      	pushq	%rbp
+     291:      	movq	%rsp, %rbp
+     294:      	movzbl	(%rdi), %eax
+     297:      	movl	%eax, %ecx
+     299:      	shll	$0x5, %ecx
+     29c:      	subq	%rax, %rcx
+     29f:      	movzbl	0x1(%rdi), %eax
+     2a3:      	addq	%rcx, %rax
+     2a6:      	movl	%eax, %ecx
+     2a8:      	shll	$0x5, %ecx
+     2ab:      	subq	%rax, %rcx
+     2ae:      	movzbl	0x2(%rdi), %eax
+     2b2:      	addq	%rcx, %rax
+     2b5:      	movl	%eax, %ecx
+     2b7:      	shll	$0x5, %ecx
+     2ba:      	subq	%rax, %rcx
+     2bd:      	movzbl	0x3(%rdi), %eax
+     2c1:      	addq	%rcx, %rax
+     2c4:      	movq	%rax, %rcx
+     2c7:      	shlq	$0x5, %rcx
+     2cb:      	subq	%rax, %rcx
+     2ce:      	movzbl	0x4(%rdi), %eax
+     2d2:      	addq	%rcx, %rax
+     2d5:      	movq	%rax, %rcx
+     2d8:      	shlq	$0x5, %rcx
+     2dc:      	subq	%rax, %rcx
+     2df:      	movzbl	0x5(%rdi), %eax
+     2e3:      	addq	%rcx, %rax
+     2e6:      	movq	%rax, %rcx
+     2e9:      	shlq	$0x5, %rcx
+     2ed:      	subq	%rax, %rcx
+     2f0:      	movzbl	0x6(%rdi), %eax
+     2f4:      	addq	%rcx, %rax
+     2f7:      	movq	%rax, %rcx
+     2fa:      	shlq	$0x5, %rcx
+     2fe:      	subq	%rax, %rcx
+     301:      	movzbl	0x7(%rdi), %eax
+     305:      	addq	%rcx, %rax
+     308:      	movq	%rax, %rcx
+     30b:      	shlq	$0x5, %rcx
+     30f:      	subq	%rax, %rcx
+     312:      	movq	%rcx, (%rsi)
+     315:      	popq	%rbp
+     316:      	retq
+     317:      	nopw	(%rax,%rax)
+
+0000000000000320 <_bench_entry>:
+     320:      	cmpq	$0x8, %rdx
+     324:      	jne	0x333 <_bench_entry+0x13>
+     326:      	pushq	%rbp
+     327:      	movq	%rsp, %rbp
+     32a:      	callq	0x290 <__RNvCs4H3057i2QET_19variant_unrolled_x47do_work>
+     32f:      	xorl	%eax, %eax
+     331:      	popq	%rbp
+     332:      	retq
+     333:      	leaq	0x13(%rip), %rax        ## 0x34d
+     33a:      	retq
+     33b:      	nopl	(%rax,%rax)
+
+0000000000000340 <_bench_name>:
+     340:      	pushq	%rbp
+     341:      	movq	%rsp, %rbp
+     344:      	leaq	0x2(%rip), %rax         ## 0x34d
+     34b:      	popq	%rbp
+     34c:      	retq

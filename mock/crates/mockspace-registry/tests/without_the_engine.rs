@@ -38,7 +38,7 @@ frozen = true
 "#;
 
 fn project(config: &str, rows: &str) -> tempfile::TempDir {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = tmp.path().join("mock");
     std::fs::create_dir_all(mock.join("registry/ticket")).unwrap();
     std::fs::create_dir(tmp.path().join(".git")).unwrap();

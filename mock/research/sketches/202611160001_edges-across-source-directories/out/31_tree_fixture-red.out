@@ -1,0 +1,13 @@
+$ cargo +nightly-2026-05-28 tree --manifest-path <sketch>/fixture-red/mock/Cargo.toml --workspace
+fx-draw v0.0.0 (<sketch>/fixture-red/mock/render/fx-draw)
+├── fx-ground v0.0.0 (<sketch>/fixture-red/mock/sim/fx-ground)
+│   └── fx-ids v0.0.0 (<sketch>/fixture-red/mock/base/fx-ids)
+│       └── fx-units v0.0.0 (<sketch>/fixture-red/mock/base/fx-units)
+└── fx-ids v0.0.0 (<sketch>/fixture-red/mock/base/fx-ids) (*)
+
+fx-ground v0.0.0 (<sketch>/fixture-red/mock/sim/fx-ground) (*)
+
+fx-ids v0.0.0 (<sketch>/fixture-red/mock/base/fx-ids) (*)
+
+fx-units v0.0.0 (<sketch>/fixture-red/mock/base/fx-units)
+exit: 0

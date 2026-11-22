@@ -1,0 +1,17 @@
+== (a) commands with a path named @ and no --
+git diff @                         -> fatal: ambiguous argument '@': both revision and filename
+git log --oneline @                -> fatal: ambiguous argument '@': both revision and filename
+git show @:crates/lib/Cargo.toml   -> [package]
+git add @                          -> ok (no output)
+git checkout @                     -> Note: switching to '@'.
+git rm -r --cached @               -> rm '@/crates/foo/README.md.tmpl'
+git status --short @               -> D  @/crates/foo/README.md.tmpl
+git ls-files @                     -> ok (no output)
+git diff -- @                      -> ok (no output)
+git add -- @                       -> ok (no output)
+== (b) ~mock
+unquoted echo ~mock/f -> ~mock/f   quoted -> ~mock/f   ls ~mock -> f   cat via quoted: x
+(a user named mock would make unquoted ~mock expand to that home: )
+== (c) cargo at depth 1 roots: '.mock/research' and 'git~1/research' with ../../../crates/lib
+.mock/research/sketch: cargo OK
+git~1/research/sketch: cargo OK

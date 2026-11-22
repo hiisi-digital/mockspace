@@ -1,0 +1,12 @@
+checkout OLD ; checkout -f dev               expect=off -> N.md: cat: mock/research/N.md: No such file or directory | data worktree status:  D N.md 
+checkout -f OLD ; checkout -f dev            expect=off -> N.md: cat: mock/research/N.md: No such file or directory | data worktree status:  D N.md 
+checkout OLD ; reset --hard dev              expect=off -> N.md: cat: mock/research/N.md: No such file or directory | data worktree status:  D N.md 
+checkout -f OLD ; reset --hard dev           expect=off -> N.md: cat: mock/research/N.md: No such file or directory | data worktree status:  D N.md 
+checkout OLD ; checkout dev (plain)          expect=off -> N.md: cat: mock/research/N.md: No such file or directory | data worktree status:  D N.md 
+reset --hard OLD ; reset --hard dev          expect=off -> N.md: cat: mock/research/N.md: No such file or directory | data worktree status:  D N.md 
+checkout OLD ; checkout -f dev               expect=on  -> N.md: EDIT | data worktree status:  M N.md 
+checkout -f OLD ; checkout -f dev            expect=on  -> N.md: EDIT | data worktree status:  M N.md 
+checkout OLD ; reset --hard dev              expect=on  -> N.md: EDIT | data worktree status:  M N.md 
+checkout -f OLD ; reset --hard dev           expect=on  -> N.md: EDIT | data worktree status:  M N.md 
+checkout OLD ; checkout dev (plain)          expect=on  -> N.md: cat: mock/research/N.md: No such file or directory | data worktree status:  D N.md 
+reset --hard OLD ; reset --hard dev          expect=on  -> N.md: EDIT | data worktree status:  M N.md 

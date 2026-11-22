@@ -113,7 +113,7 @@ fn a_push_fed_no_ref_takes_the_full_scope() {
 /// repeated, which git runs the hook for all the same.
 #[test]
 fn git_feeds_the_pre_push_hook_no_line_for_a_push_that_is_already_up_to_date() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     git(root, &["init", "-q", "--bare", "remote.git"]);
     git(root, &["init", "-q", "work"]);

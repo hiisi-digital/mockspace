@@ -92,7 +92,7 @@ fn design(root: &Path, krate: &str, names: &str) {
 fn a_type_defined_in_a_scoped_crate_and_an_unscoped_one_is_a_clash() {
     // Fails when `run_lints` skips a crate the scope does not name before it is loaded for the
     // cross-crate pass (`if !scoped && !reads_every_crate` read as `if !scoped`).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", PLACED)]);
     assert!(
         violations(&cfg, Some(&["sim-a"])) > 0,
@@ -106,10 +106,10 @@ fn a_type_defined_in_a_scoped_crate_and_an_unscoped_one_is_a_clash() {
 fn the_clash_is_found_by_the_unscoped_run_and_not_found_where_there_is_none() {
     // The controls: the full run agrees, and renaming one side clears it, so the count above is
     // the clash and nothing the fixture carries beside it.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let clash = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", PLACED)]);
     assert!(violations(&clash, None) > 0);
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let apart = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", OTHER)]);
     assert_eq!(violations(&apart, None), 0);
     assert_eq!(violations(&apart, Some(&["sim-a"])), 0);
@@ -119,7 +119,7 @@ fn the_clash_is_found_by_the_unscoped_run_and_not_found_where_there_is_none() {
 fn every_scope_reaches_the_verdict_of_the_unscoped_run_in_every_mode() {
     // The law, over every non-empty subset of three crates, two of which clash. Fails under the
     // same mutation as the first test, and when a finding is reported once per scoped crate.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", PLACED), ("sim-c", OTHER)]);
     design(tmp.path(), "sim-c", "Placed Elsewhere");
     let names = ["sim-a", "sim-b", "sim-c"];
@@ -137,7 +137,7 @@ fn every_scope_reaches_the_verdict_of_the_unscoped_run_in_every_mode() {
         }
     }
     // The control the other way: with the clash renamed away, every scope passes.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let clean = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", OTHER), ("sim-c", THIRD)]);
     design(tmp.path(), "sim-c", "Placed Elsewhere Third");
     for mode in modes() {
@@ -150,10 +150,10 @@ fn every_scope_reaches_the_verdict_of_the_unscoped_run_in_every_mode() {
 fn a_function_defined_in_a_scoped_crate_and_an_unscoped_one_is_a_duplicate() {
     // The second cross-crate lint the same defect hid: `no-duplicate-fn`. Fails under the same
     // mutation as the first test.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo(tmp.path(), &[("sim-a", SHARED_FN), ("sim-b", SHARED_FN)]);
     assert!(violations(&cfg, Some(&["sim-a"])) > 0);
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let apart = repo(tmp.path(), &[("sim-a", SHARED_FN), ("sim-b", OWN_FN)]);
     assert_eq!(violations(&apart, Some(&["sim-a"])), 0, "the control: two functions, two names");
 }
@@ -163,13 +163,13 @@ fn a_type_documented_in_an_unscoped_crate_is_documented() {
     // The refusal the scope used to give without cause: `undocumented-type` gathers the design
     // documents of every crate it is handed, and a scoped run handed one crate refused a type the
     // next crate's document names. Fails under the same mutation as the first test.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", OTHER)]);
     design(tmp.path(), "sim-b", "Placed Elsewhere");
     assert_eq!(run(&cfg, LintMode::Build, None, false), 0);
     assert_eq!(run(&cfg, LintMode::Build, Some(&["sim-a"]), false), 0);
     // The control: with no document naming it the lint is live, scoped or not.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let bare = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", OTHER)]);
     assert!(run(&bare, LintMode::Build, None, false) > 0);
     assert!(run(&bare, LintMode::Build, Some(&["sim-a"]), false) > 0);
@@ -181,7 +181,7 @@ fn a_crate_filter_on_a_cross_crate_lint_still_binds_under_a_scope() {
     // sees their clash, and a clash with a crate the lint does not bind is not seen at all. Fails
     // when the scope narrows what the lint is handed (the first half) or when the filter is
     // dropped for a scoped run (the second).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mut cfg = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", PLACED), ("sim-c", OTHER)]);
     design(tmp.path(), "sim-c", "Placed Elsewhere");
     cfg.lint_overrides.crates.insert(
@@ -209,7 +209,7 @@ fn a_scope_naming_a_crate_the_repository_no_longer_has_still_reads_every_crate()
     // The commit that deletes a crate names it and finds nothing, and what the rest of the
     // workspace holds is still its to answer for. Fails when a scope is read as the crates found
     // (`reads_every_crate` asking whether any scoped crate exists).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", PLACED)]);
     assert_eq!(violations(&cfg, Some(&["sim-gone"])), violations(&cfg, None));
     assert!(violations(&cfg, Some(&["sim-gone"])) > 0, "the control: there is a clash to find");
@@ -219,7 +219,7 @@ fn a_scope_naming_a_crate_the_repository_no_longer_has_still_reads_every_crate()
 fn a_doc_only_scoped_run_skips_the_source_lints_as_the_unscoped_one_does() {
     // `--doc-only` skips the source lints, the cross-crate ones included, and handing them more
     // crates does not bring them back.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", PLACED)]);
     assert_eq!(run(&cfg, LintMode::Commit, Some(&["sim-a"]), true), 0);
     assert_eq!(run(&cfg, LintMode::Commit, None, true), 0);
@@ -232,13 +232,13 @@ fn a_doc_only_scoped_run_reads_the_documents_of_every_crate() {
     // as an error. Handed only the scoped crate it refused a type another crate's document names.
     // Fails under the same mutation as the first test, which the Commit-mode test above cannot:
     // there `undocumented-type` only warns, so both of its sides are 0 whatever the scope reads.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", OTHER)]);
     design(tmp.path(), "sim-b", "Placed Elsewhere");
     assert_eq!(run(&cfg, LintMode::Build, Some(&["sim-a"]), true), 0);
     assert_eq!(run(&cfg, LintMode::Build, None, true), 0);
     // The control: with no document naming the type the lint is live under the flag, scoped or not.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let bare = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", OTHER)]);
     assert!(run(&bare, LintMode::Build, Some(&["sim-a"]), true) > 0);
     assert!(run(&bare, LintMode::Build, None, true) > 0);
@@ -249,7 +249,7 @@ fn a_per_crate_lint_still_reads_only_the_scoped_crates() {
     // The control for the narrowing the scope exists for: an import the rule forbids in a crate the
     // scope does not name is that crate's to answer for, at its own commit. Fails when the
     // per-crate pass runs on every crate loaded (`if scoped {` read as `if true {`).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mut cfg = repo(tmp.path(), &[("sim-a", OTHER), ("sim-b", "use std::fmt;\n")]);
     let rule: std::collections::HashMap<String, String> = [
         ("rule.no-std.scope", "sim-*"),
@@ -270,7 +270,7 @@ fn a_scope_naming_no_crate_reads_no_crate() {
     // Fails when a scope that names no crate still loads every crate (`reads_every_crate` true).
     // `--scope infra` is the commit that touches no crate. It runs the repo lints and parses
     // nothing, and a clash that already stands is not its to find.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo(tmp.path(), &[("sim-a", PLACED), ("sim-b", PLACED)]);
     assert_eq!(violations(&cfg, Some(&[])), 0);
 }

@@ -1,0 +1,7 @@
+== w1 sees w2's uncommitted edit? (per-worktree branches: isolation)
+(w1 status)
+== sync: merge w2's branch into w1's with the shared driver (git's own merge)
+Auto-merging NOTES.md
+NOTES: a|b|c|one|two|
+== remove dirty linked worktree w2 (nested data is unhidden)
+fatal: '../w2' contains modified or untracked files, use --force to delete it

@@ -117,7 +117,7 @@ fn repoint(tree: &Path, pin: &str, packs: &[(String, String)]) {
         } else if let Some((name, dir)) =
             packs.iter().find(|(n, _)| trimmed.starts_with(&format!("{n} =")))
         {
-            out.push(format!("{name} = {{ path = \"{dir}\" }}"));
+            out.push(format!("{name} = {{ path = {} }}", mockspace_manifest::toml_text::basic_string(dir)));
         } else {
             out.push(line.to_string());
         }
@@ -143,7 +143,7 @@ fn an_incremental_run_equals_a_full_one_over_a_history() {
     let walked = git(&tree, &["rev-list", "--first-parent", "--reverse", &format!("-{n}"), "HEAD"]);
     let commits: Vec<&str> = walked.lines().collect();
     assert!(commits.len() >= 2, "a history of one commit proves nothing about replay");
-    let store = tempfile::tempdir().unwrap();
+    let store = mockspace_manifest::scratch::tempdir().unwrap();
 
     let mut differing = Vec::new();
     let mut replays = 0;
@@ -169,9 +169,10 @@ fn an_incremental_run_equals_a_full_one_over_a_history() {
     // the control: a walk where nothing was ever replayed compares a full run with a cold one
     assert!(replays > 0, "no verdict was replayed after the first commit, so the walk tested nothing");
 
-    // the control that the comparison can fail: every saved verdict replaced by a wrong one must
-    // show up as a different report at the last commit.
-    let planted = "verdict-v2 1\nplanted\t1\tplanted\tEEE\t~\t~\tplanted by the test\n";
+    // the control that the comparison can fail: every saved unit replaced by one whose trace asks
+    // nothing, so it always holds, and whose findings are wrong, must show up as a different report
+    // at the last commit.
+    let planted = "unit-v1 1\nalt 0 0\nverdict-v2 1\nplanted\t1\tplanted\tEEE\t~\t~\tplanted by the test\n";
     for file in stored(store.path()) {
         std::fs::write(file, planted).unwrap();
     }

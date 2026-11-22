@@ -1,0 +1,24 @@
+git checkout -f other          hook called 1  time(s); first call saw: edit on disk: EDIT
+git reset --hard HEAD          hook called 1  time(s); first call saw: edit on disk: EDIT
+git clean -ffdx                hook called 1  time(s); first call saw: edit on disk: EDIT
+git clean -ffd                 hook called 1  time(s); first call saw: edit on disk: EDIT
+git stash -u                   hook called 7  time(s); first call saw: edit on disk: EDIT
+git merge other                hook called 1  time(s); first call saw: edit on disk: EDIT
+git cherry-pick other          hook called 3  time(s); first call saw: edit on disk: EDIT
+git rebase other               hook called 1  time(s); first call saw: edit on disk: EDIT
+git restore .                  hook called 1  time(s); first call saw: edit on disk: EDIT
+git switch other               hook called 1  time(s); first call saw: edit on disk: EDIT
+git pull                       hook called 2  time(s); first call saw: edit on disk: EDIT
+git status                     hook called 1  time(s); first call saw: edit on disk: EDIT
+git gc                         hook called 2  time(s); first call saw: edit on disk: EDIT
+git worktree prune             hook called 0  time(s); first call saw: 
+git checkout-index -a -f       hook called 1  time(s); first call saw: edit on disk: EDIT
+git read-tree -u --reset HEAD  hook called 1  time(s); first call saw: edit on disk: EDIT
+git am --abort                 hook called 1  time(s); first call saw: edit on disk: EDIT
+git bisect start               hook called 0  time(s); first call saw: 
+git rm -r --cached .           hook called 1  time(s); first call saw: edit on disk: EDIT
+git diff                       hook called 1  time(s); first call saw: edit on disk: EDIT
+git log                        hook called 0  time(s); first call saw: 
+rm -rf of the data dir, then status: hook saw edit? edit on disk: cat: /tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/009/p4/m/mock/study/N.md: No such file or directory  (the delete already happened, so no)
+git -c core.fsmonitor=false clean -ffdx: hook calls 0, edit now: cat: mock/study/N.md: No such file or directory
+worktree remove --force: hook calls 0

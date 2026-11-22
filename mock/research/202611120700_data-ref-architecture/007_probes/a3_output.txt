@@ -1,0 +1,24 @@
+U worktree remove w2          : kept=1 {fatal: '../w2' contains modified or untracked files, use --force to delete it}
+U worktree remove --force w2  : kept=0 {}
+U worktree remove -f -f w2    : kept=0 {}
+U worktree move w2 w3         : kept=1 {} data-wt-ok=mock-wt/research/w2
+U worktree move -f -f w2 w3   : kept=1 {} data-wt-ok=mock-wt/research/w2 prune-then:Removing worktrees/rdata: gitdir file points to non-existent location 
+U mv clone; repair             : kept=1 before-repair={fatal: not a git repository: <scratch>/a3/c/m/.git/worktrees/rdata} after-repair={ M N.md}
+H worktree remove w2          : kept=0 {}
+H worktree remove --force w2  : kept=0 {}
+H worktree remove -f -f w2    : kept=0 {}
+H worktree move w2 w3         : kept=1 {} data-wt-ok=mock-wt/research/w2
+H worktree move -f -f w2 w3   : kept=1 {} data-wt-ok=mock-wt/research/w2 prune-then:Removing worktrees/rdata: gitdir file points to non-existent location 
+H mv clone; repair             : kept=1 before-repair={fatal: not a git repository: <scratch>/a3/c/m/.git/worktrees/rdata} after-repair={ M N.md}
+HL worktree remove w2          : kept=1 {fatal: cannot remove a locked working tree, lock reason: holds data worktree mock/rdata}
+HL worktree remove --force w2  : kept=1 {fatal: cannot remove a locked working tree, lock reason: holds data worktree mock/rdata}
+HL worktree remove -f -f w2    : kept=0 {}
+HL worktree move w2 w3         : kept=1 {fatal: cannot move a locked working tree, lock reason: holds data worktree mock/rdata} data-wt-ok=mock-wt/research/w2
+HL worktree move -f -f w2 w3   : kept=1 {} data-wt-ok=mock-wt/research/w2 prune-then:Removing worktrees/rdata: gitdir file points to non-existent location 
+HL mv clone; repair             : kept=1 before-repair={fatal: not a git repository: <scratch>/a3/c/m/.git/worktrees/rdata} after-repair={ M N.md}
+UL worktree remove w2          : kept=1 {fatal: cannot remove a locked working tree, lock reason: holds data worktree mock/rdata}
+UL worktree remove --force w2  : kept=1 {fatal: cannot remove a locked working tree, lock reason: holds data worktree mock/rdata}
+UL worktree remove -f -f w2    : kept=0 {}
+UL worktree move w2 w3         : kept=1 {fatal: cannot move a locked working tree, lock reason: holds data worktree mock/rdata} data-wt-ok=mock-wt/research/w2
+UL worktree move -f -f w2 w3   : kept=1 {} data-wt-ok=mock-wt/research/w2 prune-then:Removing worktrees/rdata: gitdir file points to non-existent location 
+UL mv clone; repair             : kept=1 before-repair={fatal: not a git repository: <scratch>/a3/c/m/.git/worktrees/rdata} after-repair={ M N.md}

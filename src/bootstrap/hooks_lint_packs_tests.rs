@@ -36,7 +36,7 @@ fn a_project_lint_is_a_shared_input() {
     assert_eq!(args, "mock --lint-only --strict", "{out}");
 }
 
-const PACK: &str = "mock/crates/kaski-asset-lints";
+const PACK: &str = "mock/crates/game-asset-lints";
 
 fn commit_with_packs(
     packs: &[&str],
@@ -103,11 +103,11 @@ fn a_pack_under_a_source_directory_is_a_shared_input() {
 /// itself, so the arm above is about the pack and not about the directory.
 #[test]
 fn a_crate_beside_a_pack_stays_scoped_to_itself() {
-    let sibling = "mock/crates/kaski-sim/src/lib.rs";
+    let sibling = "mock/crates/game-sim/src/lib.rs";
     let (out, args) = commit_with_packs(&[PACK], &[], &[(sibling, "fn s() {}\n")]);
-    assert_eq!(args, "mock --lint-only --commit --scope kaski-sim", "{out}");
+    assert_eq!(args, "mock --lint-only --commit --scope game-sim", "{out}");
     let (out, args) = push_with_packs(&[PACK], &[(sibling, "fn s() {}\n")]);
-    assert_eq!(args, "mock --lint-only --strict --scope kaski-sim", "{out}");
+    assert_eq!(args, "mock --lint-only --strict --scope game-sim", "{out}");
 }
 
 /// A pack that is declared but has not been staged leaves a commit as before.
@@ -116,7 +116,7 @@ fn the_same_edit_without_a_declared_pack_is_scoped_to_its_crate() {
     let src = format!("{PACK}/src/lib.rs");
     let (out, args) = commit_with_packs(&[], &[], &[(&src, "fn l() {}\n")]);
     assert_eq!(
-        args, "mock --lint-only --commit --scope kaski-asset-lints",
+        args, "mock --lint-only --commit --scope game-asset-lints",
         "{out}"
     );
 }
@@ -152,7 +152,7 @@ fn the_layout_reads_the_path_packs_of_the_config() {
         "[lint-crates]\n\
          remote = { git = \"ssh://git@github.com/o/r.git\", branch = \"dev\" }\n\
          version = \"0.1\"\n\
-         inline = { path = \"../../crates/kaski-asset-lints\" }\n\
+         inline = { path = \"../../crates/game-asset-lints\" }\n\
          outside = { path = \"../../../../elsewhere\" }\n\
          [lint-crates.table]\n\
          path = \"../../../tools/table-pack/\"\n",
@@ -160,7 +160,7 @@ fn the_layout_reads_the_path_packs_of_the_config() {
     .unwrap();
     let layout = HookLayout::declared(root, &mock, &[mock.join("crates")], "m", &config);
     assert_eq!(layout.lint_packs, vec![
-        "mock/crates/kaski-asset-lints".to_string(),
+        "mock/crates/game-asset-lints".to_string(),
         "tools/table-pack".to_string(),
     ]);
     // no config, no packs

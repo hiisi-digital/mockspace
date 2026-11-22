@@ -30,17 +30,8 @@ fn save(h: &History, mock: &Path, members: &[&str]) -> Result<(), String> {
     })
 }
 
-fn scratch(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!(
-        "mockspace-suite-hist-{tag}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    ));
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn scratch(_tag: &str) -> tempfile::TempDir {
+    mockspace_manifest::scratch::tempdir().unwrap()
 }
 
 #[test]
@@ -245,7 +236,8 @@ fn members_that_did_not_run_are_left_alone() {
 /// the fingerprints in it were made of other inputs.)
 #[test]
 fn a_file_without_binaries_reads_as_having_none() {
-    let mock = scratch("nobins");
+    let mock_guard = scratch("nobins");
+    let mock = mock_guard.path().to_path_buf();
     let dir = History::dir(&mock).join("default");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
@@ -265,7 +257,6 @@ fn a_file_without_binaries_reads_as_having_none() {
         !f.green.contains_key("b"),
         "a version 1 record is made of other fingerprints and is not read"
     );
-    std::fs::remove_dir_all(&mock).ok();
 }
 
 #[test]
@@ -325,7 +316,8 @@ fn a_tests_pass_is_recorded_at_its_binarys_fingerprint() {
 /// every pass, which was made at fingerprints of other inputs.
 #[test]
 fn a_version_1_record_gives_its_timings_and_no_pass() {
-    let mock = scratch("v1");
+    let mock_guard = scratch("v1");
+    let mock = mock_guard.path().to_path_buf();
     let dir = History::dir(&mock).join("default");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
@@ -357,5 +349,4 @@ fn a_version_1_record_gives_its_timings_and_no_pass() {
     save(&h, &mock, &["render"]).unwrap();
     let text = std::fs::read_to_string(dir.join("render.json")).unwrap();
     assert!(text.contains(&format!("\"version\": {VERSION}")), "{text}");
-    std::fs::remove_dir_all(&mock).ok();
 }

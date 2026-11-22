@@ -1,16 +1,12 @@
 //! What `declared_types` hands a tool: the declaration split into its generics and its members, in
 //! the canonical form `single-source` compares by, so a copy under another name has the same parts.
 
-use std::path::PathBuf;
+use std::path::Path;
 
-use crate::{CrateSourceFile, DeclaredType, declared_types};
+use crate::{DeclaredType, declared_types};
 
 fn read(source: &str) -> Vec<DeclaredType> {
-    let file = CrateSourceFile {
-        rel_path: PathBuf::from("src/lib.rs"),
-        text:     source.to_string(),
-    };
-    declared_types("test-a", &[file])
+    declared_types("test-a", &[(Path::new("src/lib.rs"), source)])
 }
 
 fn only(source: &str) -> DeclaredType {

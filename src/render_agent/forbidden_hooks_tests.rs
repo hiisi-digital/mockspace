@@ -45,14 +45,12 @@ fn derive(repo: &Path, cfg: &Config) -> (usize, Vec<HookMeta>) {
         &repo.join(".claude/hooks"),
         &repo.join(".github/hooks"),
         "",
-        "",
-        "",
     )
 }
 
 #[test]
 fn a_forbidden_imports_hook_is_returned_with_the_events_it_guards() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = cfg_with_rule(tmp.path());
     let (_, hooks) = derive(tmp.path(), &cfg);
     let hook = hooks
@@ -79,7 +77,7 @@ fn a_forbidden_imports_hook_is_returned_with_the_events_it_guards() {
 
 #[test]
 fn the_generated_settings_register_a_forbidden_imports_hook_under_an_event() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = cfg_with_rule(tmp.path());
     let (_, hooks) = derive(tmp.path(), &cfg);
     wire::generate_settings(tmp.path(), &hooks);
@@ -108,7 +106,7 @@ fn the_generated_settings_register_a_forbidden_imports_hook_under_an_event() {
 #[test]
 fn a_config_without_forbidden_imports_returns_no_hooks() {
     // The control: the new return is not simply every hook that exists.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = tmp.path().join("mock");
     fs::create_dir_all(&mock).unwrap();
     let mut cfg = Config::from_dir(&mock);
@@ -131,7 +129,7 @@ fn generated_hook(repo: &Path) -> String {
 fn one_hook_is_written_however_many_scopes_the_rules_name() {
     // The lint holds the scopes, so a hook per scope ran the whole lint once for
     // each of them. Two scopes, still one hook, and the legacy per-scope names gone.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mut cfg = cfg_with_rule(tmp.path());
     let params = cfg.lint_overrides.params.get_mut("forbidden-imports").unwrap();
     for (k, v) in [
@@ -184,6 +182,7 @@ fn edit_verdict(cfg: &Config, file: &Path, text: &str) -> Vec<mockspace_lint_rul
         &crates,
         &cfg.src_dirs,
         &cfg.mock_dir,
+        &cfg.repo_root,
         &cfg.proc_macro_crates,
         cfg.lint_proc_macro_source,
         &cfg.crate_prefix,
@@ -226,7 +225,7 @@ fn gate_verdict(cfg: &Config, krate: &str, file: &Path, text: &str) -> usize {
 
 #[test]
 fn an_import_the_lint_refuses_is_refused_by_the_hook_too() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo_with_crates(tmp.path(), "std::*");
     let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
     let text = "use std::fmt;\npub fn f() {}\n";
@@ -239,7 +238,7 @@ fn an_import_the_lint_refuses_is_refused_by_the_hook_too() {
 
 #[test]
 fn text_the_lint_passes_is_passed_by_the_hook_though_the_old_substring_test_refused_it() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo_with_crates(tmp.path(), "std::*");
     let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
     // A comment naming the path. The hook used to refuse any text containing `std::`.
@@ -253,7 +252,7 @@ fn text_the_lint_passes_is_passed_by_the_hook_though_the_old_substring_test_refu
 
 #[test]
 fn a_crate_outside_the_scope_is_the_lints_to_pass_not_the_hooks() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo_with_crates(tmp.path(), "std::*");
     let file = tmp.path().join("mock/crates/other/src/lib.rs");
     let text = "use std::fmt;\n";
@@ -265,7 +264,7 @@ fn a_crate_outside_the_scope_is_the_lints_to_pass_not_the_hooks() {
 fn a_finding_elsewhere_in_the_crate_does_not_block_an_edit_that_adds_none() {
     // Blocking every write to a crate that already has a finding would make the crate
     // unfixable by edits. The gate still counts the one on disk; the edit is judged on its file.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo_with_crates(tmp.path(), "std::*");
     let lib = tmp.path().join("mock/crates/sim-core/src/lib.rs");
     fs::write(&lib, "use std::io;\n").unwrap();
@@ -280,7 +279,7 @@ fn a_finding_elsewhere_in_the_crate_does_not_block_an_edit_that_adds_none() {
 
 #[test]
 fn a_file_that_is_not_a_crate_source_is_in_no_lints_view() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo_with_crates(tmp.path(), "std::*");
     let crates = crate::parse::discover_crates_in(&cfg.src_dirs, &cfg.crate_prefix);
     let verdict = |file: &Path| {
@@ -288,6 +287,7 @@ fn a_file_that_is_not_a_crate_source_is_in_no_lints_view() {
             &crates,
             &cfg.src_dirs,
             &cfg.mock_dir,
+            &cfg.repo_root,
             &cfg.proc_macro_crates,
             cfg.lint_proc_macro_source,
             &cfg.crate_prefix,
@@ -368,7 +368,7 @@ fn refused(out: &str) -> bool {
 
 #[test]
 fn a_write_hands_the_engine_the_whole_text_and_names_the_lint() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
     let call = tool_call(
         "Write",
@@ -385,7 +385,7 @@ fn a_write_hands_the_engine_the_whole_text_and_names_the_lint() {
 
 #[test]
 fn an_edit_hands_the_engine_what_it_replaces_and_what_replaces_it() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
     let call = tool_call(
         "Edit",
@@ -406,7 +406,7 @@ fn an_edit_hands_the_engine_what_it_replaces_and_what_replaces_it() {
 
 #[test]
 fn the_hook_refuses_exactly_when_the_engine_does_and_carries_its_words() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
     let call = tool_call(
         "Write",
@@ -421,7 +421,7 @@ fn the_hook_refuses_exactly_when_the_engine_does_and_carries_its_words() {
 
 #[test]
 fn a_file_that_is_not_rust_never_reaches_the_engine_and_a_path_outside_the_repository_does() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let call = |path: &Path| {
         tool_call("Write", serde_json::json!({ "file_path": path.display().to_string(), "content": "x" }))
     };
@@ -438,7 +438,7 @@ fn a_file_that_is_not_rust_never_reaches_the_engine_and_a_path_outside_the_repos
 
 #[test]
 fn with_no_launcher_the_hook_refuses_rather_than_passing_what_it_cannot_judge() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
     let call = tool_call(
         "Write",
@@ -452,7 +452,7 @@ fn with_no_launcher_the_hook_refuses_rather_than_passing_what_it_cannot_judge() 
 #[test]
 #[should_panic(expected = "failed to create a hooks or rules directory")]
 fn a_hooks_directory_that_cannot_be_made_fails_loudly() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fs::create_dir_all(tmp.path().join(".claude")).unwrap();
     // a regular file where the directory must go
     fs::write(tmp.path().join(".claude/hooks"), "").unwrap();
@@ -463,7 +463,7 @@ fn a_hooks_directory_that_cannot_be_made_fails_loudly() {
 #[test]
 #[should_panic(expected = "failed to write forbidden-imports claude hook")]
 fn a_hook_that_cannot_be_written_fails_loudly() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = cfg_with_rule(tmp.path());
     derive(tmp.path(), &cfg);
     // the second run meets a directory where the script goes
@@ -478,7 +478,8 @@ fn a_hook_that_cannot_be_written_fails_loudly() {
 fn a_full_render_registers_the_forbidden_imports_hooks_under_write_and_edit() {
     // Through `generate_agent_rules`, where the derived hooks join the builtin ones: the hand-wired
     // test above would stay green if that join were dropped.
-    let mock = super::tests::skill_fixture(None);
+    let mock_guard = super::tests::skill_fixture(None);
+    let mock = mock_guard.path().join("mock");
     let root = mock.parent().unwrap().to_path_buf();
     let mut cfg = Config::from_dir(&mock);
     let rule = cfg_with_rule(&root);
@@ -508,7 +509,7 @@ fn a_full_render_registers_the_forbidden_imports_hooks_under_write_and_edit() {
 #[test]
 #[should_panic(expected = "failed to write forbidden-imports copilot hook")]
 fn a_copilot_hook_that_cannot_be_written_fails_loudly() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = cfg_with_rule(tmp.path());
     derive(tmp.path(), &cfg);
     let hook = generated_hook(tmp.path());
@@ -520,7 +521,7 @@ fn a_copilot_hook_that_cannot_be_written_fails_loudly() {
 
 #[test]
 fn a_lint_that_judges_the_whole_crate_has_no_verdict_on_an_edit() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo_with_crates(tmp.path(), "std::*");
     let whole = mockspace_lint_rules::all_lints()
         .into_iter()
@@ -539,7 +540,7 @@ fn a_lint_that_judges_the_whole_crate_has_no_verdict_on_an_edit() {
 fn the_hook_hands_the_engine_exactly_the_bytes_of_the_edit() {
     // `$(...)` strips trailing newlines, which made an old_string of only newlines empty and
     // the edit read as a whole-file write.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let target = tmp.path().join("mock/crates/sim-core/src/lib.rs");
     let call = tool_call(
         "Edit",
@@ -563,7 +564,7 @@ fn the_hook_hands_the_engine_exactly_the_bytes_of_the_edit() {
 
 #[test]
 fn a_render_with_no_rules_left_takes_the_hook_it_wrote_before_with_it() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = cfg_with_rule(tmp.path());
     derive(tmp.path(), &cfg);
     let hook = tmp.path().join(".claude/hooks/forbidden-imports.sh");
@@ -580,7 +581,7 @@ fn a_render_with_no_rules_left_takes_the_hook_it_wrote_before_with_it() {
 
 #[test]
 fn a_rule_naming_no_scope_gets_the_hook_because_the_lint_reads_it_as_every_crate() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mut cfg = cfg_with_rule(tmp.path());
     let rule: std::collections::HashMap<String, String> =
         [("rule.no-fmt.forbidden", "std::fmt"), ("rule.no-fmt.reason", "no fmt")]
@@ -596,7 +597,7 @@ fn a_rule_naming_no_scope_gets_the_hook_because_the_lint_reads_it_as_every_crate
         .get_mut("forbidden-imports")
         .unwrap()
         .insert("rule.no-fmt.enabled".to_string(), "false".to_string());
-    let fresh = tempfile::tempdir().unwrap();
+    let fresh = mockspace_manifest::scratch::tempdir().unwrap();
     let (_, none) = derive(fresh.path(), &cfg);
     assert!(none.iter().all(|h| h.name != "forbidden-imports.sh"));
 }
@@ -605,7 +606,7 @@ fn a_rule_naming_no_scope_gets_the_hook_because_the_lint_reads_it_as_every_crate
 
 #[test]
 fn an_edit_is_refused_while_the_file_it_leaves_still_has_a_violation() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo_with_crates(tmp.path(), "std::*");
     let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
     fs::write(&file, "use std::fmt;\nuse std::io;\npub fn f() {}\n").unwrap();
@@ -619,7 +620,7 @@ fn an_edit_is_refused_while_the_file_it_leaves_still_has_a_violation() {
 
 #[test]
 fn a_path_spelled_with_dots_is_the_same_file_and_a_relative_one_is_refused() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo_with_crates(tmp.path(), "std::*");
     let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
     fs::write(&file, "use std::fmt;\n").unwrap();
@@ -635,7 +636,7 @@ fn a_path_spelled_with_dots_is_the_same_file_and_a_relative_one_is_refused() {
 
 #[test]
 fn a_lint_allow_marker_is_honoured_by_the_hook_as_by_the_gate() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo_with_crates(tmp.path(), "std::*");
     let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
     let allowed = "use std::fmt; // lint:allow(forbidden-imports) reason: test\n";
@@ -650,7 +651,7 @@ fn a_lint_allow_marker_is_honoured_by_the_hook_as_by_the_gate() {
 #[test]
 fn the_gate_picked_by_the_request_decides_what_blocks() {
     use mockspace_lint_rules::{Level, Severity};
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mut cfg = repo_with_crates(tmp.path(), "std::*");
     let file = tmp.path().join("mock/crates/sim-core/src/lib.rs");
     fs::write(&file, "use std::fmt;\n").unwrap();
@@ -671,7 +672,7 @@ fn the_gate_picked_by_the_request_decides_what_blocks() {
 
 #[test]
 fn without_jq_the_hook_refuses_rather_than_reading_nothing_and_passing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     derive(tmp.path(), &cfg_with_rule(tmp.path()));
     let script = tmp.path().join(".claude/hooks/forbidden-imports.sh");
     let bin = tmp.path().join("nojq");
@@ -707,7 +708,7 @@ fn without_jq_the_hook_refuses_rather_than_reading_nothing_and_passing() {
 
 #[test]
 fn a_new_crates_first_lib_rs_gets_the_verdict_the_gate_gives_it_once_written() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo_with_crates(tmp.path(), "std::*");
     // Neither the directory nor a `Cargo.toml` exists yet.
     let dir = tmp.path().join("mock/crates/sim-fresh");
@@ -728,7 +729,7 @@ fn a_new_crates_first_lib_rs_gets_the_verdict_the_gate_gives_it_once_written() {
 fn a_module_file_in_a_crate_with_no_root_has_no_verdict_until_the_root_exists() {
     // Discovery takes a directory holding `src/lib.rs` and nothing else, so the gate reads no
     // crate here and the hook has nothing to say about a file in one.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cfg = repo_with_crates(tmp.path(), "std::*");
     let dir = tmp.path().join("mock/crates/sim-fresh");
     let extra = dir.join("src/extra.rs");

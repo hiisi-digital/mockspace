@@ -1,0 +1,18 @@
+  building arm build-from-clean/arms/from_clean...
+  building generated bench driver...
+run plan: 1 bench(es), 1 config(s), run 20261116T002225Z-2764b23-dirty on linux-x86_64-c4-container-intel
+[1/1] build-from-clean n=1 (elapsed 0s)
+  Warmup spawn complete.
+  ── Harness run 1/1 ──
+  pass 1/3 cd=0ms... done (10s elapsed, ~20s left)
+  pass 2/3 cd=0ms... done (16s elapsed, ~8s left)
+  pass 3/3 cd=0ms... done (23s elapsed, ~0s left)
+  Total: 23.1s
+  samples: <worktree>/mock/research/sketches/202611160019_a-bench-arm-that-measures-a-build/consumer/mock/benches/results/.inflight/1794788545-16748/build-from-clean/build-from-clean_n1/linux-x86_64-c4-container-intel/20261116T002225Z-2764b23-dirty/samples.csv (6 rows)
+  after_cell: 14 calls, each built all 4 fixture crates into an empty target directory
+
+bench                             n variant                    median  vs best
+build-from-clean                  1 from_clean              142.45 ms    1.00x
+
+total: 26.1s
+exit: 0

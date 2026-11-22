@@ -9,6 +9,7 @@ use std::process::Command;
 
 use crate::config::Config;
 use crate::custom_lints::load_in;
+use crate::custom_lints::store::knobs::PROCESS_ENV as ENV;
 
 /// A lint with a panic site, so the library embeds the path of the file the
 /// lint was built from, which is what made the old byte digest tree specific.
@@ -55,8 +56,11 @@ fn identity_in(cache: &Path, mock: &Path) -> String {
     settle();
     let cfg = Config::from_dir(mock);
     let dep = format!(
-        "{{ package = \"mockspace-lint-rules\", path = \"{}/lint-rules\" }}",
-        env!("CARGO_MANIFEST_DIR")
+        "{{ package = \"mockspace-lint-rules\", path = {} }}",
+        mockspace_manifest::toml_text::basic_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/lint-rules"
+        ))
     );
     load_in(cache, &cfg, &mock.join("mockspace.toml"), &dep)
         .unwrap()
@@ -69,7 +73,7 @@ fn identity_in(cache: &Path, mock: &Path) -> String {
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_same_sources_in_two_trees_are_one_identity() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let a = tree(&tmp.path().join("a"), "identity-same", "same");
     let b = tree(&tmp.path().join("a-longer-path-for-b"), "identity-same", "same");
@@ -81,7 +85,7 @@ fn the_same_sources_in_two_trees_are_one_identity() {
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_changed_lint_source_is_another_identity() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let a = tree(&tmp.path().join("a"), "identity-changed", "before");
     let b = tree(&tmp.path().join("b"), "identity-changed", "after");
@@ -117,8 +121,11 @@ fn name_in(cache: &Path, mock: &Path) -> String {
     settle();
     let cfg = Config::from_dir(mock);
     let dep = format!(
-        "{{ package = \"mockspace-lint-rules\", path = \"{}/lint-rules\" }}",
-        env!("CARGO_MANIFEST_DIR")
+        "{{ package = \"mockspace-lint-rules\", path = {} }}",
+        mockspace_manifest::toml_text::basic_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/lint-rules"
+        ))
     );
     let loaded = load_in(cache, &cfg, &mock.join("mockspace.toml"), &dep)
         .unwrap()
@@ -130,7 +137,7 @@ fn name_in(cache: &Path, mock: &Path) -> String {
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_lint_edited_during_the_build_is_not_kept_under_the_old_content() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let mock = tree(tmp.path(), "identity-edited-during", "before");
     let source = lint_path(&mock);
@@ -154,7 +161,7 @@ fn a_lint_edited_during_the_build_is_not_kept_under_the_old_content() {
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_file_a_lint_includes_is_part_of_what_was_built() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let mock = tree(tmp.path(), "identity-include", "unused");
     std::fs::write(lint_path(&mock), lint_named_by(r#"include_str!("probe_name.txt")"#)).unwrap();
@@ -165,14 +172,12 @@ fn a_file_a_lint_includes_is_part_of_what_was_built() {
     assert_eq!(name_in(&cache, &mock), "two");
 }
 
-/// Serialises the cases that set an environment variable of the whole process.
-static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_build_does_not_read_the_profile_from_the_environment() {
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let mock = tree(tmp.path(), "identity-profile", "unused");
     std::fs::write(
@@ -193,7 +198,7 @@ fn the_build_does_not_read_the_profile_from_the_environment() {
 /// Two trees of one commit, each with the lint `lint_src` and its own `files` under the mock
 /// directory, loaded in turn from one store. What each answers, in order.
 fn names_in_two_trees(tag: &str, lint_src: &str, setup: impl Fn(&Path, &str), what: [&str; 2]) -> [String; 2] {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let trees: Vec<PathBuf> = ["a", "b"]
         .iter()
@@ -241,7 +246,7 @@ fn a_file_behind_a_link_in_the_lints_is_read_from_the_asking_tree() {
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_variable_the_build_still_gets_is_checked_when_the_lint_reads_it() {
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let mock = tree(tmp.path(), "identity-env-read", "unused");
     std::fs::write(
@@ -264,8 +269,11 @@ fn probe_tool(mock: &Path, body: &str) {
     std::fs::write(
         t.join("Cargo.toml"),
         format!(
-            "[package]\nname = \"probe-tool\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nmockspace = {{ package = \"mockspace-lint-rules\", path = \"{}/lint-rules\" }}\n",
-            env!("CARGO_MANIFEST_DIR")
+            "[package]\nname = \"probe-tool\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nmockspace = {{ package = \"mockspace-lint-rules\", path = {} }}\n",
+            mockspace_manifest::toml_text::basic_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/lint-rules"
+            ))
         ),
     )
     .unwrap();
@@ -280,7 +288,7 @@ fn probe_tool(mock: &Path, body: &str) {
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_variable_a_dependency_reads_is_checked() {
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let mock = tree(tmp.path(), "review-dep-env", "unused");
     probe_tool(&mock, r#"pub const NAME: &str = match option_env!("NO_COLOR") { Some(_) => "set", None => "unset" };"#);
@@ -308,7 +316,7 @@ fn a_tool_manifest_dir_names_the_asking_tree() {
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_source_set_back_in_time_is_built_not_reused_by_cargo() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let mock = tree(tmp.path(), "review-setback", "unused");
     let text = mock.join("lints").join("probe_name.txt");
@@ -326,7 +334,7 @@ fn a_source_set_back_in_time_is_built_not_reused_by_cargo() {
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_tool_source_set_back_in_time_is_not_kept_as_the_new_content() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let a = tree(&tmp.path().join("a"), "r3-tool-setback", "unused");
     probe_tool(&a, r#"pub const NAME: &str = "one";"#);
@@ -400,7 +408,8 @@ impl Drop for ConfigGuard {
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_cargo_config_that_appears_during_the_build_is_not_kept_under_the_old_key() {
-    let tmp = tempfile::tempdir().unwrap();
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let mock = tree(tmp.path(), "review2-config", "unused");
     std::fs::write(
@@ -431,7 +440,7 @@ fn a_cargo_config_that_appears_during_the_build_is_not_kept_under_the_old_key() 
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_build_does_not_read_rustflags_from_the_environment() {
     let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let mock = tree(tmp.path(), "review2-rustflags", "unused");
     std::fs::write(
@@ -450,7 +459,7 @@ fn the_build_does_not_read_rustflags_from_the_environment() {
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn a_second_tree_of_the_same_sources_loads_the_kept_library_and_builds_nothing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let a = tree(&tmp.path().join("a"), "review2-no-build", "same");
     let b = tree(&tmp.path().join("a-longer-path-for-b"), "review2-no-build", "same");

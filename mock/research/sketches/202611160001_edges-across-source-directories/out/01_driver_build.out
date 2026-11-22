@@ -1,0 +1,32 @@
+$ cargo +nightly-2026-05-28 build --quiet --manifest-path <sketch>/Cargo.toml
+warning: unused import: `repo_identity`
+  --> <repo>/src/custom_lints/store.rs:36:80
+   |
+36 | pub(crate) use key::{absolutize_path_pack, lints_manifest_path, resolve_packs, repo_identity, shared_base};
+   |                                                                                ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `duplicates_of`
+  --> <repo>/src/custom_lints/store.rs:43:5
+   |
+43 |     duplicates_of,
+   |     ^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::Config::crates_dir`: use `src_dirs`. This is `src_dirs[0]`, so on a grouped project it sees only the first group and reports a subset as if it were the whole. If one directory really is meant, take it as an argument rather than reading the first entry of a list.
+    --> <repo>/src/config.rs:1086:13
+     |
+1086 |             crates_dir,
+     |             ^^^^^^^^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: function `find_mockspace_root` is never used
+  --> <repo>/src/entry/resolve.rs:51:15
+   |
+51 | pub(crate) fn find_mockspace_root() -> Option<PathBuf> {
+   |               ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+exit: 0

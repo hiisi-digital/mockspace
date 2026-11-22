@@ -1,0 +1,5 @@
+worktrees:  /git~1/benches /git~1/research 
+from git~1/research/R_probes/p, ../../../../bench-harness/x reads: h
+add -f under each: rc=0 staged=[] (the nested worktree is a repository boundary to add; the plumbing row below is the real test)
+checkout -f crafted: {error: invalid path 'git~1/research/N.md'} merge crafted: {error: invalid path 'git~1/research/N.md'} edit=1
+status of main: []

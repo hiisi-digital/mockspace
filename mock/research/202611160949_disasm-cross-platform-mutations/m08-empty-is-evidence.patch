@@ -1,0 +1,13 @@
+diff --git a/bench-harness/src/disasm.rs b/bench-harness/src/disasm.rs
+index 32d83a1..87c167a 100644
+--- a/bench-harness/src/disasm.rs
++++ b/bench-harness/src/disasm.rs
+@@ -64,7 +64,7 @@ fn extract_text_section(tool: &Disassembler, library: &str) -> Option<String> {
+ }
+ 
+ fn non_empty(text: String) -> Option<String> {
+-    (!text.trim().is_empty()).then_some(text)
++    Some(text)
+ }
+ 
+ /// The disassembly of one function of a library, as the tool printed it, and

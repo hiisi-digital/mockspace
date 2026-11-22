@@ -1,0 +1,18 @@
+fatal: cannot remove a locked working tree, lock reason: holds data
+remove : parent exists=yes
+fatal: cannot remove a locked working tree, lock reason: holds data
+remove --force: parent exists=yes
+remove -f -f: parent exists=no  (the user said it twice)
+fatal: cannot move a locked working tree;
+== unlocked parent, unlocked data: move then prune
+w2/mock/rdata  1385cb7 [data] prunable
+w3             bfffc41 [feat]
+Removing worktrees/rdata: gitdir file points to non-existent location
+== unlocked parent, LOCKED data worktree: move then prune
+admin dir kept: rdata
+w2
+== mv clone, repair
+repair: gitdir incorrect: m/.git/worktrees/w2/gitdir
+repair: gitdir incorrect: m/.git/worktrees/rdata/gitdir
+ M N.md
+status rc=0

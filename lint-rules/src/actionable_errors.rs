@@ -18,10 +18,6 @@ const TRACKED_MACROS: &[&str] = &["define_error!", "define_warning!", "define_hi
 pub struct ActionableErrors;
 
 impl Lint for ActionableErrors {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn name(&self) -> &'static str {
         "actionable-errors"
     }
@@ -46,7 +42,7 @@ impl CrateLint for ActionableErrors {
         let mut macro_name = "";
         let mut found_hint = false;
 
-        for (line_num, line) in ctx.source.lines().enumerate() {
+        for (line_num, line) in ctx.source().lines().enumerate() {
             let trimmed = line.trim();
 
             // Skip comments
@@ -105,7 +101,7 @@ impl CrateLint for ActionableErrors {
                     if !found_hint {
                         // Check the macro start line for lint:allow
                         let start_line = ctx
-                            .source
+                            .source()
                             .lines()
                             .nth(macro_start_line.saturating_sub(1))
                             .unwrap_or("");

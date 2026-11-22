@@ -1,0 +1,38 @@
+name         log     diff    show    checkout  rev-parse add     restore  status  branch-possible
+@            AMBIG   AMBIG   AMBIG   AS-REV    ok        ok      ok       ok      yes
+shadow       AMBIG   AMBIG   AMBIG   AS-REV    ok        ok      ok       ok      yes
+.shadow      ok      ok      ok      ok        ok        ok      ok       ok      no
+_shadow      AMBIG   AMBIG   AMBIG   AS-REV    ok        ok      ok       ok      yes
+#shadow      AMBIG   AMBIG   AMBIG   AS-REV    ok        ok      ok       ok      yes
+%shadow      AMBIG   AMBIG   AMBIG   AS-REV    ok        ok      ok       ok      yes
+=shadow      AMBIG   AMBIG   AMBIG   AS-REV    ok        ok      ok       ok      yes
++shadow      AMBIG   AMBIG   AMBIG   AS-REV    ok        ok      ok       ok      yes
+-shadow      err     err     err     err       ok        err     err      ok      no
+$shadow      AMBIG   AMBIG   AMBIG   AS-REV    ok        ok      ok       ok      yes
+HEAD         AMBIG   AMBIG   AMBIG   ok        ok        ok      ok       ok      no
+ORIG_HEAD    AMBIG   AMBIG   AMBIG   AS-REV    ok        ok      ok       ok      yes
+shadow.lock  ok      ok      ok      ok        ok        ok      ok       ok      no
+== bash, unquoted, name at the start of a word (what the shell does before git sees it)
+#shadow   -> []
+%shadow   -> [%shadow/f]
+=shadow   -> [=shadow/f]
++shadow   -> [+shadow/f]
+$shadow   -> [/f]
+-shadow   -> [-shadow/f]
+.shadow   -> [.shadow/f]
+_shadow   -> [_shadow/f]
+(zsh is not installed here; its rule that a word starting with = expands to a command path, and fails when none, is an impression)
+== can the name ever be a ref component? (git check-ref-format)
+@            valid
+shadow       valid
+.shadow      INVALID
+_shadow      valid
+#shadow      valid
+%shadow      valid
+=shadow      valid
++shadow      valid
+-shadow      valid
+$shadow      valid
+HEAD         valid
+ORIG_HEAD    valid
+shadow.lock  INVALID

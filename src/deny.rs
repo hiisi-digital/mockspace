@@ -485,7 +485,7 @@ mod tests {
 
     #[test]
     fn workspace_roots_finds_nested_and_skips_build_dirs() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         // root workspace, a nested mock/ workspace, a plain member package, and a
         // stray workspace manifest under target/ that must be skipped.
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn check_skips_when_no_config() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         // no deny.toml at the root: check is a no-op, never blocks.
         let actions = check(tmp.path(), true).unwrap();
         assert!(actions.is_empty());
@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn check_disabled_is_noop() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         write(&tmp.path().join("deny.toml"), "[licenses]\n");
         // disabled: returns Ok with no actions even though a config exists.
         assert!(check(tmp.path(), false).unwrap().is_empty());
@@ -522,7 +522,7 @@ mod tests {
 
     #[test]
     fn workspace_roots_skips_every_vcs_and_vendor_dir() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         write(&root.join("Cargo.toml"), "[workspace]\nmembers = []\n");
         // a stray workspace manifest under each skipped dir must not surface.
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn workspace_roots_respects_depth_bound() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         write(&root.join("Cargo.toml"), "[workspace]\nmembers = []\n");
         // a workspace manifest nested one level past the depth-8 cap is not found.
@@ -551,7 +551,7 @@ mod tests {
 
     #[test]
     fn rel_renders_root_as_dot() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         assert_eq!(rel(root, root), ".");
         assert_eq!(rel(root, &root.join("mock")), "mock");
@@ -560,7 +560,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn workspace_roots_does_not_traverse_symlinked_dirs() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         write(&root.join("Cargo.toml"), "[workspace]\nmembers = []\n");
         // a real workspace outside the tree, reachable only via a symlink.
@@ -579,7 +579,7 @@ mod tests {
         // `[workspace]` so none of them reaches a consumer's graph. cargo-deny
         // exits non-zero here before reading a licence, and reading that as a
         // violation blocks a push over a layout somebody chose.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         write(
             &tmp.path().join("Cargo.toml"),
             "[workspace]\nresolver = \"2\"\nmembers = []\n",
@@ -593,7 +593,7 @@ mod tests {
         // does not exist used to block with the wrong reason, and skipping on it
         // instead would push with nothing checked and log that there was
         // nothing to check. Neither is honest; the graph is simply unknown.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         write(
             &tmp.path().join("Cargo.toml"),
             "[workspace]\nresolver = \"2\"\nmembers = [\"nonexistent\"]\n",
@@ -613,7 +613,7 @@ mod tests {
         // the moment cargo-deny is absent, so this needs the tool installed to
         // exercise the loop at all; `decide_root_action` covers the same
         // distinction without it, in `decide_root_action_blocks_only_a_non_spike_unreadable_graph`.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         write(&tmp.path().join("deny.toml"), "[licenses]\n");
         write(
             &tmp.path().join("Cargo.toml"),
@@ -718,7 +718,7 @@ mod tests {
         // `mock/research/`. Blocking on those gates the repository on the state
         // of its own audit trail, so the reaction has to depend on where the
         // root sits rather than only on what cargo said about it.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         write(&root.join("deny.toml"), "[licenses]\n");
         // a readable root, so the loop reaches the others
@@ -819,7 +819,7 @@ mod tests {
         // stub reads its own streams through `/proc/$$` and not `/proc/self`,
         // because inside a command substitution `/proc/self` is the `readlink`
         // process, whose stdout is the substitution's pipe and never the parent's.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let path = tmp.path().join("stub-cargo");
         let script = format!(
             "#!/usr/bin/env bash\nfor fd in 1 2; do\n  if [ \"$(readlink /proc/$$/fd/$fd)\" = \"$(readlink /proc/$PPID/fd/$fd)\" ]; then echo shared >> '{shared}'; fi\ndone\necho noise\necho noise >&2\nexit 0\n",
@@ -839,7 +839,7 @@ mod tests {
         // when CARGO_TERM_COLOR forces colour, and `check` with `--config` is what
         // makes it the repo's one config over every root. A stub that ignores its
         // arguments passes whatever they are, so they are read back.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let cargo = stub_cargo(tmp.path(), "", "", 0);
         assert_eq!(run_stub(tmp.path(), &cargo), Ok(()));
         let argv = std::fs::read_to_string(tmp.path().join("argv")).unwrap();
@@ -856,7 +856,7 @@ mod tests {
 
     #[test]
     fn a_failed_check_carries_its_errors_its_summary_and_its_status_and_no_warnings() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let cargo = stub_cargo(
             tmp.path(),
             DENY_SUMMARY,
@@ -892,7 +892,7 @@ mod tests {
         // them: what is kept is the two blocks, and none of the other three, which
         // is the difference between `note` and `help` being headers and being
         // lines of the error above them.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let stderr = "error[a]: first\n  first body\nnote[x]: a note\n  note body\nhelp: a help\n  help body\nerror[b]: second\n  second body\nwarning: a warning\n  warning body\n";
         let cargo = stub_cargo(tmp.path(), "", stderr, 4);
         let err = run_stub(tmp.path(), &cargo).expect_err("a non-zero exit is a failed check");
@@ -909,7 +909,7 @@ mod tests {
         // cargo-deny dying on something that is not a diagnostic (a fetch, a
         // panic, a manifest it cannot parse) has no `error[` block to keep, and
         // dropping it all would turn the failure into one that says nothing.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let noise: String = (1 ..= 100).map(|n| format!("noise-{n:03}\n")).collect();
         let cargo = stub_cargo(tmp.path(), "", &noise, 101);
         let err = run_stub(tmp.path(), &cargo).expect_err("a non-zero exit is a failed check");
@@ -934,7 +934,7 @@ mod tests {
     fn a_failure_that_printed_nothing_still_names_its_status() {
         // The blank reason: cargo-deny killed before it said anything left the
         // person blocked by a push with an empty message.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let cargo = stub_cargo(tmp.path(), "", "", 1);
         let err = run_stub(tmp.path(), &cargo).expect_err("a non-zero exit is a failed check");
         assert_eq!(err, "cargo deny exited with status 1\n");
@@ -942,7 +942,7 @@ mod tests {
 
     #[test]
     fn a_cargo_that_cannot_run_is_a_failure_that_names_it() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let err = run_deny_with(
             tmp.path().join("no-such-cargo").as_os_str(),
             tmp.path(),
@@ -972,7 +972,7 @@ mod tests {
         // The control. Without it the test above passes on an implementation
         // that answers false for everything, which would skip the gate on every
         // repository rather than on the one that cannot run it.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         write(
             &tmp.path().join("Cargo.toml"),
             "[workspace]\nresolver = \"2\"\nmembers = [\"one\"]\n",
@@ -1031,7 +1031,7 @@ mod tests {
         // Needs only `cargo`, not `cargo-deny`: this is the state that made
         // the reported defect possible in the first place, and it holds
         // whether or not cargo-deny is installed to check it end to end.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         write_license_denial_fixture(root, "mock/research/p1");
         assert!(matches!(
@@ -1052,7 +1052,7 @@ mod tests {
         // be the only one that exempted. `decide_root_action_skips_a_spike_
         // tree_whatever_its_graph_state` covers the same shape purely; this
         // one checks it end to end through `check()`.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         write_license_denial_fixture(root, "mock/research/p1");
         let config = root.join("deny.toml");
@@ -1085,7 +1085,7 @@ mod tests {
 
     #[test]
     fn a_non_spike_root_has_a_readable_package_graph() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         write_license_denial_fixture(root, ".");
         assert!(matches!(package_graph(root), PackageGraph::Present));
@@ -1098,7 +1098,7 @@ mod tests {
         // The control for the spike-tree test above. Without it, a version
         // that skipped every readable-but-failing root (not only spike trees)
         // would pass the positive case too.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         write_license_denial_fixture(root, ".");
         let config = root.join("deny.toml");
@@ -1135,7 +1135,7 @@ mod tests {
         // run is a wrapper that forces colour in the environment and hands every
         // argument on, which is the one thing a stand-in `cargo` printing plain
         // text cannot show.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path();
         write_license_denial_fixture(root, ".");
         let unused = [

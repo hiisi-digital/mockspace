@@ -30,9 +30,12 @@ fn tree(parent: &Path, derive_dependencies: &str, derive_source: &str) -> PathBu
         tool.join("Cargo.toml"),
         format!(
             "[package]\nname = \"probe-tool\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\n\
-             mockspace = {{ package = \"mockspace-lint-rules\", path = \"{}/lint-rules\" }}\n\
+             mockspace = {{ package = \"mockspace-lint-rules\", path = {} }}\n\
              probe-derive = {{ path = \"../../derive-probe\" }}\n",
-            env!("CARGO_MANIFEST_DIR")
+            mockspace_manifest::toml_text::basic_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/lint-rules"
+            ))
         ),
     )
     .unwrap();
@@ -58,7 +61,7 @@ const PURE: &str = "use proc_macro::TokenStream;\n#[proc_macro_derive(Probe)]\np
 fn kept_after_build(mock: &Path, cache: &Path) -> usize {
     std::thread::sleep(crate::custom_lints::depinfo::TRUST_MARGIN + std::time::Duration::from_millis(200));
     let cfg = Config::from_dir(mock);
-    let dep = format!("{{ package = \"mockspace-lint-rules\", path = \"{}/lint-rules\" }}", env!("CARGO_MANIFEST_DIR"));
+    let dep = format!("{{ package = \"mockspace-lint-rules\", path = {} }}", mockspace_manifest::toml_text::basic_string(concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules")));
     load_in(cache, &cfg, &mock.join("mockspace.toml"), &dep).unwrap().expect("something to load");
     std::fs::read_dir(cache.join("built"))
         .map(|d| d.flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".deps")).count())
@@ -68,7 +71,7 @@ fn kept_after_build(mock: &Path, cache: &Path) -> usize {
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_library_of_a_pack_with_a_pure_derive_crate_of_the_tree_is_kept() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = tree(tmp.path(), "", PURE);
     assert_eq!(kept_after_build(&mock, &tmp.path().join("cache")), 1);
 }
@@ -76,7 +79,7 @@ fn the_library_of_a_pack_with_a_pure_derive_crate_of_the_tree_is_kept() {
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_library_of_a_pack_whose_derive_crate_depends_outside_the_allowlist_is_not_kept() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let mock = tree(tmp.path(), "serde_json = \"1\"", PURE);
     assert_eq!(kept_after_build(&mock, &tmp.path().join("cache")), 0);
 }
@@ -84,7 +87,7 @@ fn the_library_of_a_pack_whose_derive_crate_depends_outside_the_allowlist_is_not
 #[test]
 #[ignore = "the_mockspace_real_cargo_end_to_end_tests_are_ignored_for_th: runs a cargo build"]
 fn the_library_of_a_pack_whose_derive_crate_can_read_a_file_is_not_kept() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let source = format!("{PURE}fn read() {{ let _ = std::fs::read(\"Cargo.toml\"); }}\n");
     let mock = tree(tmp.path(), "", &source);
     assert_eq!(kept_after_build(&mock, &tmp.path().join("cache")), 0);

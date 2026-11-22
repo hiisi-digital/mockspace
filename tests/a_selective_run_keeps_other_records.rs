@@ -120,7 +120,7 @@ fn prepared() -> Option<tempfile::TempDir> {
         eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
         return None;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path();
     fixture(root);
     let (ok, t) = mock(root, &[]);

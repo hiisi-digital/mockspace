@@ -1,0 +1,40 @@
+root mock/research/202608151554_probes/doc-examples-compile/Cargo.toml -> ../../../../bench-core => bench-core
+root mock/research/202608151554_probes/doc-examples-compile/Cargo.toml -> ../../../../bench-harness => bench-harness
+root mock/research/202608151554_probes/glob-corners/Cargo.toml -> ../../../../bench-harness => bench-harness
+root mock/research/202608151554_probes/mode-is-a-string/Cargo.toml -> ../../../../bench-harness => bench-harness
+root mock/research/202608151554_probes/normalise-silence/Cargo.toml -> ../../../../bench-harness => bench-harness
+root mock/research/202608151554_probes/per-file-form-asymmetry/Cargo.toml -> ../../../../bench-harness => bench-harness
+root mock/research/202608151554_probes/zero-sample-survives/Cargo.toml -> ../../../../bench-harness => bench-harness
+root mock/research/202608151700_probes/01_diagnostics/Cargo.toml -> ../../../../bench-harness => bench-harness
+root mock/research/202608151700_probes/02_fail_open_keys/Cargo.toml -> ../../../../bench-harness => bench-harness
+root mock/research/202608151700_probes/03_csv_reader/Cargo.toml -> ../../../../bench-harness => bench-harness
+root mock/research/202608151700_probes/06_undeclared_point/arm/Cargo.toml -> ../../../../../bench-core => bench-core
+root mock/research/202608151700_probes/06_undeclared_point/arm/Cargo.toml -> ../../../../../bench-macro => bench-macro
+root mock/research/202608151700_probes/06_undeclared_point/runner/Cargo.toml -> ../../../../../bench-core => bench-core
+root mock/research/202608151700_probes/07_empty_dataset_panic/Cargo.toml -> ../../../../bench-harness => bench-harness
+root mock/research/202608151700_probes/08_precedence_matrix/Cargo.toml -> ../../../../bench-harness => bench-harness
+self mock/research/202608151554_probes/doc-examples-compile/Cargo.toml -> src/bin/ex1_byte_routine_module.rs => mock/research/202608151554_probes/doc-examples-compile/src/bin/ex1_byte_routine_module.rs
+self mock/research/202608151554_probes/doc-examples-compile/Cargo.toml -> src/bin/ex2a_dispatch_verbatim.rs => mock/research/202608151554_probes/doc-examples-compile/src/bin/ex2a_dispatch_verbatim.rs
+self mock/research/202608151554_probes/doc-examples-compile/Cargo.toml -> src/bin/ex2b_dispatch_comment.rs => mock/research/202608151554_probes/doc-examples-compile/src/bin/ex2b_dispatch_comment.rs
+self mock/research/202608151554_probes/doc-examples-compile/Cargo.toml -> src/bin/ex3_routine_spec.rs => mock/research/202608151554_probes/doc-examples-compile/src/bin/ex3_routine_spec.rs
+self mock/research/202608151554_probes/doc-examples-compile/Cargo.toml -> src/bin/ex4_hooks_struct_update.rs => mock/research/202608151554_probes/doc-examples-compile/src/bin/ex4_hooks_struct_update.rs
+self mock/research/202608151554_probes/doc-examples-compile/Cargo.toml -> src/bin/ex5_driver_module.rs => mock/research/202608151554_probes/doc-examples-compile/src/bin/ex5_driver_module.rs
+self mock/research/202608151554_probes/glob-corners/Cargo.toml -> src/main.rs => mock/research/202608151554_probes/glob-corners/src/main.rs
+self mock/research/202608151554_probes/mode-is-a-string/Cargo.toml -> src/main.rs => mock/research/202608151554_probes/mode-is-a-string/src/main.rs
+self mock/research/202608151554_probes/normalise-silence/Cargo.toml -> src/main.rs => mock/research/202608151554_probes/normalise-silence/src/main.rs
+self mock/research/202608151554_probes/per-file-form-asymmetry/Cargo.toml -> src/main.rs => mock/research/202608151554_probes/per-file-form-asymmetry/src/main.rs
+self mock/research/202608151554_probes/profile-precedence/arm_declares_nothing/Cargo.toml -> src/lib.rs => mock/research/202608151554_probes/profile-precedence/arm_declares_nothing/src/lib.rs
+self mock/research/202608151554_probes/profile-precedence/arm_declares_thin/Cargo.toml -> src/lib.rs => mock/research/202608151554_probes/profile-precedence/arm_declares_thin/src/lib.rs
+self mock/research/202608151554_probes/standalone-target-dir-sharing/arm-a/Cargo.toml -> ../support => mock/research/202608151554_probes/standalone-target-dir-sharing/support
+self mock/research/202608151554_probes/standalone-target-dir-sharing/arm-a/Cargo.toml -> src/lib.rs => mock/research/202608151554_probes/standalone-target-dir-sharing/arm-a/src/lib.rs
+self mock/research/202608151554_probes/standalone-target-dir-sharing/arm-b/Cargo.toml -> ../support => mock/research/202608151554_probes/standalone-target-dir-sharing/support
+self mock/research/202608151554_probes/standalone-target-dir-sharing/arm-b/Cargo.toml -> src/lib.rs => mock/research/202608151554_probes/standalone-target-dir-sharing/arm-b/src/lib.rs
+self mock/research/202608151554_probes/standalone-target-dir-sharing/arm-c/Cargo.toml -> ../support => mock/research/202608151554_probes/standalone-target-dir-sharing/support
+self mock/research/202608151554_probes/standalone-target-dir-sharing/arm-c/Cargo.toml -> src/lib.rs => mock/research/202608151554_probes/standalone-target-dir-sharing/arm-c/src/lib.rs
+self mock/research/202608151554_probes/zero-sample-survives/Cargo.toml -> src/main.rs => mock/research/202608151554_probes/zero-sample-survives/src/main.rs
+self mock/research/202608151700_probes/04_target_dir_sharing/arm-a/Cargo.toml -> ../shared => mock/research/202608151700_probes/04_target_dir_sharing/shared
+self mock/research/202608151700_probes/04_target_dir_sharing/arm-b/Cargo.toml -> ../shared => mock/research/202608151700_probes/04_target_dir_sharing/shared
+self mock/research/202608151700_probes/04_target_dir_sharing/arm-c/Cargo.toml -> ../shared => mock/research/202608151700_probes/04_target_dir_sharing/shared
+== counts
+     15 root
+     22 self

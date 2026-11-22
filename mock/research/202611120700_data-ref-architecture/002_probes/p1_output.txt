@@ -1,0 +1,24 @@
+== (a) same branch in a second worktree
+Preparing worktree (checking out 'mock/research')
+fatal: 'mock/research' is already used by worktree at '/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/p1/main/mock/research'
+== (f) status in main with data worktree present
+(end status)
+== (b) edit data, go to OLD commit (tracks mock/research/N.md), force back
+checkout rc=0
+-- N.md after checkout of OLD:
+old
+-- N.md after force back to dev:
+cat: mock/research/N.md: No such file or directory
+. .. .git 
+== (c) clean -fdx and -fdxx with an edit in the data worktree
+after clean -fdx:
+N.md U.md 
+EDIT-B
+after clean -fdxx:
+N.md U.md 
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/p1/main                84c8a2d [dev]
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/p1/main/mock/research  3c97274 [mock/research]
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/p1/wt2                 84c8a2d [feat]
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/p1/main                84c8a2d [dev]
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/p1/main/mock/research  3c97274 [mock/research]
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/p1/wt2                 84c8a2d [feat]

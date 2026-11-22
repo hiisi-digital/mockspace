@@ -1,0 +1,4 @@
+in the tree, same depth (mock/rdata), nested worktree: cargo OK
+common dir, no symlink (the resolver names the path): cargo FAILED:   unable to update m/.git/crates/lib
+common dir + symlink at mock/rlink: cargo FAILED:   unable to update m/.git/crates/lib
+in the tree, deeper (mock/deep/er/rdata): cargo FAILED:   unable to update m/mock/deep/crates/lib

@@ -1,0 +1,5 @@
+# recorded on a1d1fd3; replay: git apply m10-adrp-companion.patch && cargo test -p mockspace-bench-harness --lib -- disasm library
+test disasm::tests::an_adrp_page_folds_in_every_form_and_its_companion_add_with_it ... FAILED
+test disasm::tests_recorded::identical_work_in_two_libraries_is_one_duplicate_on_every_format_and_tool ... FAILED
+test disasm::tests_recorded::the_same_entry_at_other_addresses_normalises_to_the_same_text ... FAILED
+test result: FAILED. 41 passed; 3 failed; 1 ignored; 0 measured; 238 filtered out; finished in 2.17s

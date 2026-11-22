@@ -80,7 +80,7 @@ impl Fixture {
 }
 
 fn repo() -> Fixture {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let root = dir.path().join("repo");
     let root = root.as_path();
     common::git_init(root);

@@ -1,0 +1,3 @@
+denyDeletes=false: rc=0 1 deleted line(s), 0 remote-rejected; remote still has refs/mock/research: 0
+denyDeletes=true: rc=0 1 deleted line(s), 0 remote-rejected; remote still has refs/mock/research: 0
+update hook: rc=1 1 remote-rejected; remote still has refs/mock/research: 1

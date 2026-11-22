@@ -1,0 +1,50 @@
+
+libvariant_scalar.dylib:	file format mach-o arm64
+
+Disassembly of section __TEXT,__text:
+
+00000000000002a8 <__RNvCsdlSolg5Okjs_14variant_scalar7do_work>:
+     2a8:      	ldrb	w8, [x0]
+     2ac:      	ldrb	w9, [x0, #0x1]
+     2b0:      	sub	x9, x9, x8
+     2b4:      	add	x8, x9, x8, lsl #5
+     2b8:      	ldrb	w9, [x0, #0x2]
+     2bc:      	sub	x9, x9, x8
+     2c0:      	add	x8, x9, x8, lsl #5
+     2c4:      	ldrb	w9, [x0, #0x3]
+     2c8:      	sub	x9, x9, x8
+     2cc:      	add	x8, x9, x8, lsl #5
+     2d0:      	ldrb	w9, [x0, #0x4]
+     2d4:      	sub	x9, x9, x8
+     2d8:      	add	x8, x9, x8, lsl #5
+     2dc:      	ldrb	w9, [x0, #0x5]
+     2e0:      	sub	x9, x9, x8
+     2e4:      	add	x8, x9, x8, lsl #5
+     2e8:      	ldrb	w9, [x0, #0x6]
+     2ec:      	sub	x9, x9, x8
+     2f0:      	add	x8, x9, x8, lsl #5
+     2f4:      	ldrb	w9, [x0, #0x7]
+     2f8:      	sub	x9, x9, x8
+     2fc:      	add	x8, x9, x8, lsl #5
+     300:      	lsl	x9, x8, #5
+     304:      	sub	x8, x9, x8
+     308:      	str	x8, [x1]
+     30c:      	ret
+
+0000000000000310 <_bench_entry>:
+     310:      	cmp	x2, #0x8
+     314:      	b.ne	0x330 <_bench_entry+0x20>
+     318:      	stp	x29, x30, [sp, #-0x10]!
+     31c:      	mov	x29, sp
+     320:      	bl	0x2a8 <__RNvCsdlSolg5Okjs_14variant_scalar7do_work>
+     324:      	mov	x0, #0x0                ; =0
+     328:      	ldp	x29, x30, [sp], #0x10
+     32c:      	ret
+     330:      	adrp	x0, 0x0
+     334:      	add	x0, x0, #0x348
+     338:      	ret
+
+000000000000033c <_bench_name>:
+     33c:      	adrp	x0, 0x0
+     340:      	add	x0, x0, #0x348
+     344:      	ret

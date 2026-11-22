@@ -20,10 +20,6 @@ use crate::{Lint, LintContext, LintError, Severity, WorkspaceLint};
 pub struct NoDuplicateFn;
 
 impl Lint for NoDuplicateFn {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::Workspace
-    }
-
     fn name(&self) -> &'static str {
         "no-duplicate-fn"
     }
@@ -45,8 +41,8 @@ impl WorkspaceLint for NoDuplicateFn {
         // carry their file, or the suppression lookup below reads the wrong
         // source. tracked: #33
         for &(crate_name, ctx) in crates {
-            let root = ctx.tree.root_node();
-            collect_pub_fns(root, ctx.source, crate_name, &mut all_fns);
+            let root = ctx.tree().root_node();
+            collect_pub_fns(root, ctx.source(), crate_name, &mut all_fns);
         }
 
         let mut errors = Vec::new();
@@ -156,7 +152,7 @@ fn is_suppressed(sig: &FnSig, ctx_by_crate: &HashMap<&str, &LintContext>) -> boo
         Some(c) => c,
         None => return false,
     };
-    is_line_suppressed(ctx.source, sig.line)
+    is_line_suppressed(ctx.source(), sig.line)
 }
 
 /// 1-indexed line lookup; returns true if the line carries a

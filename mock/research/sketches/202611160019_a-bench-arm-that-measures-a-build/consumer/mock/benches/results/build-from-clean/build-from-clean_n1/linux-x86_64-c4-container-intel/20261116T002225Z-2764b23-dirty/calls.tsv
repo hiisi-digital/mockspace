@@ -1,0 +1,15 @@
+pid	call	compiled	absent_before	present_after	waited_on_lock	exit
+16749	1	4	true	true	false	0
+16749	2	4	true	true	false	0
+17918	1	4	true	true	false	0
+17918	2	4	true	true	false	0
+19196	1	4	true	true	false	0
+19196	2	4	true	true	false	0
+19909	1	4	true	true	false	0
+19909	2	4	true	true	false	0
+20628	1	4	true	true	false	0
+20628	2	4	true	true	false	0
+21782	1	4	true	true	false	0
+21782	2	4	true	true	false	0
+21909	1	4	true	true	false	0
+21909	2	4	true	true	false	0

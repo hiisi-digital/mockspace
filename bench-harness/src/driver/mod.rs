@@ -6,30 +6,22 @@
 //! Manifest-driven bench driver: the whole generic main loop, in the
 //! library.
 //!
-//! Every consumer bench binary used to own a copy of the same loop
-//! (load bench.toml, iterate benches and sizes, bridge routines,
-//! spawn the orchestrator, write CSV plus findings), and the copies
-//! drifted: hand-grown size whitelists, hardcoded may-differ name
-//! lists, stale helper snapshots. [`drive`] owns that loop once. A
-//! consumer `main` shrinks to its registrations:
-//!
-//! ```ignore
-//! fn main() -> std::process::ExitCode {
-//!     mockspace_bench_harness::driver::drive(&DriverRegistry {
-//!         build_workload,
-//!         routine_for,
-//!         byte_dispatch: byte_routine_dispatch!(out = 8, sizes = [64, 256, 1024, 16384]),
-//!     })
-//! }
-//! ```
+//! Consumer bench binaries used to own copies of the same loop (load
+//! bench.toml, iterate benches and sizes, bridge routines, spawn the
+//! orchestrator, write CSV plus findings), and the copies drifted: hand-grown
+//! size whitelists, hardcoded may-differ name lists, stale helper snapshots,
+//! and results written wherever each copy chose. [`drive_spec`] owns that loop
+//! once, and `mock bench run` generates the one binary that calls it from
+//! `bench.toml`; a consumer-owned driver is refused by the tool and by a lint.
 //!
 //! The driver handles: bench-name filtering (`--only` or positional
 //! names), report-only regeneration, a preflight that reports every
 //! missing variant dylib at once, master-seed resolution with replay
 //! (`--seed`), pre-run validation feeding the `required` manifest
-//! flag, per-bench organised output directories, history append plus
-//! regression detection, an end-of-run summary table, and a findings
-//! index.
+//! flag, one run directory per cell under `results/` keyed by machine class
+//! and run (see [`mockspace_bench_layout`]), regression detection against the
+//! earlier runs of the same cell on the same machine class, an end-of-run
+//! summary table, and the index over every run.
 
 pub mod hooks;
 mod index;
@@ -54,32 +46,17 @@ use crate::config::{BenchConfig, BenchManifest};
 use crate::core::ByteDispatch;
 use crate::error::BenchError;
 use crate::history::{self, HistoryEntry};
+use mockspace_bench_layout::{self as layout, Cell};
 use crate::sample::BenchResult;
 use crate::spec::RoutineSpec;
 use crate::workload::Workload;
 use crate::{harness, validation};
 
-/// Root directory (relative to `mock/benches/`) for organised
-/// per-bench outputs.
-pub const RESULTS_DIR: &str = "results";
+/// Root directory (relative to `mock/benches/`) of every run.
+pub use mockspace_bench_layout::RESULTS_DIR;
 
-/// Consumer registrations the driver dispatches through.
-pub struct DriverRegistry {
-    /// Build the workload program for `(workload_name, n)`.
-    pub build_workload: fn(&str, usize) -> Workload,
-    /// Custom routine hook for benches whose inputs are not plain
-    /// bytes (graph shapes, sparse layouts). Return `None` to fall
-    /// through to the byte dispatch.
-    pub routine_for:    fn(&BenchConfig) -> Option<RoutineSpec>,
-    /// The declared const byte-size dispatch
-    /// (`byte_routine_dispatch!`). Manifest sizes must be members of
-    /// its list; the driver errors by name otherwise.
-    pub byte_dispatch:  ByteDispatch,
-}
-
-/// The full driver specification: the registrations plus the named
-/// hooks. [`DriverRegistry`] remains the hook-less compat surface;
-/// `drive` adapts it onto this.
+/// The driver specification: the registrations plus the named hooks. The
+/// generated driver builds one from `bench.toml`.
 pub struct DriverSpec {
     /// Build the workload program for `(workload_name, n)`.
     pub build_workload: fn(&str, usize) -> Workload,
@@ -167,11 +144,10 @@ pub(super) fn resolve_routine(
             Err(BenchError::InvalidConfig {
                 reason: format!(
                     "bench `{}` n={} has no monomorphised byte routine: the compiled \
-                 dispatch list is {:?}. With the generated driver, add {} to \
+                 dispatch list is {:?}. Add {} to \
                  `[dispatch] points` in bench.toml (or leave `[dispatch]` out so the \
-                 list defaults to the union of every bench's points). With a \
-                 consumer-owned driver, add it to the `byte_routine_dispatch!` \
-                 declaration, or serve it from `routine_for`.",
+                 list defaults to the union of every bench's points), or serve it \
+                 from the `routine_for` hook.",
                     config.bench_name, config.n, spec.byte_dispatch.sizes, config.n
                 ),
             })
@@ -179,24 +155,48 @@ pub(super) fn resolve_routine(
     }
 }
 
-/// Per-config output paths under `<root>/<bench>/`. During a run
-/// `root` is the in-flight staging tree; report-only reads the
-/// canonical `results/` directly.
-///
-/// A flat-tree cell keeps the historical `<bench>_n<n>_findings.md`
-/// naming so committed artifacts and their citations stay reachable;
-/// a nested-tree cell writes `<sweep>_n<point>_report.md` under its
-/// bench's directory.
-fn output_paths(config: &BenchConfig, root: &Path) -> (PathBuf, String, String) {
-    let dir = root.join(&config.bench);
-    let stem = format!("{}_n{}", config.sweep, config.n);
-    let report_suffix = if config.nested { "_report.md" } else { "_findings.md" };
-    let csv = dir.join(format!("{stem}.csv")).display().to_string();
-    let report = dir
-        .join(format!("{stem}{report_suffix}"))
-        .display()
-        .to_string();
-    (dir, csv, report)
+/// The cell a config measures.
+fn cell_of(config: &BenchConfig) -> Cell {
+    Cell {
+        sweep: config.sweep.clone(),
+        n:     config.n as u64,
+    }
+}
+
+/// One cell's run directory under `root` with its samples and report paths.
+/// During a run `root` is the in-flight staging tree, which promotes into
+/// `results/` with the same relative paths.
+fn run_paths(config: &BenchConfig, root: &Path, machine: &str, run: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let dir = root.join(layout::run_rel(&config.bench, &cell_of(config), machine, run));
+    let samples = dir.join(layout::SAMPLES_FILE);
+    let report = dir.join(layout::REPORT_FILE);
+    (dir, samples, report)
+}
+
+/// The runs a report-only pass renders a report for: those with none. A run's
+/// own report states the methodology it ran under, which its samples cannot,
+/// so one that exists is never rendered again.
+fn reportless(runs: &[layout::RunDir]) -> Vec<&layout::RunDir> {
+    runs.iter().filter(|r| !r.dir.join(layout::REPORT_FILE).exists()).collect()
+}
+
+/// The run id this run takes: `base`, or `base` with the first `-<k>` suffix
+/// no run directory under `results_root` already carries on this machine
+/// class, so two runs starting in the same second over the same commit sit side
+/// by side rather than one replacing the other.
+fn unique_run_id(results_root: &Path, machine: &str, base: &str) -> String {
+    let taken: std::collections::BTreeSet<String> = layout::runs(results_root)
+        .into_iter()
+        .filter(|r| r.machine == machine)
+        .map(|r| r.run)
+        .collect();
+    if !taken.contains(base) {
+        return base.to_string();
+    }
+    (2 ..)
+        .map(|k| format!("{base}-{k}"))
+        .find(|id| !taken.contains(id))
+        .unwrap_or_else(|| base.to_string())
 }
 
 /// Load the manifest for a bench tree root: the root file plus every
@@ -236,23 +236,6 @@ fn select_names(all: &[String], requested: &[String]) -> Result<Vec<String>, Str
     Ok(selected)
 }
 
-/// The history root and key for one cell. A nested cell's ledger is
-/// `history/<bench>/<sweep>_n<point>.tsv`; a flat cell keeps the
-/// historical `.bench_history/<bench>_n<n>.tsv`.
-fn history_root_and_key(config: &BenchConfig, root: &Path) -> (PathBuf, String) {
-    if config.nested {
-        (
-            root.join("history").join(&config.bench),
-            format!("{}_n{}", config.sweep, config.n),
-        )
-    } else {
-        (
-            root.join(history::DEFAULT_HISTORY_DIR),
-            format!("{}_n{}", config.bench_name, config.n),
-        )
-    }
-}
-
 /// Compute warm-mode medians per variant from a result.
 fn warm_medians(result: &BenchResult) -> BTreeMap<String, Vec<f64>> {
     let mut per_variant: BTreeMap<String, Vec<f64>> = BTreeMap::new();
@@ -268,25 +251,10 @@ fn warm_medians(result: &BenchResult) -> BTreeMap<String, Vec<f64>> {
 }
 
 /// The crate's one median, over a vector the caller owns. Delegates to
-/// [`crate::analysis::median`] so the summary table, the history ledger and the
+/// [`crate::analysis::median`] so the summary table, the run's summary rows and the
 /// findings report cannot disagree about what "median" means on an even count.
 fn median(vals: &mut [f64]) -> f64 {
     crate::analysis::median(vals)
-}
-
-/// The hook-less compat entry point: adapts a [`DriverRegistry`]
-/// onto [`drive_spec`]. Existing consumer binaries keep building and
-/// keep their behaviour; `routine_for` becomes the hook of the same
-/// name.
-pub fn drive(registry: &DriverRegistry) -> ExitCode {
-    drive_spec(&DriverSpec {
-        build_workload: registry.build_workload,
-        byte_dispatch:  registry.byte_dispatch,
-        hooks:          Hooks {
-            routine_for: Some(registry.routine_for),
-            ..Hooks::default()
-        },
-    })
 }
 
 /// The library-provided bench driver entry point. See the module and
@@ -410,12 +378,28 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
         }
     };
 
+    // ── run identity: every cell of this run lands under one machine
+    // class and one run id, a sibling of every earlier run ──
+    let machine = crate::env::collect_run_env().machine_class;
+    let run = unique_run_id(
+        &results_root,
+        &machine,
+        &layout::run_id(
+            history::timestamp(),
+            &crate::env::run_commit(),
+        ),
+    );
+
     // ── run plan ──
     eprintln!(
         "run plan: {} bench(es), {} config(s){}",
         selected.len(),
         configs.len(),
-        if cli.report_only { " [report-only]" } else { "" }
+        if cli.report_only {
+            " [report-only]".to_string()
+        } else {
+            format!(", run {run} on {machine}")
+        }
     );
 
     // ── after_init: cells resolved, preflight passed, staging
@@ -427,9 +411,6 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
     });
 
     let mut summary: Vec<SummaryRow> = Vec::new();
-    // History appends are deferred to after promotion so the
-    // regression log never records a crash-borne run.
-    let mut deferred_history: Vec<(PathBuf, String, Vec<HistoryEntry>)> = Vec::new();
     let mut required_failure = false;
     let mut hook_failure = false;
     let mut refused_failure = false;
@@ -462,32 +443,56 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
             },
         };
         let workload = (spec.build_workload)(&config.workload, config.n);
-        let out_root = stage_root.as_deref().unwrap_or(results_root.as_path());
-        let (dir, csv_path, findings_path) = output_paths(config, out_root);
+
+        if cli.report_only {
+            // A run of the cell, on any machine class, that has samples and no
+            // report gets one rendered from its samples. A run that has its
+            // report keeps it: the report a run wrote carries the methodology
+            // section, which samples alone cannot restate, so rendering it
+            // again would lose what it said.
+            let cell = cell_of(config);
+            let cell_runs: Vec<layout::RunDir> = layout::runs(&results_root)
+                .into_iter()
+                .filter(|r| r.bench == config.bench && r.cell == cell)
+                .filter(|r| r.dir.join(layout::SAMPLES_FILE).is_file())
+                .collect();
+            if cell_runs.is_empty() {
+                eprintln!(
+                    "error: report-only for `{}` n={}: no run of it has samples under {}\n\
+                     hint: run the bench first",
+                    config.bench_name,
+                    config.n,
+                    results_root.join(&config.bench).join(cell.name()).display()
+                );
+                return ExitCode::FAILURE;
+            }
+            for r in reportless(&cell_runs) {
+                let report = r.dir.join(layout::REPORT_FILE);
+                match crate::report_from_csv_for_routine(
+                    &r.dir.join(layout::SAMPLES_FILE),
+                    &report.display().to_string(),
+                    "warm",
+                    &config.title,
+                    &routine,
+                ) {
+                    Ok(()) => eprintln!("  rendered {}", report.display()),
+                    Err(e) => {
+                        eprintln!("error: report-only for {}: {e}", r.dir.display());
+                        return ExitCode::FAILURE;
+                    },
+                }
+            }
+            continue;
+        }
+
+        let Some(stage) = stage_root.as_deref() else {
+            continue;
+        };
+        let (dir, _samples_path, report_path) = run_paths(config, stage, &machine, &run);
+        let findings_path = report_path.display().to_string();
         if let Err(e) = std::fs::create_dir_all(&dir) {
             eprintln!("error: creating {}: {e}", dir.display());
             return ExitCode::FAILURE;
-        }
-
-        if cli.report_only {
-            match crate::report_from_csv_for_routine(
-                Path::new(&csv_path),
-                &findings_path,
-                "warm",
-                &config.title,
-                &routine,
-            ) {
-                Ok(()) => eprintln!("  regenerated {findings_path}"),
-                Err(e) => {
-                    eprintln!(
-                        "error: report-only for `{}` n={}: {e}\nhint: run the bench \
-                         first to produce {}",
-                        config.bench_name, config.n, csv_path
-                    );
-                    return ExitCode::FAILURE;
-                },
-            }
-            continue;
         }
 
         // ── master-seed resolution (replayable) ──
@@ -636,8 +641,8 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
                 },
             }
         }
-        if let Err(e) = harness::write_csv(&result, &csv_path) {
-            eprintln!("error: writing csv: {e}");
+        if let Err(e) = harness::write_run(&result, &dir, &run) {
+            eprintln!("error: writing the run: {e}");
             return ExitCode::FAILURE;
         }
         {
@@ -688,7 +693,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
         }
 
         // ── history + regressions + summary rows ──
-        let (history_root, benchmark_key) = history_root_and_key(&config, root);
+        let cell = cell_of(&config);
         let per_variant = warm_medians(&result);
         let mut best = f64::INFINITY;
         let mut entries: Vec<HistoryEntry> = Vec::new();
@@ -701,8 +706,8 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
             let (_, lo, hi) = bootstrap_ci_median(vals, config.master_seed);
             entries.push(HistoryEntry {
                 timestamp:  history::timestamp(),
-                git_commit: history::git_commit(),
-                benchmark:  benchmark_key.clone(),
+                git_commit: history::ledger_commit(&result.env.git_commit),
+                benchmark:  cell.name(),
                 variant:    variant.clone(),
                 n:          config.n,
                 mode:       "warm".into(),
@@ -711,7 +716,9 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
                 ci_hi_ns:   hi,
             });
         }
-        let historical = history::load_in(&history_root, &benchmark_key);
+        // The earlier runs of this cell on this machine class; this run is
+        // still staged, so it is not among them.
+        let historical = history::load_cell(&results_root, &config.bench, &cell, &machine);
         let regressions = history::detect_regressions(&entries, &historical);
         for r in &regressions {
             if r.flagged {
@@ -729,30 +736,28 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
             });
         }
         if cell_failed {
-            // A gated-out run must not become the next run's
-            // regression baseline: the ledger records accepted runs.
-            // The staged artifacts still promote as the evidence of
-            // what ran and why it was failed.
-            eprintln!("  history withheld for {benchmark_key}: after_cell returned Fail");
-        } else {
-            deferred_history.push((history_root, benchmark_key, entries));
+            // A gated-out run must not become the next run's regression
+            // baseline: only an accepted run carries a summary. The staged
+            // artifacts still promote as the evidence of what ran and why it
+            // was failed.
+            eprintln!("  summary withheld for {}: after_cell returned Fail", cell.name());
+        } else if let Err(e) =
+            harness::write_new(&dir.join(layout::SUMMARY_FILE), history::render_summary(&entries).as_bytes())
+        {
+            eprintln!("error: writing the run's summary: {e}");
+            return ExitCode::FAILURE;
         }
     }
 
-    // ── orderly completion: promote staged results, then history ──
+    // ── orderly completion: promote the staged run ──
     if let Some(stage) = &stage_root {
         if let Err(e) = staging::promote(&results_root, stage) {
             eprintln!("error: promoting staged results: {e}");
             return ExitCode::FAILURE;
         }
-        for (hroot, key, entries) in &deferred_history {
-            if let Err(e) = history::append_in(hroot, key, entries) {
-                eprintln!("  history append failed: {e}");
-            }
-        }
     }
 
-    // ── summary table + findings index ──
+    // ── summary table + index ──
     if !cli.report_only && !summary.is_empty() {
         eprintln!();
         eprintln!(
@@ -771,7 +776,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
             );
         }
     }
-    if let Err(e) = write_index(&results_root, &summary) {
+    if let Err(e) = write_index(&results_root) {
         eprintln!("  index write failed: {e}");
     }
 
@@ -859,7 +864,6 @@ mod tests {
             },
             bench: bench.to_string(),
             sweep: sweep.to_string(),
-            nested,
             n,
             ..BenchConfig::default()
         }
@@ -934,42 +938,63 @@ mod tests {
         }
     }
 
+    const M: &str = "linux-x86_64-c4-container-intel";
+    const R: &str = "20261115T093000Z-abc";
+
+    /// A flat and a nested cell take the one layout: the bench, the cell, the
+    /// machine class, the run. Neither keeps a name of its own any more.
     #[test]
-    fn flat_output_naming_is_unchanged() {
-        let (dir, csv, report) =
-            output_paths(&cfg("hash", "hash", 64, false), Path::new("results"));
-        assert_eq!(dir, Path::new("results/hash"));
-        assert!(csv.ends_with("results/hash/hash_n64.csv"), "{csv}");
-        assert!(
-            report.ends_with("results/hash/hash_n64_findings.md"),
-            "flat trees keep the committed suffix: {report}"
+    fn flat_and_nested_cells_land_in_the_one_layout() {
+        let (dir, samples, report) =
+            run_paths(&cfg("hash", "hash", 64, false), Path::new("results"), M, R);
+        assert_eq!(dir, Path::new("results/hash/hash_n64").join(M).join(R));
+        assert_eq!(samples, dir.join("samples.csv"));
+        assert_eq!(report, dir.join("report.md"));
+        let (dir, ..) = run_paths(&cfg("warm-container", "width-l1", 80003, true), Path::new("results"), M, R);
+        assert_eq!(dir, Path::new("results/warm-container/width-l1_n80003").join(M).join(R));
+        assert_eq!(
+            mockspace_bench_layout::place(&dir.join("samples.csv"), |_| true),
+            mockspace_bench_layout::Placement::InLayout,
+            "what the driver writes is what the layout calls in place"
         );
     }
 
+    /// A run id already taken on this machine class gets a suffix, so a run
+    /// started in the same second over the same commit sits beside the first.
+    /// The same id on another class is no collision.
     #[test]
-    fn nested_output_naming_uses_the_sweep_stem_and_the_report_suffix() {
-        let c = cfg("warm-container", "width-l1", 80003, true);
-        let (dir, csv, report) = output_paths(&c, Path::new("results"));
-        assert_eq!(dir, Path::new("results/warm-container"));
-        assert!(
-            csv.ends_with("results/warm-container/width-l1_n80003.csv"),
-            "{csv}"
-        );
-        assert!(
-            report.ends_with("results/warm-container/width-l1_n80003_report.md"),
-            "{report}"
-        );
+    fn a_taken_run_id_takes_the_next_suffix() {
+        let root = mockspace_manifest::scratch::held();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(unique_run_id(&root, M, R), R);
+        let cell = Cell { sweep: "hash".into(), n: 64 };
+        std::fs::create_dir_all(root.join(layout::run_rel("hash", &cell, M, R))).unwrap();
+        assert_eq!(unique_run_id(&root, M, R), format!("{R}-2"));
+        std::fs::create_dir_all(root.join(layout::run_rel("hash", &cell, M, &format!("{R}-2")))).unwrap();
+        assert_eq!(unique_run_id(&root, M, R), format!("{R}-3"));
+        assert_eq!(unique_run_id(&root, "macos-aarch64-c8-bare-apple", R), R);
+        std::fs::remove_dir_all(&root).ok();
     }
 
+    /// Report-only renders a report only where a run has none: the report a
+    /// run wrote carries its methodology, which the samples cannot restate.
     #[test]
-    fn history_partitions_per_bench_in_nested_trees_and_stays_put_in_flat_ones() {
-        let root = Path::new("/tree");
-        let (hroot, key) = history_root_and_key(&cfg("warm", "width-l1", 80003, true), root);
-        assert_eq!(hroot, Path::new("/tree/history/warm"));
-        assert_eq!(key, "width-l1_n80003");
-        let (hroot, key) = history_root_and_key(&cfg("hash", "hash", 64, false), root);
-        assert_eq!(hroot, Path::new("/tree/.bench_history"));
-        assert_eq!(key, "hash_n64");
+    fn report_only_leaves_an_existing_report_alone() {
+        let root = mockspace_manifest::scratch::held();
+        let _ = std::fs::remove_dir_all(&root);
+        let cell = Cell { sweep: "hash".into(), n: 64 };
+        for (run, report) in [("20261114T000000Z-a", true), ("20261115T000000Z-b", false)] {
+            let d = root.join(layout::run_rel("hash", &cell, M, run));
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("samples.csv"), "x").unwrap();
+            if report {
+                std::fs::write(d.join("report.md"), "# with methodology").unwrap();
+            }
+        }
+        let runs = layout::runs(&root);
+        let picked: Vec<&str> = reportless(&runs).iter().map(|r| r.run.as_str()).collect();
+        assert_eq!(picked, ["20261115T000000Z-b"]);
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -1028,10 +1053,7 @@ mod tests {
     }
 
     fn temp_tree(name: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "mockspace-driver-test-{}-{name}",
-            std::process::id()
-        ));
+        let root = mockspace_manifest::scratch::held();
         std::fs::remove_dir_all(&root).ok();
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(

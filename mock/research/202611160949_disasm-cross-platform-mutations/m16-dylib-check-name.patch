@@ -1,0 +1,16 @@
+diff --git a/src/dylib_check.rs b/src/dylib_check.rs
+index 0e18434..71a2be1 100644
+--- a/src/dylib_check.rs
++++ b/src/dylib_check.rs
+@@ -49,10 +49,7 @@ pub fn check_module_dylibs(cfg: &Config) -> usize {
+ /// since the check loads it on this host (`libx.so`, `libx.dylib`, `x.dll`).
+ fn module_library(mock_dir: &Path, crate_name: &str) -> std::path::PathBuf {
+     mock_dir.join("target/debug").join(format!(
+-        "{}{}{}",
+-        std::env::consts::DLL_PREFIX,
+-        crate_name.replace('-', "_"),
+-        std::env::consts::DLL_SUFFIX
++        "lib{}.dylib", crate_name.replace('-', "_")
+     ))
+ }
+ 

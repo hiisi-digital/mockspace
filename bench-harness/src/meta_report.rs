@@ -180,16 +180,18 @@ pub fn generate(csv_paths: &[&str], baseline_name: Option<&str>) -> String {
 }
 
 fn parse_csv(text: &str, path: &str, baseline_name: Option<&str>) -> Vec<VariantResult> {
-    // `harness::write_csv` names its files `<sweep>_n<point>.csv`. Strip the
-    // extension first: trimming a `_results.csv` suffix no writer in this crate
-    // produces left `hash_n1024.csv` intact, so the size parsed out of
-    // `1024.csv` and every row carried `n = 0`.
-    let file = path.rsplit('/').next().unwrap_or(path);
-    let bench_name = file.strip_suffix(".csv").unwrap_or(file);
-    let bench_name = bench_name.strip_suffix("_results").unwrap_or(bench_name);
-    let (benchmark, n) = match bench_name.rsplit_once("_n") {
-        Some((stem, size)) => (stem, size.parse().unwrap_or(0)),
-        None => (bench_name, 0usize),
+    // A run's samples sit at `<bench>/<sweep>_n<point>/<machine>/<run>/samples.csv`,
+    // so the benchmark and the size are the cell directory's, the nearest
+    // ancestor that parses as one. Reading them from the file name gave
+    // `samples` for every run.
+    let cell = path
+        .split('/')
+        .rev()
+        .skip(1)
+        .find_map(mockspace_bench_layout::Cell::parse);
+    let (benchmark, n) = match &cell {
+        Some(c) => (c.sweep.as_str(), c.n as usize),
+        None => (path, 0usize),
     };
 
     let mut by_variant: BTreeMap<String, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
@@ -293,7 +295,7 @@ fn median(vals: &[f64]) -> f64 {
 mod tests {
     use super::*;
 
-    /// The CSV `harness::write_csv` writes, header and one row, in the exact
+    /// The CSV `harness::write_run` writes, header and one row, in the exact
     /// column order the writer emits. Anything reading these files reads this
     /// shape or reads the wrong column.
     const CSV: &str = "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,\
@@ -307,7 +309,7 @@ batch_count,score,input_tag,instructions,cycles,setup_ns,first_ns,digest\n\
     /// is `e2e_ns`; `algo_ns` is column 7.
     #[test]
     fn the_warm_median_is_the_algo_column_not_the_end_to_end_one() {
-        let rows = parse_csv(CSV, "results/hash/hash_n1024.csv", None);
+        let rows = parse_csv(CSV, "results/hash/hash_n1024/linux-x86_64-c4-bare-amd/20261115T000000Z-a/samples.csv", None);
         let alpha = rows.iter().find(|r| r.variant == "alpha").expect("alpha");
         assert_eq!(
             alpha.warm_median_ns, 100.0,
@@ -321,7 +323,7 @@ batch_count,score,input_tag,instructions,cycles,setup_ns,first_ns,digest\n\
     /// and the size parses out of `64.csv`.
     #[test]
     fn the_size_is_recovered_from_the_filename_the_harness_writes() {
-        let rows = parse_csv(CSV, "results/hash/hash_n1024.csv", None);
+        let rows = parse_csv(CSV, "results/hash/hash_n1024/linux-x86_64-c4-bare-amd/20261115T000000Z-a/samples.csv", None);
         assert!(!rows.is_empty(), "no rows parsed");
         for r in &rows {
             assert_eq!(r.n, 1024, "n parsed as {} from `hash_n1024.csv`", r.n);
@@ -334,7 +336,7 @@ batch_count,score,input_tag,instructions,cycles,setup_ns,first_ns,digest\n\
     /// the caller did not ask for, with nothing in the output saying so.
     #[test]
     fn the_baseline_percentages_are_against_the_named_baseline() {
-        let rows = parse_csv(CSV, "results/hash/hash_n1024.csv", Some("beta"));
+        let rows = parse_csv(CSV, "results/hash/hash_n1024/linux-x86_64-c4-bare-amd/20261115T000000Z-a/samples.csv", Some("beta"));
         let alpha = rows.iter().find(|r| r.variant == "alpha").expect("alpha");
         // alpha 100ns against baseline beta 200ns: -50%.
         assert_eq!(

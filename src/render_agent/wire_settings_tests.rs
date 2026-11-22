@@ -19,7 +19,7 @@ fn claude(root: &Path) -> serde_json::Value {
 
 #[test]
 fn a_first_run_writes_the_wiring_and_nothing_else() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     assert_eq!(
         generate_settings(d.path(), &[hook("gate.sh", &["Bash"])]),
         2
@@ -60,7 +60,7 @@ fn a_hook_somebody_wired_by_hand_survives_even_inside_the_generated_directory() 
     // their own puts it there, and the entry pointing at it read as ours
     // on nothing but the directory. It was deleted on every run, silently,
     // which is the same class of thing this merge exists to stop.
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let theirs = hook_script(d.path(), "my-own-check.sh", false);
     let stale = hook_script(d.path(), "retired-gate.sh", true);
     fs::write(
@@ -103,7 +103,7 @@ fn an_entry_pointing_at_a_script_that_is_gone_is_dropped() {
     // there. Nothing can read a marker off it, so the rule has to say what
     // an absent script means, and inside the directory this tool writes
     // the honest answer is that it was ours.
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     fs::create_dir_all(d.path().join(".claude")).unwrap();
     fs::write(
         d.path().join(".claude/settings.json"),
@@ -126,7 +126,7 @@ fn the_file_keeps_its_own_order_and_its_own_shape() {
     // hand-edited and read in diffs, and alphabetising every key at every
     // depth makes the next diff unreadable in a change whose whole claim
     // is that it leaves alone what it does not own.
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     fs::create_dir_all(d.path().join(".claude")).unwrap();
     let theirs = concat!(
         "{\n",
@@ -164,7 +164,7 @@ fn a_shape_this_does_not_understand_is_left_where_it_is() {
         r#"{"hooks": []}"#,
         r#"{"hooks": {"PreToolUse": "everything"}}"#,
     ] {
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         fs::create_dir_all(d.path().join(".claude")).unwrap();
         let path = d.path().join(".claude/settings.json");
         fs::write(&path, body).unwrap();
@@ -186,7 +186,7 @@ fn everything_the_file_already_held_survives_a_run() {
     // hook metadata on every run, so a permission list, an environment, a
     // model choice and every hook on an event this does not generate were
     // all destroyed without a word.
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     fs::create_dir_all(d.path().join(".claude")).unwrap();
     fs::write(
         d.path().join(".claude/settings.json"),
@@ -230,7 +230,7 @@ fn everything_the_file_already_held_survives_a_run() {
 fn running_twice_leaves_the_same_file() {
     // A merge that appends rather than replacing its own entries grows the
     // list on every invocation, and every case above passes while it does.
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     generate_settings(d.path(), &[hook("gate.sh", &["Bash", "Write"])]);
     let once = fs::read_to_string(d.path().join(".claude/settings.json")).unwrap();
     generate_settings(d.path(), &[hook("gate.sh", &["Bash", "Write"])]);
@@ -242,7 +242,7 @@ fn running_twice_leaves_the_same_file() {
 fn an_entry_mixing_one_of_ours_with_one_of_theirs_is_theirs() {
     // Dropping it would take the hand-written half with it, so the rule is
     // that an entry is ours only when every command in it is.
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     fs::create_dir_all(d.path().join(".claude")).unwrap();
     fs::write(
         d.path().join(".claude/settings.json"),
@@ -264,7 +264,7 @@ fn an_unreadable_file_is_left_exactly_as_it_was() {
     // The only honest thing to do with bytes that cannot be parsed: what
     // cannot be read cannot be preserved, and overwriting on that basis is
     // the defect one size larger.
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     fs::create_dir_all(d.path().join(".claude")).unwrap();
     let broken = "{ not json at all";
     fs::write(d.path().join(".claude/settings.json"), broken).unwrap();
@@ -282,7 +282,7 @@ fn the_copilot_side_leaves_an_unreadable_file_alone_as_well() {
     // The law governs two files and was asserted on one. The other test
     // proves the copilot side wrote, which is the case where nothing was
     // in its way.
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     fs::create_dir_all(d.path().join(".github/hooks")).unwrap();
     let broken = "{ not json at all";
     let path = d.path().join(".github/hooks/hooks.json");
@@ -305,7 +305,7 @@ fn the_copilot_side_leaves_a_shape_it_does_not_understand_alone_as_well() {
         "{\n  \"hooks\": {\"preToolUse\": {}}\n}",
         "{\n  \"hooks\": [{\"name\":\"mine\",\"command\":\"scripts/mine.sh\"}]\n}",
     ] {
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         fs::create_dir_all(d.path().join(".github/hooks")).unwrap();
         let path = d.path().join(".github/hooks/hooks.json");
         fs::write(&path, odd).unwrap();
@@ -345,7 +345,7 @@ fn a_hand_written_script_whose_name_carries_a_space_is_still_theirs() {
     // script, which truncates a name with a space in it. The read then
     // fails, and the arm that reads an absent script as a retired one of
     // ours drops the wiring for a hand-written hook sitting right there.
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let dir = d.path().join(".claude/hooks");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("my check.sh"), "#!/bin/sh\nexit 0\n").unwrap();
@@ -371,7 +371,7 @@ fn a_hand_written_script_whose_name_carries_a_space_is_still_theirs() {
 fn a_json_document_that_is_not_an_object_is_left_alone_too() {
     // `[]` parses and is not something a key can be inserted into, so a
     // check that only asked "does this parse" would clobber it.
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     fs::create_dir_all(d.path().join(".claude")).unwrap();
     fs::write(d.path().join(".claude/settings.json"), "[1, 2, 3]").unwrap();
     generate_settings(d.path(), &[hook("gate.sh", &["Bash"])]);
@@ -393,7 +393,7 @@ fn copilot(root: &Path) -> serde_json::Value {
 /// `timeoutSec`.
 #[test]
 fn the_copilot_file_has_the_shape_the_hooks_reference_gives() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     generate_settings(d.path(), &[hook("gate.sh", &["Bash"]), hook("imports.sh", &["Write", "Edit", "MultiEdit"])]);
     let v = copilot(d.path());
 
@@ -418,7 +418,7 @@ fn the_copilot_file_has_the_shape_the_hooks_reference_gives() {
 
 #[test]
 fn a_hook_for_every_tool_carries_no_matcher() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     generate_settings(d.path(), &[hook("all.sh", &["*"])]);
     let v = copilot(d.path());
     let entry = &v["hooks"]["preToolUse"][0];
@@ -435,7 +435,7 @@ fn a_matcher_with_no_runtime_row_passes_through() {
 
 #[test]
 fn the_flat_list_earlier_renders_wrote_is_replaced_by_the_reference_shape() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     fs::create_dir_all(d.path().join(".github/hooks")).unwrap();
     fs::write(
         d.path().join(".github/hooks/hooks.json"),
@@ -453,7 +453,7 @@ fn the_flat_list_earlier_renders_wrote_is_replaced_by_the_reference_shape() {
 
 #[test]
 fn the_copilot_side_merges_on_the_same_terms() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     fs::create_dir_all(d.path().join(".github/hooks")).unwrap();
     fs::write(
         d.path().join(".github/hooks/hooks.json"),

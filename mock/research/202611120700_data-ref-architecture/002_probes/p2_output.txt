@@ -1,0 +1,19 @@
+checkout OLD ; checkout -f dev                             expect=off -> N.md: cat: mock/research/N.md: No such file or directory
+checkout -f OLD ; checkout -f dev                          expect=off -> N.md: cat: mock/research/N.md: No such file or directory
+checkout OLD ; reset --hard dev                            expect=off -> N.md: cat: mock/research/N.md: No such file or directory
+checkout -f OLD ; reset --hard dev                         expect=off -> N.md: cat: mock/research/N.md: No such file or directory
+checkout OLD ; checkout dev (plain)                        expect=off -> N.md: cat: mock/research/N.md: No such file or directory
+reset --hard OLD ; reset --hard dev                        expect=off -> N.md: cat: mock/research/N.md: No such file or directory
+checkout OLD ; checkout -f dev                             expect=on  -> N.md: EDIT
+checkout -f OLD ; checkout -f dev                          expect=on  -> N.md: EDIT
+checkout OLD ; reset --hard dev                            expect=on  -> N.md: EDIT
+checkout -f OLD ; reset --hard dev                         expect=on  -> N.md: EDIT
+checkout OLD ; checkout dev (plain)                        expect=on  -> N.md: cat: mock/research/N.md: No such file or directory
+reset --hard OLD ; reset --hard dev                        expect=on  -> N.md: EDIT
+== clean in the exclude+sparse shape
+after clean -fdx: ls: cannot access 'mock': No such file or directory 
+== clean -ff -dx with a nested data worktree
+clean -fdx : UNCOMMITTED
+clean -ffdx: cat: mock/research/N.md: No such file or directory
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/p2/n                8d8cadb [dev]
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/002/p2/n/mock/research  07de2f7 [mock/research] prunable

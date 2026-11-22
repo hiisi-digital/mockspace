@@ -1,0 +1,21 @@
+  building arm build-without-clean/arms/without_clean...
+  building generated bench driver...
+run plan: 1 bench(es), 1 config(s), run 20261116T002449Z-2764b23-dirty on linux-x86_64-c4-container-intel
+[1/1] build-without-clean n=1 (elapsed 0s)
+  Warmup spawn complete.
+  ── Harness run 1/1 ──
+  pass 1/3 cd=0ms... done (9s elapsed, ~19s left)
+  pass 2/3 cd=0ms... done (15s elapsed, ~8s left)
+  pass 3/3 cd=0ms... done (21s elapsed, ~0s left)
+  Total: 21.5s
+  samples: <worktree>/mock/research/sketches/202611160019_a-bench-arm-that-measures-a-build/consumer/mock/benches/results/.inflight/1794788689-3303/build-without-clean/build-without-clean_n1/linux-x86_64-c4-container-intel/20261116T002449Z-2764b23-dirty/samples.csv (6 rows)
+  after_cell FAIL: calls that did not build from clean: line 2: compiled 0, absent before false, present after true, waited false, exit 0; line 3: compiled 0, absent before false, present after true, waited false, exit 0; line 4: compiled 0, absent before false, present after true, waited false, exit 0; line 5: compiled 0, absent before false, present after true, waited false, exit 0; line 6: compiled 0, absent before false, present after true, waited false, exit 0; line 7: compiled 0, absent before false, present after true, waited false, exit 0; line 8: compiled 0, absent before false, present after true, waited false, exit 0; line 9: compiled 0, absent before false, present after true, waited false, exit 0; line 10: compiled 0, absent before false, present after true, waited false, exit 0; line 11: compiled 0, absent before false, present after true, waited false, exit 0; line 12: compiled 0, absent before false, present after true, waited false, exit 0; line 13: compiled 0, absent before false, present after true, waited false, exit 0; line 14: compiled 0, absent before false, present after true, waited false, exit 0
+  summary withheld for build-without-clean_n1: after_cell returned Fail
+
+bench                             n variant                    median  vs best
+build-without-clean               1 without_clean            22.57 ms    1.00x
+
+total: 24.5s
+FAILED: an after_cell hook returned Fail
+bench driver exited with Some(1)
+exit: 1

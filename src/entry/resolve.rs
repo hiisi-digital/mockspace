@@ -112,7 +112,7 @@ mod discovery_tests {
 
     #[test]
     fn each_way_of_finding_a_project_and_the_two_ways_of_not() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let root = tmp.path().canonicalize().unwrap();
         assert_eq!(
             discover_mock_dir(&args(&["mock"]), &root),

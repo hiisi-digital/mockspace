@@ -52,7 +52,7 @@ type = "string"
 /// present or absent. Returns the mock dir, which is what the launcher hands
 /// `Config::from_dir`.
 fn tree(git: bool) -> (tempfile::TempDir, std::path::PathBuf) {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
     let root = tmp.path();
     fs::write(root.join("mockspace.toml"), CONFIG).expect("write config");
     let mock = root.join("mock");
@@ -107,7 +107,7 @@ fn the_same_tree_with_a_git_dir_reads_it_too() {
 /// than reporting whatever the loader defaults to.
 #[test]
 fn a_tree_with_no_config_declares_no_namespaces() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
     let mock = tmp.path().join("mock");
     fs::create_dir_all(&mock).expect("create mock dir");
     let cfg = Config::from_dir(&mock);
@@ -129,7 +129,7 @@ fn a_tree_with_no_config_declares_no_namespaces() {
 #[test]
 #[should_panic(expected = "does not parse")]
 fn a_config_that_does_not_parse_is_refused_rather_than_defaulted() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
     let root = tmp.path();
     // Valid TOML, and not a config: the field key is wrong, which is the
     // ordinary way one of these is malformed.
@@ -149,7 +149,7 @@ fn a_config_that_does_not_parse_is_refused_rather_than_defaulted() {
 /// panics on every load satisfies the one above.
 #[test]
 fn a_project_with_no_config_at_all_still_loads() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = mockspace_manifest::scratch::tempdir().expect("tempdir");
     let mock = tmp.path().join("mock");
     fs::create_dir_all(&mock).expect("create mock dir");
     let cfg = Config::from_dir(&mock);

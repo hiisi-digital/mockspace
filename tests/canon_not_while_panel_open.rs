@@ -75,7 +75,7 @@ fn text(o: &Output) -> String {
 
 #[test]
 fn staging_canon_while_a_panel_is_open_fails_the_gate() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), true);
     git(tmp.path(), &["add", "mock/canon/law.md"]);
     let out = commit_gate(tmp.path());
@@ -92,7 +92,7 @@ fn staging_canon_while_a_panel_is_open_fails_the_gate() {
 /// every canon edit.
 #[test]
 fn staging_canon_with_no_panel_open_passes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), false);
     git(tmp.path(), &["add", "mock/canon/law.md"]);
     let t = text(&commit_gate(tmp.path()));
@@ -107,7 +107,7 @@ fn staging_canon_with_no_panel_open_passes() {
 /// that refuses every commit while a panel is open.
 #[test]
 fn staging_something_that_is_not_canon_passes_with_a_panel_open() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), true);
     write(&tmp.path().join("mock/notes.md"), "not canon\n");
     git(tmp.path(), &["add", "mock/notes.md"]);
@@ -124,7 +124,7 @@ fn staging_something_that_is_not_canon_passes_with_a_panel_open() {
 /// working tree on purpose.
 #[test]
 fn an_unstaged_canon_change_passes_the_commit_gate() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), true);
     git(tmp.path(), &["add", "mock/panel/kickoff.toml"]);
     write(

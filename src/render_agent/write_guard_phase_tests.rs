@@ -34,15 +34,8 @@ use std::process::Command;
 
 use super::*;
 
-pub(super) fn scratch(tag: &str) -> std::path::PathBuf {
-    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let d = std::env::temp_dir().join(format!(
-        "ms_wgphase_{tag}_{}_{}",
-        std::process::id(),
-        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&d).unwrap();
-    d
+pub(super) fn scratch(_tag: &str) -> tempfile::TempDir {
+    mockspace_manifest::scratch::tempdir().unwrap()
 }
 
 pub(super) fn git(dir: &std::path::Path, args: &[&str]) {
@@ -60,7 +53,7 @@ pub(super) fn git(dir: &std::path::Path, args: &[&str]) {
 /// A repository whose mock directory holds the named design-round files,
 /// committed, since the guard reads tracked files rather than the working tree.
 pub(super) fn repo_with_rounds(tag: &str, rounds: &[&str]) -> std::path::PathBuf {
-    let d = scratch(tag);
+    let d = mockspace_manifest::scratch::held();
     git(&d, &["init", "-q", "-b", "main"]);
     git(&d, &["config", "user.name", "t"]);
     git(&d, &["config", "user.email", "t@example.com"]);
@@ -133,7 +126,7 @@ pub(super) fn refused(out: &str) -> bool {
 /// A repository with no rounds at all, standing in for a workspace root: the
 /// place a session actually runs from when it addresses members by path.
 fn elsewhere(tag: &str) -> std::path::PathBuf {
-    let d = scratch(tag);
+    let d = mockspace_manifest::scratch::held();
     git(&d, &["init", "-q", "-b", "main"]);
     git(&d, &["config", "user.name", "t"]);
     git(&d, &["config", "user.email", "t@example.com"]);
@@ -462,7 +455,8 @@ fn a_command_writing_a_committed_topic_is_still_refused() {
 fn a_topic_in_a_repository_with_no_commit_yet_can_be_written() {
     // No HEAD at all, where asking a commit for the file errors rather than
     // answering empty; the error is read as not committed, which is true.
-    let d = scratch("unborn");
+    let d_guard = scratch("unborn");
+    let d = d_guard.path().to_path_buf();
     git(&d, &["init", "-q", "-b", "main"]);
     std::fs::create_dir_all(d.join("mock/design_rounds")).unwrap();
     std::fs::write(d.join(TOPIC), "# a-thing\n").unwrap();
@@ -478,7 +472,7 @@ fn a_topic_in_a_repository_with_no_commit_yet_can_be_written() {
 // A second changelist of a kind written while the first is only in the working tree. The phase is
 // read from what git tracks, so an untracked first changelist leaves the phase where it was, the
 // guard sees no changelist of the kind and allows another, and a commit that takes everything
-// carries both in (kaski, 30 October, a stub `# src changelist` beside the round's own).
+// carries both in (a consumer, 30 October, a stub `# src changelist` beside the round's own).
 
 fn write_to_round(repo: &std::path::Path, name: &str) -> String {
     write_payload(&repo.join("mock/design_rounds").join(name))

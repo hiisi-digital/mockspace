@@ -1,0 +1,15 @@
+U git checkout polluted: msg={error: The following untracked working tree files would be overwritten by checkout: 	mock/rdata/N.md } -> N=[data EDIT ] U=[untracked]
+U git checkout dev     : msg={Already on 'dev' } -> N=[data EDIT ] U=[untracked] data-status=[ M N.md ?? U.md ]
+probes/a2_polluted_detail.sh: line 18: mock/rdata/N.md: No such file or directory
+U git checkout -f polluted: msg={Switched to branch 'polluted' } -> N=[pollute ] U=[untracked]
+U git checkout -f dev     : msg={Switched to branch 'dev' } -> N=[GONE] U=[untracked] data-status=[ D N.md ?? U.md ]
+U git reset --hard polluted: msg={HEAD is now at 28d964a polluted } -> N=[pollute ] U=[untracked]
+U git reset --hard dev     : msg={HEAD is now at 28d964a polluted } -> N=[pollute ] U=[untracked] data-status=[ M N.md ?? U.md ]
+probes/a2_polluted_detail.sh: line 18: mock/rdata/N.md: No such file or directory
+H git checkout polluted: msg={Switched to branch 'polluted' } -> N=[pollute ] U=[untracked]
+H git checkout dev     : msg={Switched to branch 'dev' } -> N=[GONE] U=[untracked] data-status=[ D N.md ?? U.md ]
+probes/a2_polluted_detail.sh: line 18: mock/rdata/N.md: No such file or directory
+H git checkout -f polluted: msg={Switched to branch 'polluted' } -> N=[pollute ] U=[untracked]
+H git checkout -f dev     : msg={Switched to branch 'dev' } -> N=[GONE] U=[untracked] data-status=[ D N.md ?? U.md ]
+H git reset --hard polluted: msg={HEAD is now at 28d964a polluted } -> N=[pollute ] U=[untracked]
+H git reset --hard dev     : msg={HEAD is now at 28d964a polluted } -> N=[pollute ] U=[untracked] data-status=[ M N.md ?? U.md ]

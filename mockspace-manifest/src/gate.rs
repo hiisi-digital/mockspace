@@ -567,7 +567,7 @@ mod tests {
         // gated, and it still looks installed.
         for name in HOOK_NAMES {
             let h = durable_hook(name, 3);
-            let f = std::env::temp_dir().join(format!("ms_gate_{name}_{}.sh", std::process::id()));
+            let f = crate::scratch::held().join("hook.sh");
             std::fs::write(&f, &h).unwrap();
             let out = std::process::Command::new("bash")
                 .arg("-n")
@@ -607,7 +607,7 @@ mod tests {
 
     #[test]
     fn installing_twice_writes_once() {
-        let dir = std::env::temp_dir().join(format!("ms_gate_idem_{}", std::process::id()));
+        let dir = crate::scratch::held();
         let _ = std::fs::remove_dir_all(&dir);
         let first = install_durable_hooks(&dir, 3);
         let second = install_durable_hooks(&dir, 3);

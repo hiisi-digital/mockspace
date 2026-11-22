@@ -47,10 +47,6 @@ pub(crate) enum Verdict {
 /// is git's own, and git never lists `.git`.
 const OUTPUT_DIRS: [&str; 1] = ["target"];
 
-/// Directories at the bench root that `mock bench run` writes: output, never
-/// input.
-const GENERATED: [&str; 2] = ["results", "history"];
-
 /// The lockfile the bench build writes beside the tree it builds. One that git
 /// does not track is that output and is taken out of the digest, so a run does
 /// not move the digest it recorded. One a consumer committed is an input: it
@@ -136,16 +132,18 @@ fn label(repo_root: &Path, f: &Path) -> String {
 /// texts:
 ///
 /// - the files git tracks or would track under `bench_dir`, the same list the
-///   members use, less `results/` and `history/` and any lockfile git does not
-///   track, which is the one the build writes;
+///   members use, less every bench output (what
+///   `mockspace_bench_harness::layout::place` calls one, in the current layout
+///   or an older one) and any lockfile git does not track, which is the one
+///   the build writes;
 /// - the files of every local package a bench manifest reaches by `path`,
 ///   transitively, the generated arm manifests and the support crates among
 ///   them (a workspace-inherited path included), wherever in the repository
 ///   they sit;
 /// - the files every build in the workspace reads, which the members'
 ///   fingerprints are salted with ([`WORKSPACE_INPUTS`]);
-/// - the text of what `mock bench` generates for a tree whose arms have no
-///   manifest: the arm manifests and the driver, which no file holds.
+/// - the text of what `mock bench` generates: the manifests of arms that have
+///   none and the driver, which no file holds.
 pub(crate) fn inputs(
     repo_root: &Path,
     mock_dir: &Path,
@@ -162,11 +160,8 @@ pub(crate) fn inputs(
         match rel.strip_prefix(bench_rel) {
             Err(_) => true,
             Ok(under) => {
-                let first = under
-                    .components()
-                    .next()
-                    .and_then(|c| c.as_os_str().to_str());
-                !first.is_some_and(|n| GENERATED.contains(&n))
+                mockspace_bench_harness::layout::place(under, |p| bench_dir.join(p).exists())
+                    == mockspace_bench_harness::layout::Placement::NotOutput
                     && !under
                         .components()
                         .any(|c| OUTPUT_DIRS.iter().any(|o| c.as_os_str() == *o))
@@ -237,15 +232,11 @@ pub(crate) fn inputs(
     Ok((out.into_iter().collect(), generated))
 }
 
-/// What `mock bench` writes under `target/` for a tree with no manifest at its
-/// root: a manifest for each arm that has none, and the driver's manifest and
-/// source. Digested as text because what they say depends on this build of
+/// What `mock bench` writes under `target/`: a manifest for each arm that has
+/// none, and the driver's manifest and source. Digested as text because what they say depends on this build of
 /// mockspace as much as on any file the consumer keeps.
 fn generated(mock_dir: &Path, bench_dir: &Path) -> Vec<Generated> {
     let mut out = Vec::new();
-    if bench_dir.join("Cargo.toml").is_file() {
-        return out;
-    }
     let Ok(plan) = crate::bench_gen::plan(bench_dir) else {
         return out;
     };
@@ -259,7 +250,7 @@ fn generated(mock_dir: &Path, bench_dir: &Path) -> Vec<Generated> {
             });
         }
     }
-    if let Ok(text) = crate::bench_gen::driver_cargo_toml(&dep, &plan.support) {
+    if let Ok(text) = crate::bench_gen::driver_cargo_toml(&dep, &plan.support, &crate::bench_gen::driver_name(bench_dir)) {
         out.push(Generated {
             dir: Some(crate::bench_gen::driver_gen_dir(mock_dir)),
             label: "generated/driver/Cargo.toml".to_string(),

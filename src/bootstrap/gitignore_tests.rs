@@ -7,7 +7,7 @@ use super::*;
 
 #[test]
 fn adds_catch_all_target_to_empty_repo() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let mut actions = Vec::new();
     ensure_gitignore(dir.path(), &mut actions);
     let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
@@ -20,7 +20,7 @@ fn adds_catch_all_target_to_empty_repo() {
 
 #[test]
 fn preserves_existing_entries() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     fs::write(dir.path().join(".gitignore"), "/target\n.DS_Store\n*.swp\n").unwrap();
     let mut actions = Vec::new();
     ensure_gitignore(dir.path(), &mut actions);
@@ -41,7 +41,7 @@ fn preserves_existing_entries() {
 
 #[test]
 fn idempotent_when_catch_all_present() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let mut actions = Vec::new();
     ensure_gitignore(dir.path(), &mut actions);
     let after_first = fs::read_to_string(dir.path().join(".gitignore")).unwrap();

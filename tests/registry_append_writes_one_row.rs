@@ -77,7 +77,7 @@ fn place_hook(dir: &Path, body: &str) {
 
 #[test]
 fn a_value_is_added_to_the_row_and_nothing_is_printed() {
-    let ws = tempfile::tempdir().unwrap();
+    let ws = mockspace_manifest::scratch::tempdir().unwrap();
     let root = fixture(ws.path());
     let out = append(&root, &["ticket::second", "answers", "b"]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -93,7 +93,7 @@ fn a_value_is_added_to_the_row_and_nothing_is_printed() {
 
 #[test]
 fn what_the_project_does_not_declare_is_refused_and_the_file_stays() {
-    let ws = tempfile::tempdir().unwrap();
+    let ws = mockspace_manifest::scratch::tempdir().unwrap();
     let root = fixture(ws.path());
     for args in [
         ["nothing::first", "answers", "x"],
@@ -109,7 +109,7 @@ fn what_the_project_does_not_declare_is_refused_and_the_file_stays() {
 
 #[test]
 fn a_delegate_above_the_repository_takes_the_step_whole_or_declines_it() {
-    let ws = tempfile::tempdir().unwrap();
+    let ws = mockspace_manifest::scratch::tempdir().unwrap();
     let root = fixture(ws.path());
     let said = ws.path().join("said");
     place_hook(
@@ -141,7 +141,7 @@ fn a_delegate_above_the_repository_takes_the_step_whole_or_declines_it() {
 
 #[test]
 fn a_delegate_that_fails_fails_the_call_and_the_file_stays() {
-    let ws = tempfile::tempdir().unwrap();
+    let ws = mockspace_manifest::scratch::tempdir().unwrap();
     let root = fixture(ws.path());
     place_hook(ws.path(), "echo broken >&2\nexit 9");
     let out = append(&root, &["ticket::first", "answers", "x"]);

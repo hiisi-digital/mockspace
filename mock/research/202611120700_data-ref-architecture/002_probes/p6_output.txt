@@ -1,0 +1,5 @@
+(status of linked worktree with an edited ignored file: empty above)
+worktree remove rc=0 ; dir exists: no
+stash -u: file EDIT2
+stash -a: file cat: mock/research/N.md: No such file or directory ; stashes: 1
+clean -fdX: file cat: mock/research/N.md: No such file or directory

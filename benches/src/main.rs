@@ -8,7 +8,7 @@
 //! subprocess, dlopen, CSV cache, findings.md). First real consumer
 //! of mockspace-bench-harness.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 
 use mockspace_bench_core::{Routine, routine_bridge};
@@ -63,25 +63,23 @@ fn main() -> ExitCode {
 
     for (bench_name, section) in &manifest.bench {
         for (size_idx, _size) in section.sizes.iter().enumerate() {
-            let mut config = match manifest.for_size(bench_name, size_idx, &mock_benches_dir) {
+            let config = match manifest.for_size(bench_name, size_idx, &mock_benches_dir) {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("error: {e}");
                     return ExitCode::FAILURE;
                 },
             };
-            config.variant_paths = config
-                .variant_paths
-                .into_iter()
-                .map(shape_variant_path)
-                .collect();
             let routine = RoutineSpec {
                 name:   section.workload.clone(),
                 bridge: routine_bridge!(HashMix),
             };
 
-            let csv_path = format!("{}_n{}.csv", bench_name, config.n);
-            let report_path = format!("{}_n{}_findings.md", bench_name, config.n);
+            // Scratch output of this self-test, replaced on every run; a
+            // consumer's runs go through the generated driver instead.
+            let out_dir = Path::new("out").join(format!("{}_n{}", bench_name, config.n));
+            let csv_path = out_dir.join(harness::layout::SAMPLES_FILE).display().to_string();
+            let report_path = out_dir.join(harness::layout::REPORT_FILE).display().to_string();
 
             if report_only {
                 let samples = match harness::load_samples_csv(Path::new(&csv_path)) {
@@ -124,8 +122,9 @@ fn main() -> ExitCode {
                         return ExitCode::FAILURE;
                     },
                 };
-                if let Err(e) = harness::write_csv(&result, &csv_path) {
-                    eprintln!("error: writing csv: {e}");
+                let _ = std::fs::remove_dir_all(&out_dir);
+                if let Err(e) = harness::write_run(&result, &out_dir, "self-bench") {
+                    eprintln!("error: writing the run: {e}");
                     return ExitCode::FAILURE;
                 }
                 if let Err(e) =
@@ -140,20 +139,6 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
-}
-
-/// Take a manifest variant path with bare cargo target stem and
-/// produce the platform-shaped dylib path
-/// (DLL_PREFIX + stem + DLL_SUFFIX in the same parent directory).
-fn shape_variant_path(p: PathBuf) -> PathBuf {
-    let parent = p.parent().map(Path::to_path_buf).unwrap_or_default();
-    let stem = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    parent.join(format!(
-        "{}{}{}",
-        std::env::consts::DLL_PREFIX,
-        stem,
-        std::env::consts::DLL_SUFFIX
-    ))
 }
 
 fn run_worker(args: &[String]) -> ExitCode {

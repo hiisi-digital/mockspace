@@ -1,0 +1,12 @@
+diff --git a/bench-harness/src/disasm/tool.rs b/bench-harness/src/disasm/tool.rs
+index 971c8bb..9e1b703 100644
+--- a/bench-harness/src/disasm/tool.rs
++++ b/bench-harness/src/disasm/tool.rs
+@@ -173,6 +173,7 @@ fn is_label(trimmed: &str) -> bool {
+ 
+ /// Whether the label line `trimmed` names exactly `spelling`.
+ fn labels(trimmed: &str, spelling: &str) -> bool {
++    if trimmed.ends_with(':') { return trimmed.contains(spelling); }
+     let Some(head) = trimmed.strip_suffix(':') else { return false };
+     head == spelling
+         || head

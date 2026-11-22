@@ -1,0 +1,22 @@
+diff --git a/bench-harness/src/disasm/fixtures/x86_64-unknown-linux-gnu/llvm-variant_unrolled_x4.txt b/bench-harness/src/disasm/fixtures/x86_64-unknown-linux-gnu/llvm-variant_unrolled_x4.txt
+index f0ec918..50fb6eb 100644
+--- a/bench-harness/src/disasm/fixtures/x86_64-unknown-linux-gnu/llvm-variant_unrolled_x4.txt
++++ b/bench-harness/src/disasm/fixtures/x86_64-unknown-linux-gnu/llvm-variant_unrolled_x4.txt
+@@ -83,7 +83,7 @@ Disassembly of section .text:
+     161e:      	int3
+     161f:      	int3
+ 
+-0000000000001620 <_RNvCs4H3057i2QET_19variant_unrolled_x47do_work>:
++0000000000001620 <_RNvCsdlSolg5Okjs_14variant_scalar7do_work>:
+     1620:      	movzbl	(%rdi), %eax
+     1623:      	movl	%eax, %ecx
+     1625:      	shll	$0x5, %ecx
+@@ -144,7 +144,7 @@ Disassembly of section .text:
+     16b0:      	cmpq	$0x8, %rdx
+     16b4:      	jne	0x16c3 <bench_entry+0x13>
+     16b6:      	pushq	%rax
+-    16b7:      	callq	0x1620 <_RNvCs4H3057i2QET_19variant_unrolled_x47do_work>
++    16b7:      	callq	0x1620 <_RNvCsdlSolg5Okjs_14variant_scalar7do_work>
+     16bc:      	xorl	%eax, %eax
+     16be:      	addq	$0x8, %rsp
+     16c2:      	retq

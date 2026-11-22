@@ -206,7 +206,7 @@ pub struct DocgenSection {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BenchSection {
-    /// Display title for the bench (used in findings.md).
+    /// Display title for the bench (used in the report).
     pub title:       String,
     /// Workload program identifier (matches a name registered with
     /// the harness's workload module in Round 2).
@@ -305,7 +305,7 @@ pub struct BenchSection {
 /// common "normalise against a named variant" case. For arbitrary
 /// derived metrics (composite scores, cross-N regressions, custom
 /// transforms), add an optional `post_process` code symbol to the
-/// `DriverRegistry`, symmetric with `build_workload` / `dispatch`,
+/// driver's `Hooks`, symmetric with `routine_for` and `after_cell`,
 /// receiving the collected `BenchResult` and returning extra findings.
 /// It must NOT live in the `timed!` macro: normalisation is a
 /// cross-variant, post-collection operation and the timing macro has
@@ -850,7 +850,6 @@ impl BenchManifest {
             bench_name: bench_name.to_string(),
             bench,
             sweep,
-            nested: self.nested.contains_key(bench_name),
             title: section.title.clone(),
             workload: section.workload.clone(),
             master_seed: section.master_seed,
@@ -909,11 +908,7 @@ pub struct BenchConfig {
     /// The sweep within the bench. Equal to the bench name in a flat
     /// tree, where every section is its own single sweep.
     pub sweep:              String,
-    /// Whether this cell came from a nested tree. Decides the output
-    /// naming (`<bench>/<sweep>_n<point>_report.md` against the flat
-    /// `<bench>/<bench>_n<n>_findings.md`) and the history root.
-    pub nested:             bool,
-    /// Display title (for findings.md).
+    /// Display title (for the report).
     pub title:              String,
     /// Workload program identifier.
     pub workload:           String,
@@ -971,12 +966,10 @@ pub struct BenchConfig {
 /// iteration speed (lower seed counts) or to plug in different
 /// statistical budgets.
 ///
-/// Cache and history roots are NOT configured here. Use
-/// [`crate::cache::Cache::load_in`], [`crate::history::append_in`],
-/// and [`crate::history::load_in`] directly when the harness needs
-/// to live outside the consumer's cwd; the cwd-relative defaults
-/// ([`crate::DEFAULT_CACHE_ROOT`] / [`crate::DEFAULT_HISTORY_DIR`])
-/// remain the implicit fallback.
+/// Where results and history live is not configured here: every run lands in
+/// the one layout of [`mockspace_bench_layout`]. The cache root is
+/// [`crate::cache::Cache::load_in`]'s, with [`crate::DEFAULT_CACHE_ROOT`] as
+/// the cwd-relative default.
 #[derive(Clone, Debug)]
 pub struct HarnessTuning {
     /// Number of seeds used in [`crate::validate`]. Default 100.
@@ -1014,7 +1007,6 @@ impl Default for BenchConfig {
             bench_name:         String::new(),
             bench:              String::new(),
             sweep:              String::new(),
-            nested:             false,
             title:              "Benchmark".into(),
             workload:           String::new(),
             master_seed:        0,
@@ -1413,10 +1405,7 @@ mod tests {
         // Guards the call site: `validate_roles` existing is not the
         // fix, `load` running it is. Deleting the call turns this red
         // while the direct `validate_roles` tests stay green.
-        let dir = std::env::temp_dir().join(format!(
-            "mockspace-bench-config-test-{}",
-            std::process::id()
-        ));
+        let dir = mockspace_manifest::scratch::held();
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("bench.toml");
         std::fs::write(

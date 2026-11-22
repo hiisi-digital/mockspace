@@ -50,33 +50,19 @@ pub(crate) fn validate_bookend_size(content: &str, filename: &str) {
     if words > BOOKEND_MAX_WORDS {
         eprintln!(
             "cargo::warning=mockspace: {filename} is {words} words ({} over budget). \
-             Bookends are re-stamped on every rule/skill load; tight constant \
+             Bookends load every session in the `mockspace` rule; tight constant \
              reminders only. Move longer invariants into MAIN.md.tmpl.",
             words - BOOKEND_MAX_WORDS
         );
     }
 }
 
-pub(crate) fn format_with_bookends(
-    header: &str,
-    preamble: &str,
-    body: &str,
-    postamble: &str,
-) -> String {
+/// The generated header, a blank line and the body. The bookends are not added
+/// here: they live in the one `mockspace` rule.
+pub(crate) fn format_with_header(header: &str, body: &str) -> String {
     let mut out = String::new();
     out.push_str(header);
-    out.push('\n');
-    if !preamble.is_empty() {
-        out.push('\n');
-        out.push_str(preamble);
-        out.push('\n');
-    }
-    out.push('\n');
+    out.push_str("\n\n");
     out.push_str(body);
-    if !postamble.is_empty() {
-        out.push('\n');
-        out.push_str(postamble);
-        out.push('\n');
-    }
     out
 }

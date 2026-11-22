@@ -21,10 +21,6 @@ use crate::{CrateLint, Lint, LintContext, LintError};
 pub struct NoPoolAccess;
 
 impl Lint for NoPoolAccess {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
@@ -40,7 +36,7 @@ impl CrateLint for NoPoolAccess {
         let mut in_behavior = false;
         let mut brace_depth: i32 = 0;
 
-        for (line_num, line) in ctx.source.lines().enumerate() {
+        for (line_num, line) in ctx.source().lines().enumerate() {
             let trimmed = line.trim();
 
             // Track define_behavior! macro boundaries

@@ -43,7 +43,14 @@
 //! drift a claim of totality is supposed to name rather than imply.
 
 use mockspace_lint_rules::LintPack;
-use mockspace_lint_rules::tool::{ArgSpec, Purpose, duplicate_tool_names, usage_from, usage_line};
+use mockspace_lint_rules::tool::{
+    ArgSpec,
+    ConfigKey,
+    Purpose,
+    duplicate_tool_names,
+    usage_from,
+    usage_line,
+};
 
 /// Which population a [`Listing`] came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +82,9 @@ pub struct Listing {
     /// What a project tool is for. `None` for a builtin, which is neither a
     /// check nor a maker in the tool contract's sense: it is the engine.
     pub purpose: Option<Purpose>,
+    /// The keys a project tool reads from its `[tools.<name>]` table. Empty for a builtin, whose
+    /// configuration is the engine's own.
+    pub config:  Vec<ConfigKey>,
 }
 
 /// Every builtin subcommand, then every project tool.
@@ -111,6 +121,7 @@ pub fn enumerate(pack: &LintPack) -> Vec<Listing> {
                 help:    c.help.to_string(),
                 source:  Source::Builtin,
                 purpose: None,
+                config:  Vec::new(),
             }
         })
         .collect();
@@ -124,6 +135,7 @@ pub fn enumerate(pack: &LintPack) -> Vec<Listing> {
             help:    t.help().to_string(),
             source:  Source::Project,
             purpose: Some(t.purpose()),
+            config:  t.config_keys().to_vec(),
         });
     }
 
@@ -208,6 +220,9 @@ pub fn render_one(l: &Listing) -> String {
     for a in &l.args {
         let mark = if a.required { "required" } else { "optional" };
         let _ = writeln!(s, "      {:<12} ({mark}) {}", a.name, a.description);
+    }
+    for k in &l.config {
+        let _ = writeln!(s, "      [tools.{}] {}  {}", l.name, k.name, k.description);
     }
     if !l.help.is_empty() {
         let _ = writeln!(s, "      {}", l.help);

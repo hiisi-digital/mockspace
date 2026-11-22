@@ -1,0 +1,7 @@
+data wt: git pull --no-rebase origin mock/research -> output.txt=[theirs] {From <scratch>/a11/origin}
+data wt: git pull --rebase origin mock/research -> output.txt=[theirs] {From <scratch>/a11/origin}
+data wt: git merge --no-overwrite-ignore FETCH_HEAD -> output.txt=[MINE-UNIQUE] {error: The following untracked working tree files would be overwritten by merge:}
+data wt: git pull --no-rebase --no-overwrite-ignore origin mock/research -> output.txt=[MINE-UNIQUE] {error: unknown option `no-overwrite-ignore'}
+data wt: git checkout -f FETCH_HEAD -> output.txt=[theirs] {Note: switching to 'FETCH_HEAD'.}
+snapshot tree holds output.txt: 0
+snapshot with ignored added: 1

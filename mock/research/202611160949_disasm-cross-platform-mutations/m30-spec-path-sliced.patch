@@ -1,0 +1,13 @@
+diff --git a/src/bench_gen.rs b/src/bench_gen.rs
+index f12c754..12d08e2 100644
+--- a/src/bench_gen.rs
++++ b/src/bench_gen.rs
+@@ -380,7 +380,7 @@ pub fn support_package_name(s: &SupportSource) -> Result<String, String> {
+ /// `{ path = "/x/bench-core" }`), which is what local development
+ /// and in-repo tests need, since one path cannot serve three crates.
+ pub fn dep_for_crate(dep: &str, crate_subdir: &str) -> String {
+-    match spec_path(dep) {
++    match dep.split_once("path = \"").and_then(|(_, r)| r.split_once('"')).map(|(p, _)| p.to_string()) {
+         Some(root) => {
+             let joined = Path::new(&root).join(crate_subdir);
+             format!(

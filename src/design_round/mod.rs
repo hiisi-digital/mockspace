@@ -38,6 +38,13 @@ mod subjects;
 #[cfg(test)]
 mod tests;
 
+/// A fresh reading rooted at `dir`, for one question asked of the round as it stands now. Fresh
+/// each time, because a subcommand moves the files it asks about between one question and the
+/// next.
+pub(crate) fn reading_of(dir: &Path) -> lint_rules::Reading {
+    lint_rules::Reading::new(dir)
+}
+
 /// Options parsed from CLI flags for design round subcommands.
 pub struct SubcmdOpts {
     pub auto_commit: bool,
@@ -49,7 +56,7 @@ pub struct SubcmdOpts {
 /// the lock without running a hook, so the lint would only ever see the lock
 /// once it is history, where it no longer reads it.
 fn refuse_an_empty_lock(dr: &Path, cl: &ParsedChangelist) -> Option<ExitCode> {
-    if !lint_rules::says_nothing(&dr.join(&cl.filename)) {
+    if !lint_rules::says_nothing(&reading_of(&dr).view(), &dr.join(&cl.filename)) {
         return None;
     }
     eprintln!("error: {} holds nothing but a bare title", cl.filename);
@@ -63,7 +70,7 @@ fn refuse_an_empty_lock(dr: &Path, cl: &ParsedChangelist) -> Option<ExitCode> {
 /// second doc changelist, for want of one commit made first.
 fn refuse_uncommitted_templates(cfg: &Config) -> Option<ExitCode> {
     let pending = match crate::data_refs::ref_files(cfg) {
-        Ok(refs) => lint_rules::pending_doc_templates(&cfg.mock_dir, &cfg.src_dirs, &refs),
+        Ok(refs) => lint_rules::pending_doc_templates(&reading_of(&cfg.mock_dir).view(), &cfg.mock_dir, &cfg.src_dirs, &refs),
         Err(why) => {
             eprintln!("error: {why}");
             return Some(ExitCode::FAILURE);
@@ -82,11 +89,11 @@ fn refuse_uncommitted_templates(cfg: &Config) -> Option<ExitCode> {
 
 pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let dr = design_rounds_dir(cfg);
-    let phase = changelist_helpers::current_phase(&dr);
+    let phase = changelist_helpers::current_phase(&reading_of(&dr).view(), &dr);
 
     match phase {
         Phase::Doc => {
-            let cl = match changelist_helpers::find_active_doc_cl(&dr) {
+            let cl = match changelist_helpers::find_active_doc_cl(&reading_of(&dr).view(), &dr) {
                 Some(cl) => cl,
                 None => {
                     eprintln!(
@@ -121,7 +128,7 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
             }
         },
         Phase::Src => {
-            let cl = match changelist_helpers::find_active_src_cl(&dr) {
+            let cl = match changelist_helpers::find_active_src_cl(&reading_of(&dr).view(), &dr) {
                 Some(cl) => cl,
                 None => {
                     eprintln!(
@@ -176,16 +183,16 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
 
 pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let dr = design_rounds_dir(cfg);
-    let phase = changelist_helpers::current_phase(&dr);
+    let phase = changelist_helpers::current_phase(&reading_of(&dr).view(), &dr);
 
     // A stub beside a locked changelist of its kind is what holds a round open whatever phase it
     // reads as, and it is the one thing `deprecate` is asked to retire there.
-    let all_strays = changelist_helpers::stray_active_changelists(&dr);
+    let all_strays = changelist_helpers::stray_active_changelists(&reading_of(&dr).view(), &dr);
     // Only a stub is retired unread. One with text may be the round's live work beside the locks of
     // an earlier round, and renaming it would keep the dead locks and lose the work.
     let (strays, written): (Vec<_>, Vec<_>) = all_strays
         .into_iter()
-        .partition(|cl| lint_rules::says_nothing(&dr.join(&cl.filename)));
+        .partition(|cl| lint_rules::says_nothing(&reading_of(&dr).view(), &dr.join(&cl.filename)));
     if !written.is_empty() {
         for cl in &written {
             eprintln!(
@@ -225,7 +232,7 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
 
     match phase {
         Phase::Doc => {
-            let cl = match changelist_helpers::find_active_doc_cl(&dr) {
+            let cl = match changelist_helpers::find_active_doc_cl(&reading_of(&dr).view(), &dr) {
                 Some(cl) => cl,
                 None => {
                     eprintln!(
@@ -258,7 +265,7 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
             }
         },
         Phase::Src => {
-            let cl = match changelist_helpers::find_active_src_cl(&dr) {
+            let cl = match changelist_helpers::find_active_src_cl(&reading_of(&dr).view(), &dr) {
                 Some(cl) => cl,
                 None => {
                     eprintln!(
@@ -292,7 +299,7 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
             }
 
             // Step 2: unlock the doc CL (DRAFT is a useless intermediate state)
-            if let Some(doc_cl) = changelist_helpers::find_locked_doc_cl(&dr) {
+            if let Some(doc_cl) = changelist_helpers::find_locked_doc_cl(&reading_of(&dr).view(), &dr) {
                 match rename_cl(&dr, &doc_cl, ClStatus::Active) {
                     Ok(r) => {
                         eprintln!(
@@ -338,7 +345,7 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
 
 pub fn cmd_unlock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let dr = design_rounds_dir(cfg);
-    let phase = changelist_helpers::current_phase(&dr);
+    let phase = changelist_helpers::current_phase(&reading_of(&dr).view(), &dr);
 
     match phase {
         Phase::SrcPlan | Phase::Src | Phase::Done => {},
@@ -361,7 +368,7 @@ pub fn cmd_unlock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let mut touched = Vec::new();
 
     // Step 1: deprecate active or locked src CL if it exists.
-    if let Some(src_cl) = changelist_helpers::find_active_src_cl(&dr) {
+    if let Some(src_cl) = changelist_helpers::find_active_src_cl(&reading_of(&dr).view(), &dr) {
         match rename_cl(&dr, &src_cl, ClStatus::Deprecated) {
             Ok(r) => {
                 eprintln!("  deprecated src CL: {} → {}", src_cl.filename, r.new_name);
@@ -375,7 +382,7 @@ pub fn cmd_unlock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
             },
         }
     }
-    if let Some(src_cl) = changelist_helpers::find_locked_src_cl(&dr) {
+    if let Some(src_cl) = changelist_helpers::find_locked_src_cl(&reading_of(&dr).view(), &dr) {
         match rename_cl(&dr, &src_cl, ClStatus::Deprecated) {
             Ok(r) => {
                 eprintln!("  deprecated src CL: {} → {}", src_cl.filename, r.new_name);
@@ -391,7 +398,7 @@ pub fn cmd_unlock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     }
 
     // Step 2: unlock doc CL (rename *.lock.md → *.md).
-    if let Some(doc_cl) = changelist_helpers::find_locked_doc_cl(&dr) {
+    if let Some(doc_cl) = changelist_helpers::find_locked_doc_cl(&reading_of(&dr).view(), &dr) {
         match rename_cl(&dr, &doc_cl, ClStatus::Active) {
             Ok(r) => {
                 eprintln!("  unlocked doc CL: {} → {}", doc_cl.filename, r.new_name);
@@ -423,11 +430,11 @@ pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
 /// `close`, taking the flat files named in `take` into the round as well.
 pub fn cmd_close_taking(cfg: &Config, opts: &SubcmdOpts, take: &[String]) -> ExitCode {
     let dr = design_rounds_dir(cfg);
-    let phase = changelist_helpers::current_phase(&dr);
+    let phase = changelist_helpers::current_phase(&reading_of(&dr).view(), &dr);
 
     // A topic a close left flat, with no round open: `--take` files it under the newest closed
     // round, since the close that left it cannot be run again.
-    if !take.is_empty() && !changelist_helpers::has_any_changelist(&dr) {
+    if !take.is_empty() && !changelist_helpers::has_any_changelist(&reading_of(&dr).view(), &dr) {
         return adopt_into_last_round(cfg, opts, &dr, take);
     }
 
@@ -443,7 +450,7 @@ pub fn cmd_close_taking(cfg: &Config, opts: &SubcmdOpts, take: &[String]) -> Exi
 
     // Before anything moves: `--auto-commit` commits the close without a hook,
     // so the `changelist-seal` lint would first see this round as history.
-    let findings = lint_rules::active_round_findings(&dr);
+    let findings = lint_rules::active_round_findings(&reading_of(&dr).view(), &dr);
     if !findings.is_empty() {
         eprintln!("error: the round is not sealed, so it is not closed");
         for finding in &findings {
@@ -452,7 +459,7 @@ pub fn cmd_close_taking(cfg: &Config, opts: &SubcmdOpts, take: &[String]) -> Exi
         return ExitCode::FAILURE;
     }
 
-    let all_cls = changelist_helpers::find_changelists(&dr);
+    let all_cls = changelist_helpers::find_changelists(&reading_of(&dr).view(), &dr);
     let round_name = determine_round_name(&all_cls);
 
     perform_archive(cfg, opts, &dr, &round_name, ArchiveKind::Closed, take)
@@ -556,7 +563,7 @@ pub fn cmd_archive(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     // Named by the round's changelists where it has any, the way `close` names it, so the archive
     // carries the id of the round and not of whichever topic happens to be oldest. With none
     // (the TOPIC phase) the earliest file of any kind names it.
-    let changelists = changelist_helpers::find_changelists(&dr);
+    let changelists = changelist_helpers::find_changelists(&reading_of(&dr).view(), &dr);
     let round_name = if !changelists.is_empty() {
         determine_round_name(&changelists)
     } else {

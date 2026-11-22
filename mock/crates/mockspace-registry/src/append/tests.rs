@@ -115,7 +115,7 @@ fn place_hook(root: &Path, body: &str) -> std::path::PathBuf {
 
 #[test]
 fn the_nearest_hook_above_a_repository_is_the_one_found() {
-    let ws = tempfile::tempdir().unwrap();
+    let ws = mockspace_manifest::scratch::tempdir().unwrap();
     let repo = ws.path().join("repo");
     let deeper = repo.join("sub");
     std::fs::create_dir_all(&deeper).unwrap();
@@ -128,7 +128,7 @@ fn the_nearest_hook_above_a_repository_is_the_one_found() {
 
 #[test]
 fn a_hook_is_told_the_step_and_its_status_is_the_answer() {
-    let ws = tempfile::tempdir().unwrap();
+    let ws = mockspace_manifest::scratch::tempdir().unwrap();
     let said = ws.path().join("said");
     let hook_path = place_hook(
         ws.path(),

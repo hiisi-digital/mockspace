@@ -607,7 +607,7 @@ mod tests {
         // Per-crate generation applied placeholders but never resolved
         // references, so every one rendered literally and nothing reported it,
         // which reads as a templating bug rather than as a missing check.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let mock = tmp.path().join("mock");
         let crate_dir = mock.join("crates").join("proj-store");
         std::fs::create_dir_all(&crate_dir).unwrap();
@@ -674,7 +674,7 @@ mod tests {
         // written yet" rather than "what is this crate's document", so a
         // reference from a crate rendered early to one rendered later resolved
         // to nothing, silently, in the finished document.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let crates_dir = tmp.path().join("mock").join("crates");
         std::fs::create_dir_all(crates_dir.join("proj-plan-validate")).unwrap();
         let docs = tmp.path().join("docs");
@@ -718,7 +718,7 @@ mod tests {
     fn a_hyphenated_crate_short_name_resolves() {
         // `crates::plan_validate` is the common shape: most crate names in a
         // prefixed family have a hyphen in the part after the prefix.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let crates_dir = tmp.path().join("mock").join("crates");
         std::fs::create_dir_all(crates_dir.join("proj-plan-validate")).unwrap();
         let docs = tmp.path().join("docs");
@@ -758,7 +758,7 @@ mod tests {
         // The reference is to a crate, because the registry writes no page for a row to
         // link to, and a crate document is what
         // the index still names.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = mockspace_manifest::scratch::tempdir().unwrap();
         let crates_dir = tmp.path().join("mock").join("crates");
         std::fs::create_dir_all(crates_dir.join("proj-plan-validate")).unwrap();
         let docs = tmp.path().join("docs");

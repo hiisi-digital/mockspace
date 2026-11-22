@@ -50,7 +50,7 @@ impl Tool for Bake {
 
 /// A repository root with `src/icons/` real, and a directory outside it.
 fn tree() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path().join("repo");
     let outside = tmp.path().join("outside");
     fs::create_dir_all(root.join("src/icons")).unwrap();

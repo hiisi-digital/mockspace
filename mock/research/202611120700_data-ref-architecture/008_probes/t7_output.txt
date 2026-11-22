@@ -1,0 +1,49 @@
+fatal: expected 'acknowledgments', received 'packfile'
+warning: push negotiation failed; proceeding anyway with push
+== remote refs
+refs/heads/dev refs/mock/research 
+== plain clone, fetch --all, push --all, clone --bare, clone --mirror
+plain clone refs/mock: 0, objects: 6
+after fetch --all: refs/mock 0
+clone --bare: refs/mock 0
+clone --mirror: refs/mock 1  (a backup: right)
+== opted-in clone
+mirror refs: refs/mock/research 
+fetch --all keeps working: rc=0
+data worktree status: On branch refs/mock-wt/research@w1
+git worktree list: oc/mock/rdata  2d1fe0e [mock-wt/research@w1]
+heads in the clone: refs/heads/dev 
+== commit, fetch+merge (driver), push with lease
+HEAD ref moved: refs/mock-wt/research@w1 7591c71
+   2d1fe0e..e8296c7  HEAD -> refs/mock/research
+-- plain push (no force) of an update to a ref outside heads:
+hint: 'git pull' before pushing again.
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+-- push with lease on a stale expectation (oc2 already moved it):
+ ! [rejected]        HEAD -> refs/mock/research (stale info)
+error: failed to push some refs to '/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/008/t7c/remote.git'
+-- merge refs/mock/research (shared driver):
+ 1 file changed, 1 insertion(+)
+NOTES: a|b|c|mine|theirs|
+   e8296c7..ad36e05  HEAD -> refs/mock/research
+-- bare git pull / git push in the data worktree:
+You are not currently on a branch.
+fatal: You are not currently on a branch.
+== bare clone kept current by +refs/heads/*:refs/heads/*, data worktree HEAD on a non-heads working ref
+Fetching origin
+From /tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/008/t7c/remote
+   dee103f..1aa6ff9  dev        -> dev
+fetch --all in the bare clone rc=0; dev advanced: 1aa6ff9
+== gc keeps what only a working ref holds
+commit
+== push --all from the opted-in clone
+To /tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/008/t7c/remote.git
+remote refs: refs/heads/dev refs/mock/research 
+== push --mirror from a PLAIN clone (it never had refs/mock)
+deleted refs reported: 1
+remote refs: refs/heads/dev refs/remotes/origin/HEAD refs/remotes/origin/dev 
+-- restore from an opted-in clone and repeat with receive.denyDeletes on the remote (self-hosted only)
+ - [deleted]         refs/mock/research
+remote refs: refs/heads/dev refs/remotes/origin/HEAD refs/remotes/origin/dev 
+-- opted-in clone: push --mirror carries refs/mock and refs/mock-wt (publishes working refs)
+remote refs: refs/heads/dev refs/mock-wt/research@w1 refs/mock/research refs/remotes/origin/HEAD refs/remotes/origin/dev 

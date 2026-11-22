@@ -14,10 +14,6 @@ use crate::{CrateLint, Lint, LintContext, LintError};
 pub struct NoRawErrorOutsidePrimitives;
 
 impl Lint for NoRawErrorOutsidePrimitives {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
@@ -35,7 +31,7 @@ impl CrateLint for NoRawErrorOutsidePrimitives {
 
         let mut errors = Vec::new();
 
-        for (line_num, line) in ctx.source.lines().enumerate() {
+        for (line_num, line) in ctx.source().lines().enumerate() {
             let trimmed = line.trim();
             if trimmed.starts_with("//") || trimmed.starts_with("///") {
                 continue;

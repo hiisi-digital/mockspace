@@ -1,0 +1,16 @@
+== (1a) git clean -fdx
+Skipping repository mock/data/research
+NOTES.md m.big 
+== (1b) git clean -ffdx
+Removing mock/
+ls: cannot access 'mock/data': No such file or directory 
+m  ad2bdf3 [dev]
+== (1c) git worktree remove (dirty, no force)
+fatal: 'mock/data/research' contains modified or untracked files, use --force to delete it
+== (2) snapshot via temp index
+
+ NOTES.md | 1 +
+ m.big    | 2 ++
+ 2 files changed, 3 insertions(+)
+m.big in snapshot: version-ptr|oid-4ecb8327|
+with --no-filters (engine path): 8319a000 vs filtered: cb1c9a20  (snapshot blob: cb1c9a20)

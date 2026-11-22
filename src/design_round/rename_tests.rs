@@ -29,7 +29,7 @@ fn closed_round(dr: &Path, dir: &str) {
 fn a_closed_round_is_renamed_whole() {
     // Mutants: the directory is not moved; the files keep the old id; `.meta` keeps
     // the old `round:`; a file carrying another stamp is renamed too.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let dr = tmp.path();
     closed_round(dr, "202610221529");
     let r = rename_round_on_disk(dr, "202610221529", "202610221529-kx3f").unwrap();
@@ -58,11 +58,11 @@ fn a_closed_round_is_renamed_whole() {
 #[test]
 fn the_renamed_round_still_reads_as_a_round() {
     // Mutant: the new names are not parsed by the changelist reader.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let dr = tmp.path();
     closed_round(dr, "202610221529");
     rename_round_on_disk(dr, "202610221529", "202610221529-kx3f").unwrap();
-    let cls = changelist_helpers::find_changelists(&dr.join("202610221529-kx3f"));
+    let cls = changelist_helpers::find_changelists(&crate::design_round::reading_of(dr).view(), &dr.join("202610221529-kx3f"));
     assert_eq!(cls.len(), 2);
     assert!(lint_rules::round_id::is_round_dir("202610221529-kx3f"));
 }
@@ -70,7 +70,7 @@ fn the_renamed_round_still_reads_as_a_round() {
 #[test]
 fn an_abandoned_round_keeps_its_suffix_and_a_count_goes() {
     // Mutant: `kept_tail` keeps `-2`, or drops `-abandoned`.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let dr = tmp.path();
     closed_round(dr, "202610221529-abandoned");
     let r = rename_round_on_disk(dr, "202610221529-abandoned", "202610221529-kx3f").unwrap();
@@ -83,7 +83,7 @@ fn an_abandoned_round_keeps_its_suffix_and_a_count_goes() {
 #[test]
 fn the_active_round_is_renamed_by_its_flat_files() {
     // Mutant: flat files are not looked for, or a topic of another stamp moves.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let dr = tmp.path();
     touch(dr, "202610221529_changelist.doc.md", "x");
     touch(dr, "202610221529_topic.a.md", "x");
@@ -105,7 +105,7 @@ fn the_active_round_is_renamed_by_its_flat_files() {
 #[test]
 fn a_directory_wins_over_flat_files_with_the_same_id() {
     // Mutant: the flat branch runs first.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let dr = tmp.path();
     closed_round(dr, "202610221529");
     touch(dr, "202610221529_topic.next.md", "x");
@@ -117,7 +117,7 @@ fn a_directory_wins_over_flat_files_with_the_same_id() {
 #[test]
 fn a_target_that_exists_is_refused_and_nothing_moves() {
     // Mutant: `rename` overwrites, or is attempted before the check.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let dr = tmp.path();
     closed_round(dr, "202610221529");
     closed_round(dr, "202610221529-kx3f");
@@ -135,7 +135,7 @@ fn a_target_that_exists_is_refused_and_nothing_moves() {
 #[test]
 fn an_unknown_round_or_a_bad_new_id_is_an_error() {
     // Mutant: a missing round is a silent success; a malformed id is taken.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let dr = tmp.path();
     assert!(rename_round_on_disk(dr, "202610221529", "202610221529-kx3f").is_err());
     closed_round(dr, "202610221529");
@@ -162,7 +162,7 @@ fn only_the_round_line_of_meta_is_rewritten() {
 fn an_abandoned_round_with_a_count_stays_abandoned() {
     // Mutant: `kept_tail` knows `-abandoned` only whole, so `-abandoned-2` is
     // renamed to a bare tagged id, which `is_round_dir` reads as a closed round.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let dr = tmp.path();
     closed_round(dr, "202610221529-abandoned-2");
     let r = rename_round_on_disk(dr, "202610221529-abandoned-2", "202610221529-kx3f").unwrap();
@@ -237,7 +237,7 @@ struct Clone {
 }
 
 fn clone_with(on_dev: &[&str], on_main: &[&str]) -> Clone {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let base = tmp.path().canonicalize().unwrap();
     let (up, root) = (base.join("up"), base.join("clone"));
     for dir in [&up, &root] {

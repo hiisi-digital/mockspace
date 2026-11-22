@@ -1,0 +1,13 @@
+fatal: expected 'acknowledgments', received 'packfile'
+warning: push negotiation failed; proceeding anyway with push
+== merge --no-overwrite-ignore
+error: The following untracked working tree files would be overwritten by merge:
+	output.txt
+local file: LOCAL UNIQUE
+== snapshot recipe (copied index, add -A) holds ignored files?
+ignored file in tree: 0
+after add -f of ls-files -o -i: 1
+== plain git pull (no --no-overwrite-ignore option exists in this git):
+From /tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/008/t4_update_and_ignored_files/remote
+ * branch            x          -> FETCH_HEAD
+local file after pull: theirs

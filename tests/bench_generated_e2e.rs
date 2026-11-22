@@ -12,8 +12,9 @@
 //! so it is established by running it rather than asserted: the tool
 //! generates the arm manifest and the driver crate, builds both
 //! against this repository via the `[build] mockspace` path spec,
-//! runs a real (tiny) measurement, and promotes results, history and
-//! the hook's own artifact.
+//! runs a real (tiny) measurement, and promotes each cell's run directory
+//! with the hook's own artifact in it. Run twice, the second run lands
+//! beside the first and replaces nothing.
 
 use std::path::{Path, PathBuf};
 
@@ -69,14 +70,13 @@ const HOOKS_LIB: &str = r#"
 use mockspace_bench_harness::driver::{AfterCell, CellVerdict, Hooks};
 
 fn after_cell(cell: &AfterCell<'_>) -> CellVerdict {
-    let stem = format!("{}_n{}", cell.config.sweep, cell.config.n);
-    for staged in [format!("{stem}.csv"), format!("{stem}_report.md")] {
+    for staged in ["samples.csv", "meta.json", "report.md"] {
         assert!(
             cell.out_dir.join(&staged).is_file(),
             "after_cell fired before {staged} was staged"
         );
     }
-    let marker = cell.out_dir.join(format!("{stem}_hook-marker.txt"));
+    let marker = cell.out_dir.join("hook-marker.txt");
     std::fs::write(&marker, "after_cell ran\n").expect("marker writes");
     if cell.config.bench == "gate" {
         CellVerdict::Fail("gated: this cell must not reach the ledger".into())
@@ -96,8 +96,9 @@ pub fn hooks() -> Hooks {
 #[test]
 fn a_config_only_nested_tree_runs_end_to_end_through_the_generated_driver() {
     let repo = env!("CARGO_MANIFEST_DIR");
-    let root = std::env::temp_dir().join(format!("mockspace-bench-e2e-{}", std::process::id()));
-    std::fs::remove_dir_all(&root).ok();
+    let repo_toml = mockspace_manifest::toml_text::basic_string(repo);
+    let root_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let root = root_guard.path().to_path_buf();
     let mock_dir = root.join("mock");
     let bench_dir = mock_dir.join("benches");
 
@@ -107,7 +108,7 @@ fn a_config_only_nested_tree_runs_end_to_end_through_the_generated_driver() {
         &format!(
             r#"
 [build]
-mockspace = '{{ path = "{repo}" }}'
+mockspace = '{{ path = {repo_toml} }}'
 opt-level = 0
 lto = "off"
 codegen-units = 16
@@ -156,50 +157,67 @@ master_seed = 7
         "the gate bench's Fail verdict must fail the run"
     );
 
-    // ── everything the run promised is on disk, for both benches ──
+    // ── everything the run promised is on disk, for both benches, in one
+    // run directory each ──
     for bench in ["hash", "gate"] {
-        let results = bench_dir.join("results").join(bench);
-        for suffix in [".csv", ".meta.json", "_report.md", "_hook-marker.txt"] {
-            let artifact = format!("{bench}_n64{suffix}");
+        let runs = runs_of(&bench_dir, bench);
+        assert_eq!(runs.len(), 1, "{bench}: one run, {runs:?}");
+        for file in ["samples.csv", "meta.json", "report.md", "hook-marker.txt"] {
             assert!(
-                results.join(&artifact).is_file(),
-                "missing promoted artifact {artifact} in {}",
-                results.display()
+                runs[0].join(file).is_file(),
+                "missing promoted artifact {file} in {}",
+                runs[0].display()
             );
         }
+        assert_eq!(
+            mockspace_bench_harness::layout::place(
+                &runs[0].join("samples.csv").strip_prefix(&bench_dir).unwrap(),
+                |_| true
+            ),
+            mockspace_bench_harness::layout::Placement::InLayout
+        );
     }
+    let hash_run = runs_of(&bench_dir, "hash").remove(0);
     // the metadata records the profile that was actually passed,
     // which this tree overrides; the old hardcoded literal would
-    // have recorded opt-level=3 here
-    let meta = std::fs::read_to_string(
-        bench_dir
-            .join("results")
-            .join("hash")
-            .join("hash_n64.meta.json"),
-    )
-    .unwrap();
+    // have recorded opt-level=3 here, and it names its run and class
+    let meta = std::fs::read_to_string(hash_run.join("meta.json")).unwrap();
     assert!(
         meta.contains("opt-level=0") && meta.contains("codegen-units=16"),
         "the recorded profile must be the overridden one: {meta}"
     );
     assert!(!meta.contains("opt-level=3"), "{meta}");
+    let run_id = hash_run.file_name().unwrap().to_string_lossy().into_owned();
+    let class = hash_run.parent().unwrap().file_name().unwrap().to_string_lossy().into_owned();
+    assert!(meta.contains(&format!("\"run\":\"{run_id}\"")), "{meta}");
+    assert!(meta.contains(&format!("\"machine_class\":\"{class}\"")), "{meta}");
 
-    // the accepted cell reaches the ledger; the gated-out one does not
-    let history: PathBuf = bench_dir.join("history").join("hash").join("hash_n64.tsv");
+    // the accepted cell carries its summary; the gated-out one does not
+    let summary = hash_run.join("summary.tsv");
     assert!(
-        history.is_file(),
-        "the accepted cell's ledger appends after promotion"
+        std::fs::read_to_string(&summary).unwrap().contains("plusone"),
+        "the summary rows carry the arm's exported name"
     );
     assert!(
-        std::fs::read_to_string(&history)
-            .unwrap()
-            .contains("plusone"),
-        "the history rows carry the arm's exported name"
+        !runs_of(&bench_dir, "gate")[0].join("summary.tsv").exists(),
+        "a Fail verdict withholds the cell's summary"
     );
-    assert!(
-        !bench_dir.join("history").join("gate").exists(),
-        "a Fail verdict withholds the cell's history append"
+    assert!(!bench_dir.join("history").exists(), "no ledger is written beside the runs");
+
+    // ── a second run lands beside the first and replaces nothing ──
+    let first_samples = std::fs::read(hash_run.join("samples.csv")).unwrap();
+    let _ = mockspace::bench::cmd(&cfg, &["run", "hash"]);
+    let runs = runs_of(&bench_dir, "hash");
+    assert_eq!(runs.len(), 2, "the re-run is a second run directory: {runs:?}");
+    assert_eq!(
+        std::fs::read(hash_run.join("samples.csv")).unwrap(),
+        first_samples,
+        "the earlier run's samples stand untouched"
     );
+    assert!(runs[1].join("summary.tsv").is_file(), "{:?}", runs[1]);
+    let index = std::fs::read_to_string(bench_dir.join("results/INDEX.md")).unwrap();
+    assert!(index.contains("2 run(s)"), "{index}");
+
     // nothing wrote into the consumer's source area
     assert!(
         !bench_dir
@@ -211,7 +229,6 @@ master_seed = 7
         "the generated arm manifest stays out of the consumer's tree"
     );
 
-    std::fs::remove_dir_all(&root).ok();
 }
 
 /// An arm writing more than the routine it resolved to allocates is refused
@@ -224,8 +241,9 @@ master_seed = 7
 #[test]
 fn an_arm_declaring_another_output_size_than_its_routine_is_refused() {
     let repo = env!("CARGO_MANIFEST_DIR");
-    let root = std::env::temp_dir().join(format!("mockspace-bench-size-{}", std::process::id()));
-    std::fs::remove_dir_all(&root).ok();
+    let repo_toml = mockspace_manifest::toml_text::basic_string(repo);
+    let root_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let root = root_guard.path().to_path_buf();
     let mock_dir = root.join("mock");
     let bench_dir = mock_dir.join("benches");
 
@@ -234,7 +252,7 @@ fn an_arm_declaring_another_output_size_than_its_routine_is_refused() {
         &format!(
             r#"
 [build]
-mockspace = '{{ path = "{repo}" }}'
+mockspace = '{{ path = {repo_toml} }}'
 opt-level = 0
 lto = "off"
 codegen-units = 16
@@ -330,34 +348,27 @@ master_seed = 7
         );
     }
 
+    // `--keep-builds`: the preflight below reads the arms the run built, which a
+    // run removes otherwise.
     let cfg = mockspace::config::Config::from_dir(&mock_dir);
-    let code = mockspace::bench::cmd(&cfg, &["run"]);
+    let code = mockspace::bench::cmd(&cfg, &["run", "--keep-builds"]);
     assert_eq!(
         format!("{code:?}"),
         format!("{:?}", std::process::ExitCode::FAILURE),
         "a refused arm must fail the run"
     );
     for bench in ["fits", "mixed"] {
+        let runs = runs_of(&bench_dir, bench);
         assert!(
-            bench_dir
-                .join("results")
-                .join(bench)
-                .join(format!("{bench}_n64.csv"))
-                .is_file(),
-            "{bench}: the arm that fits its routine still runs and is promoted"
+            runs.len() == 1 && runs[0].join("samples.csv").is_file(),
+            "{bench}: the arm that fits its routine still runs and is promoted: {runs:?}"
         );
     }
     assert!(
-        bench_dir.join("history").join("fits").is_dir(),
-        "the fitting bench reaches the ledger"
+        runs_of(&bench_dir, "fits")[0].join("summary.tsv").is_file(),
+        "the fitting bench carries its summary"
     );
-    let mixed = std::fs::read_to_string(
-        bench_dir
-            .join("results")
-            .join("mixed")
-            .join("mixed_n64.csv"),
-    )
-    .unwrap();
+    let mixed = std::fs::read_to_string(runs_of(&bench_dir, "mixed")[0].join("samples.csv")).unwrap();
     assert!(mixed.contains("plusone"), "the fitting arm was measured: {mixed}");
     assert!(
         !mixed.contains("wideone"),
@@ -365,7 +376,7 @@ master_seed = 7
     );
     for bench in ["undeclared", "unexported", "stale"] {
         assert!(
-            !bench_dir.join("results").join(bench).join(format!("{bench}_n64.csv")).exists(),
+            runs_of(&bench_dir, bench).iter().all(|r| !r.join("samples.csv").exists()),
             "{bench}: a refused arm is not measured"
         );
     }
@@ -412,21 +423,62 @@ master_seed = 7
         "the hash is checked before the size export: {stale}"
     );
     assert!(
-        !bench_dir
-            .join("results")
-            .join("wide")
-            .join("wide_n64.csv")
-            .exists(),
-        "the bench whose arm declares 32 bytes against an 8-byte routine is refused"
-    );
-    assert!(
-        !bench_dir.join("history").join("wide").exists(),
-        "and nothing of it reaches the ledger"
+        runs_of(&bench_dir, "wide").is_empty(),
+        "the bench whose arm declares 32 bytes against an 8-byte routine is refused, and \
+         nothing of it is promoted"
     );
 
-    std::fs::remove_dir_all(&root).ok();
+    // A run without the flag removes what it built. One bench that runs clean
+    // succeeds, and then its arm's link under the bench tree and the driver in
+    // the target cargo built it in are gone.
+    let shared = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| mock_dir.join("target"));
+    let driver = mockspace::bench_gen::driver_name(&bench_dir);
+    let driver_files = |dir: &Path| -> Vec<String> {
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(&driver) || n.starts_with(&driver.replace('-', "_")))
+            .collect()
+    };
+    assert!(!driver_files(&shared.join("release")).is_empty(), "the kept run left its driver");
+    let code = mockspace::bench::cmd(&cfg, &["run", "fits"]);
+    assert_eq!(
+        format!("{code:?}"),
+        format!("{:?}", std::process::ExitCode::SUCCESS),
+        "a plain run of the bench that fits must succeed"
+    );
+    assert!(
+        !bench_dir.join("target").join("mock-arms").join("fits").exists(),
+        "the arm's link stays after a plain run"
+    );
+    let left: Vec<String> = ["release", "release/deps"].iter().flat_map(|d| driver_files(&shared.join(d))).collect();
+    assert!(left.is_empty(), "the driver stays after a plain run: {left:?}");
+
+    // the refused arms still fail a run of everything, which then removes the
+    // rest of what the kept run built
+    let code = mockspace::bench::cmd(&cfg, &["run"]);
+    assert_eq!(
+        format!("{code:?}"),
+        format!("{:?}", std::process::ExitCode::FAILURE),
+        "the refused arms fail a plain run of everything"
+    );
+    assert!(!bench_dir.join("target").exists(), "the per-arm links stay after a plain run");
+
 }
 
 /// Takes the machine's git environment out of this process before `main`.
 #[path = "common/ambient.rs"]
 mod ambient;
+
+/// Every run directory of a bench's cells, oldest first.
+fn runs_of(bench_dir: &Path, bench: &str) -> Vec<PathBuf> {
+    mockspace_bench_harness::layout::runs(&bench_dir.join("results"))
+        .into_iter()
+        .filter(|r| r.bench == bench)
+        .map(|r| r.dir)
+        .collect()
+}

@@ -10,9 +10,9 @@ description = "Launcher for the mockspace design-round workflow engine: resolves
 # installs and there is nothing narrower to say. Cargo ships whatever `readme`
 # names whether or not `include` mentions it.
 readme = "README.md"
-# `renki` is the floor and it declares 1.88. Stated here too, or an older
+# `renki` is the floor and it declares 1.89. Stated here too, or an older
 # toolchain fails somewhere inside a dependency instead of at this manifest.
-rust-version = "1.88"
+rust-version = "1.89"
 license = "MPL-2.0"
 repository = "https://github.com/hiisi-digital/mockspace"
 homepage = "https://github.com/hiisi-digital/mockspace"
@@ -56,7 +56,7 @@ include = [
 # A `0.0.x` requirement is already the exact version and nothing else, which is
 # what this wants: the launcher is what every consumer repo installs, and it
 # moves when the number here moves rather than when a branch does.
-renki = "0.0.1"
+renki = "0.0.5-rc.3"
 # The path is what a checkout builds against and the version is what the
 # registry resolves, since cargo strips the path on publish and a dependency
 # left with neither is refused.
@@ -66,3 +66,4 @@ toml = { version = "0.8", default-features = false, features = ["parse", "displa
 
 [dev-dependencies]
 tempfile = "3"
+mockspace-manifest = { path = "../mockspace-manifest", version = "0.0.2", features = ["_internal-test-scratch"] }

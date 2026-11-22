@@ -269,7 +269,7 @@ fn suite(store: &dyn Store, first_refresh: Freshness) {
 
 #[test]
 fn directory_backend() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     suite(&DirStore::new(d.path().join("data")), Freshness::Local);
 }
 
@@ -305,7 +305,7 @@ fn ref_backend_in_branch_form() {
 
 #[test]
 fn a_temporary_file_of_the_directory_backend_is_never_listed() {
-    let d = tempfile::tempdir().unwrap();
+    let d = mockspace_manifest::scratch::tempdir().unwrap();
     let root = d.path().join("data");
     let s = DirStore::new(&root);
     s.apply(&Edit::new().put("a/b", "1"), "m", &Reapply)

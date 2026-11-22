@@ -1,0 +1,16 @@
+== data branches for namespaces a and a/b
+refs/heads/mock/a: ok
+fatal: update_ref failed for ref 'refs/heads/mock/a/b': cannot lock ref 'refs/heads/mock/a/b': 'refs/heads/mock/a' exists; cannot create 'refs/heads/mock/a/b'
+== leaf snapshot refs
+refs/mock-snapshot/a@main ok
+refs/mock-snapshot/a%2Fb@main ok
+refs/mock-snapshot/a@wt%2Fx ok
+refs/mock-snapshot/a.b@c ok
+refs/mock-snapshot/a@b.c ok
+refs/mock-snapshot/a%2Fb@main
+refs/mock-snapshot/a.b@c
+refs/mock-snapshot/a@b.c
+refs/mock-snapshot/a@main
+refs/mock-snapshot/a@wt%2Fx
+== and the shipped engine ref refs/mock-backup/<ns> beside the leaf prefix: different prefix, no collision
+ok

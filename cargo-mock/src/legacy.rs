@@ -20,7 +20,7 @@
 
 use std::path::Path;
 
-use renki::{Pin, Reference};
+use renki::{Header, Pin, Reference};
 use serde::Deserialize;
 
 /// The engine revision recorded in `dir`'s `Cargo.lock`, with the url from the
@@ -41,10 +41,13 @@ fn pin_from_lock(lock_text: &str) -> Option<Pin> {
     // `git+<url>[?query]#<rev>`
     let locator = source.strip_prefix("git+").unwrap_or(&source);
     let (url_part, rev) = locator.rsplit_once('#')?;
-    Some(Pin {
-        url:       url_part.split('?').next().unwrap_or(url_part).to_string(),
-        reference: Reference::Rev(rev.to_string()),
-    })
+    // `Pin` is renki's and closed to a struct expression, so it is built the
+    // one way renki offers: a header carrying the url and the rev, asked for
+    // its pin.
+    let mut header = Header::default();
+    header.url = Some(url_part.split('?').next().unwrap_or(url_part).to_string());
+    header.pin = Some(Reference::Rev(rev.to_string()));
+    header.to_pin(&crate::TOOL)
 }
 
 #[derive(Deserialize)]
@@ -102,7 +105,7 @@ source = \"git+ssh://git@github.com/hiisi-digital/mockspace.git?branch=dev#deadb
 
     #[test]
     fn the_lock_is_read_from_the_directory_it_is_given() {
-        let d = tempfile::tempdir().unwrap();
+        let d = mockspace_manifest::scratch::tempdir().unwrap();
         assert!(
             pin_from_lock_at(d.path()).is_none(),
             "control: an empty directory declares nothing"

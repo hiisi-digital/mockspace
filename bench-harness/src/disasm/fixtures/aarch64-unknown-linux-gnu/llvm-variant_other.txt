@@ -1,0 +1,51 @@
+
+libvariant_other.so:	file format elf64-littleaarch64
+
+Disassembly of section .text:
+
+0000000000010340 <_RNvCsiFkcPgBsqU6_13variant_other7do_work>:
+   10340:      	ldrb	w8, [x0]
+   10344:      	mov	x9, #0x1b3              // =435
+   10348:      	ldrb	w10, [x0, #0x1]
+   1034c:      	movk	x9, #0x100, lsl #32
+   10350:      	mul	x8, x8, x9
+   10354:      	eor	x8, x8, x10
+   10358:      	ldrb	w10, [x0, #0x2]
+   1035c:      	mul	x8, x8, x9
+   10360:      	eor	x8, x8, x10
+   10364:      	ldrb	w10, [x0, #0x3]
+   10368:      	mul	x8, x8, x9
+   1036c:      	eor	x8, x8, x10
+   10370:      	ldrb	w10, [x0, #0x4]
+   10374:      	mul	x8, x8, x9
+   10378:      	eor	x8, x8, x10
+   1037c:      	ldrb	w10, [x0, #0x5]
+   10380:      	mul	x8, x8, x9
+   10384:      	eor	x8, x8, x10
+   10388:      	ldrb	w10, [x0, #0x6]
+   1038c:      	mul	x8, x8, x9
+   10390:      	eor	x8, x8, x10
+   10394:      	ldrb	w10, [x0, #0x7]
+   10398:      	mul	x8, x8, x9
+   1039c:      	eor	x8, x8, x10
+   103a0:      	mul	x8, x8, x9
+   103a4:      	str	x8, [x1]
+   103a8:      	ret
+
+00000000000103ac <bench_entry>:
+   103ac:      	cmp	x2, #0x8
+   103b0:      	b.ne	0x103cc <bench_entry+0x20>
+   103b4:      	stp	x29, x30, [sp, #-0x10]!
+   103b8:      	mov	x29, sp
+   103bc:      	bl	0x10340 <_RNvCsiFkcPgBsqU6_13variant_other7do_work>
+   103c0:      	mov	x0, xzr
+   103c4:      	ldp	x29, x30, [sp], #0x10
+   103c8:      	ret
+   103cc:      	adrp	x0, 0x0
+   103d0:      	add	x0, x0, #0x2a4
+   103d4:      	ret
+
+00000000000103d8 <bench_name>:
+   103d8:      	adrp	x0, 0x0
+   103dc:      	add	x0, x0, #0x2a4
+   103e0:      	ret

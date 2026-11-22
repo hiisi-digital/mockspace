@@ -11,7 +11,7 @@
 //! [`VerdictCache`], and a check that is handed none runs every time.
 
 /// Where saved verdicts live. Implemented by whoever runs the checks.
-pub trait VerdictCache {
+pub trait VerdictCache: Sync {
     /// A fixed-width digest of `parts`, stable across runs and machines for the same checker.
     ///
     /// The implementation frames the parts (a length before each) so two splittings of the same

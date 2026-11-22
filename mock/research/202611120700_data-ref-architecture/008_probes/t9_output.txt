@@ -1,0 +1,17 @@
+worktree add rc=0 ; list: m/mock/git~1  b95ef81 [data]
+status: []
+after add -A staged: []
+cargo at the old depth: OK
+data commit rc=0
+git checkout -qf 1ef0a255f2062845c291f74556b8c4b9cc97eee3 -> data edit survives=1
+git checkout -q new -> data edit survives=1
+git reset -q --hard 1ef0a255f2062845c291f74556b8c4b9cc97eee3 -> data edit survives=1
+git checkout -q -f dev -> data edit survives=1
+git reset -q --hard new -> data edit survives=1
+git stash -u -> data edit survives=1
+git clean -fd -> data edit survives=1
+git clean -fdx -> data edit survives=1
+(on dev at new: .gitignore present: yes)
+git clean -ffd -> data dir present=yes
+git clean -ffdx -> data dir present=no
+git clean -ffdX -> data dir present=no

@@ -70,7 +70,7 @@ pub struct ArmSource {
     pub arm:          String,
     /// The arm's source directory.
     pub dir:          PathBuf,
-    /// Whether the consumer wrote a `Cargo.toml` (the escape hatch).
+    /// Whether the arm carries a `Cargo.toml` of its own.
     /// Without one the tool generates the manifest.
     pub has_manifest: bool,
 }
@@ -188,6 +188,7 @@ pub fn load(benches_dir: &Path) -> Result<TreeManifest, BenchError> {
 
     manifest.nested_mode = !manifest.nested.is_empty();
     manifest.validate_roles()?;
+    check_names(&manifest)?;
     // A tree that resolves to nothing is a misconfiguration, not an empty
     // valid state: either the root declares no sections and no member
     // matched, or every pattern missed. Loading it successfully means the
@@ -204,6 +205,49 @@ pub fn load(benches_dir: &Path) -> Result<TreeManifest, BenchError> {
     }
     tree.manifest = manifest;
     Ok(tree)
+}
+
+/// Names the results layout keeps for itself, under `results/` or at the
+/// bench tree root, which no bench may take.
+const RESERVED_NAMES: [&str; 4] = [
+    mockspace_bench_layout::VOID_DIR,
+    mockspace_bench_layout::INDEX_FILE,
+    mockspace_bench_layout::RESULTS_DIR,
+    "history",
+];
+
+/// Whether `name` may name a bench or a sweep: one path component the layout
+/// can parse back ([`mockspace_bench_layout::is_name`]) and none it reserves.
+#[must_use]
+pub fn name_ok(name: &str) -> bool {
+    mockspace_bench_layout::is_name(name) && !RESERVED_NAMES.contains(&name)
+}
+
+/// Refuse a bench or a sweep whose name the results layout cannot carry: it
+/// becomes one directory of every run's path, `results/<bench>/<sweep>_n<point>/`,
+/// so a name with a slash, a space or a leading dot, or one the layout keeps
+/// for itself, would write runs no reader finds.
+fn check_names(manifest: &BenchManifest) -> Result<(), BenchError> {
+    for key in manifest.bench_names() {
+        let (bench, sweep) = manifest
+            .nested
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| (key.clone(), key.clone()));
+        for (what, name) in [("bench", &bench), ("sweep", &sweep)] {
+            if !name_ok(name) {
+                return Err(BenchError::InvalidConfig {
+                    reason: format!(
+                        "{what} `{name}` (of `{key}`) cannot name a directory of the results \
+                         layout: a name is one path component of ASCII letters, digits, `-`, \
+                         `_` and `.`, not starting with a dot, and not one of {RESERVED_NAMES:?}. \
+                         Rename it."
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The member directories the `[benchspace]` declaration selects,
@@ -750,11 +794,7 @@ mod tests {
     impl Tree {
         pub(super) fn new(name: &str) -> Tree {
             static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let root = std::env::temp_dir().join(format!(
-                "mockspace-benchspace-test-{}-{}-{name}",
-                std::process::id(),
-                SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            ));
+            let root = mockspace_manifest::scratch::held();
             std::fs::remove_dir_all(&root).ok();
             std::fs::create_dir_all(&root).unwrap();
             Tree {
@@ -804,7 +844,6 @@ mod tests {
             (c.bench.as_str(), c.sweep.as_str(), c.n),
             ("hash", "hash", 256)
         );
-        assert!(c.nested);
         let p = c.variant_paths[0].display().to_string();
         assert!(p.contains("target/mock-arms/hash/fnv/release/"), "{p}");
     }
@@ -898,7 +937,6 @@ mod tests {
             (clean.bench.as_str(), clean.sweep.as_str()),
             ("storage", "rsb_clean")
         );
-        assert!(clean.nested);
         // The member declared `passes` and nothing else, so that one knob
         // wins and every other falls through to the root. An undeclared knob
         // arriving as the framework default instead is the defect this pins:
@@ -954,7 +992,7 @@ mod tests {
     }
 
     #[test]
-    fn root_sections_and_members_coexist_and_root_cells_stay_flat() {
+    fn root_sections_and_members_coexist() {
         // A real tree's shape: 29 root sections plus one member.
         let t = Tree::new("mixed");
         t.write(
@@ -972,9 +1010,66 @@ mod tests {
         let tree = load(&t.root).unwrap();
         assert_eq!(tree.manifest.bench_names(), vec!["ema_axis_h", "hash"]);
         let root_cell = tree.manifest.for_size("ema_axis_h", 0, &t.root).unwrap();
-        assert!(!root_cell.nested, "root sections keep flat output naming");
+        assert_eq!((root_cell.bench.as_str(), root_cell.sweep.as_str()), ("ema_axis_h", "ema_axis_h"));
         let member_cell = tree.manifest.for_size("hash", 0, &t.root).unwrap();
-        assert!(member_cell.nested);
+        assert_eq!((member_cell.bench.as_str(), member_cell.sweep.as_str()), ("hash", "hash"));
+    }
+
+    /// A bench or sweep name the results layout cannot carry, or one it keeps
+    /// for itself, is refused when the manifest loads, naming it; the control
+    /// is the same tree under a plain name, which loads.
+    #[test]
+    fn a_name_the_layout_cannot_carry_is_refused_at_load() {
+        for (dir, sweep) in [("void", None), ("history", None), ("hash", Some("bad name")), ("group/hash", None)] {
+            let t = Tree::new("bad-name");
+            t.write("bench.toml", EMPTY_ROOT);
+            let body = match sweep {
+                Some(s) => format!(
+                    "title = \"t\"\nworkload = \"realistic\"\narms = [\"fnv\", \"xx\"]\n[sweep.\"{s}\"]\npoints = [64]\n"
+                ),
+                None => HASH_BENCH.to_string(),
+            };
+            t.write(&format!("{dir}/bench.toml"), &body);
+            t.mkdir(&format!("{dir}/arms/fnv/src")).mkdir(&format!("{dir}/arms/xx/src"));
+            let err = load(&t.root).expect_err(dir).to_string();
+            let named = sweep.unwrap_or(dir);
+            assert!(
+                err.contains("cannot name a directory of the results layout") && err.contains(named),
+                "{dir}: {err}"
+            );
+        }
+        let t = Tree::new("good-name");
+        t.write("bench.toml", EMPTY_ROOT);
+        t.write("hash/bench.toml", HASH_BENCH);
+        t.mkdir("hash/arms/fnv/src").mkdir("hash/arms/xx/src");
+        assert!(load(&t.root).is_ok());
+    }
+
+    /// Every name the manifest accepts gives a cell the layout parses back to
+    /// itself, over every string of up to four characters drawn from the
+    /// characters that are hard on the parse (`_n` and digits) and the ones a
+    /// name may or may not carry.
+    #[test]
+    fn every_accepted_name_round_trips_through_its_cell() {
+        let alphabet = ['a', 'n', '_', '1', '-', '.', '/', ' '];
+        let mut names: Vec<String> = vec![String::new()];
+        let mut all: Vec<String> = Vec::new();
+        for _ in 0 .. 4 {
+            names = names
+                .iter()
+                .flat_map(|p| alphabet.iter().map(move |c| format!("{p}{c}")))
+                .collect();
+            all.extend(names.iter().cloned());
+        }
+        let accepted: Vec<&String> = all.iter().filter(|n| name_ok(n)).collect();
+        assert!(accepted.len() > 1000, "the sample is not trivial: {}", accepted.len());
+        assert!(!name_ok("a/b") && !name_ok(".a") && !name_ok("void") && !name_ok(""), "the refusals");
+        for name in accepted {
+            for n in [0u64, 1, 64, 80_003, u64::MAX] {
+                let c = mockspace_bench_layout::Cell { sweep: name.clone(), n };
+                assert_eq!(mockspace_bench_layout::Cell::parse(&c.name()), Some(c.clone()), "`{name}` n={n}");
+            }
+        }
     }
 
     #[test]

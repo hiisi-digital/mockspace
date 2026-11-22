@@ -1,0 +1,13 @@
+diff --git a/bench-harness/src/disasm/normalize.rs b/bench-harness/src/disasm/normalize.rs
+index 2da28e8..4e9ac7a 100644
+--- a/bench-harness/src/disasm/normalize.rs
++++ b/bench-harness/src/disasm/normalize.rs
+@@ -64,7 +64,7 @@ pub(super) fn normalize_disasm(text: &str, flavour: Flavour) -> String {
+             normalized = folded;
+         }
+         if let Some(reg) = &adrp_reg
+-            && let Some(folded) = fold_adrp_companion_immediate(&normalized, reg)
++            && let Some(folded) = None::<String>.filter(|_| reg.is_empty())
+         {
+             normalized = folded;
+         }

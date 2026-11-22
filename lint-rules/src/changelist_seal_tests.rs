@@ -20,7 +20,7 @@ const DOC_DECLARED_EMPTY: &str = "# Doc changelist: none\n";
 /// A repository whose mock dir is its root, which is how most fixtures here are
 /// laid out.
 fn repo() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("design_rounds")).unwrap();
     // so a repository with no round in it yet still has a first commit
     std::fs::write(dir.path().join("mockspace.toml"), "").unwrap();
@@ -54,7 +54,7 @@ fn commit_all(root: &Path) {
 
 fn check_in(mock: &Path, root: &Path) -> Vec<LintError> {
     let crates = BTreeSet::new();
-    ChangelistSeal.check_repo(&RepoContext {
+    crate::testkit::check_repo(&ChangelistSeal, crate::RepoInput {
         mock_dir:    mock,
         repo_root:   root,
         all_crates:  &crates,
@@ -64,7 +64,6 @@ fn check_in(mock: &Path, root: &Path) -> Vec<LintError> {
         open_panels: &[],
         ref_files: &crate::src_layout::NO_REF_FILES,
         registry:    &Default::default(),
-        verdicts:    None,
     })
 }
 
@@ -268,7 +267,7 @@ fn before_the_first_commit_every_closed_round_is_judged() {
 #[test]
 fn a_mock_dir_under_the_root_reads_its_own_history() {
     for mock_name in ["mock", "linux"] {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let root = dir.path();
         let mock = root.join(mock_name);
         std::fs::create_dir_all(mock.join("design_rounds")).unwrap();
@@ -376,7 +375,7 @@ fn the_messages_name_a_verb_that_exists() {
     let dir = repo();
     put(dir.path(), "202609181236_changelist.doc.lock.md", TEMPLATE);
     put(dir.path(), "202609181236_changelist.doc.md", TEXT);
-    let findings = active_round_findings(&dir.path().join("design_rounds"));
+    let findings = active_round_findings(&crate::Reading::new(dir.path()).view(), &dir.path().join("design_rounds"));
     assert_eq!(findings.len(), 2, "{findings:?}");
     for finding in findings {
         assert!(finding.contains("`cargo mock unlock`"), "{finding}");
@@ -385,7 +384,7 @@ fn the_messages_name_a_verb_that_exists() {
 
 #[test]
 fn no_design_rounds_directory_is_nothing_to_judge() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     assert!(check(dir.path()).is_empty());
 }
 
@@ -427,10 +426,10 @@ fn only_a_bare_title_says_nothing() {
 
 #[test]
 fn a_file_that_cannot_be_read_is_not_called_empty() {
-    let dir = tempfile::tempdir().unwrap();
-    assert!(!says_nothing(&dir.path().join("absent.md")));
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
+    assert!(!says_nothing(&crate::Reading::new(dir.path()).view(), &dir.path().join("absent.md")));
     std::fs::write(dir.path().join("empty.md"), "").unwrap();
-    assert!(says_nothing(&dir.path().join("empty.md")));
+    assert!(says_nothing(&crate::Reading::new(dir.path()).view(), &dir.path().join("empty.md")));
 }
 
 #[test]

@@ -1,0 +1,13 @@
+default logAllRefUpdates: [true] ref reflog exists: no
+reset --hard HEAD~1: HEAD->refs/mock-wt/research@w1 ref=d1 head=d1 parent=; HEAD@{1}=local1; ORIG_HEAD=local1
+commit --amend: HEAD->refs/mock-wt/research@w1 ref=amended head=amended parent=d1
+rebase refs/mock/research: HEAD->refs/mock-wt/research@w1 ref=local1 head=local1 parent=d2-remote
+pull --rebase <explicit>: HEAD->refs/mock-wt/research@w1 ref=local1 head=local1 parent=d2-remote
+merge: HEAD->refs/mock-wt/research@w1 ref=Merge commit 'refs/mock/research' into refs/mock-wt/research@w1 head=Merge commit 'refs/mock/research' into refs/mock-wt/research@w1 parent=local1
+stash/pop: HEAD->refs/mock-wt/research@w1 ref=local1 head=local1 parent=d1 dirty=[ M N.md ]
+cherry-pick: HEAD->refs/mock-wt/research@w1 ref=d2-remote head=d2-remote parent=local1
+switch --detach then: HEAD->DETACHED ref=local1 head=local1 parent=d1
+checkout -b mine: HEAD->refs/heads/mine ref=local1 head=local1 parent=d1 (commits now go to refs/heads/mine)
+gc in main keeps the ref's commit: commit
+== the working ref made with update-ref --create-reflog, default config
+ref reflog exists: yes; refs/mock-wt/research@w1@{1} = local1

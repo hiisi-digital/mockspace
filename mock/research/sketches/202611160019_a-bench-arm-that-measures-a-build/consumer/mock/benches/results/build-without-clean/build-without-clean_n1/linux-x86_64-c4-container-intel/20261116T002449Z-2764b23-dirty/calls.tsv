@@ -1,0 +1,15 @@
+pid	call	compiled	absent_before	present_after	waited_on_lock	exit
+3304	1	4	true	true	false	0
+3304	2	0	false	true	false	0
+3375	1	0	false	true	false	0
+3375	2	0	false	true	false	0
+3390	1	0	false	true	false	0
+3390	2	0	false	true	false	0
+3406	1	0	false	true	false	0
+3406	2	0	false	true	false	0
+3421	1	0	false	true	false	0
+3421	2	0	false	true	false	0
+3439	1	0	false	true	false	0
+3439	2	0	false	true	false	0
+3454	1	0	false	true	false	0
+3454	2	0	false	true	false	0

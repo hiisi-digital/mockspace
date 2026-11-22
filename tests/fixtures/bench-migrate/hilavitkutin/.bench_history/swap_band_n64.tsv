@@ -1,0 +1,7 @@
+# schema_v1	timestamp	git_commit	benchmark	variant	n	mode	median_ns	ci_lo_ns	ci_hi_ns
+1784487015	8c3a949d	swap_band_n64	sb_none	64	warm	9945.8	9887.5	9962.5
+1784487015	8c3a949d	swap_band_n64	sb_plan	64	warm	14033.3	13983.3	14154.1
+1784487015	8c3a949d	swap_band_n64	sb_value	64	warm	22225.0	22179.2	22716.7
+1794698888	266650fb	swap_band_n64	sb_none	64	warm	10022.9	10022.9	10127.0
+1794698888	266650fb	swap_band_n64	sb_plan	64	warm	12531.2	12531.2	12666.6
+1794698888	266650fb	swap_band_n64	sb_value	64	warm	17822.9	17822.9	17912.5

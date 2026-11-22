@@ -1,0 +1,16 @@
+ID+glob  DEL prune=off fetch rc=0 local refs/mock/research                =newest   msg={}
+ID+glob  DEL prune=on  fetch rc=0 local refs/mock/research                =gone     msg={- [deleted]         (none)     -> refs/mock/research}
+ID+glob  REW prune=off fetch rc=0 local refs/mock/research                =REWOUND  msg={+ b5a63fb...08c9c5f refs/mock/research -> refs/mock/research  (forced update)}
+ID+glob  REW prune=on  fetch rc=0 local refs/mock/research                =REWOUND  msg={+ b5a63fb...08c9c5f refs/mock/research -> refs/mock/research  (forced update)}
+TR+      DEL prune=off fetch rc=128 local refs/remotes/mock/research        =newest   msg={fatal: couldn't find remote ref refs/mock/research}
+TR+      DEL prune=on  fetch rc=128 local refs/remotes/mock/research        =newest   msg={fatal: couldn't find remote ref refs/mock/research}
+TR+      REW prune=off fetch rc=0 local refs/remotes/mock/research        =REWOUND  msg={+ 8de4516...67a47e0 refs/mock/research -> mock/research  (forced update)}
+TR+      REW prune=on  fetch rc=0 local refs/remotes/mock/research        =REWOUND  msg={+ 8de4516...67a47e0 refs/mock/research -> mock/research  (forced update)}
+TR-      DEL prune=off fetch rc=128 local refs/remotes/mock/research        =newest   msg={fatal: couldn't find remote ref refs/mock/research}
+TR-      DEL prune=on  fetch rc=128 local refs/remotes/mock/research        =newest   msg={fatal: couldn't find remote ref refs/mock/research}
+TR-      REW prune=off fetch rc=1 local refs/remotes/mock/research        =newest   msg={! [rejected]        refs/mock/research -> mock/research  (non-fast-forward)}
+TR-      REW prune=on  fetch rc=1 local refs/remotes/mock/research        =newest   msg={! [rejected]        refs/mock/research -> mock/research  (non-fast-forward)}
+ID-      DEL prune=off fetch rc=128 local refs/mock/research                =newest   msg={fatal: couldn't find remote ref refs/mock/research}
+ID-      DEL prune=on  fetch rc=128 local refs/mock/research                =newest   msg={fatal: couldn't find remote ref refs/mock/research}
+ID-      REW prune=off fetch rc=1 local refs/mock/research                =newest   msg={! [rejected]        refs/mock/research -> refs/mock/research  (non-fast-forward)}
+ID-      REW prune=on  fetch rc=1 local refs/mock/research                =newest   msg={! [rejected]        refs/mock/research -> refs/mock/research  (non-fast-forward)}

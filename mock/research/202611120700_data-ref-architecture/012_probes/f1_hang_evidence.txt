@@ -1,0 +1,11 @@
+ 1269 28847       08:39          |   |   \_ bash f1_fsmonitor_through_git_shook.sh /tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/012/f1b
+ 1275  1269       08:39          |   |       \_ git status --short
+ 1278  1275       08:39          |   |           \_ /bin/sh <scratch>/r/.shook/hooks/fsmonitor-watchman 2 1794471499011534682
+ 1292  1278       08:39          |   |               \_ cat
+28848 28845       08:45          |   \_ tee f1_output.txt
+28849 28845       08:45          |   \_ cut -c1-190
+--
+10682  9748       00:01          |       \_ sleep 2
+10685 10684       00:00              \_ ps -eo pid,ppid,etime,cmd --forest
+10688 10684       00:00              \_ sed s#/tmp/claude-0/[^ ]*scratchpad/012/f1b/#<scratch>/#g
+10689 10684       00:00              \_ cut -c1-170

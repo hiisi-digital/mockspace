@@ -247,6 +247,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 name = "mockspace"
 version = "0.0.2"
 dependencies = [
+ "libc",
  "libloading",
  "mockspace-bench-harness",
  "mockspace-lint-rules",
@@ -274,9 +275,19 @@ version = "0.0.0"
 dependencies = [
  "libloading",
  "mockspace-bench-core",
+ "mockspace-bench-layout",
  "mockspace-manifest",
  "serde",
+ "serde_json",
+ "sha2",
  "toml",
+]
+
+[[package]]
+name = "mockspace-bench-layout"
+version = "0.0.0"
+dependencies = [
+ "mockspace-manifest",
 ]
 
 [[package]]
@@ -304,6 +315,7 @@ name = "mockspace-lint-rules"
 version = "0.0.0"
 dependencies = [
  "letkajenkka",
+ "mockspace-bench-layout",
  "mockspace-manifest",
  "mockspace-refnames",
  "mockspace-verdicts",
@@ -362,6 +374,12 @@ version = "0.0.0"
 dependencies = [
  "mockspace-bench-core",
 ]
+
+[[package]]
+name = "notko"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4856ec4bc0c44e913b2f2ac9804a7ef71a56477c27d0534cab579d2fe0ae957a"
 
 [[package]]
 name = "once_cell"
@@ -440,12 +458,34 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "renki"
-version = "0.0.1"
+version = "0.0.5-rc.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73d5bf35752f3e3da67d0dfb6a969f876c39d400754813c4d53ae179d083464e"
+checksum = "f5ee0a66e17a66fbcf27d7414369237080163ffa3c5014beace70716fbc6f5a2"
 dependencies = [
+ "notko",
+ "renki-config",
+ "renki-dirs",
  "serde",
  "toml",
+ "toml_edit",
+]
+
+[[package]]
+name = "renki-config"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e51f398fb4ec01ac3416363e09d238e9bd0fd563230330bd6ba1fa92840146be"
+dependencies = [
+ "notko",
+]
+
+[[package]]
+name = "renki-dirs"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "250b59018b615caeafde41cade76b67c87be88ba525a73ef8a3e5a93ba0d29e2"
+dependencies = [
+ "notko",
 ]
 
 [[package]]

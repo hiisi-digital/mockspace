@@ -9,10 +9,8 @@ workload = "default"
 master_seed = 0x1234_5678_9ABC_DEF0
 
 # Variant entries hold the cargo target stem (no `lib` prefix, no
-# `.dylib`/`.so`/`.dll` suffix). The bench bin shapes each path with
-# DLL_PREFIX + DLL_SUFFIX at startup so this manifest is portable
-# across host platforms. v3 may hoist that into the harness so each
-# consumer does not redo the dance.
+# `.dylib`/`.so`/`.dll` suffix). The harness shapes each path with the
+# platform prefix and suffix, so this manifest is portable across hosts.
 [[bench.hash-mix.sizes]]
 n = 1
 variants = [

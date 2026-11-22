@@ -1,0 +1,5 @@
+files: 30000, git 2.43.0
+A no fsmonitor:              35 ms
+B floor:                     49 ms
+D snapshot every command:    109 ms
+D after one file edited:     160 ms  snapshot holds edit: 1

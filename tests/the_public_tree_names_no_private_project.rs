@@ -43,7 +43,7 @@ use std::process::Command;
 /// says so. Deriving it would mean a network call from a test, which is worse;
 /// what is written down instead is that the list is a snapshot of a fact that
 /// can move.
-const PRIVATE: &[&str] = &["clause-dev", "kolli", "ikiuni", "loisto", "loimu", "saalis"];
+const PRIVATE: &[&str] = &["clause-dev", "kolli", "ikiuni", "loisto", "loimu", "saalis", "kirjo", "kaski"];
 
 /// Where a path on somebody's own machine gives itself away.
 ///
@@ -545,7 +545,7 @@ fn the_publish_scan_reaches_every_member_including_this_one() {
 
     // And the parse itself, on text rather than on this repository, so the two
     // assertions above cannot both hold by accident of one hand-written array.
-    let d = tempfile::tempdir().expect("no tempdir");
+    let d = mockspace_manifest::scratch::tempdir().expect("no tempdir");
     std::fs::write(
         d.path().join("Cargo.toml"),
         "[workspace]\nmembers = [\n    \".\",\n    \"a/b/c\",\n]\n\n[package]\nname = \"x\"\n",

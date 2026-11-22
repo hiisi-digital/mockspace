@@ -19,10 +19,6 @@ const LINT_NAME: &str = "no-todo";
 pub struct NoTodo;
 
 impl Lint for NoTodo {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::File
-    }
-
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::PUSH_GATE
     }
@@ -35,7 +31,7 @@ impl Lint for NoTodo {
 impl CrateLint for NoTodo {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
-        let root = ctx.tree.root_node();
+        let root = ctx.tree().root_node();
         find_todo_macros(root, ctx, &mut errors);
         errors
     }
@@ -44,7 +40,7 @@ impl CrateLint for NoTodo {
 fn find_todo_macros(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     if node.kind() == "macro_invocation" {
         if let Some(name_node) = node.child_by_field_name("macro") {
-            let name = &ctx.source[name_node.byte_range()];
+            let name = &ctx.source()[name_node.byte_range()];
             if name == "todo" || name == "todo!" {
                 errors.push(LintError::push_error(
                     ctx.crate_name.to_string(),

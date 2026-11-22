@@ -179,7 +179,7 @@ fn the_push_branches_pass_these_arguments() {
 /// the config is named only where it lives: the repo root and the mock directory.
 #[test]
 fn a_fixture_named_like_the_config_stays_scoped_to_its_crate() {
-    let fixture = "mock/applets/console/crates/console-core/tests/fixture/kaski/mockspace.toml";
+    let fixture = "mock/applets/console/crates/console-core/tests/fixture/game/mockspace.toml";
     let (out, args) = commit_run(KASKI, &[(CONSOLE_SRC, "fn x() {}\n"), (fixture, "x = 1\n")]);
     assert_eq!(
         args, "mock --lint-only --commit --scope console-core",

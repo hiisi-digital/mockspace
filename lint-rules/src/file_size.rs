@@ -46,10 +46,6 @@ impl FileSize {
 }
 
 impl Lint for FileSize {
-    fn reach(&self) -> crate::Reach {
-        crate::Reach::Crate
-    }
-
     /// Crate-scoped. It walks `all_sources` itself, so running it per file
     /// would measure every file once per file.
     fn per_file(&self) -> bool {
@@ -96,20 +92,20 @@ impl CrateLint for FileSize {
 
         // Every file under `src/`, not just the crate root. A crate root
         // declares modules and the code lives in siblings, so measuring
-        // `ctx.source` alone measures the smallest file in the crate and
+        // `ctx.source()` alone measures the smallest file in the crate and
         // reports clean however large the rest are.
         //
         // `all_sources` falls back to the crate root when empty, so a caller
         // that builds a context without it still gets the old behaviour rather
         // than silently getting no coverage at all.
         let mut errors = Vec::new();
-        if ctx.all_sources.is_empty() {
-            if let Some(err) = self.measure(ctx, "src/lib.rs", ctx.source) {
+        if ctx.all_sources().is_empty() {
+            if let Some(err) = self.measure(ctx, "src/lib.rs", ctx.source()) {
                 errors.push(err);
             }
             return errors;
         }
-        for file in ctx.all_sources {
+        for file in ctx.all_sources() {
             let path = file.rel_path.to_string_lossy();
             if let Some(err) = self.measure(ctx, &path, &file.text) {
                 errors.push(err);
@@ -181,41 +177,11 @@ impl FileSize {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
     use super::*;
-    use crate::CrateSourceFile;
+    use crate::testkit::LintFixture;
 
-    fn make_ctx(source: &str) -> LintContext<'_> {
-        make_ctx_with(source, &[])
-    }
-
-    fn make_ctx_with<'a>(source: &'a str, all: &'a [CrateSourceFile]) -> LintContext<'a> {
-        static EMPTY: &str = "";
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_rust::LANGUAGE.into())
-            .unwrap();
-        let tree = parser.parse(EMPTY, None).unwrap();
-        let tree: &'static tree_sitter::Tree = Box::leak(Box::new(tree));
-
-        LintContext {
-            crate_name: "test-crate",
-            short_name: "test-crate",
-            source,
-            tree,
-            all_sources: all,
-            deps: &[],
-            all_crates: Box::leak(Box::new(BTreeSet::new())),
-            design_doc: None,
-            all_doc_content: "",
-            shame_doc: None,
-            workspace_root: std::path::Path::new("/tmp"),
-            proc_macro_crates: &[],
-            crate_prefix: "test",
-            lint_proc_macro_source: false,
-            primitive_introductions: Box::leak(Box::new(std::collections::BTreeMap::new())),
-        }
+    fn make_ctx(source: &str) -> LintContext<'static> {
+        Box::leak(Box::new(LintFixture::new(source))).ctx()
     }
 
     #[test]
@@ -291,10 +257,8 @@ mod tests {
 
 #[cfg(test)]
 mod module_file_tests {
-    use std::collections::BTreeSet;
-
     use super::*;
-    use crate::CrateSourceFile;
+    use crate::testkit::LintFixture;
 
     /// A crate whose root is small but whose module file is far over the limit.
     ///
@@ -311,39 +275,8 @@ mod module_file_tests {
         let big: String = (0 .. 600)
             .map(|i| format!("pub fn f{i}() {{}}\n"))
             .collect();
-        let all = vec![
-            CrateSourceFile {
-                rel_path: std::path::PathBuf::from("src/lib.rs"),
-                text:     "pub mod huge;\n".to_string(),
-            },
-            CrateSourceFile {
-                rel_path: std::path::PathBuf::from("src/huge.rs"),
-                text:     big,
-            },
-        ];
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_rust::LANGUAGE.into())
-            .unwrap();
-        let tree = parser.parse("", None).unwrap();
-        let tree: &'static tree_sitter::Tree = Box::leak(Box::new(tree));
-        let ctx = LintContext {
-            crate_name: "test-crate",
-            short_name: "test-crate",
-            source: "pub mod huge;\n",
-            tree,
-            all_sources: &all,
-            deps: &[],
-            all_crates: Box::leak(Box::new(BTreeSet::new())),
-            design_doc: None,
-            all_doc_content: "",
-            shame_doc: None,
-            workspace_root: std::path::Path::new("/tmp"),
-            proc_macro_crates: &[],
-            crate_prefix: "test",
-            lint_proc_macro_source: false,
-            primitive_introductions: Box::leak(Box::new(std::collections::BTreeMap::new())),
-        };
+        let fixture = LintFixture::new("pub mod huge;\n").with_module("src/huge.rs", &big);
+        let ctx = fixture.ctx();
 
         let errs = FileSize::new().check(&ctx);
         assert_eq!(

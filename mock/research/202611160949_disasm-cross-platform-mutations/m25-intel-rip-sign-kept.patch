@@ -1,0 +1,13 @@
+diff --git a/bench-harness/src/disasm/normalize.rs b/bench-harness/src/disasm/normalize.rs
+index 2da28e8..e78cafd 100644
+--- a/bench-harness/src/disasm/normalize.rs
++++ b/bench-harness/src/disasm/normalize.rs
+@@ -254,7 +254,7 @@ pub(super) fn fold_rip_relative(insn: &str) -> String {
+             .filter(|t| !t.is_empty())
+             .collect();
+         if tokens.contains(&"rip") {
+-            folded.push_str(if tokens.len() > 1 { "rip+ADDR" } else { "rip" });
++            folded.push_str(inner);
+         } else {
+             folded.push_str(inner);
+         }

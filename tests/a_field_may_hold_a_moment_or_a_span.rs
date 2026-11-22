@@ -78,7 +78,7 @@ fn outcome(ty: &str, value: &str) -> (bool, String) {
         taplo_present(),
         "the form is enforced by taplo. Install taplo to run this suite."
     );
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture(tmp.path(), ty, value);
     let out = run(tmp.path());
     (
@@ -175,7 +175,7 @@ fn outcome_literal(ty: &str, literal: &str) -> (bool, String) {
         taplo_present(),
         "the form is enforced by taplo. Install taplo to run this suite."
     );
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     fixture_literal(tmp.path(), ty, literal);
     let out = run(tmp.path());
     (

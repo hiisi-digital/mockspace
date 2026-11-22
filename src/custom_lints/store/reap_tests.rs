@@ -34,7 +34,7 @@ fn reap_now(base: &Path, keep: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn a_key_whose_owner_worktree_is_gone_is_removed() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let base = tmp.path().join("store");
     let alive = tmp.path().join("wt");
     std::fs::create_dir_all(&alive).unwrap();
@@ -56,7 +56,7 @@ fn a_key_whose_owner_worktree_is_gone_is_removed() {
 
 #[test]
 fn a_key_unused_past_the_window_is_removed_though_its_owner_exists() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let base = tmp.path().join("store");
     let alive = tmp.path().join("wt");
     std::fs::create_dir_all(&alive).unwrap();
@@ -70,7 +70,7 @@ fn a_key_unused_past_the_window_is_removed_though_its_owner_exists() {
 
 #[test]
 fn the_key_this_run_is_using_is_never_removed() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let base = tmp.path().join("store");
     // abandoned on both counts, and ours
     let ours = key_dir(&base, KEPT, &tmp.path().join("deleted"), STALE_AFTER + DAYS);
@@ -80,7 +80,7 @@ fn the_key_this_run_is_using_is_never_removed() {
 
 #[test]
 fn a_key_in_use_by_another_run_survives_and_goes_once_it_is_released() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let base = tmp.path().join("store");
     let busy = key_dir(&base, K1, &tmp.path().join("deleted"), STALE_AFTER + DAYS);
 
@@ -99,7 +99,7 @@ fn a_key_in_use_by_another_run_survives_and_goes_once_it_is_released() {
 
 #[test]
 fn a_run_that_waited_on_a_removed_key_starts_again_in_a_fresh_one() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let base = tmp.path().join("store");
     let dir = key_dir(&base, K1, &tmp.path().join("deleted"), STALE_AFTER + DAYS);
 
@@ -116,7 +116,7 @@ fn a_run_that_waited_on_a_removed_key_starts_again_in_a_fresh_one() {
 
 #[test]
 fn only_key_named_directories_are_candidates() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let base = tmp.path().join("store");
     std::fs::create_dir_all(base.join(".pack-pins")).unwrap();
     std::fs::create_dir_all(base.join("notes")).unwrap();
@@ -133,7 +133,7 @@ fn only_key_named_directories_are_candidates() {
 
 #[test]
 fn a_directory_a_peer_is_still_creating_is_not_taken() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let base = tmp.path().join("store");
     // no lock file, no owner, no stamp: between `create_dir_all` and the lock
     let new = base.join(K1);
@@ -150,13 +150,13 @@ fn a_directory_a_peer_is_still_creating_is_not_taken() {
 
 #[test]
 fn a_missing_store_reaps_nothing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     assert!(reap_now(&tmp.path().join("never-made"), &tmp.path().join("x")).is_empty());
 }
 
 #[test]
 fn a_run_stamps_its_key_as_used() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let base = tmp.path().join("store");
     let alive = tmp.path().join("wt");
     std::fs::create_dir_all(&alive).unwrap();

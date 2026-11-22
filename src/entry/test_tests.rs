@@ -138,14 +138,8 @@ fn no_shared_directory_means_no_redirect_for_anyone() {
 /// crate without one is not a root however it got past `is_orphaned`.
 #[test]
 fn a_root_is_the_manifest_declaring_a_workspace_and_nothing_else() {
-    let tmp = std::env::temp_dir().join(format!(
-        "mockspace-test-own-root-{}-{:?}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    ));
+    let tmp_guard = mockspace_manifest::scratch::tempdir().unwrap();
+    let tmp = tmp_guard.path().to_path_buf();
     let root = tmp.join("is-a-root");
     let member = tmp.join("is-a-member");
     std::fs::create_dir_all(&root).unwrap();

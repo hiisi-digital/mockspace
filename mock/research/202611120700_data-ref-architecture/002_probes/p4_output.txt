@@ -1,0 +1,8 @@
+checkout OLD ; checkout -f dev               -> real file: EDIT   | via path: cat: mock/research/N.md: No such file or directory | symlink: gone
+checkout -f OLD ; checkout -f dev            -> real file: EDIT   | via path: cat: mock/research/N.md: No such file or directory | symlink: gone
+checkout OLD ; reset --hard dev              -> real file: EDIT   | via path: cat: mock/research/N.md: No such file or directory | symlink: gone
+checkout -f OLD ; reset --hard dev           -> real file: EDIT   | via path: cat: mock/research/N.md: No such file or directory | symlink: gone
+checkout OLD ; checkout dev (plain)          -> real file: EDIT   | via path: cat: mock/research/N.md: No such file or directory | symlink: gone
+reset --hard OLD ; reset --hard dev          -> real file: EDIT   | via path: old | symlink: gone
+clean -fdx : symlink gone, real file EDIT
+clean -ffdx: symlink gone, real file EDIT

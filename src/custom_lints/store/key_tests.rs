@@ -9,17 +9,20 @@ const PACK: &str = r#"{ git = "https://example.invalid/pack.git", rev = "1111111
 const TIP_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TIP_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
-/// The manifest path as a run reaches it: the packs resolved first, once, and
-/// the key made from what that gave.
-fn path_of(
+/// The manifest path as a run reaches it.
+fn path_of(base: &Path, mock: &Path) -> PathBuf {
+    lints_manifest_path(base, &Config::from_dir(mock), None)
+}
+
+/// The revision as a run reaches it: the packs resolved first, once, and the
+/// revision made from what that gave.
+fn revision_of(
     base: &Path,
-    mock: &Path,
     dep: &str,
     packs: &[(String, String)],
     resolve: &dyn Fn(&str, &str) -> Result<String, String>,
-) -> PathBuf {
-    let packs = resolve_packs(packs, &base.join(".pack-pins"), resolve);
-    lints_manifest_path(base, &Config::from_dir(mock), dep, &packs, None)
+) -> String {
+    revision(dep, &resolve_packs(packs, &base.join(".pack-pins"), resolve))
 }
 
 fn no_remote(_: &str, _: &str) -> Result<String, String> {
@@ -27,12 +30,11 @@ fn no_remote(_: &str, _: &str) -> Result<String, String> {
 }
 
 #[test]
-fn two_worktrees_of_one_consumer_at_the_same_revs_share_one_manifest_path() {
+fn two_worktrees_of_one_consumer_share_one_manifest_path() {
     let c = consumer("ssh://git@example.invalid/o/consumer.git");
     let base = Path::new("/shared");
-    let packs = vec![("pack".to_string(), PACK.to_string())];
-    let a = path_of(base, &c.main.join("mock"), DEP, &packs, &no_remote);
-    let b = path_of(base, &c.other.join("mock"), DEP, &packs, &no_remote);
+    let a = path_of(base, &c.main.join("mock"));
+    let b = path_of(base, &c.other.join("mock"));
     assert_eq!(a, b);
     assert!(
         a.starts_with(base),
@@ -47,65 +49,40 @@ fn a_clone_at_another_path_with_the_same_remote_shares_it_too() {
     let a = consumer("https://example.invalid/o/consumer.git");
     let b = consumer("ssh://git@example.invalid/o/consumer");
     let base = Path::new("/shared");
-    assert_eq!(
-        path_of(base, &a.main.join("mock"), DEP, &[], &no_remote),
-        path_of(base, &b.main.join("mock"), DEP, &[], &no_remote),
-    );
+    assert_eq!(path_of(base, &a.main.join("mock")), path_of(base, &b.main.join("mock")));
 }
 
 #[test]
-fn a_changed_rev_gets_a_different_manifest_path() {
-    let c = consumer("ssh://git@example.invalid/o/consumer.git");
+fn a_changed_rev_is_another_revision_of_the_same_crate() {
     let base = Path::new("/shared");
-    let mock = c.main.join("mock");
     let packs = vec![("pack".to_string(), PACK.to_string())];
-    let here = path_of(base, &mock, DEP, &packs, &no_remote);
+    let here = revision_of(base, DEP, &packs, &no_remote);
+    assert_eq!(here, revision_of(base, DEP, &packs, &no_remote), "the control: the same revs are one revision");
 
     let engine = DEP.replace("aaaaaaa", "bbbbbbb");
-    assert_ne!(
-        here,
-        path_of(base, &mock, &engine, &packs, &no_remote),
-        "engine rev"
-    );
+    assert_ne!(here, revision_of(base, &engine, &packs, &no_remote), "engine rev");
 
     let moved = vec![("pack".to_string(), PACK.replace("1111111", "2222222"))];
-    assert_ne!(
-        here,
-        path_of(base, &mock, DEP, &moved, &no_remote),
-        "pack rev"
-    );
+    assert_ne!(here, revision_of(base, DEP, &moved, &no_remote), "pack rev");
 
     let none: Vec<(String, String)> = Vec::new();
-    assert_ne!(
-        here,
-        path_of(base, &mock, DEP, &none, &no_remote),
-        "pack set"
-    );
+    assert_ne!(here, revision_of(base, DEP, &none, &no_remote), "pack set");
 }
 
 #[test]
-fn a_branch_pack_whose_tip_moved_gets_a_different_manifest_path() {
-    let c = consumer("ssh://git@example.invalid/o/consumer.git");
-    let mock = c.main.join("mock");
+fn a_branch_pack_whose_tip_moved_is_another_revision() {
     let packs = vec![(
         "pack".to_string(),
         r#"{ git = "https://example.invalid/pack.git", branch = "dev" }"#.to_string(),
     )];
     // each call gets a pin cache of its own, so each reads the tip fresh: the
     // two resolvers are the remote at two moments
-    let key = |tip: &'static str| {
-        let base = tempfile::tempdir().unwrap();
-        let p = path_of(base.path(), &mock, DEP, &packs, &move |_: &str, _: &str| {
-            Ok(tip.to_string())
-        });
-        p.parent().unwrap().file_name().unwrap().to_owned()
+    let rev = |tip: &'static str| {
+        let base = mockspace_manifest::scratch::tempdir().unwrap();
+        revision_of(base.path(), DEP, &packs, &move |_: &str, _: &str| Ok(tip.to_string()))
     };
-    assert_ne!(key(TIP_A), key(TIP_B));
-    assert_eq!(
-        key(TIP_A),
-        key(TIP_A),
-        "the control: the same tip is the same key"
-    );
+    assert_ne!(rev(TIP_A), rev(TIP_B));
+    assert_eq!(rev(TIP_A), rev(TIP_A), "the control: the same tip is the same revision");
 }
 
 #[test]
@@ -113,10 +90,7 @@ fn another_consumer_does_not_share_the_manifest_path() {
     let a = consumer("https://example.invalid/o/one.git");
     let b = consumer("https://example.invalid/o/two.git");
     let base = Path::new("/shared");
-    assert_ne!(
-        path_of(base, &a.main.join("mock"), DEP, &[], &no_remote),
-        path_of(base, &b.main.join("mock"), DEP, &[], &no_remote),
-    );
+    assert_ne!(path_of(base, &a.main.join("mock")), path_of(base, &b.main.join("mock")));
 }
 
 #[test]
@@ -147,13 +121,7 @@ fn the_name_sanitiser_changes_what_cargo_would_refuse_and_nothing_a_real_key_hol
     // one name, which would make two keys one package, so it must be the
     // identity on every key a manifest path actually carries.
     let c = consumer("ssh://git@example.invalid/o/consumer.git");
-    let manifest = path_of(
-        Path::new("/shared"),
-        &c.main.join("mock"),
-        DEP,
-        &[],
-        &no_remote,
-    );
+    let manifest = path_of(Path::new("/shared"), &c.main.join("mock"));
     let key = manifest
         .parent()
         .unwrap()
@@ -261,25 +229,20 @@ fn a_tool_scoped_build_has_a_manifest_path_of_its_own() {
     let c = consumer("ssh://git@example.invalid/o/consumer.git");
     let cfg = Config::from_dir(&c.main.join("mock"));
     let base = Path::new("/shared");
-    let whole = lints_manifest_path(base, &cfg, DEP, &[], None);
-    let add = lints_manifest_path(base, &cfg, DEP, &[], Some("ticket-add"));
-    let mv = lints_manifest_path(base, &cfg, DEP, &[], Some("ticket-move"));
+    let whole = lints_manifest_path(base, &cfg, None);
+    let add = lints_manifest_path(base, &cfg, Some("ticket-add"));
+    let mv = lints_manifest_path(base, &cfg, Some("ticket-move"));
     assert_ne!(whole, add, "a scoped build must not overwrite the whole one");
     assert_ne!(add, mv, "two scopes are two builds");
 }
 
 #[test]
-fn a_whole_build_keeps_the_key_it_always_had() {
+fn a_whole_build_has_the_key_of_its_repo_alone() {
     // The key names a directory that outlives the binary. A golden value, so a change to the text it hashes
-    // is a failure here and not a quietly orphaned build per repository. Packs are present, since the
-    // scope line is appended after them.
-    let packs = vec![(
-        "some-pack".to_string(),
-        r#"{ git = "https://example.invalid/pack.git", rev = "1111111" }"#.to_string(),
-    )];
-    let key = lint_crate_key("remote:example.invalid/o/consumer", Path::new("mock"), DEP, &packs, None);
+    // is a failure here and not a quietly orphaned build per repository.
+    let key = lint_crate_key("remote:example.invalid/o/consumer", Path::new("mock"), None);
     assert_eq!(format!("{key:016x}"), GOLDEN_WHOLE_KEY);
-    let scoped = lint_crate_key("remote:example.invalid/o/consumer", Path::new("mock"), DEP, &packs, Some("t"));
+    let scoped = lint_crate_key("remote:example.invalid/o/consumer", Path::new("mock"), Some("t"));
     assert_ne!(key, scoped);
 }
-const GOLDEN_WHOLE_KEY: &str = "3040726b2cef6a9f"; // fnv1a of the original key text, computed apart from the code
+const GOLDEN_WHOLE_KEY: &str = "115bd267c20b34cb"; // fnv1a of the key text, computed apart from the code

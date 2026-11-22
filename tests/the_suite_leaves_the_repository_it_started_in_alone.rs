@@ -178,7 +178,7 @@ fn the_suite_leaves_the_repository_it_started_in_alone() {
     if std::env::var_os(CHILD).is_some() {
         return;
     }
-    let base = tempfile::tempdir().unwrap();
+    let base = mockspace_manifest::scratch::tempdir().unwrap();
     let clone = clone_in(base.path());
     let before = snapshot(&clone);
 
@@ -235,7 +235,7 @@ fn every_top_level_target_declares_the_scrub() {
 
 #[test]
 fn a_target_without_the_scrub_is_named() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     let bare = dir.path().join("bare.rs");
     fs::write(
         &bare,
@@ -325,7 +325,7 @@ fn every_member_that_spawns_git_scrubs_its_tests() {
 
 #[test]
 fn a_member_that_spawns_git_without_the_scrub_is_named() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
     for (name, lib) in [
         ("bare", "fn f() { std::process::Command::new(\"git\"); }\n"),
         (

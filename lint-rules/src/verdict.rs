@@ -3,59 +3,22 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-//! Saved verdicts: the seam the engine plugs a store into, and what goes into a key.
+//! Saved verdicts: the seam the engine plugs a store into, what a lint is keyed on, and how
+//! findings are written down.
 //!
-//! This crate hashes nothing and writes nothing. It says **what a verdict depends on**
-//! ([`file_scalars`], [`crate_digest`], [`behaviour_material`]) and **how findings are written
-//! down** ([`encode`], [`decode`]); the engine supplies the digest and the store through
-//! [`VerdictCache`]. Keeping the hash out of here means a lint pack, which links this crate, gains
-//! no dependency from the cache.
-//!
-//! **A key holds what the lint declared it reads, and no more.** For a lint whose declared reach is
-//! honest, that is every input its verdict can depend on, so a hit replays what a run would have
-//! found and a miss runs the lint. Honesty of a declaration is sampled by `reach_check`, which moves
-//! the inputs a lint claims not to read; it is not proved. The severity a project configures
-//! is not an input: it is applied to findings after the lint ran, by the runner, to a replayed
-//! finding exactly as to a fresh one, so changing it never invalidates anything.
+//! This crate hashes nothing and writes nothing to disk itself. The engine supplies the digest and
+//! the store through [`VerdictCache`]; [`crate::reading::Store`] keeps each unit's traces and
+//! findings through it. Keeping the hash out of here means a lint pack, which links this crate,
+//! gains no dependency from the cache. The severity a project configures is not part of a key: the
+//! runner applies it to replayed findings exactly as to fresh ones.
 
-use crate::{Level, LintConfig, LintContext, LintError, Severity};
+use crate::{Level, LintConfig, LintError, Severity};
 
 /// Where saved verdicts live, implemented by the engine: the one trait every check that replays
 /// shares. The engine's `tally` feeds its timing report; it is a method of the trait and not a call
 /// into the timing table because a lint pack carries its own copy of this crate, whose table the
 /// engine never prints.
 pub use mockspace_verdicts::VerdictCache;
-
-/// A store that mixes one lint's behaviour material into every digest it makes, so a verdict a repo
-/// lint saves through [`crate::RepoContext::remembered`] is keyed on how that lint was configured
-/// without the lint having to say so.
-pub(crate) struct Salted<'a> {
-    /// The store behind.
-    pub inner: &'a dyn VerdictCache,
-    /// What goes in front of every digest's parts.
-    pub salt:  String,
-}
-
-impl VerdictCache for Salted<'_> {
-    fn digest(&self, parts: &[&[u8]]) -> String {
-        let mut all: Vec<&[u8]> = Vec::with_capacity(parts.len() + 1);
-        all.push(self.salt.as_bytes());
-        all.extend_from_slice(parts);
-        self.inner.digest(&all)
-    }
-
-    fn replay(&self, key: &str) -> Option<String> {
-        self.inner.replay(key)
-    }
-
-    fn remember(&self, key: &str, encoded: &str) {
-        self.inner.remember(key, encoded);
-    }
-
-    fn tally(&self, hit: bool, lint: &str) {
-        self.inner.tally(hit, lint);
-    }
-}
 
 /// Where a lint came from, which is part of what it is: two lints of one kind can share a name when a
 /// pack declares one a built-in does, and they must not share a verdict.
@@ -102,173 +65,6 @@ pub(crate) fn behaviour_material(lint_name: &str, origin: Origin, cfg: Option<&L
     out
 }
 
-/// What a file-reach lint can see of a context besides the file's text.
-///
-/// The scalars `Reach::File` is allowed to read: the crate's name and short name, the prefix, the
-/// two proc-macro answers, and the primitives this crate introduces. Nothing else of the context.
-#[must_use]
-pub(crate) fn file_scalars(ctx: &LintContext) -> String {
-    let mut introduced: Vec<&str> = ctx
-        .primitive_introductions
-        .get(ctx.crate_name)
-        .map(|l| l.iter().map(String::as_str).collect())
-        .unwrap_or_default();
-    introduced.sort_unstable();
-    format!(
-        "crate\0{}\0{}\0{}\0{}\0{}\0{}",
-        ctx.crate_name,
-        ctx.short_name,
-        ctx.crate_prefix,
-        ctx.is_proc_macro_crate(),
-        ctx.lint_proc_macro_source,
-        introduced.join(","),
-    )
-}
-
-/// The digest of everything a crate-reach lint can see of a context.
-///
-/// Every source file by path and text, the design document, the concatenated doc templates, the
-/// SHAME template, the dependency list, the names of every crate in the workspace, and the
-/// scalars a file-reach lint sees. Computed once per crate per run and shared by every lint.
-#[must_use]
-pub(crate) fn crate_digest(cache: &dyn VerdictCache, ctx: &LintContext) -> String {
-    let scalars = file_scalars(ctx);
-    let mut deps: Vec<&str> = ctx.deps.iter().map(String::as_str).collect();
-    deps.sort_unstable();
-    let deps = deps.join("\0");
-    let all_crates = ctx.all_crates.iter().map(String::as_str).collect::<Vec<_>>().join("\0");
-    let proc_macro_crates = ctx.proc_macro_crates.join("\0");
-
-    let mut parts: Vec<&[u8]> = vec![
-        b"crate-digest",
-        scalars.as_bytes(),
-        deps.as_bytes(),
-        all_crates.as_bytes(),
-        proc_macro_crates.as_bytes(),
-        ctx.design_doc.unwrap_or("\u{1}absent").as_bytes(),
-        ctx.all_doc_content.as_bytes(),
-        ctx.shame_doc.unwrap_or("\u{1}absent").as_bytes(),
-    ];
-    let paths: Vec<String> = ctx
-        .all_sources
-        .iter()
-        .map(|f| f.rel_path.to_string_lossy().into_owned())
-        .collect();
-    for (file, path) in ctx.all_sources.iter().zip(&paths) {
-        parts.push(path.as_bytes());
-        parts.push(file.text.as_bytes());
-    }
-    cache.digest(&parts)
-}
-
-// ---------------------------------------------------------------------------
-// Findings, written down
-// ---------------------------------------------------------------------------
-
-/// The findings saved under `key`, or what `compute` finds, saved for next time.
-///
-/// The one place a verdict is replayed or remembered, so the counts reported for a lint and the
-/// rule that an unreadable entry is a miss are the same for a file, a crate, a workspace and a repo
-/// item. `compute` answers `None` when there is nothing to judge, which saves and counts nothing.
-pub(crate) fn replay_or(
-    cache: &dyn VerdictCache,
-    key: &str,
-    lint: &str,
-    compute: impl FnOnce() -> Option<Vec<LintError>>,
-) -> Option<Vec<LintError>> {
-    if let Some(found) = cache.replay(key).as_deref().and_then(decode) {
-        cache.tally(true, lint);
-        return Some(found);
-    }
-    let found = compute()?;
-    cache.tally(false, lint);
-    cache.remember(key, &encode(&found));
-    Some(found)
-}
-
-/// The findings for every key, replayed where saved and computed where not, the misses at the
-/// same time.
-///
-/// The batch form of [`replay_or`]: every key is asked of the store first, on this thread, since
-/// a store is not required to be `Sync`; the misses then run on as many threads as the machine
-/// has, each key's item once however many positions name it; and the new verdicts are saved after,
-/// on this thread again. A key named twice is the second naming's hit, as it is in the sequential
-/// form. `compute(n)` judges the item at position `n`.
-pub(crate) fn replay_or_batch(
-    cache: &dyn VerdictCache,
-    keys: &[String],
-    lint: &str,
-    compute: impl Fn(usize) -> Vec<LintError> + Sync,
-) -> Vec<Vec<LintError>> {
-    let mut out: Vec<Option<Vec<LintError>>> = Vec::with_capacity(keys.len());
-    let mut first_of: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-    let mut misses: Vec<usize> = Vec::new();
-    for (n, key) in keys.iter().enumerate() {
-        let found = cache.replay(key).as_deref().and_then(decode);
-        if found.is_some() || first_of.contains_key(key.as_str()) {
-            cache.tally(true, lint);
-        } else {
-            first_of.insert(key.as_str(), n);
-            misses.push(n);
-        }
-        out.push(found);
-    }
-    for (n, found) in misses.iter().zip(parallel_map(&misses, &compute)) {
-        cache.tally(false, lint);
-        cache.remember(&keys[*n], &encode(&found));
-        out[*n] = Some(found);
-    }
-    // A repeat of a key computed above takes the first naming's answer from memory, not from the
-    // store, which may be one that cannot write.
-    for (n, key) in keys.iter().enumerate() {
-        if out[n].is_none() {
-            out[n] = out[first_of[key.as_str()]].clone();
-        }
-    }
-    out.into_iter().map(Option::unwrap_or_default).collect()
-}
-
-/// `compute` over each of `positions`, in order, spread over the machine's threads.
-pub(crate) fn parallel_map(positions: &[usize], compute: &(impl Fn(usize) -> Vec<LintError> + Sync)) -> Vec<Vec<LintError>> {
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
-    parallel_map_with(threads, positions, compute)
-}
-
-/// [`parallel_map`] on at most `threads` threads, so a test can ask for several on any machine.
-pub(crate) fn parallel_map_with(
-    threads: usize,
-    positions: &[usize],
-    compute: &(impl Fn(usize) -> Vec<LintError> + Sync),
-) -> Vec<Vec<LintError>> {
-    use std::sync::Mutex;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    let workers = threads.min(positions.len());
-    if workers <= 1 {
-        return positions.iter().map(|&n| compute(n)).collect();
-    }
-    let next = AtomicUsize::new(0);
-    let done: Mutex<Vec<Option<Vec<LintError>>>> = Mutex::new(vec![None; positions.len()]);
-    std::thread::scope(|scope| {
-        for _ in 0 .. workers {
-            scope.spawn(|| {
-                loop {
-                    let at = next.fetch_add(1, Ordering::Relaxed);
-                    let Some(&n) = positions.get(at) else { break };
-                    let found = compute(n);
-                    done.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[at] = Some(found);
-                }
-            });
-        }
-    });
-    done.into_inner()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .into_iter()
-        .map(Option::unwrap_or_default)
-        .collect()
-}
-
-/// The version line of the encoding. A reader that does not know it finds nothing.
 const FORMAT: &str = "verdict-v2";
 
 /// Findings as text, one per line, readable by [`decode`].

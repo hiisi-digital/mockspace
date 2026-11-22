@@ -243,7 +243,8 @@ mod tests {
     #[test]
     fn the_driver_script_is_valid_shell_and_names_its_arguments() {
         let script = driver_script();
-        let file = std::env::temp_dir().join(format!("ms_driver_{}.sh", std::process::id()));
+        let file_guard = mockspace_manifest::scratch::tempdir().unwrap();
+        let file = file_guard.path().join("ms_driver.sh");
         fs::write(&file, &script).unwrap();
         let out = Command::new("sh").arg("-n").arg(&file).output().unwrap();
         let _ = fs::remove_file(&file);

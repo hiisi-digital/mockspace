@@ -44,7 +44,7 @@ impl Repo {
     /// The same repository with `gitignore` already in place when the first
     /// generation runs, so a generated file it names is never tracked.
     pub fn ignoring(gitignore: &str) -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let base = dir.path().canonicalize().unwrap();
         let root = base.join("repo");
         let home = base.join("home");
@@ -264,7 +264,7 @@ impl Repo {
 impl Repo {
     /// A repository mockspace has not run in yet.
     pub fn untouched() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
         let base = dir.path().canonicalize().unwrap();
         let root = base.join("repo");
         let home = base.join("home");
@@ -300,16 +300,10 @@ impl Repo {
 ///
 /// `ensure_gate` writes the durable hooks to `$XDG_CONFIG_HOME` or
 /// `$HOME/.config`, and a test that ran it with the real environment rewrote the
-/// hooks the developer's own clones use. One directory per test process is
-/// enough, since nothing here reads it back.
+/// hooks the developer's own clones use. One directory per call, held until its
+/// test thread ends.
 pub fn mockspace() -> Command {
-    use std::sync::OnceLock;
-    static HOME: OnceLock<PathBuf> = OnceLock::new();
-    let home = HOME.get_or_init(|| {
-        let dir = std::env::temp_dir().join(format!("ms-test-home-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    });
+    let home = mockspace_manifest::scratch::held();
     let mut c = Command::new(BIN);
     c.env("HOME", home).env_remove("XDG_CONFIG_HOME");
     c

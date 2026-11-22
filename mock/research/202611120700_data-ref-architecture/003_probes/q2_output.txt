@@ -1,0 +1,31 @@
+== (a1) shell: cat ../../../crates/lib/Cargo.toml from inside the link (physical .. )
+BROKEN: dot-dot resolves physically, under .git/mock-data
+== (a2) cargo path dependency through the link
+cargo FAILED:
+error: failed to get `lib` as a dependency of package `sk v0.1.0 (/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/003/q2c/m/.git/mock-data/research/sketch)`
+
+Caused by:
+== (b1) git checkout OLD -- mock/research/NOTES.md
+   link still a link=NO, data edit survives=1, data files=NOTES.md sketch 
+== (b2) git restore --source=OLD --worktree -- mock/research
+   link still a link=NO, data edit survives=1, data files=NOTES.md sketch 
+== (b3) git merge oldbranch (edits a path dev removed)
+CONFLICT (modify/delete): mock/research/NOTES.md deleted in HEAD and modified in oldbranch.  Version oldbranch of mock/research/NOTES.md left in tree.
+Automatic merge failed; fix conflicts and then commit the result.
+   link still a link=NO, data edit survives=1, data files=NOTES.md sketch 
+== (b4) git checkout OLD (whole tree)
+   link still a link=NO, data edit survives=1, data files=NOTES.md sketch 
+== (b5) git checkout -f OLD
+   link still a link=NO, data edit survives=1, data files=NOTES.md sketch 
+== (b6) git reset --hard OLD
+   link still a link=NO, data edit survives=1, data files=NOTES.md sketch 
+== (b7) git stash -u
+No local changes to save
+   link still a link=yes, data edit survives=1, data files=NOTES.md sketch 
+== (b8) git cherry-pick oldbranch
+CONFLICT (modify/delete): mock/research/NOTES.md deleted in HEAD and modified in fb5cc34 (old branch edit).  Version fb5cc34 (old branch edit) of mock/research/NOTES.md left in tree.
+error: could not apply fb5cc34... old branch edit
+hint: After resolving the conflicts, mark them with
+   link still a link=NO, data edit survives=1, data files=NOTES.md sketch 
+== (c) realpath of the link
+/tmp/claude-0/-home-user/8f6b0721-ceea-5423-b931-8e7c87f0af72/scratchpad/003/q2c/m/.git/mock-data/research

@@ -6,6 +6,7 @@ members = [
     "lint-rules",
     "verdicts",
     "bench-core",
+    "bench-layout",
     "bench-harness",
     "bench-macro",
     "bench-matrix",
@@ -90,10 +91,15 @@ sha2 = "0.10"
 mockspace-store = { path = "mock/crates/mockspace-store", features = ["test-support"] }
 mockspace-registry = { path = "mock/crates/mockspace-registry", features = ["test-support"] }
 tempfile = "3"
+mockspace-manifest = { path = "mockspace-manifest", features = ["_internal-test-scratch"] }
 # Read by `tests/a_publishing_crate_has_no_git_dependency.rs`, which parses every
 # manifest in the tree. Already a normal dependency, so this adds nothing to
 # resolve.
 toml_edit = { version = "0.22", features = ["serde"] }
+
+# The cross-process verdict store tests cap a child's file size to cut a write part way.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = "0.2"
 
 # Release profile applies workspace-wide.
 [profile.release]

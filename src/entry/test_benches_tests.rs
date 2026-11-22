@@ -16,7 +16,7 @@ fn write(p: &Path, s: &str) {
 
 /// A git repository with a mock directory and one bench arm, as `(root, mock)`.
 fn repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
     let st = Command::new("git")
         .args(["init", "-q"])
