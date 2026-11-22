@@ -161,6 +161,7 @@ impl Store for DirStore {
                         fs::create_dir_all(parent)
                             .map_err(io_err(format!("creating `{}`", parent.display())))?;
                     }
+                    crate::kept::keep(&file).map_err(io_err(format!("keeping a copy of `{}` before writing over it", file.display())))?;
                     // written beside the target and renamed over it, so a reader never sees half a file
                     let tmp = file.with_file_name(format!(
                         "{TMP_PREFIX}{}-{}",
@@ -174,6 +175,7 @@ impl Store for DirStore {
                     changed = true;
                 },
                 None => {
+                    crate::kept::keep(&file).map_err(io_err(format!("keeping a copy of `{}` before removing it", file.display())))?;
                     match fs::remove_file(&file) {
                         Ok(()) => {
                             changed = true;

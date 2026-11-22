@@ -150,6 +150,7 @@ impl Instance<'_> {
         let wanted: Vec<&Oid> = paths.iter().map(|p| &copy.lost[p].blob).collect();
         for (path, bytes) in paths.iter().zip(self.store.blobs(&wanted)?) {
             if self.dir.join(path).is_dir() {
+                crate::kept::keep(&self.dir.join(path)).map_err(|e| self.io("keeping a copy before removing a directory of", e))?;
                 std::fs::remove_dir_all(self.dir.join(path)).map_err(|e| self.io("removing", e))?;
             }
             self.write(path, &bytes, copy.lost[path].mode.is_exec())?;

@@ -137,6 +137,8 @@ impl Instance<'_> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| self.io("creating", e))?;
         }
+        // the bytes it stood with are kept for a day before they are written over
+        crate::kept::keep(&path).map_err(|e| self.io("keeping a copy before writing over a file of", e))?;
         std::fs::write(&path, bytes).map_err(|e| self.io("writing", e))?;
         self.set_exec(&path, exec)
     }

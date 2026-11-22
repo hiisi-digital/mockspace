@@ -175,7 +175,8 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
         Step::AppendConfig(text) => {
             let held = std::fs::read_to_string(&cfg.config_path)
                 .map_err(|e| format!("reading {}: {e}", cfg.config_path.display()))?;
-            let lead = if held.ends_with("\n\n") || held.is_empty() {
+            keep(&cfg.config_path)?;
+            let lead =if held.ends_with("\n\n") || held.is_empty() {
                 ""
             } else if held.ends_with('\n') {
                 "\n"
@@ -203,6 +204,8 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
             from,
             to,
         } => {
+            keep(&cfg.repo_root.join(from))?;
+            keep(&cfg.repo_root.join(to))?;
             std::fs::rename(cfg.repo_root.join(from), cfg.repo_root.join(to))
                 .map_err(|e| format!("renaming {from} to {to}: {e}"))
         },
@@ -214,6 +217,7 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
             if let Some(why) = crate::migrate_refs::symlinks_on(&cfg.repo_root, [path.as_str()].into_iter()).pop() {
                 return Err(why);
             }
+            keep(&cfg.repo_root.join(path))?;
             std::fs::write(cfg.repo_root.join(path), text).map_err(|e| format!("writing {path}: {e}"))
         },
         Step::WriteRegistry(files) => {
@@ -545,3 +549,11 @@ use seeded::{mark_seeded, seeded_here};
 #[cfg(test)]
 #[path = "migrate_tests.rs"]
 mod tests;
+
+/// Keeps a copy of what stands at `path` in the person's cache before a step writes over, renames
+/// or removes it (`mockspace_store::kept`); a copy that cannot be made stops the step.
+fn keep(path: &std::path::Path) -> Result<(), String> {
+    mockspace_store::kept::keep(path)
+        .map(|_| ())
+        .map_err(|e| format!("keeping a copy of {} before the step changes it: {e}", path.display()))
+}

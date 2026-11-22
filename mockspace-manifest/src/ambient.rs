@@ -119,7 +119,17 @@ pub unsafe fn scrub_process() {
         // SAFETY: as above.
         unsafe { std::env::set_var(k, v) };
     }
+    // the copies the engine keeps before it writes over a file go to a directory of the tests'
+    // own, never into the person's cache; it is pruned by age as the person's is
+    if std::env::var_os(KEPT_DIR).is_none() {
+        // SAFETY: as above.
+        unsafe { std::env::set_var(KEPT_DIR, std::env::temp_dir().join("ms-test-kept")) };
+    }
 }
+
+/// The variable that names where the engine keeps the copies it takes before it writes over a
+/// file, read by `mockspace_store::kept` before the person's cache.
+pub const KEPT_DIR: &str = "MOCKSPACE_KEPT_DIR";
 
 /// Runs [`scrub_process`] before `main`, while the process is one thread, so that
 /// expanding this once in a test binary is all it takes to be scrubbed. Linux and

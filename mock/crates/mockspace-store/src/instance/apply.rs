@@ -203,6 +203,7 @@ impl Instance<'_> {
             return Err(self.fail("holds files in the way of the tip", in_the_way));
         }
         for path in removals {
+            crate::kept::keep(&self.dir.join(path)).map_err(|e| self.io("keeping a copy before removing a file of", e))?;
             match std::fs::remove_file(self.dir.join(path)) {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
                     return Err(self.io("removing", e));
@@ -215,6 +216,8 @@ impl Instance<'_> {
             for (path, bytes) in chunk.iter().zip(self.store.blobs(&wanted)?) {
                 // a directory at a path to be written holds directories only, or `in_the_way` refused
                 if self.dir.join(path.as_str()).is_dir() {
+                    crate::kept::keep(&self.dir.join(path.as_str()))
+                        .map_err(|e| self.io("keeping a copy before removing a directory of", e))?;
                     std::fs::remove_dir_all(self.dir.join(path.as_str()))
                         .map_err(|e| self.io("removing", e))?;
                 }

@@ -32,6 +32,7 @@ mod git;
 mod identity;
 mod ids;
 mod instance;
+pub mod kept;
 mod merge;
 mod path;
 mod reader;

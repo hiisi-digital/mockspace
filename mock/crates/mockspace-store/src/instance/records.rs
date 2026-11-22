@@ -126,6 +126,7 @@ impl Instance<'_> {
             std::fs::create_dir_all(parent).map_err(|e| self.io("creating the directory of", e))?;
         }
         let lead = if held.is_empty() || held.ends_with('\n') { "" } else { "\n" };
+        crate::kept::keep(&file).map_err(|e| self.io("keeping a copy of the exclude file before changing it for", e))?;
         let mut handle = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
