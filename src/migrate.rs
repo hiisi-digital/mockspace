@@ -196,7 +196,8 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
         },
         // the declared instance is now what git would write over on a checkout of an older commit;
         // the config is read again, since a step before may have appended the declaration
-        Step::KeepGitOff => crate::data_refs::keep_git_off_the_instances(&Config::from_dir(&cfg.mock_dir))
+        Step::KeepGitOff => Config::try_from_dir(&cfg.mock_dir)
+            .and_then(|again| crate::data_refs::keep_git_off_the_instances(&again))
             .map_err(|why| format!("keeping git from writing over the instance: {why}")),
         Step::Rename {
             from,

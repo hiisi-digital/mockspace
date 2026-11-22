@@ -187,6 +187,10 @@ fn stopped_at_each_git_call(s: &Shape, k: usize, stop: Stop) {
         spy.stop_failing();
         let mark = if stop == Stop::Fail { "INJECTED " } else { "KILLED " };
         let failed = spy.text().lines().find(|l| l.starts_with(mark)).unwrap_or("none").to_string();
+        // a failed git call is a refusal the command reports, naming the call, and never a panic
+        if stop == Stop::Fail && first.all().contains("panicked") {
+            return Err(format!("a failed git call ended the run in a panic; {failed}\nfirst: {}", first.all()));
+        }
         if failed != "none" {
             stopped.fetch_add(1, Ordering::SeqCst);
         } else if !first.ok {

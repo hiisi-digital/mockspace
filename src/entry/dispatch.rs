@@ -339,7 +339,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         },
     };
 
-    let cfg = Config::from_dir(&mock_dir);
+    let cfg = match Config::try_from_dir(&mock_dir) {
+        Ok(cfg) => cfg,
+        Err(why) => {
+            eprintln!("error: {why}");
+            return ExitCode::FAILURE;
+        },
+    };
 
     // The pre-commit guard over the test-history files runs on every commit that
     // stages one, so it answers before the gate, the lint pack and the rest are
