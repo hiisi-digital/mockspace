@@ -8,6 +8,7 @@ mod refs_e2e;
 use refs_e2e::{World, fixture};
 
 use refs_e2e::fixture::NOTES;
+use refs_e2e::whole::Ledger;
 
 // Mutation: drop the sparse block, so the checkout of the old branch writes its bytes over the
 // instance file and the rebase then replays onto them; the instance's bytes are gone from disk and
@@ -121,9 +122,12 @@ fn a_declared_ref_not_born_yet_instantiates_empty_and_passes_the_gate() {
     a.ok(&["data-refs", "verify", "extra"]);
 }
 
-// Mutation: let the late clone's first commit be refused for good, or overwrite the early file.
+// Mutation: let the late clone's first commit push over the ref the early one made, be refused for
+// good, or let `update` write the early clone's file over a new file of the same name made here;
+// one clone's file is then nowhere. Both clones make the same new ref from nothing: one new file
+// each, and one path both made with other bytes.
 #[test]
-fn the_late_clone_of_a_ref_not_born_yet_merges_after_its_push_is_rejected() {
+fn two_clones_making_the_same_new_ref_lose_neither_file() {
     let w = World::new();
     let a = w.first_clone("a");
     fixture::build_tracked(&a);
@@ -133,18 +137,39 @@ fn the_late_clone_of_a_ref_not_born_yet_merges_after_its_push_is_rejected() {
     b.ok(&["data-refs", "instantiate", "research"]);
     a.ok(&["data-refs", "instantiate", "extra"]);
     b.ok(&["data-refs", "instantiate", "extra"]);
-    a.write("mock/extra/from-a.md", b"a\n");
-    b.write("mock/extra/from-b.md", b"b\n");
+    let mut l = Ledger::default();
+    l.write(&a, "mock/extra/from-a.md", b"a\n");
+    l.write(&b, "mock/extra/from-b.md", b"b\n");
+    l.write(&a, "mock/extra/both.md", b"both, as a wrote it\n");
+    l.write(&b, "mock/extra/both.md", b"both, as b wrote it\n");
     a.ok(&["data-refs", "commit", "extra"]);
-    let late = b.run(&["data-refs", "commit", "extra"]);
-    if !late.ok {
-        b.ok(&["data-refs", "update", "extra"]);
-        b.ok(&["data-refs", "commit", "extra"]);
-    }
-    let tree = w.remote_git(&["ls-tree", "-r", "--name-only", "refs/heads/mock/extra"]);
-    assert!(tree.contains("from-a.md") && tree.contains("from-b.md"), "{tree}");
-    assert_eq!(b.read("mock/extra/from-a.md"), b"a\n");
+    let born = w.remote_tip("refs/heads/mock/extra").expect("the early commit makes the ref");
+
+    // the late push is rejected and fetches; the file both made is changed on both sides
+    let late = b.fails(&["data-refs", "commit", "extra"]);
+    assert!(late.all().contains("data-refs update"), "the refusal names the way on: {}", late.all());
+    assert_eq!(w.remote_tip("refs/heads/mock/extra").as_deref(), Some(born.as_str()), "the late commit pushed over the ref");
+    let u = b.fails(&["data-refs", "update", "extra"]);
+    assert!(u.all().contains("both.md"), "the refusal names the file both made: {}", u.all());
+    assert_eq!(b.read("mock/extra/both.md"), b"both, as b wrote it\n", "the refused update wrote over the late file");
     assert_eq!(b.read("mock/extra/from-b.md"), b"b\n");
+    l.kept(&w, &[&a, &b]).unwrap();
+
+    // by hand: the late edit set aside, the file taken as the ref has it, and the edit brought back
+    // as a new file
+    std::fs::rename(b.path("mock/extra/both.md"), b.path("mock/extra/both-b.md")).unwrap();
+    b.ok(&["data-refs", "update", "extra"]);
+    b.ok(&["data-refs", "commit", "extra"]);
+    a.ok(&["data-refs", "update", "extra"]);
+    let tree = w.remote_git(&["ls-tree", "-r", "--name-only", "refs/heads/mock/extra"]);
+    for (p, text) in [("from-a.md", &b"a\n"[..]), ("from-b.md", b"b\n"), ("both.md", b"both, as a wrote it\n"), ("both-b.md", b"both, as b wrote it\n")] {
+        assert!(tree.lines().any(|l| l == p), "{p} is on the ref: {tree}");
+        for c in [&a, &b] {
+            assert_eq!(c.read(&format!("mock/extra/{p}")), text, "{p} in {}", c.root.display());
+        }
+    }
+    l.kept(&w, &[&a, &b]).unwrap();
+    a.ok(&["data-refs", "verify", "extra"]);
     b.ok(&["data-refs", "verify", "extra"]);
 }
 
