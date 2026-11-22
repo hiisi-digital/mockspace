@@ -59,9 +59,10 @@ fn a_checkout_of_a_commit_from_before_the_migration_keeps_an_uncommitted_edit() 
     a.write(NOTES, b"edited after the migration\n");
     switch(&a, "old");
     assert_eq!(a.read(NOTES), b"edited after the migration\n", "on the old branch");
-    // leaving it again must not take the edit either, whether git refuses or lets it be
+    // leaving it again takes every file of the instance the old branch tracks, the edit among them,
+    // and the copy the `post-checkout` hook took on the way there brings the edit back
     try_switch(&a, "dev");
-    assert_eq!(a.read(NOTES), b"edited after the migration\n", "back on dev");
+    refs_e2e::daily::edit_back_after_forced_way_back(&a, "research", "20261001_alpha/NOTES.md", NOTES, b"edited after the migration\n", "back on dev");
 }
 
 // Mutation: as above, for a file the ref changed since the old commit was cut and nobody edited.
@@ -74,13 +75,16 @@ fn a_file_newer_on_the_ref_than_the_old_commit_is_not_replaced_by_the_old_bytes(
     switch(&a, "old");
     assert_eq!(a.read(NOTES), b"newer, committed to the ref\n");
     try_switch(&a, "dev");
+    if !a.exists(NOTES) {
+        a.ok(&["data-refs", "restore"]);
+    }
     assert_eq!(a.read(NOTES), b"newer, committed to the ref\n");
 }
 
 // Mutation: none; this pins the one window that remains for a clean instance. A file equal to the
 // old commit's is up to date there, and leaving that commit removes it. No byte is lost, since the
-// old commit and the ref both hold it, and `restore` writes it again. A `post-checkout` hook could do
-// that by itself, but the gate holds `core.hooksPath`, so the hook is the hook machinery's to add.
+// old commit and the ref both hold it, and `restore` writes it again; the `post-checkout` hook only
+// copies, and writes nothing into the work tree.
 #[test]
 fn leaving_an_old_commit_removes_the_clean_files_and_restore_gives_back_the_same_bytes() {
     let w = World::new();

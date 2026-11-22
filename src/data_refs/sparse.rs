@@ -10,13 +10,18 @@
 //! Two things are done against that. A sparse checkout: a path the patterns leave out is not
 //! written, and one that is there and differs from the commit is left in place with a warning,
 //! never replaced. So each worktree carries a managed block of patterns, one set for every declared
-//! ref, written from the same lines as the exclude file; per-worktree config is turned on for it,
-//! with a bare clone's `core.bare` moved where only the clone itself reads it. And the
-//! `reference-transaction` hook of `hook`: a merge that conflicts on a path the migration took off
-//! the branch writes the branch's bytes whatever the patterns say, but git moves `ORIG_HEAD` first,
-//! and the hook copies the files of every instance into its backup ref, so the next engine command
-//! names what git wrote over and `restore` brings it back. `instantiate`, `commit` and the
-//! migration write both; `verify` checks both and names a block whose declaration is gone.
+//! ref, written from the same lines as the exclude file. The switch that turns it on sits in the
+//! common config, so a bare clone's `core.bare` stays where its linked worktrees read it, and each
+//! worktree keeps its own patterns file; a worktree with none reads every path, and one an earlier
+//! sparse checkout left is made to read every path before the switch reaches it.
+//! `sparse.expectFilesOutsideOfPatterns` keeps an edited instance file skipped at a commit from
+//! before the migration, so the forced ways back leave it on disk. And the hooks of `hook`: a merge
+//! that conflicts on a path the migration took off the branch writes the branch's bytes whatever
+//! the patterns say, but git moves `ORIG_HEAD` first, and a checkout moves `HEAD`, and the hooks
+//! copy the files of every instance into its backup ref, so the next engine command names what git
+//! wrote over and `restore` brings it back. `instantiate`, `commit` and the migration write both;
+//! `verify` checks both and names a block whose declaration is gone. Every file this changes is
+//! kept in the person's cache first (`mockspace_store::kept`).
 
 use std::path::{Path, PathBuf};
 
@@ -104,6 +109,7 @@ pub fn install(cfg: &Config) -> Result<(), String> {
     let existing = std::fs::read_to_string(&file).unwrap_or_default();
     if lines.is_empty() {
         if has_block(&existing) {
+            keep(&file)?;
             std::fs::write(&file, compose(&existing, &[])).map_err(|e| format!("writing {}: {e}", file.display()))?;
         }
         let _ = std::fs::remove_file(remembered_file(cfg)?);
@@ -118,9 +124,35 @@ pub fn install(cfg: &Config) -> Result<(), String> {
     let was_on = setting("core.sparseCheckout")?;
     let cone = was_on && setting("core.sparseCheckoutCone")?;
     let existing = if was_on { existing } else { String::new() };
-    worktree_config(cfg)?;
-    git(repo, &["config", "--worktree", "core.sparseCheckout", "true"])?;
-    git(repo, &["config", "--worktree", "core.sparseCheckoutCone", "false"])?;
+    // per-worktree config is never turned on: with it, a bare clone's `core.bare` has to move into
+    // the bare repository's own config, and git 2.43 then reads the bare repository from a linked
+    // worktree as one with its HEAD branch checked out, so that branch could not be checked out,
+    // fetched into or moved there again. The switch goes into the common config, and each worktree
+    // keeps its own patterns file; where per-worktree config is on already, it stays the worktree's.
+    let per_worktree = setting("extensions.worktreeConfig")?;
+    if !was_on && !per_worktree {
+        // turning the shared switch on reads the patterns file of every other worktree, and one an
+        // earlier sparse checkout left behind would hide the branch's files it leaves out there
+        neutral_files_elsewhere(cfg, &file)?;
+    }
+    let scope: &[&str] = if per_worktree { &["--worktree"] } else { &[] };
+    // the edit is kept on disk where git un-skips a file present outside the patterns: at a commit
+    // from before the migration the file then stays skipped, and the forced ways back keep it
+    let want = [("core.sparseCheckout", "true"), ("core.sparseCheckoutCone", "false"), ("sparse.expectFilesOutsideOfPatterns", "true")];
+    let mut kept = false;
+    for (key, value) in want {
+        if config(repo, &["--type=bool"], key)?.as_deref() == Some(value) {
+            continue;
+        }
+        if !kept {
+            keep_config(cfg, per_worktree)?;
+            kept = true;
+        }
+        let mut args = vec!["config"];
+        args.extend_from_slice(scope);
+        args.extend([key, value]);
+        git(repo, &args)?;
+    }
     if cone {
         eprintln!(
             "data-refs: the sparse checkout of this worktree was in cone mode, and is now in the full pattern mode the \
@@ -134,6 +166,7 @@ pub fn install(cfg: &Config) -> Result<(), String> {
         if let Some(parent) = file.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("creating {}: {e}", parent.display()))?;
         }
+        keep(&file)?;
         std::fs::write(&file, text).map_err(|e| format!("writing {}: {e}", file.display()))?;
     }
     let held = remembered_file(cfg)?;
@@ -174,10 +207,19 @@ pub fn check(cfg: &Config) -> Result<(), String> {
             Ok(())
         };
     }
-    let on = config(&cfg.repo_root, &["--worktree"], "core.sparseCheckout")?.as_deref() == Some("true");
+    let set = |key: &str| -> Result<bool, String> { Ok(config(&cfg.repo_root, &["--type=bool"], key)?.as_deref() == Some("true")) };
+    let on = set("core.sparseCheckout")? && !set("core.sparseCheckoutCone")?;
     if !(on && compose(&existing, &lines) == existing) {
         return Err("this worktree does not keep git from writing over its instances (a checkout of a commit from before \
                     the migration would overwrite them); `cargo mock data-refs instantiate` sets that up"
+            .to_string());
+    }
+    // without it git un-skips an edited file at a commit from before the migration, and a forced
+    // way back then writes over it
+    if !set("sparse.expectFilesOutsideOfPatterns")? {
+        return Err("this worktree lets git take an edited instance file for the branch's at a commit from before the \
+                    migration (`sparse.expectFilesOutsideOfPatterns` is not set), where a forced way back writes over it; \
+                    `cargo mock data-refs instantiate` sets that up"
             .to_string());
     }
     // the hook reads these on a branch that declares none of the refs; a ref missing from them is
@@ -191,26 +233,51 @@ pub fn check(cfg: &Config) -> Result<(), String> {
     super::hook::check(cfg)
 }
 
-/// Turns on per-worktree config, which the sparse checkout of one worktree needs. With it on, git
-/// reads `core.bare` and `core.worktree` of the common config as every worktree's own, so a bare
-/// clone's linked worktrees would read themselves as bare; where either is set there it first
-/// moves into the config of the main worktree alone, as `git sparse-checkout init` does.
-fn worktree_config(cfg: &Config) -> Result<(), String> {
-    if config(&cfg.repo_root, &["--type=bool"], "extensions.worktreeConfig")?.as_deref() == Some("true") {
-        return Ok(());
-    }
+/// Keeps a copy of what stands at `path` in the person's cache before it is written over, changed
+/// or removed (`mockspace_store::kept`); a copy that cannot be made stops the write.
+fn keep(path: &Path) -> Result<(), String> {
+    mockspace_store::kept::keep(path)
+        .map(|_| ())
+        .map_err(|e| format!("keeping a copy of {} before writing over it: {e}", path.display()))
+}
+
+/// Keeps the config files a setting is about to change: the common one, and this worktree's own
+/// where per-worktree config is on.
+fn keep_config(cfg: &Config, per_worktree: bool) -> Result<(), String> {
     let common = PathBuf::from(git(&cfg.repo_root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?);
-    let (shared, main) = (common.join("config"), common.join("config.worktree"));
-    let (shared, main) = (shared.to_string_lossy(), main.to_string_lossy());
-    for key in ["core.bare", "core.worktree"] {
-        // `core.bare = false` is every worktree's answer anyway, and stays where it is
-        let Some(value) = config(&cfg.repo_root, &["--file", &shared], key)? else { continue };
-        if key == "core.bare" && value != "true" {
+    keep(&common.join("config"))?;
+    if per_worktree {
+        keep(&path_of(cfg, "config.worktree")?)?;
+    }
+    Ok(())
+}
+
+/// Makes the patterns file of every worktree but this one read every path, before the shared
+/// switch turns the sparse checkout on for all of them: lines a sparse checkout that is off left
+/// there would otherwise hide the branch's files they leave out at that worktree's next checkout.
+/// Each file is kept in the cache first. A worktree with no such file reads every path already.
+fn neutral_files_elsewhere(cfg: &Config, own: &Path) -> Result<(), String> {
+    let common = PathBuf::from(git(&cfg.repo_root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?);
+    let mut files = vec![common.join("info").join("sparse-checkout")];
+    match std::fs::read_dir(common.join("worktrees")) {
+        Ok(dirs) => files.extend(dirs.flatten().map(|d| d.path().join("info").join("sparse-checkout"))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+        Err(e) => return Err(format!("reading the worktrees of {}: {e}", common.display())),
+    }
+    let own = own.canonicalize().unwrap_or_else(|_| own.to_path_buf());
+    for f in files {
+        if f.canonicalize().unwrap_or_else(|_| f.clone()) == own {
             continue;
         }
-        git(&cfg.repo_root, &["config", "--file", &main, key, &value])?;
-        git(&cfg.repo_root, &["config", "--file", &shared, "--unset", key])?;
+        match std::fs::read_to_string(&f) {
+            Ok(text) if text == "/*\n" => {},
+            Ok(_) => {
+                keep(&f)?;
+                std::fs::write(&f, "/*\n").map_err(|e| format!("writing {}: {e}", f.display()))?;
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+            Err(e) => return Err(format!("reading {}: {e}", f.display())),
+        }
     }
-    git(&cfg.repo_root, &["config", "extensions.worktreeConfig", "true"])?;
     Ok(())
 }

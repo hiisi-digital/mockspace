@@ -97,19 +97,34 @@ fn migrated_under(setup: Setup) {
             assert_eq!(side.git(&["status", "--porcelain", "--untracked-files=no"]), "", "the other worktree is as it was");
             let bare = w.sh(&w.base().join("a.git"), "git", &["rev-parse", "--is-bare-repository"]);
             assert_eq!(bare.stdout.trim(), "true", "the clone itself is bare still: {}", bare.all());
-            // Red on purpose, with the way back below: a linked worktree that left `dev` moves it
-            // as it did before the migration, by a fetch into it and by `branch -f`, and goes back
-            // to it. Asked in question ticket `per_worktree_config_in_a_bare_clone_leaves_its_head_branch_u`.
+            // a linked worktree that left `dev` moves it as it did before the migration, by a fetch
+            // into it and by `branch -f`, and goes back to it: the sparse switch sits in the common
+            // config, and `core.bare` stays where every worktree reads it
+            // the remote holds what the migration made, so the fetch into `dev` has nothing to rewind
+            c.git(&["push", "-q", "--no-verify", "origin", "dev"]);
             let tip = c.git(&["rev-parse", "HEAD"]).trim().to_string();
             c.git(&["checkout", "-q", "--detach"]);
             let mut refused = Vec::new();
-            for args in [&["fetch", "-q", "origin", "dev:dev"][..], &["branch", "-f", "dev", &tip], &["checkout", "-q", "dev"]] {
+            for args in [&["fetch", "origin", "dev:dev"][..], &["branch", "-f", "dev", &tip], &["checkout", "-q", "dev"]] {
                 let o = c.git_out(args);
                 if !o.ok {
                     refused.push(format!("{args:?}: {}", o.all().trim()));
                 }
             }
             assert!(refused.is_empty(), "a linked worktree of the bare clone moves and takes `dev` again:\n{}", refused.join("\n"));
+            // the worktree with patterns an earlier sparse checkout left keeps every file of its
+            // branch once the shared switch reads them, and the file it held is in the cache
+            let stale = c.at(w.base().join("a-stale"));
+            stale.git(&["checkout", "-q", "-b", "stale-2"]);
+            stale.git(&["checkout", "-q", "stale"]);
+            let skipped: Vec<String> =
+                stale.git(&["ls-files", "-t"]).lines().filter(|l| l.starts_with("S ")).map(str::to_owned).collect();
+            assert!(skipped.is_empty(), "the stale patterns hid the branch's files: {skipped:?}");
+            let tracked = stale.git(&["ls-files", "-z"]);
+            let gone: Vec<&str> = tracked.split('\0').filter(|p| !p.is_empty() && !stale.exists(p)).collect();
+            assert!(gone.is_empty(), "files of the branch are gone from the worktree: {gone:?}");
+            let file = w.base().join("a.git/worktrees/a-stale/info/sparse-checkout");
+            assert!(kept_copies_of(&file).iter().any(|k| std::fs::read_to_string(k).ok().as_deref() == Some(setups::STALE_PATTERNS)), "a copy of {} is in the cache", file.display());
         },
     }
 
@@ -132,12 +147,7 @@ fn migrated_under(setup: Setup) {
             c.git(&["checkout", "-q", &before_any]);
             let _ = c.run(&["data-refs", "status"]);
             let back = c.git_out(&["checkout", "-q", "-f", "dev"]);
-            // Red on purpose for the bare clone: the design keeps a bare clone's linked worktrees
-            // working, and per-worktree config moves `core.bare` into the bare repository's own
-            // `config.worktree`, after which git 2.43 reads the bare repository from a linked
-            // worktree as one with `dev` checked out, so the way back to `dev` is refused there.
-            // Before the migration it is not. How the engine keeps the worktrees working is op's
-            // call, asked in question ticket `per_worktree_config_in_a_bare_clone_leaves_its_head_branch_u`.
+            // a linked worktree of the bare clone goes back to `dev` as before the migration
             assert!(back.ok, "{what}: the linked worktree goes back to `dev`: {}", back.all());
         }
         refs_e2e::daily::edit_back_after_forced_way_back(&c, "research", rel, &file, &edited, &what);
@@ -167,4 +177,18 @@ fn every_migration_keeps_git_shook_dispatching_the_hooks() {
 #[test]
 fn every_migration_keeps_a_bare_clone_with_linked_worktrees() {
     migrated_under(Setup::BareWorktrees);
+}
+
+/// Every copy of `file` the engine kept before it wrote over it, in the directory the test binaries
+/// name for the copies (`mockspace_store::kept`).
+fn kept_copies_of(file: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let root = std::path::PathBuf::from(std::env::var_os(mockspace_manifest::ambient::KEPT_DIR).expect("the scrub names the copies' directory"));
+    let rel: std::path::PathBuf = file.components().filter(|c| matches!(c, std::path::Component::Normal(_))).collect();
+    let Ok(runs) = std::fs::read_dir(&root) else { return Vec::new() };
+    // a run directory holds one numbered directory for each copy
+    runs.flatten()
+        .filter_map(|r| std::fs::read_dir(r.path()).ok())
+        .flat_map(|copies| copies.flatten().map(|n| n.path().join(&rel)).collect::<Vec<_>>())
+        .filter(|p| p.is_file())
+        .collect()
 }

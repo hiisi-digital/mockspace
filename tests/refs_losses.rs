@@ -59,16 +59,18 @@ fn a_merge_overwrites_the_file_and_the_edit_is_in_the_backup_ref() {
     assert!(backup_holds(&a, "DIRTY instance edit\n"), "the backup ref holds the edit: {:?}", backup_of(&a));
 }
 
-// Mutation: none; this pins that git refuses a plain rebase over the edit, since the old branch
-// tracks the file and the edit shows there as an unstaged change.
+// Mutation: leave the `post-checkout` hook out. The old branch tracks the file, and with
+// `sparse.expectFilesOutsideOfPatterns` the edit stays skipped there, so git no longer refuses the
+// rebase as over an unstaged change: its modify/delete conflict leaves the branch's bytes in the
+// tree. The copy the hook took on the checkout of the old branch holds the edit.
 #[test]
-fn a_rebase_of_an_old_branch_over_a_dirty_instance_is_refused_by_git_and_the_edit_stays() {
+fn a_rebase_of_an_old_branch_over_a_dirty_instance_keeps_the_edit_in_the_backup_ref() {
     let w = World::new();
     let a = dirty_instance_and_an_old_branch(&w);
     a.git(&["checkout", "-q", "feat"]);
-    let rb = a.git_out(&["rebase", "dev"]);
-    assert!(!rb.ok && rb.all().contains("unstaged changes"), "{}", rb.all());
-    assert_eq!(a.read(NOTES), b"DIRTY instance edit\n");
+    assert_eq!(a.read(NOTES), b"DIRTY instance edit\n", "the checkout of the old branch left the edit");
+    let _ = a.git_out(&["rebase", "dev"]);
+    assert!(backup_holds(&a, "DIRTY instance edit\n"), "the backup ref holds the edit: {:?}", backup_of(&a));
 }
 
 // Mutation: leave the edit nowhere when an autostashed rebase writes the branch's bytes: it is in the

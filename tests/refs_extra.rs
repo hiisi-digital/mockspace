@@ -11,10 +11,13 @@ use refs_e2e::fixture::NOTES;
 use refs_e2e::whole::Ledger;
 
 // Mutation: drop the sparse block, so the checkout of the old branch writes its bytes over the
-// instance file and the rebase then replays onto them; the instance's bytes are gone from disk and
-// the next commit pushes the old branch's.
+// instance file; or drop the copy the hooks take on the checkout and on the move of `ORIG_HEAD`.
+// The rebase replays the old branch's edit of a path the migration took off the branch, a
+// modify/delete conflict whose version git leaves in the tree over the edited instance file; the
+// copy holds the edit, the engine names the file, `restore` brings the edit back, and the next
+// commit pushes it and not the old branch's bytes.
 #[test]
-fn a_rebase_of_a_branch_cut_before_the_migration_is_refused_and_the_instance_file_kept() {
+fn a_rebase_of_a_branch_cut_before_the_migration_keeps_the_edited_instance_file() {
     let w = World::new();
     let a = w.first_clone("a");
     fixture::build_tracked(&a);
@@ -24,13 +27,18 @@ fn a_rebase_of_a_branch_cut_before_the_migration_is_refused_and_the_instance_fil
     a.git(&["checkout", "-q", "dev"]);
     fixture::migrate_all(&a);
     a.push();
-    let instance = a.read(NOTES);
-    assert_ne!(instance, b"edited on the old branch\n", "the control: the old branch holds other bytes");
+    let edit = b"edited in the instance\n";
+    a.write(NOTES, edit);
     a.git(&["checkout", "-q", "feat"]);
-    assert_eq!(a.read(NOTES), instance, "the checkout of the old branch wrote over the instance file");
+    assert_eq!(a.read(NOTES), edit, "the checkout of the old branch wrote over the instance file");
     let rb = a.git_out(&["rebase", "dev"]);
-    assert!(!rb.ok && rb.all().contains("unstaged changes"), "git took the instance file for its own: {}", rb.all());
-    assert_eq!(a.read(NOTES), instance, "the refused rebase wrote over the instance file");
+    if !rb.ok {
+        let _ = a.git_out(&["rebase", "--abort"]);
+    }
+    a.git(&["checkout", "-q", "-f", "dev"]);
+    refs_e2e::daily::edit_back_after_forced_way_back(&a, "research", "20261001_alpha/NOTES.md", NOTES, edit, "a rebase of an old branch");
+    a.ok(&["data-refs", "commit", "research"]);
+    assert_eq!(w.remote_git(&["show", "refs/heads/mock/research:20261001_alpha/NOTES.md"]).as_bytes(), edit);
 }
 
 // Mutation: write through a symlink in `update`; the file lands outside the instance.

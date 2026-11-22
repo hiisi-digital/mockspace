@@ -50,27 +50,38 @@ fn a_cherry_pick_and_a_hard_reset_across_the_migration_and_back_lose_no_edit() {
 // Mutation: write the sparse block only on `instantiate` and never on the migration's own clone; a
 // checkout of a commit from before the migration then writes over the edit.
 //
-// Then a pin: back from there, git refuses a plain checkout even in a clone nobody edited, since the
-// reference migration rewrote templates the old commit tracks, so they read as local changes there.
-// Nothing is lost by that refusal; what the forced ways back do is pinned below.
+// Then the plain way back. With `sparse.expectFilesOutsideOfPatterns` the old commit's files of the
+// instance stay skipped there, so a plain `checkout dev` back is not refused, even over the
+// templates the reference migration rewrote, and git deletes every file of the instance that commit
+// tracks, the edited one among them. The `post-checkout` hook copied them on the way there, so the
+// engine names what git took and `restore` brings every file back with the edit.
 #[test]
-fn a_checkout_of_a_commit_from_before_the_migration_keeps_the_edit_and_the_way_back_is_refused() {
+fn a_checkout_of_a_commit_from_before_the_migration_keeps_the_edit_and_the_plain_way_back_restores_it() {
     let (w, base) = migrated();
     let a = seat(&w, "a");
     let mut l = Ledger::default();
-    l.write(&a, NOTES, b"a: edited before an old checkout\n");
+    let text = b"a: edited before an old checkout\n";
+    l.write(&a, NOTES, text);
     let pre = before_the_migration(&a);
     a.git(&["checkout", "-q", &pre]);
-    assert_eq!(a.read(NOTES), b"a: edited before an old checkout\n");
+    assert_eq!(a.read(NOTES), text);
     let back = a.git_out(&["checkout", "-q", "dev"]);
-    assert!(!back.ok && back.all().contains("overwritten"), "{}", back.all());
-    assert_eq!(a.read(NOTES), b"a: edited before an old checkout\n");
+    assert!(back.ok, "the plain way back goes: {}", back.all());
+    assert!(history_holds(&a, "research", text), "the copy taken on the way there holds the edit");
+    l.kept(&w, &[&a]).unwrap();
+    edit_back_after_forced_way_back(&a, "research", "20261001_alpha/NOTES.md", NOTES, text, "a plain checkout back");
+    a.ok(&["data-refs", "commit", "research"]);
+    a.ok(&["data-refs", "verify"]);
     nothing_lost_or_wrongly_committed(&w, &l, &base, &[&a]);
+    // a clean clone goes back the same way, and nothing of it is lost
     let b = seat(&w, "b");
+    let tmpl = b.read(TMPL);
     b.git(&["checkout", "-q", &pre]);
     let back = b.git_out(&["checkout", "-q", "dev"]);
-    assert!(!back.ok, "a clean clone goes back now; drop this pin: {}", back.all());
-    assert!(back.all().contains("README.md.tmpl"), "{}", back.all());
+    assert!(back.ok, "{}", back.all());
+    b.ok(&["data-refs", "restore"]);
+    assert_eq!(b.read(TMPL), tmpl, "the rewritten template is back as the ref holds it");
+    b.ok(&["data-refs", "verify"]);
 }
 
 /// Whether any copy in the history of the backup ref of `ns` holds `text`.
@@ -87,27 +98,27 @@ fn history_holds_at(c: &refs_e2e::Clone, ns: &str, name: &str, text: &[u8]) -> b
     })
 }
 
-// Mutation: none yet; this test is red on purpose, and asks what the design promises (round
-// 202611110830, the paragraphs on the sparse checkout and the copy): an edit of an instance file is
-// kept whatever git does to the tree, on disk or in a copy the way back names. With no engine command
-// anywhere between, the way there by `checkout` and the forced way back are plain git, and none of
-// them leaves a copy: at the old commit git takes the edited file, on disk where the patterns leave
-// it out, as a changed tracked file; `checkout -f` there writes the old bytes over it, `checkout -f`
-// back moves no `ORIG_HEAD`, and `reset --hard` back moves it only after it wrote the tree (see
-// `git_moves_orig_head_before_it_writes_in_a_merge_and_after_in_a_reset_and_a_rebase`), so the hook
-// copies a tree the edit is already gone from. Telling git to expect files outside the patterns
-// keeps the forced ways and has a plain `checkout` back delete the edit instead (measured), so it is
-// no fix. How the engine closes this is op's call, asked in question ticket
-// `a_forced_checkout_back_from_an_old_commit_drops_an_edit_no_e`. A reset there instead of a
-// checkout is covered, by the copy its own move of `ORIG_HEAD` takes
-// (`a_cherry_pick_and_a_hard_reset_across_the_migration_and_back_lose_no_edit`).
+// Mutation: leave `sparse.expectFilesOutsideOfPatterns` unset, or the `post-checkout` hook out. With
+// no engine command anywhere between, the way there by `checkout` (plain, forced, or of a branch cut
+// before the migration) and every way back are plain git. Without the setting, git takes the edited
+// file at the old commit, on disk where the patterns leave it out, as a changed tracked file: a
+// forced checkout there writes the old bytes over it, and a forced way back removes it with no copy
+// anywhere (`checkout -f` moves no `ORIG_HEAD`, and `reset --hard` moves it only after it wrote the
+// tree). With it, the file stays skipped there: the forced ways back leave it on disk, and the plain
+// way back deletes it, which the copy the `post-checkout` hook took on the way there holds.
 #[test]
-fn an_edit_taken_to_an_old_commit_by_checkout_with_no_engine_command_since_is_kept_on_the_forced_way_back() {
-    let ways: [(&[&str], &[&str]); 4] = [
+fn an_edit_taken_to_an_old_commit_by_checkout_with_no_engine_command_since_is_kept_on_every_way_back() {
+    let ways: [(&[&str], &[&str]); 9] = [
         (&["checkout", "-q", "-f"], &["checkout", "-q", "-f", "dev"]),
         (&["checkout", "-q"], &["checkout", "-q", "-f", "dev"]),
         (&["checkout", "-q", "-f"], &["reset", "-q", "--hard", "dev"]),
         (&["checkout", "-q"], &["reset", "-q", "--hard", "dev"]),
+        (&["checkout", "-q"], &["checkout", "-q", "dev"]),
+        (&["checkout", "-q", "-f"], &["checkout", "-q", "dev"]),
+        (&["switch", "-q", "--detach"], &["switch", "-q", "dev"]),
+        // a branch cut before the migration, which moves `HEAD` by name and no reference with it
+        (&["checkout", "-q", "old"], &["checkout", "-q", "dev"]),
+        (&["checkout", "-q", "old"], &["checkout", "-q", "-f", "dev"]),
     ];
     let mut lost = Vec::new();
     for (there, back) in ways {
@@ -118,9 +129,21 @@ fn an_edit_taken_to_an_old_commit_by_checkout_with_no_engine_command_since_is_ke
         l.write(&a, NOTES, text);
         let pre = before_the_migration(&a);
         let mut there = there.to_vec();
-        there.push(&pre);
+        if there.last() == Some(&"old") {
+            a.git(&["branch", "old", &pre]);
+        } else {
+            there.push(&pre);
+        }
         a.git(&there);
-        a.git(back);
+        if a.read(NOTES) != text {
+            lost.push(format!("{there:?}: the way there wrote over the edit"));
+            continue;
+        }
+        let b = a.git_out(back);
+        if !b.ok {
+            lost.push(format!("{there:?} then {back:?}: the way back was refused: {}", b.all()));
+            continue;
+        }
         let _ = a.git_out(&["checkout", "-q", "dev"]);
         let what = format!("{there:?} then {back:?}");
         match l.kept(&w, &[&a]) {

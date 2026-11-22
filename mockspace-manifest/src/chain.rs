@@ -17,7 +17,7 @@
 use crate::gate::{MANAGED_MARKER, SHOOK_KEEPS};
 
 /// The events the gate passes on and does nothing else with.
-pub const CHAIN_HOOKS: &[&str] = &["reference-transaction"];
+pub const CHAIN_HOOKS: &[&str] = &["reference-transaction", "post-checkout"];
 
 /// The script of the gate's hook for `name`, one of [`CHAIN_HOOKS`].
 #[must_use]

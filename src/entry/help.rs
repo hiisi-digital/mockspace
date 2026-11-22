@@ -196,7 +196,8 @@ const COMMANDS: &[Cmd] = &[
                   directory's changes to the ref, where a ref with neither a tip nor an instance is made from the \
                   files, and refuses a file git wrote over unless `--accept-overwritten` takes the bytes on disk. \
                   `snapshot` copies every file of each instance into `refs/mock-backup/<namespace>`, which the \
-                  `reference-transaction` hook runs before git writes the work tree. Every verb but `instantiate`, \
+                  `reference-transaction` hook runs before git writes the work tree and the `post-checkout` hook \
+                  after a checkout moved `HEAD`. Every verb but `instantiate`, \
                   `snapshot` and a `commit` that makes the ref refuses a missing instance. With no \
                   `[[data_ref]]` declared the command says so and succeeds. A table with \
                   `include` holds only the files of its directory those patterns match \

@@ -166,11 +166,11 @@ fn an_edit_made_after_a_merge_is_not_said_to_be_written_over() {
     assert_eq!(w.remote_git(&["show", &format!("refs/heads/mock/research:{IN_REF}")]), "after the merge\n");
 }
 
-// Mutation: keep no copy at the reset that left the edit in place; the reset back to the migration,
-// which tracks none of the instance's files, removes every one of them, and the edit is in no commit
-// and no copy.
+// Mutation: leave `sparse.expectFilesOutsideOfPatterns` unset; at the commit from before the
+// migration git then takes the edited file for a changed tracked file, and the reset back to the
+// migration, which tracks none of the instance's files, removes it.
 #[test]
-fn an_edit_a_hard_reset_and_back_removed_is_said_and_restored() {
+fn an_edit_a_hard_reset_there_and_back_leaves_on_disk_and_commits() {
     let w = World::new();
     let a = dirty_instance_and_an_old_branch(&w);
     let dev = a.git(&["rev-parse", "HEAD"]);
@@ -178,38 +178,28 @@ fn an_edit_a_hard_reset_and_back_removed_is_said_and_restored() {
     assert!(o.ok, "{}", o.all());
     assert_eq!(a.read(NOTES), b"DIRTY instance edit\n", "the sparse checkout left the edit in place");
     a.git(&["reset", "-q", "--hard", dev.trim()]);
-    assert!(!a.exists(NOTES), "the control: leaving the commit that tracks the file removed it");
-    let s = a.fails(&["data-refs", "status", "research"]);
-    assert!(s.all().contains("`restore` it") && s.all().contains(IN_REF), "the edit is not named beside the removal: {}", s.all());
-    a.ok(&["data-refs", "restore", "research"]);
+    assert_eq!(a.read(NOTES), b"DIRTY instance edit\n", "the reset back left the edit in place");
     let s = a.ok(&["data-refs", "status", "research"]);
-    assert!(s.all().contains(&format!("data-refs restore research {IN_REF}")), "{}", s.all());
-    a.fails(&["data-refs", "commit", "research"]);
-    a.ok(&["data-refs", "restore", "research", IN_REF]);
-    assert_eq!(a.read(NOTES), b"DIRTY instance edit\n");
+    assert!(!s.all().contains("written over") && s.stdout.trim_end().ends_with("changed"), "{}", s.all());
+    a.ok(&["data-refs", "commit", "research"]);
+    assert_eq!(w.remote_git(&["show", &format!("refs/heads/mock/research:{IN_REF}")]), "DIRTY instance edit\n");
 }
 
-// Mutation: none; this pins the window that remains. A reset writes the work tree before it moves
-// `ORIG_HEAD`, so an edit made while the branch sits at a commit from before the migration, which
-// tracks the file, is copied by no hook before the reset back removes it, as git's reset drops an
-// edit of any tracked file. The day a hook runs first, this test says so.
+// Mutation: leave `sparse.expectFilesOutsideOfPatterns` unset. A reset writes the work tree before
+// it moves `ORIG_HEAD`, so an edit made while the branch sits at a commit from before the migration
+// is copied by no hook before the reset back; with the file skipped there the reset back leaves it
+// on disk, where git's reset would otherwise drop an edit of a tracked file.
 #[test]
-fn an_edit_made_at_a_commit_from_before_the_migration_is_the_window_a_reset_leaves() {
+fn an_edit_made_at_a_commit_from_before_the_migration_is_kept_by_the_reset_back() {
     let w = World::new();
     let a = dirty_instance_and_an_old_branch(&w);
     let dev = a.git(&["rev-parse", "HEAD"]);
     a.git(&["reset", "-q", "--hard", "feat"]);
     a.write(NOTES, b"edited at the old commit\n");
     a.git(&["reset", "-q", "--hard", dev.trim()]);
-    assert!(!a.exists(NOTES), "the control: leaving the commit that tracks the file removed it");
-    a.ok(&["data-refs", "restore", "research"]);
-    a.ok(&["data-refs", "restore", "research", IN_REF]);
-    assert_eq!(
-        a.read(NOTES),
-        b"DIRTY instance edit\n",
-        "the edit made at the old commit is kept now; close the window in the design text"
-    );
-    assert!(!copies_of(&a, IN_REF).contains(&"edited at the old commit\n".to_string()));
+    assert_eq!(a.read(NOTES), b"edited at the old commit\n", "the reset back dropped the edit made at the old commit");
+    a.ok(&["data-refs", "commit", "research"]);
+    assert_eq!(w.remote_git(&["show", &format!("refs/heads/mock/research:{IN_REF}")]), "edited at the old commit\n");
 }
 
 /// Holds the lock of the backup ref, as another writer, or the transaction a hook runs inside of

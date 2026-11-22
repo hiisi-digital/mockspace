@@ -17,11 +17,16 @@ pub enum Setup {
     HooksPath,
     /// git-shook holding `core.hooksPath`, installed once in the clone.
     Shook,
-    /// A bare clone whose `dev` is checked out in a linked worktree, and a second branch in another.
+    /// A bare clone whose `dev` is checked out in a linked worktree, a second branch in another, and
+    /// a third with a patterns file an earlier sparse checkout left.
     BareWorktrees,
 }
 
 pub const SETUPS: [Setup; 5] = [Setup::Cone, Setup::OwnRefHook, Setup::HooksPath, Setup::Shook, Setup::BareWorktrees];
+
+/// The patterns file a sparse checkout turned off long ago left in a linked worktree of the bare
+/// clone, which would hide every file but the readme there once the sparse checkout is on again.
+pub const STALE_PATTERNS: &str = "/README.md\n";
 
 /// The person's own hook, kept by every setup that has one.
 pub const OWN_HOOK: &str = "#!/bin/sh\n# the person's own, not the engine's\nexit 0\n";
@@ -97,7 +102,8 @@ impl World {
         let o = self.sh(&self.base(), "git", &["clone", "-q", "--bare", self.remote.to_str().unwrap(), &bare]);
         assert!(o.ok, "clone --bare: {}", o.all());
         let git_dir = self.base().join(&bare);
-        for (dir, branch) in [(name.to_string(), "dev".to_string()), (format!("{name}-side"), "side".to_string())] {
+        let worktrees = [(name.to_string(), "dev".to_string()), (format!("{name}-side"), "side".to_string()), (format!("{name}-stale"), "stale".to_string())];
+        for (dir, branch) in worktrees {
             let args: Vec<String> = if branch == "dev" {
                 vec!["worktree".into(), "add".into(), "-q".into(), format!("../{dir}"), branch]
             } else {
@@ -107,6 +113,11 @@ impl World {
             let o = self.sh(&git_dir, "git", &args);
             assert!(o.ok, "worktree add: {}", o.all());
         }
+        // a patterns file an earlier sparse checkout of that worktree left, which nothing reads while
+        // the sparse checkout is off
+        let stale = git_dir.join("worktrees").join(format!("{name}-stale")).join("info");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("sparse-checkout"), STALE_PATTERNS).unwrap();
         let c = Clone { w: self, root: self.base().join(name) };
         c.configure();
         c
