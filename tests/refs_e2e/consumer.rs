@@ -8,7 +8,7 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::symlink;
 
-use super::fixture::{CACHE_TAG, MANAGED_IGNORE, bytes, exec};
+use super::fixture::{BENCH_EXEC, CACHE_TAG, MANAGED_IGNORE, bytes, exec};
 use super::world::{Clone, World};
 
 /// What a consumer carries beside the shape every one of them has.
@@ -252,8 +252,8 @@ impl Shape {
             c.write(&m("research/empty.txt"), b"");
             c.write(&m("benches/hot/bench.rs"), b"fn main() {}\n");
             c.write(&m("benches/hot/baseline.json"), b"{\"ns\": 120}\n");
-            c.write(&m("benches/hot/run.sh"), b"#!/bin/sh\necho bench\n");
-            exec(c, &m("benches/hot/run.sh"));
+            c.write(&m(BENCH_EXEC.0), BENCH_EXEC.1);
+            exec(c, &m(BENCH_EXEC.0));
             for i in 0 .. self.bulk {
                 c.write(&m(&format!("research/bulk/{:03}/f{i:05}.md", i % 200)), format!("file number {i}\n").repeat(4).as_bytes());
             }

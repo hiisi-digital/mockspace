@@ -130,7 +130,7 @@ fn a_mode_change_alone_is_seen_committed_and_round_trips_to_a_second_clone() {
     let w = fixture::migrated_remote();
     let (a, b) = (fixture::seat(&w, "a"), fixture::seat(&w, "b"));
     let plain = "mock/research/crlf.txt";
-    let script = "mock/benches/hot/run.sh";
+    let script = "mock/benches/hot/sampler.bin";
     assert_eq!(mode_of(&b, plain), 0);
     assert_ne!(mode_of(&b, script), 0, "an executable arrives executable");
     set_exec(&a, plain, true);
@@ -140,7 +140,7 @@ fn a_mode_change_alone_is_seen_committed_and_round_trips_to_a_second_clone() {
     a.ok(&["data-refs", "commit"]);
     let tree = w.remote_git(&["ls-tree", "refs/heads/mock/research", "crlf.txt"]);
     assert!(tree.starts_with("100755"), "{tree}");
-    let tree = w.remote_git(&["ls-tree", "refs/heads/mock/benches", "hot/run.sh"]);
+    let tree = w.remote_git(&["ls-tree", "refs/heads/mock/benches", "hot/sampler.bin"]);
     assert!(tree.starts_with("100644"), "{tree}");
     b.ok(&["data-refs", "update"]);
     assert_ne!(mode_of(&b, plain), 0, "the mode alone arrived");
@@ -155,7 +155,7 @@ fn a_mode_change_alone_is_seen_committed_and_round_trips_to_a_second_clone() {
 fn restore_gives_a_file_back_its_executable_bit() {
     let w = fixture::migrated_remote();
     let a = fixture::seat(&w, "a");
-    let script = "mock/benches/hot/run.sh";
+    let script = "mock/benches/hot/sampler.bin";
     a.remove(script);
     a.ok(&["data-refs", "restore", "benches"]);
     assert_ne!(mode_of(&a, script), 0);

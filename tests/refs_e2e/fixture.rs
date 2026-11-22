@@ -22,6 +22,10 @@ pub fn exec(c: &Clone, rel: &str) {
     mockspace_manifest::write_executable(&p, body).unwrap();
 }
 
+/// An executable among the benches that is not a runner: a prebuilt input, no shebang and no
+/// script extension, since dev's `a-bench-runs-only-on-the-generated-driver` refuses a script there.
+pub const BENCH_EXEC: (&str, &[u8]) = ("benches/hot/sampler.bin", b"\x7fELF a prebuilt input generator\n");
+
 pub const MANAGED_IGNORE: &str = "# === mockspace-managed build artifacts (do not edit) ===\n# Catch-all: every cargo build dir, including nested ones under benches/,\n# tests/, and research sketches. A leading-slash /target would miss those.\ntarget/\n# === end mockspace-managed build artifacts ===\n";
 
 /// The declarations the full migration of the fixture makes, as `(namespace, path, include)`.
@@ -93,8 +97,9 @@ pub fn build_tracked(c: &Clone) {
     // commit 4: benches, tools and lints with their own lockfiles, executables
     c.write("mock/benches/hot/bench.rs", b"fn main() {}\n");
     c.write("mock/benches/hot/baseline.json", b"{\"ns\": 120}\n");
-    c.write("mock/benches/hot/run.sh", b"#!/bin/sh\necho bench\n");
-    exec(c, "mock/benches/hot/run.sh");
+    let exe = format!("mock/{}", BENCH_EXEC.0);
+    c.write(&exe, BENCH_EXEC.1);
+    exec(c, &exe);
     for k in ["tools/probe", "lints/shape"] {
         c.write(&format!("mock/{k}/Cargo.toml"), b"[package]\nname = \"x\"\nversion = \"0.1.0\"\n");
         c.write(&format!("mock/{k}/Cargo.lock"), b"# lock\nversion = 3\n");
