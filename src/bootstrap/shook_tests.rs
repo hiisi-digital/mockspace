@@ -164,7 +164,7 @@ fn activating_where_shook_holds_the_key_registers_and_leaves_the_key() {
     let before = git(&dir, &["config", "--local", "core.hooksPath"]);
     assert!(is_shook_path(&dir, &before), "{before}");
 
-    activate_with(&dir, &mock, test_shook_dir().as_deref()).unwrap();
+    activate_with(&dir, &mock, test_shook_dir().as_deref(), &mut |_| {}).unwrap();
 
     assert_eq!(git(&dir, &["config", "--local", "core.hooksPath"]), before, "the key is git-shook's still");
     assert!(has_manifest(&dir));

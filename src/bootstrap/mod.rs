@@ -207,9 +207,10 @@ pub fn ensure_gate(
         } else {
             ensure_durable_hooks(&mut actions);
         }
-    } else if current.as_deref() != Some(want.as_ref()) {
-        // not pointing at the durable gate yet: activate (also (re)writes the
-        // durable hooks and records the mock-dir locator).
+    } else if current.as_deref() != Some(want.as_ref()) || shook::runs(repo_root, None) {
+        // not pointing at the durable gate yet, or pointing at it where git-shook
+        // runs and so should hold the key: activate (also (re)writes the durable
+        // hooks and records the mock-dir locator).
         let _ = activate(repo_root, mock_dir);
     } else {
         // already active: just keep the hook content current.

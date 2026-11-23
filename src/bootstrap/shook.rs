@@ -231,3 +231,11 @@ mod tests;
 #[cfg(test)]
 #[path = "shook_chain_tests.rs"]
 mod chain_tests;
+
+#[cfg(test)]
+#[path = "shook_activate_tests.rs"]
+mod activate_tests;
+
+#[cfg(test)]
+#[path = "shook_gate_refusal_tests.rs"]
+mod gate_refusal_tests;

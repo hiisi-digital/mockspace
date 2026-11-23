@@ -11,12 +11,23 @@ use super::*;
 /// The durable dir lives in the user config home, so the gate survives a
 /// `target/` clean that deletes the generated validator. Requires the
 /// generated validator to exist (it is what the durable hook execs).
+///
+/// Where `git shook` runs, the gate is registered through it and git-shook takes
+/// `core.hooksPath`, whatever the key held: what was there is adopted as its own
+/// kept entries, and the gate is one more entry beside them. Where it does not
+/// run, the gate takes the key itself and says so in one line.
 pub fn activate(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
-    activate_with(repo_root, mock_dir, None)
+    activate_with(repo_root, mock_dir, None, &mut |line| eprintln!("--- gate: {line} ---"))
 }
 
-/// [`activate`], with `on_path` put at the front of the `PATH` of the `git shook` it runs.
-pub(crate) fn activate_with(repo_root: &Path, mock_dir: &Path, on_path: Option<&Path>) -> Result<(), String> {
+/// [`activate`], with `on_path` put at the front of the `PATH` of the `git shook` it runs, and
+/// every line it would print handed to `say`.
+pub(crate) fn activate_with(
+    repo_root: &Path,
+    mock_dir: &Path,
+    on_path: Option<&Path>,
+    say: &mut dyn FnMut(&str),
+) -> Result<(), String> {
     let generated = generated_hooks_dir(mock_dir);
     if !generated.exists() {
         return Err(format!(
@@ -30,7 +41,7 @@ pub(crate) fn activate_with(repo_root: &Path, mock_dir: &Path, on_path: Option<&
     let mut actions = Vec::new();
     ensure_durable_hooks(&mut actions);
     for msg in &actions {
-        eprintln!("--- gate: {msg} ---");
+        say(msg);
     }
     // Point at whatever `ensure_durable_hooks` actually produced: the same
     // choice `hooks_path_target` reports to `check_activation`, so the two
@@ -43,8 +54,37 @@ pub(crate) fn activate_with(repo_root: &Path, mock_dir: &Path, on_path: Option<&
         .is_some_and(|existing| shook::is_shook_path(repo_root, &existing));
     if shook_held {
         shook::register_with(repo_root, &hooks_dir, on_path)?;
-        eprintln!("--- gate: registered with git-shook, core.hooksPath left as it is ---");
+        say("registered with git-shook, core.hooksPath left as it is");
         return record_mock_dir(repo_root, mock_dir);
+    }
+    // Where git-shook runs it takes the key, whatever it held: `git shook install` keeps what
+    // was in the hooks directory the key named (or in `.git/hooks`) as its own entries, so every
+    // event that ran before still runs, and the gate is one entry beside them. A clone the gate
+    // held the key of is moved the same way: the gate's own hooks, which git-shook would keep as
+    // an existing hook beside the entry, are dropped from the kept ones by `register_with`, and
+    // what the gate chained to in `.git/hooks` stays reached by the gate's chain.
+    if shook::runs(repo_root, on_path) {
+        match shook::register_with(repo_root, &hooks_dir, on_path) {
+            Ok(()) => {
+                let key = local_config(repo_root, "core.hooksPath");
+                if key.as_deref().is_some_and(|k| shook::is_shook_path(repo_root, k)) {
+                    say("registered with git-shook, which took core.hooksPath");
+                    return record_mock_dir(repo_root, mock_dir);
+                }
+                // registered, and the key is somebody's still: an entry no hook reaches
+                shook::unregister(repo_root)?;
+                say("git shook did not take core.hooksPath, so mockspace takes it itself");
+            },
+            Err(e) => {
+                let key = local_config(repo_root, "core.hooksPath");
+                if key.as_deref().is_some_and(|k| shook::is_shook_path(repo_root, k)) {
+                    return Err(e);
+                }
+                say(&format!("git shook refused ({}), so mockspace takes core.hooksPath itself", e.replace('\n', " ")));
+            },
+        }
+    } else {
+        say("git shook does not run here, so mockspace takes core.hooksPath itself");
     }
     // git-shook gave the key up (`git shook uninstall` keeps the manifest): the
     // stale registration goes, the gate takes the key below
@@ -76,10 +116,9 @@ pub(crate) fn activate_with(repo_root: &Path, mock_dir: &Path, on_path: Option<&
                 .args(["config", "--local", PREVIOUS_HOOKS_PATH, &existing])
                 .current_dir(repo_root)
                 .status();
-            eprintln!(
-                "--- gate: core.hooksPath was {existing}; saved, and `mock deactivate` \
-                 puts it back ---"
-            );
+            say(&format!(
+                "core.hooksPath was {existing}; saved, and `mock deactivate` puts it back"
+            ));
         }
     }
 
@@ -233,6 +272,15 @@ mod tests {
 
     use super::{PREVIOUS_HOOKS_PATH, deactivate, local_config};
 
+    /// `activate`, in a place where `git shook` does not run: a directory whose `git-shook`
+    /// refuses, in front of the `PATH`, so these hold on a machine that has git-shook too.
+    fn activate_without_shook(dir: &PathBuf, mock: &PathBuf) {
+        let bin = dir.join("no-shook-bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        crate::test_exec::write_executable(&bin.join("git-shook"), "#!/bin/sh\nexit 1\n");
+        let _ = super::activate_with(dir, mock, Some(&bin), &mut |_| {});
+    }
+
     /// A repository with no remote and no hooks configuration.
     ///
     /// The counter is what makes it unique, not the clock. Keying on pid plus
@@ -344,7 +392,7 @@ mod tests {
         let (_g, dir, mock) = repo_ready_to_activate();
         set(&dir, "core.hooksPath", "mock/target/hooks");
 
-        let _ = super::activate(&dir, &mock);
+        activate_without_shook(&dir, &mock);
 
         assert!(
             local_config(&dir, PREVIOUS_HOOKS_PATH).is_none(),
@@ -360,7 +408,7 @@ mod tests {
         let (_g, dir, mock) = repo_ready_to_activate();
         set(&dir, "core.hooksPath", "/home/x/.config/mockspace/hooks-v2");
 
-        let _ = super::activate(&dir, &mock);
+        activate_without_shook(&dir, &mock);
 
         assert!(
             local_config(&dir, PREVIOUS_HOOKS_PATH).is_none(),
@@ -377,7 +425,7 @@ mod tests {
         let (_g, dir, mock) = repo_ready_to_activate();
         set(&dir, "core.hooksPath", ".husky");
 
-        let _ = super::activate(&dir, &mock);
+        activate_without_shook(&dir, &mock);
 
         assert_eq!(
             local_config(&dir, PREVIOUS_HOOKS_PATH).as_deref(),
