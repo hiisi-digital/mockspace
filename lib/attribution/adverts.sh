@@ -28,7 +28,28 @@ ATTRIBUTION_ADVERT_URL_RE='(claude\.com/claude-code|claude\.ai/code|noreply@anth
 # an angle-bracketed address.
 ATTRIBUTION_ADVERT_PHRASE_RE='(generated|created|written|authored|made|built)[[:space:]]+(with|by)[[:space:]]*:?[[:space:]]*(\[|https?://|<)'
 
-ATTRIBUTION_ADVERT_RE="(${ATTRIBUTION_ADVERT_URL_RE}|${ATTRIBUTION_ADVERT_PHRASE_RE})"
+# The same advert in plain words, `Generated with Claude Code` or `Made with
+# Cursor`, with no link, URL or address after it, on a line of its own. The
+# phrase net above passed these. A verb of making at the start of the line,
+# behind anything that is not a letter or a digit (comment and quote markers, a
+# robot emoji), then `with`, `by`, `using`, `via` or `from`, at most one word,
+# and a name from the identity net's own tables of tools and given names, so a
+# name is spelled once, there. Anchored at the line's start for the reason
+# above: `written with spaces` in a subject, and a sentence naming a tool
+# mid-way, are prose. A word after the verb that is no tool's name, `generated
+# by the renderer`, is prose too.
+_attribution_advert_words_re() {
+    local names="" n
+    while IFS= read -r n; do
+        [[ -n "$n" ]] || continue
+        n=${n//./\\.}
+        names+="${names:+|}${n// /[[:space:]]+}"
+    done < <(printf '%s|%s' "$ATTRIBUTION_AGENT_TOOLS" "$ATTRIBUTION_AGENT_GIVEN" | tr '|' '\n' | sort -u)
+    printf '%s' "^[^[:alnum:]]*(co-?)?(generated|created|written|authored|made|built|produced|assisted|powered|coded|drafted|crafted|developed)[[:space:]]+((with|by|using|via|in|from)[[:space:]]+[^[:alnum:][:space:]]+[[:space:]]+)?(with|by|using|via|from)[[:space:]]+[[]?(the[[:space:]]+)?([[:alnum:]-]+[[:space:]]+)?(${names})([^[:alnum:]]|$)"
+}
+ATTRIBUTION_ADVERT_WORDS_RE="$(_attribution_advert_words_re)"
+
+ATTRIBUTION_ADVERT_RE="(${ATTRIBUTION_ADVERT_URL_RE}|${ATTRIBUTION_ADVERT_PHRASE_RE}|${ATTRIBUTION_ADVERT_WORDS_RE})"
 
 # attribution_strip_quoted
 #
