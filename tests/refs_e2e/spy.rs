@@ -28,6 +28,11 @@ pub struct Spy {
 }
 
 /// Puts the logging `git` first on the `PATH` of every command `w` runs.
+/// The filter that writes the caller's process id as `P` where it stands as a whole token, as in
+/// the scratch ref `remote_holds` fetches into (`probe-<pid>-<n>`), and nowhere else: the same digits
+/// inside an object id or a longer number are left as they are.
+pub const PID_MASK: &str = r#"sed -E "s/(^|[^0-9A-Za-z])$PPID([^0-9A-Za-z]|$)/\1P\2/g""#;
+
 pub fn install(w: &World) -> Spy {
     let base = w.base();
     let spy = Spy {
@@ -117,9 +122,10 @@ if [ -f '{measure}' ]; then
   # the caller names to it where the number of calls does not
   tmp='{sizes}'.$$
   cat > "$tmp"
-  # the process id of the caller, where a name holds it (the scratch ref `remote_holds` fetches
-  # into), counts as one byte, so the count is the same whatever number the system gave it
-  echo "$sub $(printf %s "$*" | sed "s/$PPID/P/g" | wc -c) $(sed "s/$PPID/P/g" "$tmp" | wc -c)" >> '{sizes}'
+  # the process id of the caller, where a name holds it as a token of its own (the scratch ref
+  # `remote_holds` fetches into), counts as one byte, so the count is the same whatever number the
+  # system gave it
+  echo "$sub $(printf %s "$*" | {mask} | wc -c) $({mask} < "$tmp" | wc -c)" >> '{sizes}'
   exec 3< "$tmp"
   rm -f "$tmp"
   exec '{real}' "$@" <&3 3<&-
@@ -134,6 +140,7 @@ exec '{real}' "$@"
         group = spy.group.display(),
         measure = spy.measure.display(),
         sizes = spy.sizes.display(),
+        mask = PID_MASK,
     );
     mockspace_manifest::write_executable(&base.join("shims/git"), body).unwrap();
     spy

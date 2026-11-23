@@ -208,3 +208,21 @@ fn a_command_that_writes_every_file_starts_no_more_git_processes_on_a_tree_five_
         assert_eq!(s.objects, l.objects, "{what}: objects written grow with the tree\n{shown}");
     }
 }
+
+// Mutation: mask the caller's process id wherever its digits stand; an object id or a longer number
+// holding them then counts fewer bytes on one run than on another.
+#[test]
+fn the_spy_counts_the_process_id_as_one_byte_only_where_it_is_a_token_of_its_own() {
+    let pid = std::process::id().to_string();
+    let oid = format!("{pid}{}", "a".repeat(40 - pid.len()));
+    let input = format!("refs/mockspace-store/probe-{pid}-3 {oid} 1{pid} x{pid}");
+    let o = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("printf '%s' \"$1\" | {}", spy::PID_MASK))
+        .arg("sh")
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(String::from_utf8(o.stdout).unwrap(), format!("refs/mockspace-store/probe-P-3 {oid} 1{pid} x{pid}"));
+}
