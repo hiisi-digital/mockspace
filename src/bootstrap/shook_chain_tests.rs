@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use super::tests::{git, have_shook, repo};
+use super::tests::{git, have_shook, register_t, repo};
 use super::*;
 
 #[test]
@@ -39,7 +39,7 @@ fn adopting_shook_in_a_gated_repo_runs_the_gate_once() {
         "control: git-shook did keep the gate as an existing hook"
     );
 
-    register(&dir, &hooks).unwrap();
+    register_t(&dir, &hooks).unwrap();
 
     fs::write(dir.join("f.txt"), "x").unwrap();
     git(&dir, &["add", "f.txt"]);
@@ -76,7 +76,7 @@ fn adopted_with_own_hook(tag: &str, own_before_adoption: bool) -> (PathBuf, Path
     fs::write(dir.join("shook.toml"), "[hooks.pre-commit]\nrun = [\"true\"]\n").unwrap();
     git(&dir, &["add", "shook.toml"]);
     git(&dir, &["shook", "install", "--yes"]);
-    register(&dir, &hooks).unwrap();
+    register_t(&dir, &hooks).unwrap();
     if !own_before_adoption {
         write_own();
     }
@@ -139,7 +139,7 @@ fn a_kept_hook_that_is_not_ours_survives_registration() {
     git(&dir, &["shook", "install", "--yes"]);
     let kept = shook_dir(&dir).join("entries/pre-commit/00-existing");
     assert!(kept.is_file(), "control: the repository's own hook was kept");
-    register(&dir, &hooks).unwrap();
+    register_t(&dir, &hooks).unwrap();
     assert!(kept.is_file(), "a kept hook without the managed marker is not dropped");
     assert!(shook_dir(&dir).join("kept/pre-commit").is_file());
     let _ = fs::remove_dir_all(&dir);
@@ -213,7 +213,7 @@ fn a_hook_git_shook_declined_because_a_manifest_runs_it_is_not_chained_to_either
     let hooks = dir.join("durable");
     let _ = mockspace_manifest::gate::install_durable_hooks(&hooks, HOOK_VERSION);
     git(&dir, &["shook", "install", "--yes"]);
-    register(&dir, &hooks).unwrap();
+    register_t(&dir, &hooks).unwrap();
     assert!(
         !shook_dir(&dir).join("entries/pre-commit/00-existing").exists(),
         "control: git-shook declined to keep it, and left the file where it was"
@@ -279,7 +279,7 @@ fn a_hook_adopted_from_another_hooks_directory_leaves_git_hooks_to_the_chain() {
     fs::write(dir.join("shook.toml"), "[hooks.pre-commit]\nrun = [\"true\"]\n").unwrap();
     git(&dir, &["add", "shook.toml"]);
     git(&dir, &["shook", "install", "--yes"]);
-    register(&dir, &hooks).unwrap();
+    register_t(&dir, &hooks).unwrap();
     fs::write(dir.join("f.txt"), "x").unwrap();
     git(&dir, &["add", "f.txt"]);
     git(&dir, &["commit", "-q", "-m", "init"]);
@@ -351,7 +351,7 @@ fn a_tool_run_by_a_manifest_and_by_the_hook_in_git_hooks_runs_once_after_the_gat
     let _ = mockspace_manifest::gate::install_durable_hooks(&hooks, HOOK_VERSION);
     git(&dir, &["config", "core.hooksPath", hooks.to_str().unwrap()]);
     git(&dir, &["shook", "install", "--yes"]);
-    register(&dir, &hooks).unwrap();
+    register_t(&dir, &hooks).unwrap();
     fs::write(dir.join("f.txt"), "x").unwrap();
     git(&dir, &["add", "f.txt"]);
     git(&dir, &["commit", "-q", "-m", "init"]);
