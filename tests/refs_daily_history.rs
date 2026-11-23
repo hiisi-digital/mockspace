@@ -100,12 +100,13 @@ fn history_holds_at(c: &refs_e2e::Clone, ns: &str, name: &str, text: &[u8]) -> b
 
 // Mutation: leave `sparse.expectFilesOutsideOfPatterns` unset, or the `post-checkout` hook out. With
 // no engine command anywhere between, the way there by `checkout` (plain, forced, or of a branch cut
-// before the migration) and every way back are plain git. Without the setting, git takes the edited
-// file at the old commit, on disk where the patterns leave it out, as a changed tracked file: a
-// forced checkout there writes the old bytes over it, and a forced way back removes it with no copy
-// anywhere (`checkout -f` moves no `ORIG_HEAD`, and `reset --hard` moves it only after it wrote the
-// tree). With it, the file stays skipped there: the forced ways back leave it on disk, and the plain
-// way back deletes it, which the copy the `post-checkout` hook took on the way there holds.
+// before the migration) or by a hard reset of the branch, and every way back, are plain git. Without
+// the setting, git takes the edited file at the old commit, on disk where the patterns leave it out,
+// as a changed tracked file: a forced checkout there writes the old bytes over it, and a forced way
+// back removes it with no copy anywhere (`checkout -f` moves no `ORIG_HEAD`, and `reset --hard`
+// moves it only after it wrote the tree). With it, the file stays skipped there: the forced ways back
+// leave it on disk, and the plain way back deletes it, which the copy the `post-checkout` hook took
+// on the way there holds.
 #[test]
 fn an_edit_taken_to_an_old_commit_by_checkout_with_no_engine_command_since_is_kept_on_every_way_back() {
     there_and_back(false);
@@ -124,7 +125,7 @@ fn an_edit_made_at_an_old_commit_with_no_engine_command_since_is_kept_on_every_w
 /// Every way to a commit from before the migration and back, plain git with no engine command
 /// between; where `edit_there`, the file is edited again after arriving there.
 fn there_and_back(edit_there: bool) {
-    let ways: [(&[&str], &[&str]); 9] = [
+    let ways: [(&[&str], &[&str]); 11] = [
         (&["checkout", "-q", "-f"], &["checkout", "-q", "-f", "dev"]),
         (&["checkout", "-q"], &["checkout", "-q", "-f", "dev"]),
         (&["checkout", "-q", "-f"], &["reset", "-q", "--hard", "dev"]),
@@ -135,6 +136,9 @@ fn there_and_back(edit_there: bool) {
         // a branch cut before the migration, which moves `HEAD` by name and no reference with it
         (&["checkout", "-q", "old"], &["checkout", "-q", "dev"]),
         (&["checkout", "-q", "old"], &["checkout", "-q", "-f", "dev"]),
+        // a hard reset of the branch itself there, and back to the commit it was at (`TIP`)
+        (&["reset", "-q", "--hard"], &["reset", "-q", "--hard", "TIP"]),
+        (&["reset", "-q", "--hard"], &["checkout", "-q", "-B", "dev", "TIP"]),
     ];
     let mut lost = Vec::new();
     for (there, back) in ways {
@@ -143,6 +147,7 @@ fn there_and_back(edit_there: bool) {
         let mut l = Ledger::default();
         let text = b"a: edited, then plain git there and back\n";
         l.write(&a, NOTES, text);
+        let tip = a.git(&["rev-parse", "HEAD"]).trim().to_string();
         let pre = before_the_migration(&a);
         let mut there = there.to_vec();
         if there.last() == Some(&"old") {
@@ -159,7 +164,8 @@ fn there_and_back(edit_there: bool) {
         if edit_there {
             l.write(&a, NOTES, last);
         }
-        let b = a.git_out(back);
+        let back: Vec<&str> = back.iter().map(|arg| if *arg == "TIP" { tip.as_str() } else { arg }).collect();
+        let b = a.git_out(&back);
         if !b.ok {
             lost.push(format!("{there:?} then {back:?}: the way back was refused: {}", b.all()));
             continue;
