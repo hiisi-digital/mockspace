@@ -29,15 +29,25 @@ ATTRIBUTION_ADVERT_URL_RE='(claude\.com/claude-code|claude\.ai/code|noreply@anth
 ATTRIBUTION_ADVERT_PHRASE_RE='(generated|created|written|authored|made|built)[[:space:]]+(with|by)[[:space:]]*:?[[:space:]]*(\[|https?://|<)'
 
 # The same advert in plain words, `Generated with Claude Code` or `Made with
-# Cursor`, with no link, URL or address after it, on a line of its own. The
-# phrase net above passed these. A verb of making at the start of the line,
-# behind anything that is not a letter or a digit (comment and quote markers, a
-# robot emoji), then `with`, `by`, `using`, `via` or `from`, at most one word,
-# and a name from the identity net's own tables of tools and given names, so a
-# name is spelled once, there. Anchored at the line's start for the reason
-# above: `written with spaces` in a subject, and a sentence naming a tool
-# mid-way, are prose. A word after the verb that is no tool's name, `generated
-# by the renderer`, is prose too.
+# Cursor`, with no link, URL or address after it. The phrase net above passed
+# these. The line has to be the advert and nothing else: a verb of making at its
+# start, behind anything that is not a letter (comment, quote and list markers,
+# a robot emoji, a numbered item) and an optional prefix such as `AI-`; then
+# `with`, `by`, `using`, `via` or `from`; a name from the identity net's own
+# tables of tools and given names, so a name is spelled once, there, with at
+# most `the` and a vendor in front of it; and after it only what a tool's
+# suffix carries, a product word, a version or a model, up to three of them,
+# and the punctuation that ends the line.
+#
+# Several of those names are ordinary words, `cursor`, `amp`, `opus`, `llama`,
+# and a commit body is wrapped wherever its width falls, so a wrapped line of
+# prose can start `built with cursor-based paging`. Anchored at both ends is
+# what keeps that, and `written with spaces` in a subject, and a sentence
+# naming a tool mid-way, prose. What it does not keep is a line that is no more
+# than a verb and one of those words, `made by amp`, which is refused, and costs
+# whoever wrote it one reword.
+_ATTRIBUTION_ADVERT_VENDORS='github|google|openai|anthropic|amazon|aws|microsoft|jetbrains|sourcegraph|cognition|meta|mistral|deepseek|xai'
+_ATTRIBUTION_ADVERT_TAIL_WORDS='code|cli|chat|agent|assistant|ai|pro|max|ide|app|desktop|web|cloud|enterprise|workspace|copilot|ultra|flash|mini|turbo|preview|beta|sonnet|opus|haiku|instant'
 _attribution_advert_words_re() {
     local names="" n
     while IFS= read -r n; do
@@ -45,8 +55,10 @@ _attribution_advert_words_re() {
         n=${n//./\\.}
         names+="${names:+|}${n// /[[:space:]]+}"
     done < <(printf '%s|%s' "$ATTRIBUTION_AGENT_TOOLS" "$ATTRIBUTION_AGENT_GIVEN" | tr '|' '\n' | sort -u)
-    printf '%s' "^[^[:alnum:]]*(co-?)?(generated|created|written|authored|made|built|produced|assisted|powered|coded|drafted|crafted|developed)[[:space:]]+((with|by|using|via|in|from)[[:space:]]+[^[:alnum:][:space:]]+[[:space:]]+)?(with|by|using|via|from)[[:space:]]+[[]?(the[[:space:]]+)?([[:alnum:]-]+[[:space:]]+)?(${names})([^[:alnum:]]|$)"
+    local tail="(([[:space:]]+|-)(${_ATTRIBUTION_ADVERT_TAIL_WORDS}|[[:alnum:].-]*[0-9][[:alnum:].-]*)){0,3}"
+    printf '%s' "^[^[:alpha:]]*([[:alpha:]]+-)?(co-?)?(generated|created|written|authored|made|built|produced|assisted|powered|coded|drafted|crafted|developed)[[:space:]]+((with|by|using|via|in|from)[[:space:]]+[^[:alnum:][:space:]]+[[:space:]]+)?(with|by|using|via|from):?[[:space:]]+[[]?(the[[:space:]]+)?((${_ATTRIBUTION_ADVERT_VENDORS})[[:space:]]+)?(${names})${tail}[[:space:][:punct:]]*$"
 }
+
 ATTRIBUTION_ADVERT_WORDS_RE="$(_attribution_advert_words_re)"
 
 ATTRIBUTION_ADVERT_RE="(${ATTRIBUTION_ADVERT_URL_RE}|${ATTRIBUTION_ADVERT_PHRASE_RE}|${ATTRIBUTION_ADVERT_WORDS_RE})"
