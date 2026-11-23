@@ -233,12 +233,15 @@ fn the_monitor_copies_only_while_the_index_tracks_a_file_of_an_instance_and_hide
     assert_eq!(copies(), before, "a git command on dev copies nothing");
     assert!(!tracked().exists(), "on dev the index tracks no file of an instance");
     let file = a.git(&["ls-files"]).lines().next().unwrap().to_string();
+    let was = a.read(&file);
     a.write(&file, b"changed on disk\n");
     let s = a.git(&["status", "--porcelain"]);
     assert!(s.contains(&file), "git sees the change through the monitor: {s}");
     let migration = a.git(&["log", "-1", "--format=%H", "--", "mock/research"]);
     let pre = a.git(&["rev-parse", &format!("{}~1", migration.trim())]);
-    a.git(&["commit", "-qam", "chore: the readme"]);
+    a.write(&file, &was);
+    let s = a.git(&["status", "--porcelain"]);
+    assert!(!s.contains(&file), "git sees the file back as it was through the monitor: {s}");
     a.git(&["checkout", "-q", pre.trim()]);
     assert!(tracked().exists(), "at a commit from before the migration the index tracks the files of the instance");
     a.write(NOTES, b"edited at the old commit\n");
