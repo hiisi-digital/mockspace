@@ -82,3 +82,16 @@ fn a_position_is_refused_with_the_reason() {
     assert_eq!(code, Some(1));
     assert!(err.contains("position"), "{err}");
 }
+
+#[test]
+fn a_repeated_set_member_is_read_twice_and_said() {
+    let (code, out, err) = query("ticket::{task, task}::engine.count()");
+    assert_eq!((code, out.as_str()), (Some(0), "2\n"), "{err}");
+    assert!(err.contains("names `task` twice in one set"), "{err}");
+}
+
+#[test]
+fn a_plain_field_read_after_the_root_is_the_same_reader() {
+    let (code, out, err) = query("reg::ticket::question::engine::render::id");
+    assert_eq!((code, out.as_str()), (Some(0), "question::engine::render\n"), "{err}");
+}

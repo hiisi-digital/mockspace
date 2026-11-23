@@ -53,11 +53,13 @@ A postfix chain narrows a result, left to right: `{{ pathof(crates::store).dir()
 
 ## Selecting rows
 
-Any reference may select: `{{ ticket::question::engine }}` (a branch: every row below it), `ticket::**::internals::**` (`**` any depth, none included), `ticket::*::engine`, `ticket::{task, question}::engine::*` (written order kept), and `cargo mock query` the same. Rows of one namespace are its table, holding just them, so `.count()`, `.select(id)` and `.where(...)` narrow it; a field step after a wildcard gives each row's value, and `pathof`, `sourcesof` and `refsto` take a selection. Under a wildcard members come in byte order of their names, step by step (`a::b` before `a0`), each row once.
+One reader takes every path into the registry, plain ones included, in documents and at `cargo mock query` alike: `{{ ticket::question::engine }}` (a branch: every row below it), `ticket::**::internals::**` (`**` any depth, none included), `ticket::*::engine`, `ticket::{task, question}::engine::*` (written order kept), `ticket::*::**::needs::title` (on through a field of row references). A plain read of a row or a field, a set of one member included, shows as before; rows of one namespace are otherwise its table, holding just them, so `.count()`, `.select(id)` and `.where(...)` narrow it, and fields are a list of the values the rows carry. `pathof`, `sourcesof` and `refsto` take any of these. Members come in byte order of their names, step by step (`a::b` before `a0`).
 
-- A wildcard matching nothing is an empty answer; a step naming nothing where no step before it widened fails.
-- After a wildcard a row whose namespace declares no such field is passed over (this host yields, not fails); a step past a field, an ordinal, a range and a constraint fail.
-- A namespace is written in the standard's spelling (`web_renderer`, never `web-renderer`); two namespaces folding to one name is `namespace-fold-collision`.
+- A wildcard matching nothing is an empty answer; a step naming nothing where no step before it widened fails, and the unresolved reference's finding says why.
+- After a wildcard a row whose namespace has no such field is passed over (this host yields, not fails); a step past a value field, an ordinal, a range and a constraint fail. `**` from a row covers its fields.
+- Each row once within one path of a set's expansion; a set naming a member twice reads it twice, with a warning.
+- A namespace is written as declared or folded (`web-renderer::x` and `web_renderer::x` alike), an allowance the standard's 3.2 does not make and this host keeps; two namespaces folding to one name is `namespace-fold-collision`.
+- A row selecting the branch that holds it, an epic listing its own branch, is one `reference-cycle`.
 
 ## Merging registry files
 

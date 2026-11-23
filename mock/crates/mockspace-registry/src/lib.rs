@@ -73,6 +73,7 @@ mod load;
 pub mod merge;
 mod model;
 mod provenance;
+mod query_text;
 pub mod legacy_refs;
 pub mod refpath;
 mod refs;
@@ -89,6 +90,7 @@ mod stores;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_world;
 pub mod validate;
+mod walk;
 mod writer;
 
 pub use bounds::*;
@@ -100,6 +102,7 @@ pub use ids::*;
 pub use load::*;
 pub use model::*;
 pub use provenance::*;
+pub use query_text::*;
 pub use refpath::*;
 pub use refs::*;
 pub use render::*;
@@ -184,6 +187,9 @@ pub fn cmd_query(cfg: &dyn RegistryEnv, expr: &str) -> std::process::ExitCode {
         cfg,
     ) {
         Some(found) => {
+            for warning in repeated_set_warnings(expr) {
+                eprintln!("warning: {warning}");
+            }
             print!("{}", found.to_terminal());
             ExitCode::SUCCESS
         },
@@ -192,7 +198,7 @@ pub fn cmd_query(cfg: &dyn RegistryEnv, expr: &str) -> std::process::ExitCode {
             // resolves to nothing is reported rather than rendered as something
             // plausible, and that holds here too.
             eprintln!("no result: `{}` does not resolve", expr.trim());
-            if let Some(why) = select::refusal(namespaces, &registry, expr.trim()) {
+            if let Some(why) = unresolved_reason(namespaces, &registry, expr.trim()) {
                 eprintln!("{why}");
             }
 

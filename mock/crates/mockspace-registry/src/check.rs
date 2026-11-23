@@ -101,7 +101,7 @@ pub fn check(
         ),
         // A run that could not check is not a run that passed. An unverifiable row shape reported
         // as success is a green that means nothing: every required field, every type and every
-        // slug pattern went unchecked.
+        // id pattern went unchecked.
         //
         // Decided on rows existing, not on namespaces existing. Two namespaces are built in, so the
         // namespaces are never empty and a test of them fails every project that has no registry
@@ -110,7 +110,7 @@ pub fn check(
         SchemaCheck::Unavailable => Shape::Refused(vec![RegistryFinding {
             kind:    "schema-unavailable",
             message: format!(
-                "taplo is not installed, so the shape of {} row(s) is unverified: required fields, types and slug \
+                "taplo is not installed, so the shape of {} row(s) is unverified: required fields, types and id \
                  patterns were all unchecked. Install taplo.",
                 registry.rows.len()
             ),

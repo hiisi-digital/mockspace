@@ -12,16 +12,6 @@ fn tickets() -> Vec<RegistryNamespace> {
     vec![namespace("ticket", &[("title", "string", false), ("status", "string", false)], &[])]
 }
 
-const ROWS: &str = r#"
-[[ticket]]
-id = "question::engine::allowed"
-title = "Deep"
-status = "open"
-
-[[ticket]]
-id = "lonely"
-title = "Flat"
-"#;
 
 #[test]
 fn a_row_id_is_one_or_more_plain_names() {
@@ -34,44 +24,6 @@ fn a_row_id_is_one_or_more_plain_names() {
         assert!(row_id_names(bad).is_err(), "{bad:?}");
     }
     assert_eq!(row_id_names("question::engine").unwrap(), ["question", "engine"]);
-}
-
-#[test]
-fn locate_finds_a_path_id_and_the_field_steps_after_it() {
-    let reg = rows_from(ROWS, &tickets());
-    let names = ["ticket", "question", "engine", "allowed", "status"];
-    let found = reg.locate(&names).expect("the path id is a row");
-    assert_eq!(found.row.qualified(), "ticket::question::engine::allowed");
-    assert_eq!(found.fields, ["status"]);
-
-    let whole = reg.locate(&names[.. 4]).expect("the row itself");
-    assert_eq!(whole.row.id, "question::engine::allowed");
-    assert!(whole.fields.is_empty());
-
-    // Steps after the field are the caller's to read, and handed over in order.
-    let deeper = reg.locate(&["ticket", "question", "engine", "allowed", "status", "what"]).unwrap();
-    assert_eq!(deeper.fields, ["status", "what"]);
-}
-
-#[test]
-fn locate_reads_a_one_name_id_beside_a_path_id_and_takes_the_registry_root() {
-    let reg = rows_from(ROWS, &tickets());
-    let found = reg.locate(&["ticket", "lonely", "title"]).unwrap();
-    assert_eq!((found.row.id.as_str(), found.fields), ("lonely", &["title"][..]));
-    let rooted = reg.locate(&["reg", "ticket", "lonely"]).unwrap();
-    assert_eq!(rooted.row.qualified(), "ticket::lonely");
-    assert_eq!(reg.locate_text("reg::ticket::question::engine::allowed::title").unwrap().1, ["title"]);
-}
-
-#[test]
-fn locate_names_nothing_for_a_branch_a_missing_row_or_an_unknown_namespace() {
-    let reg = rows_from(ROWS, &tickets());
-    // `question::engine` is a branch of the id tree, no row.
-    assert!(reg.locate(&["ticket", "question", "engine"]).is_none());
-    assert!(reg.locate(&["ticket", "question", "engine", "denied"]).is_none());
-    assert!(reg.locate(&["ticket"]).is_none());
-    assert!(reg.locate(&["task", "lonely"]).is_none());
-    assert!(reg.locate(&[]).is_none());
 }
 
 #[test]
@@ -153,11 +105,18 @@ fn the_registry_root_is_passed_over_by_one_function() {
 }
 
 #[test]
-fn a_branch_is_a_proper_prefix_of_an_id_and_no_row() {
-    let reg = rows_from(ROWS, &tickets());
-    assert!(reg.is_branch(&["ticket", "question"]));
-    assert!(reg.is_branch(&["reg", "ticket", "question", "engine"]));
-    assert!(!reg.is_branch(&["ticket", "question", "engine", "allowed"]), "a row is no branch");
-    assert!(!reg.is_branch(&["ticket", "quest"]), "a text prefix is no branch");
-    assert!(!reg.is_branch(&["ticket"]));
+fn the_branch_finding_says_its_text_through_one_function() {
+    let short = "[[ticket]]\nid = \"q::e\"\n";
+    let long = "[[ticket]]\nid = \"q::e::a\"\n";
+    let reg = rows_from_files(&[("a.toml", short), ("b.toml", long)], &tickets());
+    let found = id_branches(&reg);
+    assert_eq!(
+        found[0].message,
+        id_is_a_branch_message(
+            "ticket::q::e",
+            &Path::new("reg").join("a.toml").display().to_string(),
+            "ticket::q::e::a",
+            &Path::new("reg").join("b.toml").display().to_string()
+        )
+    );
 }

@@ -177,16 +177,17 @@ fn fold_row_id_is_a_pure_function_of_the_declaration_and_the_ids() {
     .into_iter()
     .map(|(k, ids)| (k.to_string(), ids.into_iter().map(String::from).collect()))
     .collect();
+    let declared: BTreeSet<&str> = referenced.keys().map(String::as_str).collect();
     let ticket = &nss[2];
     assert_eq!(
-        fold_row_id(ticket, &referenced, "question::engine::render::free::x").unwrap(),
+        fold_row_id(ticket, &declared, &referenced, "question::engine::render::free::x").unwrap(),
         [("kind".to_string(), "question".to_string()), ("subject".to_string(), "engine::render".to_string())]
     );
-    assert_eq!(fold_row_id(ticket, &referenced, "question::x"), Err(IdFault::NoReading), "the subject is required");
-    assert_eq!(fold_row_id(ticket, &referenced, "question::engine::x"), Err(IdFault::NoReading));
-    assert!(matches!(fold_row_id(ticket, &referenced, "question::"), Err(IdFault::NotAnId(_))));
+    assert_eq!(fold_row_id(ticket, &declared, &referenced, "question::x"), Err(IdFault::NoReading), "the subject is required");
+    assert_eq!(fold_row_id(ticket, &declared, &referenced, "question::engine::x"), Err(IdFault::NoReading));
+    assert!(matches!(fold_row_id(ticket, &declared, &referenced, "question::"), Err(IdFault::NotAnId(_))));
     // A namespace folding nothing reads no values from any id.
-    assert_eq!(fold_row_id(&nss[0], &referenced, "anything::at::all").unwrap(), []);
+    assert_eq!(fold_row_id(&nss[0], &declared, &referenced, "anything::at::all").unwrap(), []);
     // The written-field check is pure too.
     assert_eq!(folded_fields_written(ticket, ["title", "kind", "subject", "note"]), ["kind", "subject"]);
     assert!(folded_fields_written(ticket, ["title"]).is_empty());
@@ -226,7 +227,8 @@ fn a_load_of_one_namespace_reads_the_namespaces_its_ids_fold() {
 
 #[test]
 fn the_schema_does_not_require_a_folded_field_and_takes_a_path_id() {
-    let dir = std::env::temp_dir().join(format!("fold-schema-{}", std::process::id()));
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
     let mock = dir.join("mock");
     fs::create_dir_all(&mock).unwrap();
     crate::generate_schemas(&dir, &mock, &world());
@@ -236,7 +238,6 @@ fn the_schema_does_not_require_a_folded_field_and_takes_a_path_id() {
         .filter_map(|e| fs::read_to_string(e.path()).ok())
         .find(|t| t.contains("\"ticket\""))
         .expect("a schema naming ticket");
-    let _ = fs::remove_dir_all(&dir);
     assert!(schema.contains(r#""required": ["id", "title"]"#), "{schema}");
     assert!(schema.contains(r#"(::[a-z][a-z0-9_]*)*$"#), "{schema}");
 }

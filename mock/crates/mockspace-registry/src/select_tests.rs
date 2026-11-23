@@ -13,7 +13,7 @@ fn nss() -> Vec<RegistryNamespace> {
     vec![
         namespace("ticket", &[("title", "string", false)], &[]),
         namespace("task", &[], &[]),
-        namespace("ikiuni-renderer", &[], &[]),
+        namespace("web-renderer", &[], &[]),
         namespace("t", &[], &[]),
     ]
 }
@@ -45,8 +45,11 @@ id = "internals"
 [[task]]
 id = "unrelated"
 
-[[ikiuni-renderer]]
-id = "c_one"
+[[web-renderer]]
+id = "pass::split"
+
+[[web-renderer]]
+id = "pass::merge"
 
 [[t]]
 id = "a0"
@@ -57,8 +60,10 @@ id = "a::b"
 
 fn select(query: &str) -> Result<Vec<String>, SelectRefusal> {
     let reg = rows_from(ROWS, &nss());
-    reg.select(&nss(), query).map(|hits| {
-        hits.iter()
+    reg.select(&nss(), query).map(|found| {
+        found
+            .items
+            .iter()
             .map(|h| {
                 match h {
                     Selected::Row(r) => r.id.clone(),
@@ -115,7 +120,10 @@ fn a_deep_wildcard_in_the_middle_matches_several_segments() {
     assert_eq!(
         ok("ticket::**::internals::**"),
         [
+            // `internals` is a row as well, and `**` from a record covers its fields (8.4).
             "internals",
+            "internals.id",
+            "internals.title",
             "question::engine::internals::cache",
             "question::engine::internals::deps::allowed",
             "task::engine::internals::split",
@@ -150,17 +158,28 @@ fn a_plain_id_selects_its_row() {
 }
 
 #[test]
-fn a_namespace_is_named_folded_and_its_host_spelling_is_refused() {
-    assert_eq!(ok("ikiuni_renderer::c_one"), ["c_one"]);
-    assert!(matches!(select("ikiuni-renderer::c_one"), Err(SelectRefusal::Syntax(_))));
+fn a_namespace_reads_alike_as_declared_and_folded() {
+    for q in [
+        "web-renderer::pass::split",
+        "web_renderer::pass::split",
+        "reg::web-renderer::pass::split",
+        "reg::web_renderer::pass::split",
+    ] {
+        assert_eq!(ok(q), ["pass::split"], "{q}");
+    }
+    assert_eq!(ok("web-renderer::pass"), ["pass::merge", "pass::split"]);
+    assert_eq!(ok("web_renderer::*::merge"), ["pass::merge"]);
+    // The host's spelling stands in the namespace and nowhere after it.
+    assert!(matches!(select("ticket::a-b"), Err(SelectRefusal::Syntax(_))));
+    assert!(matches!(select("web-renderer::pass-x"), Err(SelectRefusal::Syntax(_))));
 }
 
 #[test]
 fn two_namespaces_folding_to_one_name_are_refused_and_reported() {
-    let nss = vec![namespace("ikiuni-renderer", &[], &[]), namespace("ikiuni_renderer", &[], &[])];
-    let reg = rows_from("[[ikiuni-renderer]]\nid = \"a\"\n\n[[ikiuni_renderer]]\nid = \"b\"\n", &nss);
-    let refused = reg.select(&nss, "ikiuni_renderer::*").unwrap_err();
-    assert!(matches!(refused, SelectRefusal::Ambiguous(ref n, ref keys) if n == "ikiuni_renderer" && keys.len() == 2), "{refused:?}");
+    let nss = vec![namespace("web-renderer", &[], &[]), namespace("web_renderer", &[], &[])];
+    let reg = rows_from("[[web-renderer]]\nid = \"a\"\n\n[[web_renderer]]\nid = \"b\"\n", &nss);
+    let refused = reg.select(&nss, "web_renderer::*").unwrap_err();
+    assert!(matches!(refused, SelectRefusal::Ambiguous(ref n, ref keys) if n == "web_renderer" && keys.len() == 2), "{refused:?}");
     let found = namespace_fold_collisions(&nss);
     assert_eq!(found.iter().map(|f| f.kind).collect::<Vec<_>>(), ["namespace-fold-collision"]);
     assert!(namespace_fold_collisions(&self::nss()).is_empty());
@@ -175,12 +194,20 @@ fn an_id_that_is_a_branch_selects_the_rows_under_it() {
 fn a_namespace_alone_selects_all_its_rows() {
     assert_eq!(ok("ticket"), TICKETS);
     assert_eq!(ok("{task, t}"), ["unrelated", "a::b", "a0"]);
+    // The namespace's own list is in the same order, so its table and `t::**` agree.
+    let reg = rows_from(ROWS, &nss());
+    assert_eq!(reg.by_namespace["t"], ["t::a::b", "t::a0"]);
 }
 
 #[test]
-fn each_row_comes_once_however_many_paths_reach_it() {
-    assert_eq!(ok("ticket::{question::engine, question}"), [&ENGINE[..], &["question::tools::lint"]].concat());
-    assert_eq!(ok("ticket::**::**"), TICKETS);
+fn each_row_comes_once_within_an_expansion_and_a_set_keeps_its_repeats() {
+    // Two members reaching one row read it twice: the set is exactly its expansion (8.3).
+    assert_eq!(ok("ticket::{question::engine, question}"), [&ENGINE[..], &ENGINE[..], &["question::tools::lint"]].concat());
+    assert_eq!(ok("ticket::{task, task}::docs"), ["task::docs::readme", "task::docs::readme"]);
+    assert_eq!(repeated_set_members("ticket::{task, task}::docs"), ["task"]);
+    // `**` reaching one node by several paths yields it once (8.4).
+    assert_eq!(ok("ticket::**"), TICKETS, "`**` from a branch reaches its records once each");
+    assert_eq!(ok("ticket::**::**").iter().filter(|h| !h.contains('.')).cloned().collect::<Vec<_>>(), TICKETS);
 }
 
 #[test]
@@ -220,6 +247,7 @@ fn a_step_past_a_field_is_refused() {
         Err(SelectRefusal::PastField {
             row:   "ticket::question::tools::lint".into(),
             field: "title".into(),
+            ty:    "string".into(),
         })
     );
 }

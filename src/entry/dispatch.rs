@@ -1626,6 +1626,19 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // Returning early here would trade a precise finding for an earlier exit.
     eprintln!("--- generating documents ---");
     let written = document::render_all(&plan, &placeholders, &registry, &cfg);
+    // A set naming one member twice reads it twice (letkajenkka 8.3), which is the author's to
+    // mean; said where it is written, and not gated.
+    for p in &plan {
+        let document::Source::Template(path) = &p.source else { continue };
+        let Ok(text) = std::fs::read_to_string(path) else { continue };
+        for line in text.lines() {
+            for (_, expr) in registry::placeholder_exprs(line) {
+                for warning in registry::repeated_set_warnings(&expr) {
+                    eprintln!("  warning: {}: {warning}", path.display());
+                }
+            }
+        }
+    }
     generated.extend(written.iter().cloned());
 
     eprintln!("--- sweeping docs/ ---");
@@ -1700,7 +1713,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 });
                 let refs: Vec<&str> =
                     found.iter().filter(|e| is_reference(e)).map(String::as_str).collect();
-                findings.extend(registry_scope::dangling(file, &refs, template.as_deref(), &namespaces));
+                let why = |e: &str| registry::unresolved_reason(&cfg.registry_namespaces, &registry, e);
+                findings.extend(registry_scope::dangling(file, &refs, template.as_deref(), &namespaces, &why));
             }
             let (gated, _) = registry_scope::report(findings, &changed);
             registry_errors += gated;

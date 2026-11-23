@@ -3,15 +3,182 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-//! The three operations a reference may be, `pathof`, `sourcesof` and `refsto`, and a query that
-//! selects rows, which each of them takes as well as a plain reference does.
+//! A path into the registry as a value, and the three operations a reference may be, `pathof`,
+//! `sourcesof` and `refsto`, each over what the one walker reaches.
 
 use super::resolve::{rel_to_repo, resolve_expr};
-use super::resolved::{Resolved, table_cells_of};
+use super::resolved::{Resolved, row_fields, table_cells_of};
 use super::*;
 
-/// Where the named thing is declared: the file to open to change it, or for a query selecting
-/// several rows, each file once in the order their rows came.
+/// What a path into the registry resolves to. `None` where `expr` is no such path, so the caller
+/// reads it another way; an inner `None` where it is one and is refused, or names a field the row
+/// does not carry.
+///
+/// A plain read of one row or one field shows as that row or that value, as it always has. Rows of
+/// one namespace otherwise come as that namespace's table holding just them, which every table
+/// method narrows; anything else is a list, a row as its `namespace::id` and a field as its value,
+/// a field a row does not carry left out.
+pub(crate) fn resolve_registry(
+    expr: &str,
+    by_key: &BTreeMap<&str, &RegistryNamespace>,
+    reg: &Registry,
+    roots: &BTreeMap<String, String>,
+    repo_root: &Path,
+    docs_dir: &Path,
+    cfg: &dyn RegistryEnv,
+) -> Option<Option<Resolved>> {
+    let path = registry_path(expr, by_key.keys().copied())?;
+    let Ok(found) = reg.select_in(by_key, &path) else { return Some(None) };
+    let field = |r: &RegistryRow, f: &str| render_field(r, f, by_key, reg, roots, repo_root, docs_dir, cfg);
+    if found.single {
+        return Some(match &found.items[0] {
+            Selected::Row(r) => render_row(r, by_key),
+            Selected::Field(r, f) => field(r, f),
+        });
+    }
+    let only_rows = found.items.iter().all(|s| matches!(s, Selected::Row(_)));
+    let namespace = found
+        .items
+        .first()
+        .map(|s| {
+            match s {
+                Selected::Row(r) | Selected::Field(r, _) => r.namespace.as_str(),
+            }
+        })
+        .or_else(|| path_namespace(&path, by_key));
+    let one_namespace = found.items.iter().all(|s| {
+        match s {
+            Selected::Row(r) | Selected::Field(r, _) => Some(r.namespace.as_str()) == namespace,
+        }
+    });
+    if let (true, true, Some(ns)) = (only_rows, one_namespace, namespace.and_then(|n| by_key.get(n))) {
+        let ids: Vec<String> = found.rows().iter().map(|r| r.qualified()).collect();
+        let (columns, rows) = table_cells_of(ns, reg, &ids);
+        return Some(Some(Resolved::Table {
+            namespace: ns.key.clone(),
+            columns,
+            rows,
+        }));
+    }
+    Some(Some(Resolved::List(
+        found
+            .items
+            .iter()
+            .filter_map(|s| {
+                match s {
+                    Selected::Row(r) => Some(r.qualified()),
+                    Selected::Field(r, f) => field(r, f).map(|v| v.as_scalar()),
+                }
+            })
+            .collect(),
+    )))
+}
+
+/// The namespace every expansion of `path` opens on, by the one spelling rule.
+fn path_namespace<'a>(path: &str, by_key: &BTreeMap<&'a str, &RegistryNamespace>) -> Option<&'a str> {
+    let parsed = letkajenkka::Query::parse(path).ok()?.path()?;
+    let mut found: Option<&'a str> = None;
+    for variant in parsed.expand()? {
+        let steps: Vec<letkajenkka::Step<'_>> = variant.steps().collect();
+        let steps = after_registry_root(&steps, |s| s.selector == letkajenkka::Selector::Ident(REGISTRY_ROOT));
+        let letkajenkka::Selector::Ident(name) = steps.first()?.selector else { return None };
+        let key = namespace_named(name, by_key.keys().copied())?;
+        match found {
+            Some(k) if k != key => return None,
+            _ => found = Some(key),
+        }
+    }
+    found
+}
+
+/// One row, as a plain read of it shows: a work of `reference` as its short citation, a row of a
+/// namespace declaring `value_field` as that value, any other as itself.
+fn render_row(row: &RegistryRow, by_key: &BTreeMap<&str, &RegistryNamespace>) -> Option<Resolved> {
+    if row.namespace == "reference" {
+        // A short form by default, the full one on request (`::citation`). They differ in width: a
+        // sources column carrying four hundred full citations is unreadable, while the same
+        // citation in prose wants its title. There is no page for either to link to, so the
+        // citation is its text alone.
+        return Some(Resolved::Citation {
+            text: short_citation(row),
+            link: None,
+        });
+    }
+    let ns = by_key.get(row.namespace.as_str())?;
+    // A namespace declaring a value field renders that instead of an id, so a constant states its
+    // number wherever it is named.
+    if let Some(v) = ns.value_field.as_ref().and_then(|f| row.fields.get(f)) {
+        return Some(Resolved::Field(v.clone()));
+    }
+    Some(Resolved::Row {
+        namespace: row.namespace.clone(),
+        id:        row.id.clone(),
+        fields:    row_fields(ns, row),
+    })
+}
+
+/// One field of a row, as a plain read of it shows. `None` for a field the row does not carry.
+///
+/// A field typed as a namespace holds ids, and each is resolved through the same path as the
+/// field's table cell, so a field read and the cell agree, and an id that names no row keeps its
+/// reference form and is reported rather than passed through. Internal fields never reach here:
+/// the walker does not name them, so a read of one is unresolved and reported like a missing one.
+#[allow(clippy::too_many_arguments)]
+fn render_field(
+    row: &RegistryRow,
+    field: &str,
+    by_key: &BTreeMap<&str, &RegistryNamespace>,
+    reg: &Registry,
+    roots: &BTreeMap<String, String>,
+    repo_root: &Path,
+    docs_dir: &Path,
+    cfg: &dyn RegistryEnv,
+) -> Option<Resolved> {
+    match field {
+        "id" => return Some(Resolved::Field(row.id.clone())),
+        "citation" if row.namespace == "reference" => {
+            return Some(Resolved::Citation {
+                text: format_citation(row),
+                link: None,
+            });
+        },
+        _ => {},
+    }
+    let raw = row.fields.get(field)?;
+    let target = by_key
+        .get(row.namespace.as_str())
+        .and_then(|ns| ns.fields.iter().find(|f| f.name == field))
+        .and_then(|f| row_reference_target(&f.r#type))
+        .map(|(t, _)| t)
+        .filter(|t| by_key.contains_key(t));
+    let Some(target) = target else { return Some(Resolved::Field(raw.clone())) };
+    Some(Resolved::List(
+        crate::refpath::list(raw)
+            .map(|id| {
+                let expr = format!("{target}::{id}");
+                // An id that resolves to nothing keeps its reference form rather than vanishing.
+                // The table cell for the same datum emits the reference and is caught by the
+                // unresolved-token scan; dropping it here made one path loud and the other silent
+                // about the identical bad value, and a field of two ids rendered as one.
+                resolve_expr(&expr, by_key, reg, roots, repo_root, docs_dir, cfg).unwrap_or_else(|| format!("{{{{ {expr} }}}}"))
+            })
+            .collect(),
+    ))
+}
+
+/// The rows a reference names for an operation: the rows a path into the registry reaches. `None`
+/// when `expr` is no such path; an inner `None` when it is refused or reaches a field.
+fn rows_named<'r>(expr: &str, by_key: &BTreeMap<&str, &RegistryNamespace>, reg: &'r Registry) -> Option<Option<Vec<&'r RegistryRow>>> {
+    let path = registry_path(expr, by_key.keys().copied())?;
+    let Ok(found) = reg.select_in(by_key, &path) else { return Some(None) };
+    if found.items.iter().any(|s| matches!(s, Selected::Field(..))) {
+        return Some(None);
+    }
+    Some(Some(found.rows()))
+}
+
+/// Where the named thing is declared: the file to open to change it, one path for a plain read of
+/// one row, and for a path reaching several rows each file once in the order their rows came.
 pub(crate) fn resolve_pathof(
     expr: &str,
     by_key: &BTreeMap<&str, &RegistryNamespace>,
@@ -20,17 +187,17 @@ pub(crate) fn resolve_pathof(
     cfg: &dyn RegistryEnv,
 ) -> Option<Resolved> {
     let parts = crate::names(expr).unwrap_or_default();
-
     if parts.first() == Some(&CRATE_ROOT) && parts.len() == 2 {
         return cfg.crate_dir(parts[1]).map(|dir| Resolved::Path(rel_to_repo(&dir, repo_root)));
     }
-
-    if let Some(rows) = rows_named(expr, by_key, reg, cfg) {
-        let rows = rows?;
-        if let (Ok(_), [one]) = (crate::names(expr), rows.as_slice()) {
-            if reg.locate(&parts).is_some() {
-                return Some(Resolved::Path(rel_to_repo(&one.source, repo_root)));
-            }
+    if let Some(path) = registry_path(expr, by_key.keys().copied()) {
+        let found = reg.select_in(by_key, &path).ok()?;
+        if found.items.iter().any(|s| matches!(s, Selected::Field(..))) {
+            return None;
+        }
+        let rows = found.rows();
+        if let (true, [one]) = (found.single, rows.as_slice()) {
+            return Some(Resolved::Path(rel_to_repo(&one.source, repo_root)));
         }
         let mut files: Vec<String> = Vec::new();
         for row in rows {
@@ -41,7 +208,6 @@ pub(crate) fn resolve_pathof(
         }
         return Some(Resolved::List(files));
     }
-
     // A citation names a file, and that file is where the thing is.
     let r = FileRef::parse(expr)?;
     if cfg.internal_roots().contains(&r.root) {
@@ -67,7 +233,7 @@ pub(crate) fn resolve_sourcesof(
     docs_dir: &Path,
     cfg: &dyn RegistryEnv,
 ) -> Option<Vec<String>> {
-    let rows = rows_named(expr, by_key, reg, cfg)??;
+    let rows = rows_named(expr, by_key, reg)??;
     // A row that rests on nothing it states has no sources to give, which is no empty answer.
     if !rows.iter().any(|r| r.fields.contains_key("provenance")) {
         return None;
@@ -107,7 +273,7 @@ pub(crate) fn resolve_refsto(
     // A row that does not exist is not a row with no referrers. Returning an
     // empty list for it would answer a question about nothing, and the empty
     // answer is the one a reader is most likely to act on.
-    let rows = rows_named(expr, by_key, reg, cfg)??;
+    let rows = rows_named(expr, by_key, reg)??;
     let edges = super::reverse_edges(reg, cfg.namespaces());
     let mut seen = BTreeSet::new();
     Some(
@@ -119,143 +285,15 @@ pub(crate) fn resolve_refsto(
     )
 }
 
-/// A query that selects in the registry, as a value: a widening path, or a plain one naming a
-/// branch of the id tree. `None` when `expr` is neither, so the caller reads it another way; an
-/// inner `None` when it is one and is refused or reaches nothing a plain path must.
-///
-/// Rows of one namespace come as that namespace's table holding them, which every table method
-/// narrows further; anything else is a list, a row as its `namespace::id` and a field as its value.
-pub(crate) fn resolve_selection(
-    expr: &str,
-    by_key: &BTreeMap<&str, &RegistryNamespace>,
-    reg: &Registry,
-    cfg: &dyn RegistryEnv,
-) -> Option<Option<Resolved>> {
-    let query = selection_query(expr, by_key, reg)?;
-    let Ok(hits) = reg.select(cfg.namespaces(), &query) else { return Some(None) };
-    let mut namespace: Option<&str> = query_namespace(&query, by_key);
-    let mut only_rows = true;
-    for h in &hits {
-        match h {
-            Selected::Row(r) if namespace.is_none_or(|n| n == r.namespace) => namespace = Some(&r.namespace),
-            Selected::Row(_) => namespace = Some(""),
-            Selected::Field(..) => only_rows = false,
-        }
-    }
-    if let (true, Some(ns)) = (only_rows, namespace.and_then(|n| by_key.get(n))) {
-        let ids: Vec<String> = hits
-            .iter()
-            .filter_map(|h| {
-                match h {
-                    Selected::Row(r) => Some(r.qualified()),
-                    Selected::Field(..) => None,
-                }
-            })
-            .collect();
-        let (columns, rows) = table_cells_of(ns, reg, &ids);
-        return Some(Some(Resolved::Table {
-            namespace: ns.key.clone(),
-            columns,
-            rows,
-        }));
-    }
-    Some(Some(Resolved::List(
-        hits.into_iter()
-            .map(|h| {
-                match h {
-                    Selected::Row(r) => r.qualified(),
-                    Selected::Field(r, f) if f == "id" => r.id.clone(),
-                    Selected::Field(r, f) => r.fields.get(&f).cloned().unwrap_or_default(),
-                }
-            })
-            .collect(),
-    )))
-}
-
-/// The text to select with, where `expr` is a query over the registry: a widening path as written,
-/// or a plain path naming a branch with its namespace in the standard's spelling.
-fn selection_query(expr: &str, by_key: &BTreeMap<&str, &RegistryNamespace>, reg: &Registry) -> Option<String> {
-    if let Ok(names) = crate::names(expr) {
-        let names = names_after_root(&names);
-        let (namespace, _) = names.split_first()?;
-        if !by_key.contains_key(namespace) || reg.locate(names).is_some() || !reg.is_branch(names) {
-            return None;
-        }
-        let folded = mockspace_refnames::fold(namespace)?.to_string();
-        let mut text = vec![folded.as_str()];
-        text.extend(&names[1 ..]);
-        return Some(text.join("::"));
-    }
-    let path = letkajenkka::Query::parse(expr).ok()?.path()?;
-    path.widens().then(|| expr.trim().to_string())
-}
-
-/// The namespace every expansion of `query` opens on, by a name it folds to.
-fn query_namespace<'a>(query: &str, by_key: &BTreeMap<&str, &'a RegistryNamespace>) -> Option<&'a str> {
-    let path = letkajenkka::Query::parse(query).ok()?.path()?;
-    let mut found: Option<&'a str> = None;
-    for variant in path.expand()? {
-        let steps: Vec<letkajenkka::Step<'_>> = variant.steps().collect();
-        let steps = after_registry_root(&steps, |s| s.selector == letkajenkka::Selector::Ident(REGISTRY_ROOT));
-        let letkajenkka::Selector::Ident(name) = steps.first()?.selector else { return None };
-        let ns = by_key.values().find(|ns| mockspace_refnames::fold(&ns.key).is_some_and(|f| f == name))?;
-        match found {
-            Some(k) if k != ns.key => return None,
-            _ => found = Some(&ns.key),
-        }
-    }
-    found
-}
-
-/// The rows a reference names for an operation: the one row a plain path names whole, or the rows
-/// a selecting query selects. `None` when `expr` names neither; an inner `None` when it is refused,
-/// names a row and a field, or reaches a field.
-fn rows_named<'r>(
-    expr: &str,
-    by_key: &BTreeMap<&str, &RegistryNamespace>,
-    reg: &'r Registry,
-    cfg: &dyn RegistryEnv,
-) -> Option<Option<Vec<&'r RegistryRow>>> {
-    if let Ok(names) = crate::names(expr) {
-        if !names_after_root(&names).first().is_some_and(|n| by_key.contains_key(n)) {
-            return None;
-        }
-        if let Some(found) = reg.locate(&names) {
-            return Some(found.fields.is_empty().then(|| vec![found.row]));
-        }
-    }
-    let query = selection_query(expr, by_key, reg)?;
-    let Ok(hits) = reg.select(cfg.namespaces(), &query) else { return Some(None) };
-    let mut rows = Vec::new();
-    for h in hits {
-        match h {
-            Selected::Row(r) => rows.push(r),
-            Selected::Field(..) => return Some(None),
-        }
-    }
-    Some(Some(rows))
-}
-
-/// The rows a value's references read: each row a plain reference names, and each row a selecting
-/// query selects, so a row citing `{{ ticket::question::** }}` is resolved after every row it lists.
-pub(crate) fn row_deps(
-    value: &str,
-    ns_keys: &BTreeSet<String>,
-    by_key: &BTreeMap<&str, &RegistryNamespace>,
-    namespaces: &[RegistryNamespace],
-    reg: &Registry,
-) -> Vec<String> {
-    let mut deps: Vec<String> = find_registry_refs(value, ns_keys, reg).into_iter().map(|(q, _)| q).collect();
+/// The rows a value's references read, each operation and method taken off first, so a row citing
+/// `{{ ticket::question::** }}` or `{{ pathof(ticket::a).dir() }}` is resolved after every row it
+/// reads.
+pub(crate) fn row_deps(value: &str, namespaces: &[RegistryNamespace], reg: &Registry) -> Vec<String> {
+    let mut deps = Vec::new();
     for (_, expr) in placeholder_exprs(value) {
         let base = crate::chain::split_methods(&expr).map_or(expr.clone(), |(b, _)| b);
-        let inner = ["pathof", "refsto", "sourcesof"]
-            .iter()
-            .find_map(|op| crate::operation(&base, op))
-            .unwrap_or(&base);
-        let Some(query) = selection_query(inner, by_key, reg) else { continue };
-        if let Ok(rows) = reg.select_rows(namespaces, &query) {
-            deps.extend(rows.into_iter().map(RegistryRow::qualified));
-        }
+        let (_, inner) = peel(&base);
+        deps.extend(find_registry_refs(&format!("{{{{ {inner} }}}}"), namespaces, reg));
     }
     deps
 }

@@ -51,6 +51,13 @@ type = "ticket[]"
 [[registry.namespace.field]]
 name = "related"
 type = "ref[]"
+
+[[registry.namespace]]
+key = "web-renderer"
+
+[[registry.namespace.field]]
+name = "title"
+type = "string"
 "#;
 
 const ROWS: &str = r#"
@@ -79,6 +86,14 @@ title = "Split the pass"
 [[ticket]]
 id = "task::engine::render::loose"
 title = "No needs"
+
+[[web-renderer]]
+id = "pass::split"
+title = "Split"
+
+[[web-renderer]]
+id = "pass::merge"
+title = "Merge"
 "#;
 
 fn project(rows: &str) -> (tempfile::TempDir, Env) {
@@ -154,10 +169,9 @@ fn the_operations_take_a_path_id() {
 fn a_branch_resolves_as_its_rows_and_a_missing_row_is_left_and_reported() {
     let (_tmp, env) = project(ROWS);
     let reg = load_registry_for(&env).unwrap();
-    let keys = env.namespaces().iter().map(|n| n.key.clone()).collect();
     let text = "{{ ticket::question::engine }} {{ ticket::task::engine::render::loose::nothing }} \
                 {{ ticket::task::engine::render::loose::title }} {{ ticket::idea }}";
-    let d = dangling_references(text, &reg, &keys);
+    let d = dangling_references(text, &reg, env.namespaces());
     assert_eq!(
         d.into_iter().collect::<Vec<_>>(),
         ["ticket::idea", "ticket::task::engine::render::loose::nothing"],
@@ -221,4 +235,107 @@ fn selection_reads_the_tree_the_folded_ids_make() {
     ]);
     assert_eq!(ids("ticket::**::render::**"), ["ticket::task::engine::render::loose", "ticket::task::engine::render::split"]);
     assert_eq!(ids("subject::engine"), ["subject::engine::internals", "subject::engine::render"]);
+}
+
+#[test]
+fn a_set_that_does_not_widen_resolves_as_its_expansion() {
+    let (_tmp, env) = project(ROWS);
+    for (set, plain) in [
+        ("{{ ticket::{task}::engine::render::split::title }}", "{{ ticket::task::engine::render::split::title }}"),
+        ("{{ ticket::{task::engine::render::split} }}", "{{ ticket::task::engine::render::split }}"),
+        ("{{ pathof(ticket::{task}::engine::render::split) }}", "{{ pathof(ticket::task::engine::render::split) }}"),
+        ("{{ refsto(ticket::{task}::engine::render::split) }}", "{{ refsto(ticket::task::engine::render::split) }}"),
+        ("{{ ticket::{question}::engine.count() }}", "{{ ticket::question::engine.count() }}"),
+    ] {
+        let (a, b) = (resolve(&env, set), resolve(&env, plain));
+        assert_eq!(a, b, "{set}");
+        assert!(!a.contains("{{"), "{set} did not resolve: {a}");
+    }
+    assert_eq!(resolve(&env, "{{ ticket::{task}::engine::render::split::title }}"), "Split the pass");
+}
+
+#[test]
+fn a_namespace_reads_alike_in_both_spellings_and_a_misspelled_row_is_reported_in_both() {
+    let (_tmp, env) = project(ROWS);
+    let spellings = [
+        "web-renderer::pass::split::title",
+        "web_renderer::pass::split::title",
+        "reg::web-renderer::pass::split::title",
+        "reg::web_renderer::pass::split::title",
+    ];
+    for s in spellings {
+        assert_eq!(resolve(&env, &format!("{{{{ {s} }}}}")), "Split", "{s}");
+    }
+    assert_eq!(resolve(&env, "{{ web-renderer::pass.count() }} {{ web_renderer::pass.count() }}"), "2 2");
+    let reg = load_registry_for(&env).unwrap();
+    for s in ["web-renderer::pass::spilt", "web_renderer::pass::spilt"] {
+        let d = dangling_references(&format!("{{{{ {s} }}}}"), &reg, env.namespaces());
+        assert_eq!(d.into_iter().collect::<Vec<_>>(), [s.to_string()], "{s}");
+    }
+    // A link in a `ref[]` field takes either spelling too.
+    let linked = ROWS.replace("related = [\"subject::engine::render\"]", "related = [\"web_renderer::pass::split\", \"web-renderer::pass::merge\"]");
+    let (_tmp, env) = project(&linked);
+    let reg = load_registry_for(&env).unwrap();
+    assert!(validate_row_references(&reg, env.namespaces()).is_empty());
+    assert_eq!(resolve(&env, "{{ refsto(web_renderer::pass::split) }}"), "question::engine::internals::deps_allowed");
+}
+
+#[test]
+fn a_field_read_through_a_wildcard_is_shown_as_a_plain_read_shows_it() {
+    let dangling = ROWS.replace("needs = [\"task::engine::render::split\"]", "needs = [\"task::engine::gone\"]");
+    let (_tmp, env) = project(&dangling);
+    let plain = resolve(&env, "{{ ticket::question::engine::internals::deps_allowed::needs }}");
+    let wide = resolve(&env, "{{ ticket::question::**::needs }}");
+    assert_eq!(plain, "{{ ticket::task::engine::gone }}", "the dangling id keeps its reference form");
+    assert_eq!(wide, plain, "and so it does through the wildcard");
+    // An absent field is absent, not an empty value: `loose` carries no `needs`.
+    assert_eq!(resolve(&env, "{{ ticket::task::**::needs }}"), "");
+    assert_eq!(resolve(&env, "{{ ticket::task::**::title }}"), "No needs, Split the pass");
+}
+
+#[test]
+fn a_step_past_a_reference_field_reads_the_rows_it_names() {
+    let (_tmp, env) = project(ROWS);
+    assert_eq!(resolve(&env, "{{ ticket::*::**::needs::title }}"), "Split the pass");
+    let out = resolve(&env, "{{ ticket::question::engine::internals::deps_allowed::title::x }}");
+    assert_eq!(out, "{{ ticket::question::engine::internals::deps_allowed::title::x }}");
+    let reg = load_registry_for(&env).unwrap();
+    let why = mockspace_registry::unresolved_reason(
+        env.namespaces(),
+        &reg,
+        "ticket::question::engine::internals::deps_allowed::title::x",
+    )
+    .unwrap();
+    assert!(why.contains("`title` of ticket::question::engine::internals::deps_allowed is a `string`"), "{why}");
+}
+
+#[test]
+fn the_check_reports_two_namespaces_folding_to_one_name() {
+    let (_tmp, env) = project(ROWS);
+    let reg = load_registry_for(&env).unwrap();
+    let kinds = |env: &Env, reg: &mockspace_registry::Registry| -> Vec<&'static str> {
+        mockspace_registry::check(env, reg, &[], None, None).findings.iter().map(|f| f.kind).collect()
+    };
+    assert!(!kinds(&env, &reg).contains(&"namespace-fold-collision"));
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
+    let mock = tmp.path().join("mock");
+    std::fs::create_dir_all(mock.join("registry")).unwrap();
+    std::fs::create_dir(tmp.path().join(".git")).unwrap();
+    std::fs::write(mock.join("mockspace.toml"), format!("{CONFIG}\n[[registry.namespace]]\nkey = \"web_renderer\"\n")).unwrap();
+    let both = Env::from_dir(&mock).unwrap();
+    let reg = load_registry_for(&both).unwrap();
+    assert!(kinds(&both, &reg).contains(&"namespace-fold-collision"), "{:?}", kinds(&both, &reg));
+}
+
+#[test]
+fn a_row_selecting_its_own_branch_is_one_cycle() {
+    let epic = format!(
+        "{ROWS}\n[[ticket]]\nid = \"task::engine::render::epic\"\ntitle = \"{{{{ ticket::task::engine::render.count() }}}} and {{{{ ticket::task::engine::render::** }}}}\"\n"
+    );
+    let (_tmp, env) = project(&epic);
+    let reg = load_registry_for(&env).unwrap();
+    let (_, findings) = resolve_data(env.namespaces(), &reg, env.roots(), env.repo_root(), Path::new("/nonexistent"), &env);
+    let cycles: Vec<_> = findings.iter().filter(|f| f.kind == "reference-cycle").collect();
+    assert_eq!(cycles.len(), 1, "{cycles:?}");
+    assert!(cycles[0].message.contains("task::engine::render::epic"), "{}", cycles[0].message);
 }

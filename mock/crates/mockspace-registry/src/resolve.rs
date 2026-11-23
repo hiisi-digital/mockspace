@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-use super::resolved::{Resolved, row_fields, table_cells};
+use super::resolved::Resolved;
 use super::*;
 use super::chain::{apply_methods, split_methods};
 use super::resolve_ops::{resolve_pathof, resolve_refsto, resolve_sourcesof};
@@ -146,16 +146,6 @@ pub(crate) fn resolve_expr(
     resolve_typed(expr, by_key, reg, roots, repo_root, docs_dir, cfg).map(|r| r.to_markdown())
 }
 
-/// A namespace's whole table, as a value.
-fn table_of(ns: &RegistryNamespace, reg: &Registry) -> Resolved {
-    let (columns, rows) = table_cells(ns, reg);
-    Resolved::Table {
-        namespace: ns.key.clone(),
-        columns,
-        rows,
-    }
-}
-
 /// What an expression resolves to, before anything decides how to show it.
 ///
 /// The markdown wrapper below is what documents use. `cargo mock query` uses
@@ -186,23 +176,15 @@ pub fn resolve_typed(
     //
     // `sourcesof(x)` is what x RESTS ON: its provenance. Plural, because
     // provenance is an array and a claim usually has several sources.
-    if let Some(inner) = crate::operation(expr, "pathof") {
-        return resolve_pathof(inner, by_key, reg, repo_root, cfg);
-    }
-    if let Some(inner) = crate::operation(expr, "refsto") {
-        return resolve_refsto(inner, by_key, reg, roots, repo_root, docs_dir, cfg)
-            .map(Resolved::List);
-    }
-
-    if let Some(inner) = crate::operation(expr, "sourcesof") {
-        return resolve_sourcesof(inner, by_key, reg, roots, repo_root, docs_dir, cfg).map(Resolved::List);
-    }
-
-    // A query that widens, or a plain path naming a branch of a namespace's id tree, selects rows:
-    // `ticket::question::**`, `ticket::{task, question}::engine`. The one reader of every path into
-    // the registry that is not one row or one field of it.
-    if let Some(found) = crate::resolve_ops::resolve_selection(expr, by_key, reg, cfg) {
-        return found;
+    match peel(expr) {
+        (Some("pathof"), inner) => return resolve_pathof(inner, by_key, reg, repo_root, cfg),
+        (Some("refsto"), inner) => {
+            return resolve_refsto(inner, by_key, reg, roots, repo_root, docs_dir, cfg).map(Resolved::List);
+        },
+        (Some(_), inner) => {
+            return resolve_sourcesof(inner, by_key, reg, roots, repo_root, docs_dir, cfg).map(Resolved::List);
+        },
+        (None, _) => {},
     }
 
     let parts = crate::names(expr).unwrap_or_default();
@@ -228,128 +210,12 @@ pub fn resolve_typed(
         });
     }
 
-    // A namespace addressed directly: `law::keys` rather than `reg::law::keys`.
-    //
-    // The `reg::` prefix carried no information. Slot zero is either a declared
-    // root or a declared namespace, and the two cannot collide (a collision is
-    // reported as a configuration error), so the prefix only made every
-    // reference four characters longer and read as ceremony. It still resolves,
-    // because thousands of references were written with it.
-    //
-    // Rewritten into the prefixed form rather than handled separately, so there
-    // is one resolution path and the two spellings cannot diverge.
-    // A namespace alone renders its whole table: `{{ task }}`. Placeholders
-    // have already been substituted by the time this runs, so a single segment
-    // that names a namespace can only mean the namespace.
-    if parts.len() == 1 {
-        return by_key.get(parts[0]).map(|ns| table_of(ns, reg));
-    }
-
-    if parts.first().is_some_and(|p| by_key.contains_key(p)) && parts.len() >= 2 {
-        let rewritten = format!("{}::{}", REGISTRY_ROOT, parts.join("::"));
-        return resolve_typed(&rewritten, by_key, reg, roots, repo_root, docs_dir, cfg);
-    }
-
-    if parts.first() == Some(&REGISTRY_ROOT) {
-        // A whole namespace: its table, inline.
-        if parts.len() == 2 {
-            return by_key.get(parts[1]).map(|ns| table_of(ns, reg));
-        }
-        // A row, or one field on it. Where the id ends is the registry's to say, since an id
-        // may be a path: `locate` finds the row, and what is left is the field step.
-        let found = reg.locate(&parts)?;
-        let row = found.row;
-        let field = match found.fields {
-            [] => None,
-            [one] => Some(*one),
-            _ => return None,
-        };
-        if row.namespace == "reference" {
-            if !by_key.contains_key("reference") {
-                return None;
-            }
-
-            // `::citation` is a computed field, not one the row declares:
-            // the full form. Everything else is a real field.
-            if field.is_some_and(|f| f != "citation") {
-                return row.fields.get(field?).cloned().map(Resolved::Field);
-            }
-
-            // A short form by default, the full one on request. They differ
-            // in width: a sources column carrying four hundred full citations
-            // is unreadable, while the same citation in prose wants its
-            // title. Default to the form that fits everywhere. There is no
-            // page for either to link to, so the citation is its text alone.
-            let text =
-                if field.is_some() { format_citation(row) } else { short_citation(row) };
-            return Some(Resolved::Citation {
-                text,
-                link: None,
-            });
-        }
-        let ns = by_key.get(row.namespace.as_str())?;
-        if let Some(field) = field {
-            if field == "id" {
-                return Some(Resolved::Field(row.id.clone()));
-            }
-            // An internal field does not resolve. Returning None leaves
-            // the reference visibly unresolved and reports it, which is
-            // the same treatment a field that does not exist gets. A
-            // field declared as never reaching the documentation, with
-            // a documented way to put it there anyway, would not be
-            // one.
-            if ns
-                .fields
-                .iter()
-                .any(|f| f.name == field && f.visibility == FieldVisibility::Internal)
-            {
-                return None;
-            }
-            // A field typed as a namespace holds slugs, and each is resolved
-            // through the same path as the field's table cell, so a field
-            // reference and the cell agree, and a slug that names no row is
-            // reported rather than passed through.
-            if let Some(target) = ns
-                .fields
-                .iter()
-                .find(|f| f.name == field)
-                .and_then(|f| super::row_reference_target(&f.r#type))
-                .map(|(t, _)| t)
-                .filter(|t| cfg.namespaces().iter().any(|n| n.key == *t))
-            {
-                let raw = row.fields.get(field)?;
-                return Some(Resolved::List(
-                    crate::refpath::list(raw)
-                        .map(|slug| {
-                            let expr = format!("{target}::{slug}");
-                            // A slug that resolves to nothing keeps its
-                            // reference form rather than vanishing. The
-                            // table cell for the same datum emits the
-                            // reference and is caught by the
-                            // unresolved-token scan; dropping it here
-                            // made one path loud and the other silent
-                            // about the identical bad value, and a
-                            // field of two slugs rendered as one.
-                            resolve_expr(
-                                &expr, by_key, reg, roots, repo_root, docs_dir, cfg,
-                            )
-                            .unwrap_or_else(|| format!("{{{{ {expr} }}}}"))
-                        })
-                        .collect(),
-                ));
-            }
-            return row.fields.get(field).cloned().map(Resolved::Field);
-        }
-        // A namespace declaring a value field renders that instead of a
-        // slug, so a constant states its number wherever it is named.
-        if let Some(v) = ns.value_field.as_ref().and_then(|f| row.fields.get(f)) {
-            return Some(Resolved::Field(v.clone()));
-        }
-        return Some(Resolved::Row {
-            namespace: row.namespace.clone(),
-            id:        row.id.clone(),
-            fields:    row_fields(ns, row),
-        });
+    // Every path into the registry, a plain one included, is read by the one walker: a namespace
+    // (`{{ task }}`, its table), a row, a field, a branch of the id tree, and a path that widens.
+    // The namespace may be written with or without the `reg::` root, which carries no information:
+    // slot zero is either a declared root or a declared namespace, and the two cannot collide.
+    if let Some(found) = crate::resolve_ops::resolve_registry(expr, by_key, reg, roots, repo_root, docs_dir, cfg) {
+        return found;
     }
 
     // Otherwise a file citation.

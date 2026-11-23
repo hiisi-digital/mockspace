@@ -113,15 +113,20 @@ fn resolve_row(
         let start = path.iter().position(|p| p == id).unwrap_or(0);
         let mut cycle: Vec<String> = path[start ..].to_vec();
         cycle.push(id.to_string());
-        findings.push(RegistryFinding {
-            kind: "reference-cycle",
-            message: format!(
-                "these rows reference each other in a loop and cannot be resolved: {}. Break the loop by inlining one side.",
-                cycle.join(" -> ")
-            ),
-            source: reg.get(id).map(|r| r.source.clone()),
-            gate:   GateScope::Always,
-        });
+        let message = format!(
+            "these rows reference each other in a loop and cannot be resolved: {}. Break the loop by inlining one side. \
+             A row selecting a branch that holds the row itself, an epic listing its own branch, is such a loop.",
+            cycle.join(" -> ")
+        );
+        // One loop met through several references, or several placeholders of one row, is one finding.
+        if !findings.iter().any(|f| f.kind == "reference-cycle" && f.message == message) {
+            findings.push(RegistryFinding {
+                kind: "reference-cycle",
+                message,
+                source: reg.get(id).map(|r| r.source.clone()),
+                gate: GateScope::Always,
+            });
+        }
         return;
     }
     let Some(row) = reg.get(id) else { return };
@@ -130,7 +135,7 @@ fn resolve_row(
     // fields are rewritten the values they cite are final.
     path.push(id.to_string());
     for value in row.fields.values() {
-        for dep in crate::resolve_ops::row_deps(value, ns_keys, by_key, namespaces, reg) {
+        for dep in crate::resolve_ops::row_deps(value, namespaces, reg) {
             resolve_row(
                 &dep, reg, by_key, ns_keys, namespaces, view, roots, repo_root, docs_dir, cfg,
                 done, path, findings,
@@ -144,7 +149,7 @@ fn resolve_row(
     // row fills it, and nothing below recurses, so one view serves every row in turn.
     view.rows.clear();
     for value in row.fields.values() {
-        for dep in crate::resolve_ops::row_deps(value, ns_keys, by_key, namespaces, reg) {
+        for dep in crate::resolve_ops::row_deps(value, namespaces, reg) {
             if view.rows.contains_key(&dep) {
                 continue;
             }

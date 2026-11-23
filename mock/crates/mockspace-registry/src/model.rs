@@ -111,7 +111,7 @@ pub struct RegistryNamespace {
     #[serde(default)]
     pub description: Option<String>,
     /// When set, a bare row reference renders this field's value instead of the
-    /// row's slug, so a constant is stated once and every mention stays current.
+    /// row's id, so a constant is stated once and every mention stays current.
     #[serde(default)]
     pub value_field: Option<String>,
     /// Render the table in sections, one per distinct value of this field.
@@ -147,11 +147,11 @@ impl RegistryNamespace {
     }
 }
 
-/// Whether a slug is well formed: one name under the letkajenkka standard, snake_case and starting
+/// Whether a text is one name under the letkajenkka standard, snake_case and starting
 /// with a letter.
 ///
-/// Constrained so a slug reads identically everywhere it appears: in the data,
-/// in a reference inside prose, and in a generated anchor. A slug allowed to
+/// Constrained so a name reads identically everywhere it appears: in the data,
+/// in a reference inside prose, and in a generated anchor. A name allowed to
 /// carry case or punctuation would need normalising at each of those, and the
 /// three normalisations would eventually disagree.
 pub fn is_valid_slug(s: &str) -> bool {
@@ -192,7 +192,7 @@ impl RegistryRow {
 /// difference is still visible.
 #[derive(Debug, Clone)]
 pub struct UnquotedTime {
-    /// `namespace::slug` of the row.
+    /// `namespace::id` of the row.
     pub row:    String,
     pub field:  String,
     /// The value as the file wrote it.
@@ -203,7 +203,7 @@ pub struct UnquotedTime {
 /// Every row the project declares, indexed for lookup.
 #[derive(Debug, Default)]
 pub struct Registry {
-    /// Keyed by `namespace::slug`.
+    /// Keyed by `namespace::id`.
     pub rows:         BTreeMap<String, RegistryRow>,
     pub by_namespace: BTreeMap<String, Vec<String>>,
     /// Slugs declared twice within one namespace, with every declaring file.

@@ -165,8 +165,10 @@ pub(crate) fn rows_of_texts(
     // the files and of the rows within each, which is where they happen to be written, and an
     // answer that changes when a file is split, merged, renamed or moved is an identity that
     // includes the file.
+    // In the order a path reads them, the names of each id compared one by one (letkajenkka 11):
+    // `a::b` before `a0`, so a namespace's table and `{{ ns::** }}` list its rows alike.
     for ids in reg.by_namespace.values_mut() {
-        ids.sort();
+        ids.sort_by_cached_key(|q| crate::names(q).map(|n| n.into_iter().map(String::from).collect::<Vec<_>>()).unwrap_or_else(|_| vec![q.clone()]));
     }
     crate::fold::fold_ids(&mut reg, namespaces);
     // Unfiltered, the population is every file the walk met, readable or not.

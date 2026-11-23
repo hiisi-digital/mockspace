@@ -172,8 +172,10 @@ const COMMANDS: &[Cmd] = &[
                   and the other table methods narrow, and a field step after a wildcard prints \
                   each row's value. Under a wildcard members come in byte order of their names, \
                   step by step. A wildcard matching nothing is an empty answer; a step naming \
-                  nothing where no step before it widened, an ordinal, a range and a constraint \
-                  fail with the reason.",
+                  nothing where no step before it widened, a step past a value field, an ordinal, \
+                  a range and a constraint fail with the reason. A step past a field of row \
+                  references goes on into those rows. A namespace is written as declared or \
+                  folded. A set naming a member twice reads it twice and warns.",
     },
     Cmd {
         name:    "links",

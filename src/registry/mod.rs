@@ -210,7 +210,7 @@ mod tests {
         let reg = reg_with("xpbd", "vocab", &[("what", "w")]);
         let text = "{{ reg::vocab::nope }} and {{ reg::vocab::xpbd::missing }}";
         assert_eq!(r_all(text, &[ns("vocab", None)], &reg), text);
-        let d = dangling_references(text, &reg, &["vocab".to_string()].into_iter().collect());
+        let d = dangling_references(text, &reg, &[ns("vocab", None)]);
         assert!(d.contains("vocab::nope"), "{d:?}");
         assert!(d.contains("vocab::xpbd::missing"), "{d:?}");
     }

@@ -155,7 +155,8 @@ fn path_shape(ns: &RegistryNamespace) -> String {
 
 /// The values a row's id gives the fields its namespace folds, in `path` order.
 ///
-/// `referenced` holds, for each namespace, the ids of its rows (bare, without the namespace). The
+/// `declared` is every declared namespace key, which a folded field's type must name. `referenced`
+/// holds, for each namespace, the ids of its rows (bare, without the namespace). The
 /// names after the folded values and before the leaf are free and give no field. A namespace with
 /// no `path` folds nothing and any id is returned no values.
 ///
@@ -166,14 +167,14 @@ fn path_shape(ns: &RegistryNamespace) -> String {
 /// [`IdFault::Written`], which is about the row's fields and not its id ([`folded_fields_written`]).
 pub fn fold_row_id(
     ns: &RegistryNamespace,
+    declared: &BTreeSet<&str>,
     referenced: &BTreeMap<String, BTreeSet<String>>,
     id: &str,
 ) -> Result<Vec<(String, String)>, IdFault> {
     if ns.path.is_empty() {
         return Ok(Vec::new());
     }
-    let declared: BTreeSet<&str> = referenced.keys().map(String::as_str).collect();
-    let fields = path_fields(ns, &declared).map_err(IdFault::UnfitPath)?;
+    let fields = path_fields(ns, declared).map_err(IdFault::UnfitPath)?;
     let names = row_id_names(id).map_err(IdFault::NotAnId)?;
     let mut readings = Vec::new();
     read(&fields, referenced, &names, &mut Vec::new(), &mut readings);
@@ -261,6 +262,7 @@ pub(crate) fn with_path_targets(namespaces: &[RegistryNamespace], wanted: &BTree
 /// Reads every row's id of a namespace declaring `path` back into its fields, and records each
 /// row whose id does not fold or which wrote a folded field itself.
 pub(crate) fn fold_ids(reg: &mut Registry, namespaces: &[RegistryNamespace]) {
+    let declared: BTreeSet<&str> = namespaces.iter().map(|n| n.key.as_str()).collect();
     let mut referenced: BTreeMap<String, BTreeSet<String>> =
         namespaces.iter().map(|n| (n.key.clone(), BTreeSet::new())).collect();
     for row in reg.rows.values() {
@@ -282,7 +284,7 @@ pub(crate) fn fold_ids(reg: &mut Registry, namespaces: &[RegistryNamespace]) {
                     fault:  IdFault::Written(field),
                 });
             }
-            match fold_row_id(ns, &referenced, &row.id) {
+            match fold_row_id(ns, &declared, &referenced, &row.id) {
                 Ok(values) => row.fields.extend(values),
                 // the declaration's finding, said once by `unfit_path_fields`
                 Err(IdFault::UnfitPath(_)) => break,

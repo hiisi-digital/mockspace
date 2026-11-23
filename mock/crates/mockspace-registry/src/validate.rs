@@ -317,7 +317,7 @@ pub fn namespace_root_collisions(
     //
     // A key is global over the whole of `<mock>/registry/`: `load_registry_in_dir`
     // builds one set of known keys and walks the tree against it, and a row is
-    // addressed `<namespace>::<slug>` with no part of its path in the address.
+    // addressed `<namespace>::<id>` with no part of its path in the address.
     // So a second declaration does not partition anything. It supplies a
     // second schema for one name, and every row of both is read against
     // whichever of the two a given code path happens to pick.

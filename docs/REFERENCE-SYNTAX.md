@@ -124,40 +124,61 @@ left, or that reads more than one way, reports `unfoldable-id` with the readings
 
 ### Selecting rows
 
-Any reference whose path widens, or names a branch of a namespace's id tree, selects
-rows, in a document and at `cargo mock query` alike; there is no second query language.
-The first step is the namespace, in the standard's spelling (`web_renderer`, never
-`web-renderer`; two namespaces folding to one name report `namespace-fold-collision`):
+Every path into the registry is read by one reader, a plain one included: a row and a
+field of it are a path that names one member, and a path that widens, or names a branch
+of a namespace's id tree, selects rows. It is the same in a document, in a row's field
+and at `cargo mock query`; there is no second query language. The first step is the
+namespace, as declared or folded into the standard's set (see Paths); two namespaces
+folding to one name report `namespace-fold-collision`.
 
 | Query | Selects |
 |---|---|
 | `ticket::question::engine::deps_allowed` | that row |
+| `ticket::question::engine::deps_allowed::title` | its title |
+| `ticket::{question}::engine::deps_allowed::title` | the same: a set of one is its member |
 | `ticket::question::engine` | every row below the branch |
 | `ticket::question::engine::**` | the same: `**` is any depth, none included |
-| `ticket::**::internals::**` | every row with `internals` anywhere in its id |
+| `ticket::**::internals::**` | every row with `internals` in its id |
 | `ticket::*::engine` | every row whose id has `engine` second |
 | `ticket::{task, question}::engine::*` | the rows below each member, in written order |
 | `ticket::*::engine::*::*::title` | the `title` of each row the pattern reaches |
+| `ticket::*::**::needs::title` | the title of each row any ticket's `needs` names |
 
-Rows of one namespace come as that namespace's table, holding just them, so
-`{{ ticket::question::** }}` is a table and `{{ ticket::question::**.count() }}` a number;
-`.where`, `.select`, `.first` and `.last` narrow it as they do a whole table. Rows of
-several namespaces, and fields, come as a list. `pathof`, `sourcesof` and `refsto` take a
-selection: each file, each source and each referring row once.
+A plain read of one row or one field shows as it always has: a row as its id (a work of
+`reference` as its short citation, a row of a namespace declaring `value_field` as that
+value), a field as its value, and a field holding row references as each of those rows. A
+set that does not widen is exactly its expansion, so `ticket::{task}::engine::b::title`
+reads as `ticket::task::engine::b::title`. Otherwise rows of one namespace come as that
+namespace's table, holding just them, so `{{ ticket::question::** }}` is a table and
+`{{ ticket::question::**.count() }}` a number; `.where`, `.select`, `.first` and `.last`
+narrow it as they do a whole table. Rows of several namespaces, and fields, come as a
+list, a field each row carries shown as a plain read of it shows, one it does not carry
+left out. `pathof`, `sourcesof` and `refsto` take any of these: each file, each source and
+each referring row once.
 
 A node stands for the rows at or below it. Under a wildcard members come in byte order of
-their names, step by step: `a::b` comes before `a0`, since `a` is before `a0`. Each row,
-and each field of a row, comes once however many paths reach it, a set's members in the
-order written.
+their names, step by step: `a::b` comes before `a0`, since `a` is before `a0`. Within one
+path of a set's expansion each row, and each field of a row, comes once however many `**`
+paths reach it; across the expansion nothing is dropped, so a set naming a member twice
+(`ticket::{task, task}`) reads it twice, and the generation and `cargo mock query` warn
+that it does.
 
 A wildcard matching nothing is an empty answer. A step naming nothing, where no step
-before it widened, fails, and the reference is left as written and reported. A step from
-a row names a field when the namespace declares it (`id` included, internal fields not);
-a namespace is a uniform branch, and after a widening step this host yields rather than
-fails, passing over a row whose namespace declares no such field, so
+before it widened, fails, and the reference is left as written and reported with why. A
+step from a row names a field its namespace declares (`id` included, internal fields
+not), or one the row writes; `**` taken from a row covers its fields as `*` does, as well
+as the row. A namespace is a uniform branch, and after a widening step this host yields
+rather than fails: a row whose namespace has no such field is passed over, so
 `ticket::**::internals::**` keeps the rows with `internals` in their ids. A step past a
-field, an ordinal or a range (a branch has no order), and a constraint (the registry
-declares no shapes) fail.
+field holding row references goes on into each row it names, a link in a `ref` field
+included; a step past a field holding a value fails, naming the field and its type. An
+ordinal or a range (a branch has no order) and a constraint (the registry declares no
+shapes) fail too.
+
+A row whose field selects a branch holding the row itself, an epic listing its own
+branch, is a loop: its value would need itself resolved first. It is reported once as
+`reference-cycle`, and the epic names its branch without itself, or lists its rows in a
+field of row references instead.
 
 ## Roots
 
@@ -427,8 +448,11 @@ host folds its own naming into that set. `{{ mock::design::12 }}` finds
 rendered output there, and `my_crate` is the directory `my-crate`. The one exception is
 the root of a path of two names or more, which may be written as it was declared: a
 namespace named after its directory, `web-renderer`, is reached as
-`web-renderer::a_row`. Every name after the root, and every name of a row's id, keeps the
-set. Exactly one match
+`web-renderer::a_row`, and as `web_renderer::a_row`, its folded spelling, alike, in a
+plain reference and a widening one. Every name after the root, and every name of a row's
+id, keeps the set. The standard has a host fold its naming and not accept the unfolded
+spelling (letkajenkka `SPEC.md` 3.2); this allowance predates the registry's paths and
+keeps references written with it resolving, and the two are not settled here. Exactly one match
 resolves; several is an error rather than a guess, because the author meant one of
 them and picking silently would point the citation somewhere they did not choose. No
 spelling tells two such files apart, so one is renamed or removed. A file or directory

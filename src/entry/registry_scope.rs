@@ -170,11 +170,12 @@ pub(crate) fn dangling(
     found: &[&str],
     template: Option<&Path>,
     namespaces: &std::collections::BTreeSet<&str>,
+    why: &dyn Fn(&str) -> Option<String>,
 ) -> Vec<RegistryFinding> {
     let inner = |e: &str| e.trim_matches(|c: char| c == '{' || c == '}').trim().to_owned();
     let is_row_ref = |e: &&str| {
         let text = inner(e);
-        crate::registry::root(&text).is_some_and(|r| namespaces.contains(r))
+        crate::registry::reference_namespace(&text, namespaces.iter().copied()).is_some()
             || mockspace_registry::legacy_refs::legacy_row_namespace(&text, namespaces).is_some()
     };
     let (rows, rest): (Vec<&str>, Vec<&str>) = found.iter().copied().partition(is_row_ref);
@@ -205,11 +206,15 @@ pub(crate) fn dangling(
         } else {
             String::new()
         };
+        // Why each one did not resolve, where the walker of the registry says: the step that names
+        // nothing, the field no step goes on from.
+        let reasons: Vec<String> = shown.iter().filter_map(|e| why(&inner(e))).collect();
+        let reasons = if reasons.is_empty() { String::new() } else { format!(" {}.", reasons.join("; ")) };
         out.push(RegistryFinding {
             kind: "dangling-reference",
             message: format!(
                 "{file}: {} reference(s) resolved to nothing and were rendered literally ({}). A reference \
-                 that resolves to nothing is worse than prose, because it looks checked.{hint}",
+                 that resolves to nothing is worse than prose, because it looks checked.{hint}{reasons}",
                 group.len(),
                 shown.join(", ")
             ),

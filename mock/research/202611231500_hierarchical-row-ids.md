@@ -1,8 +1,9 @@
 # Hierarchical row ids in the registry
 
-Branch `work/ids-lane`, cut from `dev` at 3515ae3. Two commits: 8e715e2 (the feature, its tests and
-docs) and e59046c (the split of three files that were past five hundred lines). Governing text: the
-letkajenkka standard, `SPEC.md` sections 3 to 9, pinned `=0.0.1-rc.1` and unchanged.
+Branch `work/ids-lane`, cut from `dev` at 3515ae3. Five commits: 8e715e2 (the feature, its tests and
+docs), e59046c (the split of three files that were past five hundred lines), ecb5571 (this
+report), 7164124 (review pass 1) and the review pass 2 commit at the tip. Governing text: the
+letkajenkka standard, `SPEC.md` sections 3 to 11, pinned `=0.0.1-rc.1` and unchanged.
 
 ## Op's intent
 
@@ -119,15 +120,16 @@ a record.
 For the ticket tools in mockspace-extra-lints (crate ticket-model), the public pure functions are
 `mockspace_registry::fold_row_id`, `mockspace_registry::row_id_names`,
 `mockspace_registry::is_valid_row_id` and `mockspace_registry::id_prefix_pairs`, with `IdFault`
-(`kind`, `message`) for the finding. A row writing a folded field is checked there as
-`ns.path.contains(field)` for each key the row writes.
+(`kind`, `message`) for the finding. Superseded: a row writing a folded field is checked by
+`folded_fields_written` (review pass 1, item 9), and the list grew in both passes below.
 
 ### 6. Row reference values
 
 `validate_row_references` takes any row id (`is_valid_row_id`) in a typed field. An item opening on
 a declared namespace and naming no row of the field's target is still refused as
 `malformed-row-reference` with the old hint (`Write display`), so a qualified value stays refused
-rather than read as an id beginning with the namespace's name.
+rather than read as an id beginning with the namespace's name. Superseded by review pass 1,
+item 5: only the target written in front of one of its rows is malformed.
 
 ### 7. The command line
 
@@ -280,3 +282,100 @@ Changed again by this pass:
 - `path_ids.rs`: subject is required in its config, `task::loose` became
   `task::engine::render::loose`, and the branch test now expects the branch to resolve.
 - `tests/the_select_verb_lists_rows.rs` became `tests/the_query_verb_takes_a_pattern.rs`.
+
+## Review pass 2
+
+This section supersedes both accounts above where they differ. Three things changed. `locate`,
+`is_branch` and `RowAt` are gone. The hyphen spelling of a namespace is accepted again. Selection
+is no longer a reader beside the plain one.
+
+The shared cause of blockers 1, 2 and 3 was two readers, so there is now one. `walk.rs` holds the
+only walker of a registry path, and a plain path is a walk that names one member. It reads a
+`Store`, which gives the keys in order plus each row's fields and values. Nodes are made only
+when a step asks for them. A plain path costs a few map lookups, and a wildcard costs the rows
+below the point where it stands. `resolving_row_data_does_not_scale_with_rows_times_registry`
+(15,000 rows) stays under its bound.
+
+- 1. Sets that do not widen. Every registry path that is not plain names goes through the
+  walker. A walk is `single` when the path does not widen (`Path::widens`, so a set of one does
+  not widen) and it reaches one record or one field. Such a walk is shown as a plain read.
+  `{{ ticket::{task}::engine::render::split::title }}`, `{{ ticket::{question}::engine }}` (a
+  table), `pathof(...)` and `refsto(...)` each resolve as their expansion does. Test:
+  `path_ids.rs::a_set_that_does_not_widen_resolves_as_its_expansion`; walker side in
+  `walk_tests.rs::a_set_of_one_reads_as_its_member`.
+- 2. One spelling rule. `query_text.rs` holds `namespace_named` (a written name and a key fold
+  alike) and `standard_spelling`. `standard_spelling` folds the hyphens of the first step after
+  the root, and only there, which is dev's 5948066 allowance. The walker, `registry_path`,
+  `reference_namespace` (used by `registry_scope::dangling`), `link_target`, `links_report`,
+  `find_registry_refs` and `dangling_references` all go through these.
+  - The conflict with SPEC 3.2 is stated, not settled, in `query_text.rs`,
+    `REFERENCE-SYNTAX.md` (Paths) and the skill.
+  - Test: the four spellings of `web-renderer::pass::split` resolve alike, `.count()` agrees in
+    both spellings, a misspelled row is dangling in both, and links in either spelling are
+    accepted (`path_ids.rs`, `select_tests.rs`, `query_text_tests.rs`).
+- 3. Field values. `resolve_ops::render_field` is the one way a field shows: `id`,
+  `reference::citation`, typed row references resolved with the unresolved form kept, and plain
+  values. Both a plain read and a list of fields go through it. A field the row does not carry is
+  `None`: a plain read leaves the reference unresolved, and a list leaves the field out. Test:
+  `a_field_read_through_a_wildcard_is_shown_as_a_plain_read_shows_it`.
+- 4. A step past a reference field. A typed field, or a link in a `ref` or `ref[]` field, goes
+  on into the rows it names (`ticket::*::**::needs::title`). A step past a value field fails with
+  `PastField { row, field, ty }`. `unresolved_reason` gives that reason, and the generation now
+  passes it to `registry_scope::dangling`, so the `dangling-reference` finding carries it. Tests:
+  `walk_tests.rs` (`a_step_past_a_reference_field_goes_on_into_the_rows_it_names`,
+  `a_step_past_a_value_field_fails_naming_the_member_and_its_type`), `path_ids.rs`, and
+  `registry_scope_tests.rs::the_reason_a_reference_did_not_resolve_is_in_its_finding`.
+- 5. Tests that fail if the code is taken out:
+  - `path_ids.rs::the_check_reports_two_namespaces_folding_to_one_name` fails if `check` stops
+    calling `namespace_fold_collisions`.
+  - Longest-wins is now the walker's: a name a longer id takes is that row, and any other name is
+    a field of the shorter row. `walk_tests.rs::the_longer_id_wins_a_name_where_one_id_is_a_prefix_of_another`
+    fails if the field is tried first.
+- 6. A repeated set member is kept, because the set is exactly its expansion. Deduplication now
+  happens only within one expansion path, for `**`. `repeated_set_warnings` is printed by
+  `cargo mock query` and, for each template, by the generation. It is a warning and gates
+  nothing. Tests: `select_tests.rs`, `query_text_tests.rs`,
+  `the_query_verb_takes_a_pattern.rs::a_repeated_set_member_is_read_twice_and_said`.
+- 7. A row selecting its own branch is one `reference-cycle` finding (they are deduplicated by
+  message), and the docs say an epic listing its own branch loops. Test:
+  `path_ids.rs::a_row_selecting_its_own_branch_is_one_cycle`.
+- 8. `fold_row_id(ns, declared, referenced, id)` takes the declared keys. New
+  `id_is_a_branch_message(short, short_at, long, long_at)`, which `id_branches` uses.
+- 9. `**` taken from a record covers its fields as well as the record. Taken from a branch it
+  reaches records as rows. So `ticket::**::internals::**` now also lists the fields of a row
+  whose id ends in `internals`; `select_tests.rs` says so.
+- 10. Rustdoc and messages say id: `model.rs`, `refs.rs`, `check.rs`, `rowref/mod.rs`,
+  `validate.rs`.
+- 11. `after_registry_root` is the one root skip. `peel` in `query_text.rs` is the one place an
+  operation is taken off, and `resolve_typed`, `row_deps` and `unresolved_reason` use it.
+- 14. `fold_tests.rs` uses `mockspace_manifest::scratch::tempdir`.
+
+Changed by this pass:
+
+- `ids_tests.rs`: the three `locate` tests and the `is_branch` test moved into `walk_tests.rs`,
+  whose tests cover the same cases through the walker.
+- `select_tests.rs`: the set-overlap test keeps repeats, and the `**` tests account for record
+  fields.
+- `path_ids.rs`: a `web-renderer` namespace and its rows were added; `dangling_references` now
+  takes the namespace declarations.
+- `src/registry/mod.rs`: the `dangling_references` call was updated.
+- `registry_scope_tests.rs`: `dangling` takes the reason closure.
+
+For ticket-model, the public functions are now:
+
+- `select_ids(query, &[&str])`.
+- `fold_row_id(ns, declared, referenced, id)`.
+- `folded_fields_written`.
+- `row_id_names` and `is_valid_row_id`.
+- `id_prefix_pairs` and `id_is_a_branch_message`.
+- `namespace_named`, `standard_spelling`, `registry_path` and `reference_namespace`.
+- `repeated_set_members` and `repeated_set_warnings`.
+
+Runs on the tip, a crate at a time:
+
+- `cargo test -p mockspace-registry`: 241 lib tests, 14 in `path_ids`, 7 in
+  `without_the_engine`. All passed.
+- `cargo test -p mockspace` by filter: `registry` 129, `refs` 59, `select` 41, `query` 5, `help`
+  32, `render_agent` 212, `config` 140, `migrate` 58, `registry_scope` 11. All passed.
+- `--test` runs: `the_query_verb_takes_a_pattern` 7, `the_public_tree_names_no_private_project`
+  7, `the_query_loads_its_own_namespace` 5. All passed.

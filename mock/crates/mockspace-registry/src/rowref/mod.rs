@@ -234,7 +234,7 @@ pub fn validate_row_references(
     out
 }
 
-/// A row-reference item that is not a slug, said once for the typed fields and
+/// A row-reference item that is not a row id, said once for the typed fields and
 /// the links alike.
 fn malformed_slug(row: &RegistryRow, field: &str, item: &str, hint: String) -> RegistryFinding {
     RegistryFinding {
@@ -248,7 +248,7 @@ fn malformed_slug(row: &RegistryRow, field: &str, item: &str, hint: String) -> R
     }
 }
 
-/// The finding for a reference to `target::slug` when no row declares it, and
+/// The finding for a reference to `target::id` when no row declares it, and
 /// nothing when one does. Shared by the typed fields and the links, so a
 /// dangling reference reads the same whichever field held it.
 fn dangling(

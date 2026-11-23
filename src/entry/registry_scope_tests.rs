@@ -249,7 +249,7 @@ fn the_push_scope_sees_a_merge_of_a_branch_a_remote_has() {
 /// how the older spelling is migrated: one row for each arm.
 fn dangling_of(found: &str) -> (GateScope, bool) {
     let namespaces = std::collections::BTreeSet::from(["spike"]);
-    let out = dangling("DOC.md", &[found], Some(Path::new("/r/DOC.md.tmpl")), &namespaces);
+    let out = dangling("DOC.md", &[found], Some(Path::new("/r/DOC.md.tmpl")), &namespaces, &|_| None);
     assert_eq!(out.len(), 1, "{found}: {out:?}");
     let hint = out[0].message.contains("`cargo mock migrate references-to-letkajenkka` rewrites");
     (out[0].gate.clone(), hint)
@@ -283,7 +283,18 @@ fn a_legacy_row_reference_keeps_the_template_scope_and_other_refused_text_gates_
 #[test]
 fn a_computed_document_gates_every_reference() {
     let namespaces = std::collections::BTreeSet::from(["spike"]);
-    let out = dangling("DOC.md", &["{{ spike::x }}", "{{ spike :: y }}", "{{ Nope :: z }}"], None, &namespaces);
+    let out = dangling("DOC.md", &["{{ spike::x }}", "{{ spike :: y }}", "{{ Nope :: z }}"], None, &namespaces, &|_| None);
     assert!(out.iter().all(|f| f.gate == GateScope::Always), "{out:?}");
     assert_eq!(out.len(), 2, "{out:?}");
+}
+
+/// Why a reference did not resolve reaches the finding, where the registry's walker says it.
+#[test]
+fn the_reason_a_reference_did_not_resolve_is_in_its_finding() {
+    let namespaces = std::collections::BTreeSet::from(["spike"]);
+    let why = |e: &str| (e == "spike::a::title::x").then(|| "`title` of spike::a is a `string`".to_string());
+    let out = dangling("DOC.md", &["{{ spike::a::title::x }}"], None, &namespaces, &why);
+    assert!(out[0].message.contains("`title` of spike::a is a `string`"), "{}", out[0].message);
+    let silent = dangling("DOC.md", &["{{ spike::a::title::x }}"], None, &namespaces, &|_| None);
+    assert!(!silent[0].message.contains("is a `string`"));
 }

@@ -25,14 +25,18 @@
 use super::*;
 
 /// The namespace and id of an item that links a row, when it is one: a path of two names or more,
-/// the first a declared namespace and every name after it the row's id, `::` joined. A link names a
+/// the first a declared namespace, in either spelling and returned as declared, and every name
+/// after it the row's id, `::` joined. A link names a
 /// row and never a field of one, so nothing after the id is read.
 ///
 /// An item the standard refuses is no link. It is a citation that does not parse, and the finding
 /// for it carries the rule it broke, so `slot::Not-A-Slug` is reported as the uppercase it is.
-pub fn link_target<'a>(item: &'a str, namespaces: &BTreeSet<&str>) -> Option<(&'a str, String)> {
+pub fn link_target<'k>(item: &str, namespaces: &BTreeSet<&'k str>) -> Option<(&'k str, String)> {
     match crate::names(item.trim()).ok()?.as_slice() {
-        [namespace, id @ ..] if !id.is_empty() && namespaces.contains(namespace) => Some((*namespace, id.join("::"))),
+        [namespace, id @ ..] if !id.is_empty() => {
+            let key = crate::namespace_named(namespace, namespaces.iter().copied())?;
+            Some((key, id.join("::")))
+        },
         _ => None,
     }
 }
@@ -115,12 +119,14 @@ pub fn links_report(
             known.join(", ")
         ));
     };
-    if !reg.rows.contains_key(id) {
+    // The row as the registry keys it, whichever spelling of the namespace was written.
+    let qualified = format!("{namespace}::{slug}");
+    if !reg.rows.contains_key(&qualified) {
         let near = super::nearest(reg, namespace, &slug);
         return Err(format!("no row `{id}`.{near}"));
     }
-    let links = links_of(reg, namespaces, id);
-    let mut out = format!("{id}\n");
+    let links = links_of(reg, namespaces, &qualified);
+    let mut out = format!("{qualified}\n");
     for (title, side) in [("links to", &links.outgoing), ("linked from", &links.incoming)] {
         if side.is_empty() {
             out.push_str(&format!("  {title}: nothing\n"));
