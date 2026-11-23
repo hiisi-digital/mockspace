@@ -257,6 +257,10 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // every git this process runs is the engine's, and the monitor of the data refs copies nothing
     // for it, since the engine copies the instances itself
     //
+    // Every child inherits `MOCKSPACE_IN_ENGINE`, and its children too: a git run by a tool, a
+    // lint or a hook this engine starts copies nothing through the monitor either, while the hooks
+    // that git runs still copy (they test `MOCKSPACE_SNAPSHOT` alone).
+    //
     // SAFETY: as above.
     unsafe { crate::data_refs::mark_engine_process() };
 
