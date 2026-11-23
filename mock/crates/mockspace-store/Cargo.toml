@@ -14,12 +14,13 @@ workspace = "../../.."
 # are the part gix is not built for here.
 [dependencies]
 tempfile = { version = "3", optional = true }
-mockspace-manifest = { path = "../../../mockspace-manifest", optional = true, features = ["_internal-test-scratch"] }
+# the name of the variable that sends the copies kept before a write away from the person's cache
+mockspace-manifest = { path = "../../../mockspace-manifest" }
 
 # The bare remote and its clones that the tests of a store on a ref share, for the crates that
 # test against one.
 [features]
-test-support = ["dep:tempfile", "dep:mockspace-manifest"]
+test-support = ["dep:tempfile", "mockspace-manifest/_internal-test-scratch"]
 
 [dev-dependencies]
 mockspace-manifest = { path = "../../../mockspace-manifest", features = ["_internal-test-scratch"] }

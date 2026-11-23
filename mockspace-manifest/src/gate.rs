@@ -62,6 +62,8 @@ pub const HOOK_NAMES: &[&str] = &["pre-commit", "pre-push", "commit-msg"];
 
 // The hooks that follow an event live beside their script, in `follow_up`.
 pub use crate::follow_up::FOLLOW_UP_HOOKS;
+// The hooks that only pass an event on to the repository's own live in `chain`.
+pub use crate::chain::{CHAIN_HOOKS, chain_hook};
 use crate::follow_up::{CAN_GENERATE_SHELL, durable_follow_up_hook};
 
 /// Marks a file as generated, so a reader knows not to edit it and the installer
@@ -234,6 +236,9 @@ pub const SHOOK_KEEPS: &str = r##"ms_shook_keeps() { # <git-common-dir> <hook>
 /// Every pass ends in the repository's own hook; see [`chain_tail`].
 #[must_use]
 pub fn durable_hook(name: &str, hook_version: u32) -> String {
+    if CHAIN_HOOKS.contains(&name) {
+        return chain_hook(name, hook_version);
+    }
     if FOLLOW_UP_HOOKS.contains(&name) {
         return durable_follow_up_hook(name, hook_version);
     }
@@ -355,7 +360,7 @@ pub fn install_durable_hooks(dir: &Path, hook_version: u32) -> Vec<String> {
         return actions;
     }
 
-    for name in HOOK_NAMES.iter().chain(FOLLOW_UP_HOOKS) {
+    for name in HOOK_NAMES.iter().chain(FOLLOW_UP_HOOKS).chain(CHAIN_HOOKS) {
         let path = dir.join(name);
         let content = durable_hook(name, hook_version);
         let fp_line = format!(
@@ -609,7 +614,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(
             first.len(),
-            HOOK_NAMES.len() + FOLLOW_UP_HOOKS.len(),
+            HOOK_NAMES.len() + FOLLOW_UP_HOOKS.len() + CHAIN_HOOKS.len(),
             "first run writes every hook"
         );
         assert!(second.is_empty(), "second run rewrites nothing: {second:?}");

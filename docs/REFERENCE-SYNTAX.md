@@ -7,12 +7,19 @@ documents are generated.
 
 `{{ root::selector... }}` in any `*.md.tmpl`.
 
+What stands between the braces is a path of steps joined by `::`, with no space beside a separator
+(`foo::bar::baz`). A step is a name, a line number (`12`), or a span of lines (`3..9`). A name is
+lowercase letters, digits and underscores, and opens on a letter. The syntax is named letkajenkka and
+read by the crate of that name, through the `refpath` module of `mockspace-registry`; what it fixes is
+the shape and the character set, and mockspace fixes what the roots, namespaces and fields mean and
+folds its own names into that character set where it resolves.
+
 | Written | Refers to | Renders as |
 |---|---|---|
 | `{{ reg::spike::foo }}` | a registry row | its slug, as plain text |
 | `{{ reg::spike::foo::question }}` | one field of a row | that field's value |
 | `{{ reg::spike }}` | a whole namespace | its table, inline |
-| `{{ seed::DESIGN::844 }}` | a place in a file | a line link |
+| `{{ seed::design::844 }}` | a place in a file | a line link |
 
 The registry writes no page into the docs directory. A namespace is read, validated and
 queried, and a table of it is written wherever a template asks for one with
@@ -28,7 +35,9 @@ pattern. Without them, a project with a root named `core` would silently link
 `core::mem::12`, and prose about code would be rewritten by accident.
 
 References inside code fences are never touched: an identifier in a fence is
-far more likely to be an example than a reference.
+far more likely to be an example than a reference. A fence is three or more
+backticks or three or more tildes, and it ends at a line of the same character at
+least as long.
 
 An expression that resolves to nothing is left exactly as written, braces and
 all, and reported. A reader sees an obviously unresolved reference rather than
@@ -61,7 +70,7 @@ error naming both, and a file and line in a report is only a place to look.
 ## Roots
 
 `reg` is the registry. `mock` is the mock directory and `live` is the
-repository, both builtin, so `{{ mock::DESIGN::12 }}` works with no
+repository, both builtin, so `{{ mock::design::12 }}` works with no
 configuration.
 
 Anything project-specific is declared, because not every project has one:
@@ -204,7 +213,7 @@ the column early.
 A relation between rows goes in one field typed `ref[]`, whichever namespace the
 other row is in. An item of it is one of two shapes that cannot be mistaken for each
 other: a citation has a root, a path and an anchor, so three segments or more
-(`research::dir::file::#heading`), and a link to a row has two, a declared namespace
+(`research::dir::file::heading`), and a link to a row has two, a declared namespace
 and a slug.
 
 ```toml
@@ -217,7 +226,7 @@ description = "Every row this one relates to, written as namespace::slug."
 ```toml
 [[answer]]
 id = "niri"
-related = ["slot::display", "ruling::wayland_first", "research::notes::niri::#tiling"]
+related = ["slot::display", "ruling::wayland_first", "research::notes::niri::tiling"]
 ```
 
 The first segment of a link is checked against the declared namespaces, and a slug
@@ -225,8 +234,11 @@ naming no row is reported as `unknown-row-reference`, a slug that is not a slug 
 `malformed-row-reference`. Only the first is scoped: it gates the commit or push that
 changes the file holding the link, and is a warning on a plain run or one that leaves
 that file alone, so a row can be retired before every citation of it is gone. A
-template citing a row is scoped the same way, to the template. A slug that is not a
-slug, and every other finding, gates every run. A root cannot carry the name of a
+template citing a row is scoped the same way, to the template, and so is one written in
+the spelling before the letkajenkka standard that `cargo mock migrate
+references-to-letkajenkka` rewrites into a link, until it is rewritten. A slug that is
+not a slug, any other text the standard refuses, and every other finding gate every
+run. A root cannot carry the name of a
 namespace
 (`namespace-root-collision`), so a two-segment item is a link exactly when it names
 one. In a table cell a link gives the row's slug as plain text, as any reference to
@@ -282,8 +294,8 @@ No claim is made here about the rest of it.
 
 ## Anchors: prefer headings to line numbers
 
-`{{ seed::DESIGN::#the-four-lanes }}` cites a heading. `{{ seed::DESIGN::844 }}`
-cites a line.
+`{{ seed::design::the_four_lanes }}` cites a heading. `{{ seed::design::844 }}`
+cites a line, and `{{ seed::design::844..860 }}` a span of lines.
 
 Prefer the heading, because **line numbers fail silently**. An edit anywhere
 above a cited line shifts it, the citation still resolves, and it now points at
@@ -292,8 +304,11 @@ failure shape there is. The only case that fails loudly is a line past the end
 of the file, and that is the case that matters least.
 
 A heading fails loudly instead. Rename it and the citation stops resolving,
-which is a report rather than a lie. Heading slugs match the form forges
-generate, so the same anchor a reader clicks is the one the link produces.
+which is a report rather than a lie. A heading is named by the slug a forge gives it, folded into the one
+character set (`-` becomes `_`), so `The four lanes` is `the_four_lanes`, and the link
+rendered for it carries the forge's own slug, `the-four-lanes`, so the anchor a reader
+clicks is the one the link produces. A heading that opens on a digit has no such name
+and cannot be cited by heading.
 
 Line citations are honest in exactly one situation: a root whose contents do not
 move. Declare that:
@@ -310,14 +325,36 @@ hazard into a fact.
 
 ## Paths
 
-A citation's path may have any depth, and the last segment is always the line:
-`{{ mock::crates::numeric::DESIGN::12 }}` needs no root of its own.
+A citation's path may have any depth, and it ends in an anchor, a line, a span of
+lines or a heading: `{{ mock::crates::numeric::design::12 }}` needs no root of its own.
 
-Extensions may be omitted. `{{ mock::DESIGN::12 }}` finds `DESIGN.md.tmpl`
-without the author tracking whether a document is a template here and rendered
-output there. Exactly one match resolves; several is an error rather than a
-guess, because the author meant one of them and picking silently would point
-the citation somewhere they did not choose.
+The syntax has one parser for every reference. A
+name is never written with an uppercase letter, a hyphen, a dot or an extension: the
+host folds its own naming into that set. `{{ mock::design::12 }}` finds
+`DESIGN.md.tmpl` without the author tracking whether a document is a template here and
+rendered output there, and `my_crate` is the directory `my-crate`. Exactly one match
+resolves; several is an error rather than a guess, because the author meant one of
+them and picking silently would point the citation somewhere they did not choose. No
+spelling tells two such files apart, so one is renamed or removed. A file or directory
+whose name cannot fold, because it opens on a digit or holds a dot, cannot be cited.
+
+The spelling before this syntax (uppercase, extensions, `::#heading`, spaces around
+the separator) is refused, and the refusal names the migration that rewrites it:
+`cargo mock migrate references-to-letkajenkka [--dry-run]`. It rewrites a reference
+only where the new spelling resolves to the file and line the old one did, and lists
+the rest. The same migration folds each preset shorthand of `extends` in the
+`[lints.<name>]` tables of `lints.toml`, `mock/lints.toml` and `mockspace.toml` into
+this syntax's names (`stack-lints::no-heap` becomes `stack_lints::no_heap`), and it reads a registry kept on a ref through the
+registry's own stores and writes it back to that ref, never into the tree.
+
+## What the syntax leaves to mockspace
+
+An operation is a name and one query in parentheses. `refsto` is reserved by the syntax, and `pathof` and `sourcesof` are
+mockspace's own, each taking one query: `{{ pathof(mock::design::12) }}`. The postfix
+chain after a finished operation, `{{ pathof(crates::store).dir() }}`, is mockspace's too
+and is no part of the syntax, which has no step after an operation. The
+syntax also has sets (`{a, b}`), wildcards (`*`, `**`) and constraints (`<name>`); a reference here is a plain path of
+names, so each of those is refused where a row or a citation is expected.
 
 ## What is checked
 

@@ -5,6 +5,9 @@
 
 #![cfg(unix)]
 
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 use std::os::unix::fs::symlink;
 
 use mockspace_store::{DirStore, Edit, Reader, Reapply, Store};

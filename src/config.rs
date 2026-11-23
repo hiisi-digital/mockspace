@@ -860,8 +860,18 @@ fn read_lint_table(source: &Path, lint: &str, table: &toml_edit::InlineTable) ->
 // ---------------------------------------------------------------------------
 
 impl Config {
+    /// [`Config::try_from_dir`], panicking where it refuses: for a caller with no way to report a
+    /// refusal, which a config that cannot be read stops.
     #[must_use]
     pub fn from_dir(mock_dir: &Path) -> Self {
+        Self::try_from_dir(mock_dir).unwrap_or_else(|why| panic!("{why}"))
+    }
+
+    /// The config of the tree at `mock_dir`, or why the clone cannot answer for it: a git call that
+    /// fails, or a clone setting git will not read. A command reports the refusal and stops, so a git
+    /// failure part way through a migration is a refusal naming the call, which the same call then
+    /// finishes, and never a panic. A malformed config still panics.
+    pub fn try_from_dir(mock_dir: &Path) -> Result<Self, String> {
         let mock_dir = mock_dir.to_path_buf();
 
         // Where the root and the config are is the registry crate's to say (`locate`), so a tool
@@ -1066,10 +1076,10 @@ impl Config {
             panel_discipline: raw_agent.agent_panel_discipline.unwrap_or(false),
         };
 
-        let auto_fmt = clone_says(&repo_root, "autoFmt")
+        let auto_fmt = clone_says(&repo_root, "autoFmt")?
             .or(raw.auto_fmt)
             .unwrap_or(true);
-        let auto_clippy_fix = clone_says(&repo_root, "autoClippyFix")
+        let auto_clippy_fix = clone_says(&repo_root, "autoClippyFix")?
             .or(raw.auto_clippy_fix)
             .unwrap_or(true);
         // What the registry reads of the project is derived once, by the registry.
@@ -1081,7 +1091,7 @@ impl Config {
             raw.registry.take().unwrap_or_default(),
             raw.ref_cfg.as_ref().map_or(&no_roots, |r| &r.roots),
         );
-        Config {
+        Ok(Config {
             mock_dir,
             crates_dir,
             src_dirs,
@@ -1135,7 +1145,7 @@ impl Config {
                 .panel_consolidate_every
                 .unwrap_or(crate::panel::DEFAULT_CONSOLIDATE_EVERY),
             test,
-        }
+        })
     }
 
     /// Get domain kind label for a macro name (e.g. "define_signal" -> "signal").
@@ -1539,34 +1549,33 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str, source: &Pa
 ///
 /// Only "not a repository" is read as no clone. Any other refusal, a `.git`
 /// file pointing nowhere or a clone git will not read for its ownership, is a
-/// clone whose setting cannot be read, and that panics like a malformed value
-/// does rather than letting the switch quietly do nothing. The message is
+/// clone whose setting cannot be read, and that is refused like a malformed
+/// value rather than letting the switch quietly do nothing; so is a git that
+/// cannot be started, or a call that fails for any other reason. The message is
 /// matched with the locale pinned, since git translates it.
-fn git_answers_for(root: &Path) -> bool {
-    let Ok(out) = std::process::Command::new("git")
+fn git_answers_for(root: &Path) -> Result<bool, String> {
+    let out = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .env("LC_ALL", "C")
         .current_dir(root)
         .output()
-    else {
-        return false;
-    };
+        .map_err(|e| format!("git cannot be run to read the clone at {}: {e}", root.display()))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         if stderr.contains("not a git repository") {
-            return false;
+            return Ok(false);
         }
-        panic!(
+        return Err(format!(
             "git cannot read the clone at {}: {}",
             root.display(),
             stderr.trim()
-        );
+        ));
     }
     let top = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
-    match (top.canonicalize(), root.canonicalize()) {
+    Ok(match (top.canonicalize(), root.canonicalize()) {
         (Ok(top), Ok(root)) => top == root,
         _ => false,
-    }
+    })
 }
 
 /// What this clone says about one of the commit fixers, read from `git config`
@@ -1588,30 +1597,30 @@ fn git_answers_for(root: &Path) -> bool {
 /// project-wide answer this switch exists to not be. A worktree has a `.git`
 /// file rather than a directory and reads its clone's config, so it gets the
 /// clone's answer.
-fn clone_says(repo_root: &Path, key: &str) -> Option<bool> {
-    if !repo_root.join(".git").exists() || !git_answers_for(repo_root) {
-        return None;
+fn clone_says(repo_root: &Path, key: &str) -> Result<Option<bool>, String> {
+    if !repo_root.join(".git").exists() || !git_answers_for(repo_root)? {
+        return Ok(None);
     }
     let name = format!("mockspace.{key}");
     let out = std::process::Command::new("git")
         .args(["config", "--local", "--type=bool", "--get", &name])
         .current_dir(repo_root)
         .output()
-        .ok()?;
+        .map_err(|e| format!("git cannot be run to read `{name}` of the clone at {}: {e}", repo_root.display()))?;
     // 1 is git's answer for a key that is not set.
     if out.status.code() == Some(1) {
-        return None;
+        return Ok(None);
     }
     if !out.status.success() {
-        panic!(
-            "`{name}` in this clone's git config does not parse as a boolean: {}",
+        return Err(format!(
+            "`{name}` in this clone's git config does not parse as a boolean, or git cannot read it: {}",
             String::from_utf8_lossy(&out.stderr).trim()
-        );
+        ));
     }
     match String::from_utf8_lossy(&out.stdout).trim() {
-        "true" => Some(true),
-        "false" => Some(false),
-        other => panic!("`{name}` in this clone's git config reads as `{other}`, not a boolean"),
+        "true" => Ok(Some(true)),
+        "false" => Ok(Some(false)),
+        other => Err(format!("`{name}` in this clone's git config reads as `{other}`, not a boolean")),
     }
 }
 

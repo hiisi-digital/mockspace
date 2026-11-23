@@ -16,7 +16,7 @@ pub const REGISTRY_ROOT: &str = "reg";
 ///
 /// The project's crate prefix is stable, so both the short name and the full
 /// directory name resolve: `crates::mechanism` and
-/// `crates::widget-mechanism` are the same crate. Writing the short
+/// `crates::widget_mechanism` are the same crate. Writing the short
 /// form everywhere keeps a rename of the prefix from touching every reference.
 pub const CRATE_ROOT: &str = "crates";
 
@@ -133,17 +133,15 @@ impl RegistryNamespace {
     }
 }
 
-/// Whether a slug is well formed: snake_case, starting with a letter.
+/// Whether a slug is well formed: one name under the letkajenkka standard, snake_case and starting
+/// with a letter.
 ///
 /// Constrained so a slug reads identically everywhere it appears: in the data,
 /// in a reference inside prose, and in a generated anchor. A slug allowed to
 /// carry case or punctuation would need normalising at each of those, and the
 /// three normalisations would eventually disagree.
 pub fn is_valid_slug(s: &str) -> bool {
-    !s.is_empty()
-        && s.starts_with(|c: char| c.is_ascii_lowercase())
-        && s.chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    matches!(crate::names(s).as_deref(), Ok(&[one]) if one == s)
 }
 
 /// One row.
@@ -399,9 +397,9 @@ pub fn reference_fields(namespaces: &[RegistryNamespace]) -> BTreeMap<String, Ve
 /// Roots every project gets without declaring them.
 ///
 /// `reg` is the registry itself. `mock` is the mock directory, which is where
-/// a project's own design documents live, so `mock::DESIGN::12` works
+/// a project's own design documents live, so `mock::design::12` works
 /// everywhere without configuration. Deeper paths need no extra root because
-/// the path may have any number of segments: `mock::crates::numeric::DESIGN::12`
+/// the path may have any number of segments: `mock::crates::numeric::design::12`
 /// resolves the same way.
 ///
 /// Anything project-specific is declared rather than baked. Not every project

@@ -7,6 +7,9 @@
 //!
 //! Only the public surface is in reach here, so what these tests do is what such a tool can do.
 
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 use std::path::Path;
 
 use mockspace_registry::{Env, RegistryEnv, load_registry_for, validate, validate_row_references};

@@ -3,6 +3,9 @@
 //! The directory is one the branch has files in too (a crate's sources beside its templates,
 //! the open round's flat files beside the closed rounds). The instance reads, writes and
 //! excludes only what its patterns match, and leaves every other file alone.
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use std::path::{Path, PathBuf};

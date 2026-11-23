@@ -1,6 +1,9 @@
 //! The contract of a store, run on every backend: the same cases, so no behaviour
 //! is true of one backend only. A new backend adds one `#[test]` that calls `suite`.
 
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use std::collections::BTreeMap;

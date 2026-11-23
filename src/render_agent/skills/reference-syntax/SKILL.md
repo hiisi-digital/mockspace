@@ -1,6 +1,6 @@
 # Reference syntax
 
-The `reference-syntax` rule has the syntax and this project's roots and namespaces. This is the rest.
+A reference is `{{ root::step::step }}`, a path in the letkajenkka standard. The `reference-syntax` rule has the syntax and this project's roots and namespaces. This is the rest.
 
 ## Fields that hold a row
 
@@ -11,10 +11,10 @@ The `reference-syntax` rule has the syntax and this project's roots and namespac
 ## One relation field, typed `ref[]`
 
 ```toml
-related = ["tenet::engine_time", "bevy::time_step", "research::202611010100_bevy-reference::NOTES::#time"]
+related = ["tenet::engine_time", "bevy::time_step", "research::bevy_reference::notes::time"]
 ```
 
-- Two segments (`<ns>::<slug>`) is a link; three or more a citation. A link naming no row is `unknown-row-reference` (gates the commit or push of the file or template holding it, a warning otherwise, so a row can retire first); a bad slug is `malformed-row-reference` (always gates).
+- Two segments (`<ns>::<slug>`) is a link; three or more a citation. A link naming no row is `unknown-row-reference` (gates the commit or push of the file or template holding it, a warning otherwise, so a row can retire first); a link in the spelling before the standard is scoped the same way until `references-to-letkajenkka` rewrites it. A bad slug is `malformed-row-reference`, and it, any other text the standard refuses and every other finding gate every run.
 - Never a field per target namespace. A namespace-typed field is for a value that is by nature one namespace's.
 - Write a link once; `{{ refsto(tenet::engine_time) }}` and `cargo mock links tenet::engine_time` derive the other end. Never add the inverse.
 
@@ -33,8 +33,9 @@ A postfix chain narrows a result, left to right: `{{ pathof(crates::store).dir()
 
 ## Citations
 
-- `root::path::anchor`; prefer a heading (`#the-four-lanes`) to a line number, which shifts silently. Line numbers only in a frozen root.
-- Any depth, extension optional (`mock::DESIGN::12` finds `DESIGN.md.tmpl`); two matches is an error.
+- `root::path::anchor`; the anchor is a heading (`the_four_lanes`), a line (`12`) or a span (`12..20`). Prefer the heading: a line number shifts silently. Line numbers only in a frozen root.
+- Any depth. Every step is lowercase letters, digits and `_`, starting with a letter; the host folds its names into that: `mock::design::12` finds `DESIGN.md.tmpl`, `crates::my_crate` the directory `my-crate`, `the_four_lanes` the heading a forge anchors as `the-four-lanes`.
+- Never an extension, uppercase letter, hyphen or dot; the old spelling is refused with a pointer to `cargo mock migrate references-to-letkajenkka`. Two files folding to one name is an error; a name that cannot fold cannot be cited.
 - A namespace is addressed by its name (`law::keys`); `reg::law::keys` still resolves.
 
 ## Rows

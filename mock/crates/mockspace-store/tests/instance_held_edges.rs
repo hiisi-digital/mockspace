@@ -3,6 +3,9 @@
 //! Each case here was first a way to lose a file: a ref emptied by narrowed patterns, a branch
 //! file hidden by an exclude line, a write that went through a symlink, an update that stopped
 //! half done, an instance whose files a clean removed.
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use std::path::{Path, PathBuf};
@@ -137,7 +140,7 @@ fn an_update_a_branch_file_stands_in_the_way_of_changes_nothing() {
     assert!(refused.contains("in the way") && refused.contains("zzz/X.md.tmpl"), "{refused}");
     assert!(!dir_b.join("aaa/NEW.md.tmpl").exists(), "a refused update wrote part of the tip");
     assert!(dir_b.join("two/README.md.tmpl").exists(), "a refused update removed a file");
-    assert_eq!(ib.base().unwrap().as_deref(), Some(base.as_str()));
+    assert_eq!(ib.base().unwrap().map(|b| b.to_string()).as_deref(), Some(base.as_str()));
     assert_eq!(std::fs::read_to_string(dir_b.join("zzz")).unwrap(), "a branch file\n");
     // the control: with the branch file out of the way the same update lands whole
     std::fs::remove_file(dir_b.join("zzz")).unwrap();
@@ -260,6 +263,6 @@ fn a_directory_a_stopped_seed_left_is_taken_as_the_instance_only_while_it_is_the
     write(&dir, "one/src/lib.rs", "pub fn changed() {}\n");
     assert!(i.is_the_tip().unwrap());
     assert_eq!(i.adopt().unwrap(), tip);
-    assert_eq!(i.base().unwrap(), Some(tip));
+    assert_eq!(i.base().unwrap().map(|b| b.to_string()), Some(tip));
     assert!(!i.is_dirty().unwrap());
 }

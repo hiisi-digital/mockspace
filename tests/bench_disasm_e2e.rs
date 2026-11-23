@@ -9,6 +9,9 @@
 //! layout, a second call lands beside the first, and a function the arm does
 //! not have fails and writes nothing.
 
+#[path = "common/ambient.rs"]
+mod ambient;
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 

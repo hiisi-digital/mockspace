@@ -34,6 +34,7 @@ pub mod namespace;
 pub mod phase;
 pub mod ref_path;
 pub mod round;
+pub mod segments;
 pub mod slug;
 pub mod task;
 pub mod transition;

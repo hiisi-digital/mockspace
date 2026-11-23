@@ -1,0 +1,333 @@
+//! A bare remote and clones of it, driven through the real binary and real git.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+pub const BIN: &str = env!("CARGO_BIN_EXE_mockspace");
+
+static CLOCK: AtomicU64 = AtomicU64::new(0);
+
+/// The clean side of the LFS-like filter: the bytes go to the store under their hash, and the blob
+/// is a pointer naming them. A pointer is passed through, as LFS passes one.
+const LFS_CLEAN: &str = r#"#!/bin/sh
+store="$(dirname "$0")/../lfs-store"
+mkdir -p "$store"
+t=$(mktemp "$store/.in.XXXXXX")
+cat > "$t"
+if [ "$(head -n 1 "$t")" = "version lfs-like" ]; then cat "$t"; rm -f "$t"; exit 0; fi
+h=$(sha256sum < "$t" | cut -c1-64)
+mv "$t" "$store/$h"
+printf 'version lfs-like\noid sha256:%s\nsize %s\n' "$h" "$(wc -c < "$store/$h" | tr -d ' ')"
+"#;
+
+/// The smudge side: a pointer becomes the bytes the store holds for it, anything else passes.
+const LFS_SMUDGE: &str = r#"#!/bin/sh
+store="$(dirname "$0")/../lfs-store"
+t=$(mktemp)
+cat > "$t"
+if [ "$(head -n 1 "$t")" = "version lfs-like" ]; then
+  h=$(sed -n 's/^oid sha256://p' "$t")
+  cat "$store/$h" || { rm -f "$t"; exit 1; }
+else
+  cat "$t"
+fi
+rm -f "$t"
+"#;
+
+/// A deterministic, strictly increasing commit time.
+fn tick() -> String {
+    let n = CLOCK.fetch_add(60, Ordering::SeqCst);
+    format!("{} +0000", 1_790_000_000 + n)
+}
+
+pub struct Out {
+    pub ok:     bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl Out {
+    pub fn all(&self) -> String {
+        format!("{}{}", self.stdout, self.stderr)
+    }
+}
+
+pub struct World {
+    pub tmp:    tempfile::TempDir,
+    pub remote: PathBuf,
+    pub home:   PathBuf,
+}
+
+impl World {
+    pub fn new() -> Self {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().canonicalize().unwrap();
+        let remote = base.join("remote.git");
+        let home = base.join("home");
+        fs::create_dir_all(&home).unwrap();
+        let w = World { tmp, remote: remote.clone(), home };
+        let shims = base.join("shims");
+        fs::create_dir_all(&shims).unwrap();
+        // the launcher reads `mock_dir` from a `mockspace.toml` at the root, as the real one does
+        let dir = "top=$(git rev-parse --show-toplevel)\nd=mock\nif [ -f \"$top/mockspace.toml\" ]; then\n  m=$(sed -n 's/^mock_dir *= *\"\\([^\"]*\\)\".*/\\1/p' \"$top/mockspace.toml\" | head -n 1)\n  [ -n \"$m\" ] && d=$m\nfi\n";
+        mockspace_manifest::write_executable(
+            &shims.join("cargo"),
+            format!("#!/bin/sh\n{dir}[ \"$1\" = mock ] && {{ shift; exec \"$MOCKSPACE_BIN\" --dir \"$top/$d\" \"$@\"; }}\n[ \"$1\" = metadata ] && exec \"$REAL_CARGO\" \"$@\"\nexit 127\n"),
+        )
+        .unwrap();
+        mockspace_manifest::write_executable(&shims.join("mock"), format!("#!/bin/sh\n{dir}exec \"$MOCKSPACE_BIN\" --dir \"$top/$d\" \"$@\"\n"))
+            .unwrap();
+        // A filter shaped like LFS: the blob is a pointer, the bytes sit in a store every clone of
+        // this world shares, as an LFS server would hold them.
+        mockspace_manifest::write_executable(&shims.join("lfs-clean"), LFS_CLEAN).unwrap();
+        mockspace_manifest::write_executable(&shims.join("lfs-smudge"), LFS_SMUDGE).unwrap();
+        fs::create_dir_all(&remote).unwrap();
+        assert!(w.sh(&remote, "git", &["init", "-q", "--bare", "-b", "dev"]).ok);
+        w
+    }
+
+    pub fn base(&self) -> PathBuf {
+        self.tmp.path().canonicalize().unwrap()
+    }
+
+    /// Where every command run in this world keeps the copies it takes before a write.
+    pub fn kept_dir(&self) -> PathBuf {
+        self.base().join("kept")
+    }
+
+    /// Every copy of `file` a command of this world kept before it wrote over, changed or removed it.
+    pub fn kept_copies_of(&self, file: &Path) -> Vec<PathBuf> {
+        mockspace_store::kept::copies_under(&self.kept_dir(), file).unwrap()
+    }
+
+    pub fn command(&self, program: &str, dir: &Path) -> Command {
+        let mut c = Command::new(program);
+        c.current_dir(dir)
+            .env("HOME", &self.home)
+            .env("XDG_CONFIG_HOME", self.home.join("config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("MOCK_ROOT")
+            .env("MOCKSPACE_BIN", BIN)
+            // the copies the engine keeps before a write, in this world and nowhere else
+            .env(mockspace_manifest::ambient::KEPT_DIR, self.kept_dir())
+            .env("REAL_CARGO", std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+            .env("PATH", format!("{}:{}", self.base().join("shims").display(), std::env::var("PATH").unwrap()));
+        // the filter is installed for the person, as `git lfs install` does, and applies only where
+        // an attribute names it
+        let shims = self.base().join("shims");
+        c.env("GIT_CONFIG_COUNT", "3")
+            .env("GIT_CONFIG_KEY_0", "filter.lfslike.clean")
+            .env("GIT_CONFIG_VALUE_0", shims.join("lfs-clean"))
+            .env("GIT_CONFIG_KEY_1", "filter.lfslike.smudge")
+            .env("GIT_CONFIG_VALUE_1", shims.join("lfs-smudge"))
+            .env("GIT_CONFIG_KEY_2", "filter.lfslike.required")
+            .env("GIT_CONFIG_VALUE_2", "true");
+        let t = tick();
+        for k in ["GIT_AUTHOR_DATE", "GIT_COMMITTER_DATE"] {
+            c.env(k, &t);
+        }
+        for (k, v) in [("NAME", "tester"), ("EMAIL", "tester@example.com")] {
+            c.env(format!("GIT_AUTHOR_{k}"), v);
+            c.env(format!("GIT_COMMITTER_{k}"), v);
+        }
+        c
+    }
+
+    pub fn sh(&self, dir: &Path, program: &str, args: &[&str]) -> Out {
+        let o = self.command(program, dir).args(args).output().unwrap();
+        Out {
+            ok:     o.status.success(),
+            stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+        }
+    }
+
+    /// git against the bare remote.
+    pub fn remote_git(&self, args: &[&str]) -> String {
+        let o = self.sh(&self.remote, "git", args);
+        assert!(o.ok, "remote git {args:?}: {}", o.all());
+        o.stdout
+    }
+
+    pub fn remote_tip(&self, reference: &str) -> Option<String> {
+        let o = self.sh(&self.remote, "git", &["rev-parse", "--verify", "-q", reference]);
+        o.ok.then(|| o.stdout.trim().to_string())
+    }
+
+    /// A clone of the remote on `dev`, configured. The remote must have a `dev`.
+    pub fn clone_of(&self, name: &str) -> Clone<'_> {
+        let root = self.base().join(name);
+        let o = self.sh(&self.base(), "git", &["clone", "-q", self.remote.to_str().unwrap(), name]);
+        assert!(o.ok, "clone: {}", o.all());
+        let c = Clone { w: self, root };
+        c.configure();
+        c
+    }
+
+    /// A first clone of an empty remote, for building the fixture in.
+    pub fn first_clone(&self, name: &str) -> Clone<'_> {
+        let root = self.base().join(name);
+        let o = self.sh(&self.base(), "git", &["clone", "-q", self.remote.to_str().unwrap(), name]);
+        assert!(o.ok, "clone: {}", o.all());
+        let c = Clone { w: self, root };
+        c.configure();
+        c.git(&["checkout", "-q", "-B", "dev"]);
+        c
+    }
+}
+
+pub struct Clone<'w> {
+    pub w:    &'w World,
+    pub root: PathBuf,
+}
+
+/// The `post-merge` hook every clone has of the person's own.
+pub const PERSONS_HOOK: &str = "#!/bin/sh\n# the person's own hook\nexit 0\n";
+
+impl Clone<'_> {
+    pub(super) fn configure(&self) {
+        for kv in [
+            ["user.name", "tester"],
+            ["user.email", "tester@example.com"],
+            ["commit.gpgsign", "false"],
+            ["core.autocrlf", "false"],
+            ["core.quotepath", "false"],
+            ["core.symlinks", "true"],
+            ["core.filemode", "true"],
+            ["push.default", "simple"],
+        ] {
+            self.git(&["config", kv[0], kv[1]]);
+        }
+        // a hook of the person's own, which no command of the engine may take or rewrite
+        mockspace_manifest::write_executable(&self.hooks_dir().join("post-merge"), PERSONS_HOOK).unwrap();
+    }
+
+    /// The mock directory: what `mock_dir` of a `mockspace.toml` at the root names, as the
+    /// launcher reads it, and `mock` where there is none.
+    pub fn mock(&self) -> PathBuf {
+        let named = fs::read_to_string(self.root.join("mockspace.toml")).ok().and_then(|text| {
+            text.lines().find_map(|l| {
+                let v = l.trim().strip_prefix("mock_dir")?.trim_start().strip_prefix('=')?.trim();
+                v.strip_prefix('"')?.split('"').next().map(str::to_owned)
+            })
+        });
+        self.root.join(named.unwrap_or_else(|| "mock".to_string()))
+    }
+
+    pub fn path(&self, rel: &str) -> PathBuf {
+        self.root.join(rel)
+    }
+
+    pub fn git_out(&self, args: &[&str]) -> Out {
+        self.w.sh(&self.root, "git", args)
+    }
+
+    pub fn git(&self, args: &[&str]) -> String {
+        let o = self.git_out(args);
+        assert!(o.ok, "git {args:?} in {}: {}", self.root.display(), o.all());
+        o.stdout
+    }
+
+    /// Stage everything (ignored files stay out) and commit, bypassing the generated hooks, which
+    /// are not what these scenarios are about.
+    pub fn commit_all(&self, msg: &str) {
+        self.git(&["add", "-A"]);
+        self.git(&["commit", "-q", "--no-verify", "--allow-empty", "-m", msg]);
+    }
+
+    /// Commit what is staged, bypassing the generated hooks.
+    pub fn commit_staged(&self, msg: &str) {
+        self.git(&["commit", "-q", "--no-verify", "-m", msg]);
+    }
+
+    pub fn push(&self) {
+        self.git(&["push", "-q", "--no-verify", "origin", "HEAD"]);
+    }
+
+    /// The real binary, pointed at this clone's mock directory.
+    pub fn run(&self, args: &[&str]) -> Out {
+        self.run_in(&self.root, args)
+    }
+
+    pub fn run_in(&self, dir: &Path, args: &[&str]) -> Out {
+        let mut c = self.w.command(BIN, dir);
+        // a group of its own, as a shell gives a command it runs in the foreground, so a stop that
+        // reaches the whole group reaches the command and what it started, and never the test
+        std::os::unix::process::CommandExt::process_group(&mut c, 0);
+        c.arg("--dir").arg(self.mock()).args(args);
+        let o = c.output().unwrap();
+        Out {
+            ok:     o.status.success(),
+            stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+        }
+    }
+
+    pub fn ok(&self, args: &[&str]) -> Out {
+        let o = self.run(args);
+        assert!(o.ok, "mockspace {args:?} in {}: {}", self.root.display(), o.all());
+        o
+    }
+
+    pub fn fails(&self, args: &[&str]) -> Out {
+        let o = self.run(args);
+        assert!(!o.ok, "mockspace {args:?} should have refused: {}", o.all());
+        o
+    }
+
+    pub fn write(&self, rel: &str, bytes: &[u8]) {
+        let p = self.path(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, bytes).unwrap();
+    }
+
+    pub fn read(&self, rel: &str) -> Vec<u8> {
+        fs::read(self.path(rel)).unwrap_or_else(|e| panic!("reading {rel}: {e}"))
+    }
+
+    pub fn exists(&self, rel: &str) -> bool {
+        fs::symlink_metadata(self.path(rel)).is_ok()
+    }
+
+    pub fn remove(&self, rel: &str) {
+        let p = self.path(rel);
+        if fs::symlink_metadata(&p).map(|m| m.is_dir()).unwrap_or(false) {
+            fs::remove_dir_all(p).unwrap();
+        } else {
+            fs::remove_file(p).unwrap();
+        }
+    }
+
+    /// Paths the branch tracks at HEAD, NUL-split so no name is quoted.
+    pub fn tracked(&self) -> Vec<String> {
+        self.git(&["ls-files", "-z"]).split('\0').filter(|s| !s.is_empty()).map(str::to_owned).collect()
+    }
+
+    pub fn untracked(&self) -> Vec<String> {
+        self.git(&["ls-files", "-z", "--others", "--exclude-standard"])
+            .split('\0')
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// A linked worktree of this clone, as a clone of its own for running commands in.
+    pub fn worktree_add(&self, name: &str, branch: &str) -> PathBuf {
+        let p = self.w.base().join(name);
+        self.git(&["worktree", "add", "-q", "-b", branch, p.to_str().unwrap(), "HEAD"]);
+        p
+    }
+}
+
+impl<'w> Clone<'w> {
+    /// A handle on another working tree of the same repository, for running commands in it.
+    pub fn at(&self, root: PathBuf) -> Clone<'w> {
+        Clone { w: self.w, root }
+    }
+}

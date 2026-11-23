@@ -1,0 +1,5 @@
+# schema_v1	timestamp	git_commit	benchmark	variant	n	mode	median_ns	ci_lo_ns	ci_hi_ns
+1795398235	255f851-dirty	fsmonitor-checkout_n1	monitor_dev	1	warm	68767722.6	68767722.6	100884056.2
+1795398235	255f851-dirty	fsmonitor-checkout_n1	monitor_old	1	warm	125932691.9	125932691.9	128641118.2
+1795398235	255f851-dirty	fsmonitor-checkout_n1	none_dev	1	warm	62881644.6	62881644.6	86318646.5
+1795398235	255f851-dirty	fsmonitor-checkout_n1	none_old	1	warm	61022579.4	61022579.4	65298779.4
