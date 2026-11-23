@@ -1,0 +1,3 @@
+# schema_v1	timestamp	git_commit	benchmark	variant	n	mode	median_ns	ci_lo_ns	ci_hi_ns
+1795398369	4fcdf0d-dirty	hash-mix_n8	bitwise-rotate	8	warm	24.6	24.6	26.1
+1795398369	4fcdf0d-dirty	hash-mix_n8	multiply-xor	8	warm	23.3	23.3	23.4
