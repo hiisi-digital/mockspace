@@ -64,25 +64,9 @@ impl Refusal {
 /// so is a path of one name, which is a slug.
 pub fn names(text: &str) -> Result<Vec<&str>, Refusal> {
     match standard_names(text) {
-        Err(refused) => root_in_host_naming(text).ok_or(refused),
+        Err(refused) => mockspace_refnames::root_in_host_naming(text).ok_or(refused),
         read => read,
     }
-}
-
-/// The names of `text` where its root alone carries a hyphen, each as written in `text`. The fold
-/// is byte for byte, so each name read from the folded text stands at the same place in `text`.
-fn root_in_host_naming(text: &str) -> Option<Vec<&str>> {
-    let folded = mockspace_refnames::fold_separators(text)?;
-    let base = folded.as_ptr().addr();
-    let read: Vec<&str> = standard_names(&folded)
-        .ok()?
-        .into_iter()
-        .map(|n| {
-            let at = n.as_ptr().addr() - base;
-            &text[at..at + n.len()]
-        })
-        .collect();
-    (read.len() >= 2 && read[1..].iter().all(|n| mockspace_refnames::fold_separators(n).is_none())).then_some(read)
 }
 
 /// The names of `text` read under the standard alone.
@@ -94,16 +78,30 @@ fn standard_names(text: &str) -> Result<Vec<&str>, Refusal> {
 
 /// An operation `name(argument)` of exactly one argument, as the argument's text.
 ///
-/// `None` when the text is not an operation of that name, or has another number of arguments.
+/// `None` when the text is not an operation of that name, or has another number of arguments. An
+/// argument whose root is written in the host's naming (`pathof(ikiuni-renderer::a_row)`) is read
+/// as [`names`] reads it: the argument is given as written, and the query inside it is the caller's
+/// to read, which still refuses a hyphen past the root.
 #[must_use]
 pub fn operation<'a>(text: &'a str, name: &str) -> Option<&'a str> {
-    let Ok(Query::Operation {
-        name: got,
-        arguments,
-    }) = Query::parse(text)
-    else {
-        return None;
-    };
+    match Query::parse(text) {
+        Ok(Query::Operation { name: got, arguments }) => one_argument(got, arguments, name),
+        Ok(_) => None,
+        Err(_) => {
+            let folded = mockspace_refnames::fold_separators(text)?;
+            let base = folded.as_ptr().addr();
+            let Ok(Query::Operation { name: got, arguments }) = Query::parse(&folded) else {
+                return None;
+            };
+            let one = one_argument(got, arguments, name)?;
+            let at = one.as_ptr().addr() - base;
+            Some(&text[at..at + one.len()])
+        },
+    }
+}
+
+/// The one argument of an operation called `got`, when it is called `name`.
+fn one_argument<'a>(got: &str, arguments: &'a str, name: &str) -> Option<&'a str> {
     let mut args = letkajenkka::Arguments::of(arguments);
     match (got == name, args.next(), args.next()) {
         (true, Some(one), None) => Some(one),
@@ -113,10 +111,13 @@ pub fn operation<'a>(text: &'a str, name: &str) -> Option<&'a str> {
 
 /// The name a text opens on, where it parses as a path whose first step is a name: the namespace or
 /// the root of a reference. `None` for a text the standard refuses, and for one opening on anything
-/// but a name, since neither says what it reaches.
+/// but a name, since neither says what it reaches. A root written in the host's naming
+/// (`ikiuni-renderer::a_row`) is read as [`names`] reads it.
 #[must_use]
 pub fn root(text: &str) -> Option<&str> {
-    let path = Query::parse(text).ok()?.path()?;
+    let Some(path) = Query::parse(text).ok().and_then(Query::path) else {
+        return mockspace_refnames::root_in_host_naming(text)?.first().copied();
+    };
     match path.steps().next()?.selector {
         Selector::Ident(name) => Some(name),
         _ => None,

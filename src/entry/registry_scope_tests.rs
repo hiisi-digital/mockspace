@@ -247,7 +247,7 @@ fn the_push_scope_sees_a_merge_of_a_branch_a_remote_has() {
 /// The gate each unresolved reference of a templated document takes, and whether its finding says
 /// how the older spelling is migrated: one row for each arm.
 fn dangling_of(found: &str) -> (GateScope, bool) {
-    let namespaces = std::collections::BTreeSet::from(["spike"]);
+    let namespaces = std::collections::BTreeSet::from(["spike", "ikiuni-renderer"]);
     let out = dangling("DOC.md", &[found], Some(Path::new("/r/DOC.md.tmpl")), &namespaces);
     assert_eq!(out.len(), 1, "{found}: {out:?}");
     let hint = out[0].message.contains("`cargo mock migrate references-to-letkajenkka` rewrites");
@@ -261,12 +261,14 @@ fn dangling_of(found: &str) -> (GateScope, bool) {
 //
 // Mutation: reading the root with the standard alone, as the gate did, gates the legacy row
 // reference on every run; reading it by cutting at the separator scopes `spike::No-Such`, which the
-// migration does not rewrite; dropping the hint leaves both refused arms silent on the way out.
+// migration does not rewrite; dropping the hint leaves both refused arms silent on the way out; a
+// hint decided by the standard alone tells a hyphenated namespace's valid reference to migrate.
 #[test]
 fn a_legacy_row_reference_keeps_the_template_scope_and_other_refused_text_gates_every_run() {
     let template = when_changed("/r/DOC.md.tmpl");
-    let table: [(&str, GateScope, bool); 6] = [
+    let table: [(&str, GateScope, bool); 7] = [
         ("{{ spike::no_such_row }}", template.clone(), false),
+        ("{{ ikiuni-renderer::no_such_row }}", template.clone(), false),
         ("{{ spike :: no_such_row }}", template.clone(), true),
         ("{{spike ::no_such_row}}", template.clone(), true),
         ("{{ spike::No-Such }}", GateScope::Always, true),

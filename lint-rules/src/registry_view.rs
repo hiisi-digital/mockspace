@@ -47,11 +47,9 @@ impl RegistryView {
     ) -> Self {
         let mut by_namespace: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for q in rows.keys() {
-            let ns = letkajenkka::Query::parse(q)
-                .ok()
-                .and_then(letkajenkka::Query::path)
-                .and_then(mockspace_refnames::plain)
-                .and_then(|mut names| names.next());
+            let ns = mockspace_refnames::standard_names(q)
+                .or_else(|| mockspace_refnames::root_in_host_naming(q))
+                .and_then(|names| names.first().copied());
             if let Some(ns) = ns {
                 by_namespace
                     .entry(ns.to_string())
@@ -226,6 +224,34 @@ mod namespace_of_a_key_tests {
                 .collect();
         let view = RegistryView::new(rows, BTreeMap::new());
         assert_eq!(view.namespaces().collect::<Vec<_>>(), ["other", "slot"]);
+        assert_eq!(view.len(), 5, "no row is dropped for it");
+    }
+
+    // A namespace named after its directory carries a hyphen, and the reference syntax reads it as
+    // the root of a reference, so its rows are under it. A hyphen past the root is no slug, and a
+    // key whose root is no name under either reading is under no namespace.
+    //
+    // Mutation: reading every key under the standard alone drops `ikiuni-renderer::a_row` from the
+    // namespaces and leaves the namespace unfound by `rows_in`.
+    #[test]
+    fn a_hyphenated_namespace_key_is_filed_under_its_directory_name() {
+        let rows: BTreeMap<String, RowFields> = [
+            "ikiuni-renderer::a_row",
+            "ikiuni-renderer::another_row",
+            "ikiuni-renderer::c-one",
+            "slot::display",
+            "Bad-Root::x",
+        ]
+        .into_iter()
+        .map(|k| (k.to_string(), RowFields::new()))
+        .collect();
+        let view = RegistryView::new(rows, BTreeMap::new());
+        assert_eq!(view.namespaces().collect::<Vec<_>>(), ["ikiuni-renderer", "slot"]);
+        assert_eq!(
+            view.rows_in("ikiuni-renderer"),
+            ["ikiuni-renderer::a_row", "ikiuni-renderer::another_row"],
+            "a hyphen past the root is no slug, so `c-one` is under no namespace"
+        );
         assert_eq!(view.len(), 5, "no row is dropped for it");
     }
 }
