@@ -262,7 +262,7 @@ pub fn kept(c: &Clone, before: &Whole, after: &Whole, allowed: &Allowed) -> Resu
 /// commits; every staged object is staged still at its own path, or held by a commit; every config
 /// value of the repository's own is set still, but the engine's own keys, and the person's
 /// `core.hooksPath` is set still or saved by the gate that took it; every hook of the person's own is
-/// there as it was; and every line of a sparse checkout that was on is in it still.
+/// there as it was, or chained beside the engine's as it was; and every line of a sparse checkout that was on is in it still.
 fn kept_own(c: &Clone, was: &Own, now: &Own, commits: bool, reachable: &mut dyn FnMut() -> BTreeSet<String>, bad: &mut Vec<String>) {
     if was.head.0 != now.head.0 {
         bad.push(format!("HEAD: named {}, now {}", was.head.0, now.head.0));
@@ -306,7 +306,9 @@ fn kept_own(c: &Clone, was: &Own, now: &Own, commits: bool, reachable: &mut dyn 
     }
     for (name, hook) in &was.hooks {
         let engine = matches!(hook, Entry::File { bytes, .. } if String::from_utf8_lossy(bytes).contains("(managed, do not edit)"));
-        if !engine && now.hooks.get(name) != Some(hook) {
+        // one the engine chained is kept whole beside its own, as `<event>.chained`
+        let chained = now.hooks.get(&[name.as_slice(), b".chained"].concat()) == Some(hook);
+        if !engine && !chained && now.hooks.get(name) != Some(hook) {
             bad.push(format!("hook {}: {} became {}", shown(name), brief(hook), now.hooks.get(name).map_or("nothing".into(), brief)));
         }
     }
