@@ -60,8 +60,12 @@ pub(crate) use gitignore::*;
 mod shook;
 /// The gate registered with git-shook, for the data refs' monitor that hands the hooks to it.
 pub(crate) use shook::register as register_gate_with_shook;
+#[cfg(test)]
+pub(crate) use shook::{register_with as register_gate_with_shook_on, test_shook_dir};
 mod activate;
 pub use activate::{activate, deactivate, is_active};
+#[cfg(test)]
+pub(crate) use activate::activate_with;
 mod lints;
 pub(crate) use lints::*;
 mod hooks;

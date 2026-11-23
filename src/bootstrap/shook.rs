@@ -104,6 +104,43 @@ fn drop_own_kept_hooks(repo_root: &Path) {
     }
 }
 
+/// `on_path`, where given, put at the front of the child's `PATH`.
+fn with_path(cmd: &mut Command, on_path: Option<&Path>) {
+    if let Some(dir) = on_path {
+        let mut joined = std::ffi::OsString::from(dir);
+        joined.push(":");
+        joined.push(std::env::var_os("PATH").unwrap_or_default());
+        cmd.env("PATH", joined);
+    }
+}
+
+/// Whether `git shook` runs from `repo_root`, with `on_path` at the front of the
+/// child's `PATH`. Asked of git-shook itself, since a script that is on the
+/// `PATH` and cannot run is as absent as one that is not there.
+pub(crate) fn runs(repo_root: &Path, on_path: Option<&Path>) -> bool {
+    let mut git = Command::new("git");
+    with_path(&mut git, on_path);
+    git.args(["shook", "version"])
+        .current_dir(repo_root)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// The directory holding the `git-shook` script for a test: `GIT_SHOOK_DIR`, a
+/// `PATH` entry that has it, or the workspace's own copy. `None` where it is
+/// nowhere, and the test then says so and skips.
+#[cfg(test)]
+pub(crate) fn test_shook_dir() -> Option<PathBuf> {
+    let named = std::env::var_os("GIT_SHOOK_DIR").map(PathBuf::from);
+    let on_path = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default();
+    named
+        .into_iter()
+        .chain(on_path)
+        .chain([PathBuf::from("/home/user/git-shook")])
+        .find(|d| d.join("git-shook").is_file())
+}
+
 /// Write the manifest and have git-shook register it. A registration that
 /// fails leaves the manifest as it was before the call, so a refusal does not
 /// leave a file behind for every later run to trip over.
@@ -145,12 +182,7 @@ fn register_inner(
     fs::write(path, manifest_text(hooks_dir))
         .map_err(|e| format!("could not write {}: {e}", path.display()))?;
     let mut git = Command::new("git");
-    if let Some(dir) = on_path {
-        let mut joined = std::ffi::OsString::from(dir);
-        joined.push(":");
-        joined.push(std::env::var_os("PATH").unwrap_or_default());
-        git.env("PATH", joined);
-    }
+    with_path(&mut git, on_path);
     let out = git
         // `--only`, so the `--yes` is consent for the gate's own manifest and
         // not for a tracked `shook.toml` that arrived through a merge and has

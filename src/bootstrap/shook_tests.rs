@@ -1,9 +1,17 @@
 
 use super::*;
-use crate::bootstrap::{activate, deactivate, is_active};
+use crate::bootstrap::{activate_with, deactivate, is_active};
+
+/// A `git` whose `PATH` has git-shook's directory in front, so `git shook` runs where the
+/// script is not installed on the machine.
+pub(super) fn git_command() -> Command {
+    let mut git = Command::new("git");
+    with_path(&mut git, test_shook_dir().as_deref());
+    git
+}
 
 pub(super) fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git").args(args).current_dir(dir).output().expect("git");
+    let out = git_command().args(args).current_dir(dir).output().expect("git");
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -15,14 +23,19 @@ pub(super) fn repo(_tag: &str) -> tempfile::TempDir {
     dir
 }
 
-/// Whether `git shook` is on the path. The registering tests need the real
-/// thing, and say so when they cannot run rather than passing.
+/// Whether `git shook` runs, from the path or from the copy `test_shook_dir` finds. The
+/// registering tests need the real thing, and say so when they cannot run rather than passing.
 pub(super) fn have_shook() -> bool {
-    Command::new("git")
+    git_command()
         .args(["shook", "--help"])
         .output()
         .map(|o| o.status.success() || !o.stdout.is_empty())
         .unwrap_or(false)
+}
+
+/// [`register`] with the git-shook the tests found.
+pub(super) fn register_t(repo_root: &Path, hooks_dir: &Path) -> Result<(), String> {
+    register_with(repo_root, hooks_dir, test_shook_dir().as_deref())
 }
 
 #[test]
@@ -151,7 +164,7 @@ fn activating_where_shook_holds_the_key_registers_and_leaves_the_key() {
     let before = git(&dir, &["config", "--local", "core.hooksPath"]);
     assert!(is_shook_path(&dir, &before), "{before}");
 
-    activate(&dir, &mock).unwrap();
+    activate_with(&dir, &mock, test_shook_dir().as_deref()).unwrap();
 
     assert_eq!(git(&dir, &["config", "--local", "core.hooksPath"]), before, "the key is git-shook's still");
     assert!(has_manifest(&dir));

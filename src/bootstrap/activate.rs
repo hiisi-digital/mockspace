@@ -12,6 +12,11 @@ use super::*;
 /// `target/` clean that deletes the generated validator. Requires the
 /// generated validator to exist (it is what the durable hook execs).
 pub fn activate(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
+    activate_with(repo_root, mock_dir, None)
+}
+
+/// [`activate`], with `on_path` put at the front of the `PATH` of the `git shook` it runs.
+pub(crate) fn activate_with(repo_root: &Path, mock_dir: &Path, on_path: Option<&Path>) -> Result<(), String> {
     let generated = generated_hooks_dir(mock_dir);
     if !generated.exists() {
         return Err(format!(
@@ -37,7 +42,7 @@ pub fn activate(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
     let shook_held = local_config(repo_root, "core.hooksPath")
         .is_some_and(|existing| shook::is_shook_path(repo_root, &existing));
     if shook_held {
-        shook::register(repo_root, &hooks_dir)?;
+        shook::register_with(repo_root, &hooks_dir, on_path)?;
         eprintln!("--- gate: registered with git-shook, core.hooksPath left as it is ---");
         return record_mock_dir(repo_root, mock_dir);
     }
