@@ -159,12 +159,13 @@ pub(crate) fn report(
 ///
 /// A reference to a row gates the run that changes `template`, the document's template, as a row
 /// citing a missing row does; a computed document has no template, and its findings gate every
-/// run. A row reference is one into a declared namespace under the standard, or one the reference
-/// migration reads as a row reference in the spelling before the standard and rewrites, which keeps
-/// the scope it had then, which the design holds as provisional. Everything else, a crate,
-/// an undeclared namespace, a text the standard refuses and the migration does not rewrite into a
-/// row reference, is a defect of the document itself and gates every run. A group holding a text
-/// the standard refuses says how a repository in the older spelling is migrated.
+/// run. A row reference is one into a declared namespace under the standard, with its root read in
+/// the host's naming (`ikiuni-renderer::a_row`), or one the reference migration reads as a row
+/// reference in the spelling before the standard and rewrites, which keeps the scope it had then,
+/// which the design holds as provisional. Everything else, a crate, an undeclared namespace, a text
+/// neither reading takes and the migration does not rewrite into a row reference, is a defect of
+/// the document itself and gates every run. A group holding a text neither reading takes says how
+/// a repository in the older spelling is migrated.
 pub(crate) fn dangling(
     file: &str,
     found: &[&str],
@@ -194,6 +195,7 @@ pub(crate) fn dangling(
         let refused = group.iter().any(|e| {
             crate::registry::placeholder_exprs(e).iter().any(|(_, inner)| {
                 matches!(crate::registry::FileRef::read(inner), Err(crate::registry::Refusal::Syntax(_)))
+                    && crate::registry::names(inner).is_err()
             })
         });
         let hint = if refused {

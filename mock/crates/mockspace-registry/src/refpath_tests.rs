@@ -135,6 +135,32 @@ fn a_root_is_the_first_name_of_a_text_the_standard_reads_as_a_path() {
     }
 }
 
+// A root written in the host's naming, a namespace named after its directory, is the root of its
+// reference as `names` reads it; a hyphen past the root and a slug on its own are still no root.
+//
+// Mutation: reading `root` under the standard alone gives `None` for the first text, and reading it
+// with every hyphen folded gives `Some("ikiuni_renderer")` or a root for the second.
+#[test]
+fn a_root_in_the_hosts_naming_is_the_root_of_its_reference() {
+    assert_eq!(root("ikiuni-renderer::a_row"), Some("ikiuni-renderer"));
+    assert_eq!(root("ikiuni-renderer::c-one"), None, "a hyphen past the root");
+    assert_eq!(root("ikiuni-renderer"), None, "a slug on its own keeps the standard's set");
+}
+
+// An operation over a row of a hyphenated namespace is read as an operation, its argument as
+// written, and the query inside still refuses a hyphen past the root.
+//
+// Mutation: parsing under the standard alone gives `None` for the first text; folding every hyphen
+// into the operation's name or reading a misnamed operation gives `Some` for the last two.
+#[test]
+fn an_operation_reads_an_argument_whose_root_is_in_the_hosts_naming() {
+    assert_eq!(operation("pathof(slot::a_row)", "pathof"), Some("slot::a_row"));
+    assert_eq!(operation("pathof(ikiuni-renderer::a_row)", "pathof"), Some("ikiuni-renderer::a_row"));
+    assert_eq!(operation("refsto(ikiuni-renderer::a_row)", "pathof"), None, "another operation");
+    assert_eq!(operation("path-of(ikiuni-renderer::a_row)", "pathof"), None, "a hyphen in the name");
+    assert_eq!(names("ikiuni-renderer::c-one").ok(), None, "the query inside refuses a hyphen past the root");
+}
+
 // Mutation: dropping the hyphen-to-underscore fold from `heading_name`, or keeping the `_` out of
 // the forge slug, gives `no_std-no-alloc`, which is no name.
 #[test]

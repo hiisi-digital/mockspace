@@ -155,3 +155,23 @@ fn an_entry_is_named_by_its_whole_name_or_a_file_up_to_its_first_dot() {
     assert_eq!(named("v1.2", true), None);
     assert_eq!(named(".hidden", false), None);
 }
+
+// A reference whose root is a namespace named after its directory is read with the hyphen kept in
+// the root and nowhere else: the standard alone refuses it, and a hyphen past the root stays refused.
+//
+// Mutation: folding every hyphen, or none, reads `ikiuni-renderer::c-one` as names or refuses
+// `ikiuni-renderer::a_row`; `standard_names` accepting the hyphen makes the first row of the second
+// half read as plain.
+#[test]
+fn a_root_alone_may_be_written_in_the_hosts_naming() {
+    assert_eq!(
+        root_in_host_naming("ikiuni-renderer::a_row"),
+        Some(vec!["ikiuni-renderer", "a_row"])
+    );
+    assert_eq!(root_in_host_naming("ikiuni-renderer::c-one"), None, "a hyphen past the root");
+    assert_eq!(root_in_host_naming("ikiuni-renderer"), None, "a path of one name is a slug");
+    assert_eq!(root_in_host_naming("slot::display"), None, "nothing to fold");
+    assert_eq!(root_in_host_naming("Ikiuni-Renderer::a_row"), None, "the standard refuses the case");
+    assert_eq!(standard_names("ikiuni-renderer::a_row"), None);
+    assert_eq!(standard_names("slot::display"), Some(vec!["slot", "display"]));
+}
