@@ -32,20 +32,35 @@ _GUARD={quoted}
 case "$_GUARD" in /*) ;; *) _GUARD="$__HOOK_REPO_ROOT/$_GUARD" ;; esac
 [ -x "$_GUARD" ] \
     || deny "the message guard $_GUARD this repository names as agent_message_guard is not there or not executable; it refuses rather than run without it."
-_GERR=$(mktemp 2>/dev/null || echo "${{TMPDIR:-/tmp}}/mockspace-guard-$$")
-_GOUT=$(cd "$__HOOK_REPO_ROOT" && printf '%s' "$__INPUT" | "$_GUARD" 2>"$_GERR")
+# The guard reads the Claude shape whichever platform ran this: Copilot's
+# `toolName` and `toolArgs` (an object, or a JSON string of one) become
+# `tool_name` and `tool_input`, the rest of the payload kept.
+_GIN=$(mktemp 2>/dev/null) \
+    || deny "the message gate cannot run its guard: no scratch file for the call. It refuses rather than pass what the guard did not read."
+_GERR=$(mktemp 2>/dev/null) \
+    || {{ rm -f "$_GIN"; deny "the message gate cannot run its guard: no scratch file for its errors. It refuses rather than pass what the guard did not read."; }}
+printf '%s' "$__INPUT" \
+    | jq -c '. + {{tool_name: (.tool_name // .toolName // ""), tool_input: (.tool_input // (.toolArgs | if type == "string" then (fromjson? // {{}}) else (. // {{}}) end))}}' \
+    > "$_GIN" 2>/dev/null \
+    || {{ rm -f "$_GIN" "$_GERR"; deny "the message gate cannot hand its guard this call: the payload does not read as JSON. It refuses rather than pass what the guard did not read."; }}
+# From a file, not a pipe: a guard that decides without reading all of a
+# large payload would otherwise kill the writer and read as a failure.
+_GOUT=$(cd "$__HOOK_REPO_ROOT" && "$_GUARD" < "$_GIN" 2>"$_GERR")
 _GRC=$?
 _GREASON=$(cat "$_GERR" 2>/dev/null || true)
-rm -f "$_GERR"
+rm -f "$_GIN" "$_GERR"
 if [ "$_GRC" -eq 2 ]; then
     deny "${{_GREASON:-the message guard refused this call}}"
 fi
 [ "$_GRC" -eq 0 ] \
     || deny "the message guard $_GUARD exited $_GRC and could not decide; it refuses rather than pass what was not read. $_GREASON"
-if printf '%s' "$_GOUT" | grep -q '"permissionDecision"[[:space:]]*:[[:space:]]*"deny"'; then
+# A deny is carried through, and so is an ask: this gate has no way to ask,
+# and a question the guard put is not an answer to pass on.
+if printf '%s' "$_GOUT" | grep -qE '"permissionDecision"[[:space:]]*:[[:space:]]*"(deny|ask)"'; then
     deny "$(printf '%s' "$_GOUT" | jq -r '.hookSpecificOutput.permissionDecisionReason // .permissionDecisionReason // "the message guard refused this call"' 2>/dev/null)"
 fi
 "##
+
     )
 }
 
@@ -57,25 +72,33 @@ mod tests {
     use super::super::*;
 
     fn gate(root: &std::path::Path, guard: Option<&str>) -> String {
+        gate_with(root, guard, crate::render_agent::CLAUDE_HOOK_HELPERS)
+    }
+
+    fn gate_with(root: &std::path::Path, guard: Option<&str>, helpers: &str) -> String {
         let mut c = Config::from_dir(std::path::Path::new("/nonexistent-mock-dir"));
         c.project_name = "fodder".to_string();
         c.repo_root = root.to_path_buf();
         c.mock_dir = root.join("mock");
         c.agent.message_guard = guard.map(str::to_string);
         builtin_check_message(&c)
-            .replace("{{HOOK_HELPERS}}", crate::render_agent::CLAUDE_HOOK_HELPERS)
+            .replace("{{HOOK_HELPERS}}", helpers)
             .replace("{{REPO_ROOT}}", &root.display().to_string())
     }
 
     fn run(root: &std::path::Path, script: &str, command: &str) -> String {
-        let f = root.join("gate.sh");
-        std::fs::write(&f, script).unwrap();
         let payload = serde_json::json!({
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
             "tool_input": { "command": command }
         })
         .to_string();
+        run_payload(root, script, &payload)
+    }
+
+    fn run_payload(root: &std::path::Path, script: &str, payload: &str) -> String {
+        let f = root.join("gate.sh");
+        std::fs::write(&f, script).unwrap();
         let mut ch = Command::new("bash")
             .arg(&f)
             .current_dir(root)
@@ -182,6 +205,57 @@ mod tests {
         let bare = super::super::tests::skill_fixture_config("");
         let cfg = crate::config::Config::from_dir(&bare.path().join("mock"));
         assert_eq!(cfg.agent.message_guard, None);
+    }
+
+    /// A guard that reads the Claude shape, as the workspace's does.
+    const READS_CLAUDE_SHAPE: &str = r#"in=$(cat)
+tool=$(printf '%s' "$in" | jq -r '.tool_name // ""')
+cmd=$(printf '%s' "$in" | jq -r '.tool_input.command // ""')
+case "$tool:$cmd" in Bash:*"gh pr create"*) echo "no pull request body" >&2; exit 2 ;; esac
+exit 0"#;
+
+    #[test]
+    fn a_copilot_call_reaches_the_guard_in_the_claude_shape() {
+        // Copilot hands `toolName` and `toolArgs`, as an object or as a JSON
+        // string of one; a guard reading `tool_name` would see nothing and pass.
+        let d = root();
+        guard(d.path(), READS_CLAUDE_SHAPE);
+        let g = gate_with(
+            d.path(),
+            Some("guard.sh"),
+            crate::render_agent::COPILOT_HOOK_HELPERS,
+        );
+        let args = serde_json::json!({ "command": "gh pr create --title t --body x" });
+        for tool_args in [args.clone(), serde_json::Value::String(args.to_string())] {
+            let payload = serde_json::json!({ "toolName": "Bash", "toolArgs": tool_args }).to_string();
+            let out = run_payload(d.path(), &g, &payload);
+            assert!(out.contains("deny") && out.contains("no pull request body"), "{out}");
+        }
+        // control: a Copilot call the guard has no quarrel with passes
+        let payload = serde_json::json!({ "toolName": "Bash", "toolArgs": { "command": "ls" } }).to_string();
+        assert!(!run_payload(d.path(), &g, &payload).contains("deny"));
+    }
+
+    #[test]
+    fn a_guard_that_answers_without_reading_a_large_call_is_not_a_failure() {
+        // Fed by a pipe, the writer dies on a full buffer when the guard never
+        // reads, and the call was refused as one the guard could not decide.
+        let d = root();
+        guard(d.path(), "exit 0");
+        let big = "x".repeat(256 * 1024);
+        let out = run(d.path(), &gate(d.path(), Some("guard.sh")), &format!("echo {big}"));
+        assert!(!out.contains("could not decide"), "{}", &out[.. out.len().min(300)]);
+    }
+
+    #[test]
+    fn a_guard_that_asks_is_refused_with_its_question() {
+        let d = root();
+        guard(
+            d.path(),
+            r#"cat >/dev/null; printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"is this body yours"}}'"#,
+        );
+        let out = run(d.path(), &gate(d.path(), Some("guard.sh")), "ls");
+        assert!(out.contains("deny") && out.contains("is this body yours"), "{out}");
     }
 
     #[test]
