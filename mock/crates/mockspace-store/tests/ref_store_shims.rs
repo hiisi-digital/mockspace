@@ -1,5 +1,8 @@
 //! The ref backend against a stand-in `git` that drops connections: pushes that landed, were refused, or never reached the remote.
 #![allow(unused_imports)]
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use common::{Bump, EMPTY_TREE, MOCK_REF, NS, Recording, World, git, git_shim, store};

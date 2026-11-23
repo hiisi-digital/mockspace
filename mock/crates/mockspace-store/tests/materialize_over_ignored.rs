@@ -2,6 +2,9 @@
 //! where the ref has a directory. Those files are the person's and were never the ref's, so the
 //! fill neither writes over them nor, when it fails, removes them: a failed fill takes back only
 //! what it wrote.
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use common::{World, inst_dir, seeded, write};

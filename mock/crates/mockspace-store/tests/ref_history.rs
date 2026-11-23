@@ -1,5 +1,8 @@
 //! What a ref store says of the commits on its local ref, against real git.
 #![allow(unused_imports)]
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use std::process::Command;

@@ -1,5 +1,8 @@
 //! An instance against real git: a directory that is a view of a ref, moved by deltas.
 #![allow(unused_imports)]
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use std::path::PathBuf;

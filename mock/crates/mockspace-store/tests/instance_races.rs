@@ -1,6 +1,9 @@
 //! An instance against writers that win a race: the same file written by both, a merge hook
 //! that merges, refuses, keeps the tip's file or leaves one out, and what the directory holds
 //! afterwards.
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use common::{MOCK_REF, T2, World, inst_dir, read, seeded, store, write};

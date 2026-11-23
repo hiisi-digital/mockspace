@@ -1,5 +1,8 @@
 //! The ref backend when a fetch or a push goes wrong: loud failures, refusals, the branch form, a shallow writer.
 #![allow(unused_imports)]
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use common::{Bump, EMPTY_TREE, MOCK_REF, NS, Recording, World, git, git_shim, store};

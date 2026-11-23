@@ -1,5 +1,8 @@
 //! The ref backend against real git and a real bare repository: history and the race.
 #![allow(unused_imports)]
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use common::{Bump, EMPTY_TREE, MOCK_REF, NS, Recording, World, git, git_shim, store};

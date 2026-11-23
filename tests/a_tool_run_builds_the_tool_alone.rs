@@ -15,6 +15,9 @@
 //! shares with every other build are compiled once. The remote is fixed, so each run of this
 //! test reuses one generated crate rather than leaving another behind.
 
+#[path = "common/ambient.rs"]
+mod ambient;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

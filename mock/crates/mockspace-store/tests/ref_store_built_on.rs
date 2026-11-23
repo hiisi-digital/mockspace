@@ -1,5 +1,8 @@
 //! `apply_from`: a write that says which tip its edit was built on, so that the hook is asked
 //! whenever that tip is not the one on the remote, whatever the store has read since.
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use common::{Recording, World, store};

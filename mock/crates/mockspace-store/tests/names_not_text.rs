@@ -2,6 +2,9 @@
 //! name is refused, by the name read lossily, wherever the store lists it: listed lossily, it
 //! names no file, reads as absent, and whoever walks the store passes it over without a word.
 #![cfg(unix)]
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use std::os::unix::ffi::OsStrExt;

@@ -1,5 +1,8 @@
 //! An instance and the shape of its directory: files and directories changing places, a file in
 //! the way, instances made together, two spellings of one directory, a materialize that fails.
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use common::{T1, World, git, inst_dir, read, seeded, store, write};

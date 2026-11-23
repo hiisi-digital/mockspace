@@ -1,5 +1,8 @@
 //! The ids an instance hands to git are object ids and nothing else.
 
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 use mockspace_store::{Base, Oid};
 
 // Mutation: let `Oid::parse` take any text, as the string ids did; the marker of a base of no

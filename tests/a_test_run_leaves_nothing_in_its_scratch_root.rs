@@ -5,6 +5,9 @@
 //! Every test binary of this checkout, run whole under a temp dir of its own, leaves nothing under
 //! the scratch directory: no test dir, no process root.
 
+#[path = "common/ambient.rs"]
+mod ambient;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

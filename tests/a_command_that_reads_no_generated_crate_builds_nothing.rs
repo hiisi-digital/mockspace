@@ -13,6 +13,9 @@
 //! a cargo call and a store, or the probe sees nothing and the other cases
 //! prove nothing.
 
+#[path = "common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use std::fs;

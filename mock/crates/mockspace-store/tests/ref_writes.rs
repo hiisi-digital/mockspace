@@ -3,6 +3,9 @@
 //! of a commit are written by one git process, from files staged in the git directory, so git
 //! would apply the filters the attributes name for those files unless it is told not to. A commit
 //! or a look of thousands of files returns: git is fed its input while what it prints is read.
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use common::{World, git, inst_dir, seeded, store, write};

@@ -3,6 +3,9 @@
 //! one ignored is the person's and left alone, the other is refused by name, since a ref names its
 //! files as text and cannot hold it.
 #![cfg(unix)]
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use std::os::unix::ffi::OsStrExt;

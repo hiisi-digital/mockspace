@@ -3,6 +3,9 @@
 //! Each case here was first a way to lose a file: a ref emptied by narrowed patterns, a branch
 //! file hidden by an exclude line, a write that went through a symlink, an update that stopped
 //! half done, an instance whose files a clean removed.
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use std::path::{Path, PathBuf};

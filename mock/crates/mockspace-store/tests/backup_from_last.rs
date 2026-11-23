@@ -3,6 +3,9 @@
 //! file was, and a file gone from the instance; and a first guard, built from the base, must hold
 //! every file of the instance.
 
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use std::collections::BTreeMap;
