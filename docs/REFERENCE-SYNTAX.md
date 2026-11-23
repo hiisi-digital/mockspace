@@ -332,7 +332,11 @@ The syntax has one parser for every reference. A
 name is never written with an uppercase letter, a hyphen, a dot or an extension: the
 host folds its own naming into that set. `{{ mock::design::12 }}` finds
 `DESIGN.md.tmpl` without the author tracking whether a document is a template here and
-rendered output there, and `my_crate` is the directory `my-crate`. Exactly one match
+rendered output there, and `my_crate` is the directory `my-crate`. The one exception is
+the root of a path of two names or more, which may be written as it was declared: a
+namespace named after its directory, `ikiuni-renderer`, is reached as
+`ikiuni-renderer::a_row`. Every name after the root, and a slug on its own, keeps the
+set. Exactly one match
 resolves; several is an error rather than a guess, because the author meant one of
 them and picking silently would point the citation somewhere they did not choose. No
 spelling tells two such files apart, so one is renamed or removed. A file or directory

@@ -92,6 +92,17 @@ fn every_conformance_case_that_is_a_plain_path_gives_its_names() {
     assert!(checked > 5, "the suite was read, {checked} plain paths");
 }
 
+// Mutation: fold every hyphen of the text, or none. A slug `c-one` then passes as a name, or a
+// reference into the namespace `ikiuni-renderer`, named after its directory, reaches nothing.
+#[test]
+fn a_root_in_the_host_s_naming_is_read_as_written_and_nothing_after_it_is() {
+    assert_eq!(names("ikiuni-renderer::c_one").ok(), Some(vec!["ikiuni-renderer", "c_one"]));
+    assert_eq!(names("ikiuni-renderer::design::a_b").ok(), Some(vec!["ikiuni-renderer", "design", "a_b"]));
+    assert!(names("ikiuni-renderer::c-one").is_err(), "a hyphen past the root");
+    assert!(names("ikiuni-renderer").is_err(), "one name is a slug, the standard's spelling alone");
+    assert!(!crate::is_valid_slug("c-one"));
+}
+
 // Mutation: reading the first operand of `names` as a path whatever its shape lets a set through.
 #[test]
 fn a_set_a_wildcard_a_constraint_and_an_operation_are_no_plain_path() {

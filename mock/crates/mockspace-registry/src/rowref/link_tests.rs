@@ -388,3 +388,27 @@ fn an_internal_root_filter_does_not_eat_a_link() {
     assert!(table.contains("{{ slot::display }}"), "{table}");
     assert!(!table.contains("slot::notes"), "{table}");
 }
+
+/// A namespace whose key carries a hyphen, as a directory name does, is reached by a reference as
+/// any other, the namespace written as it was declared. A slug after it is the standard's spelling alone.
+#[test]
+fn a_reference_into_a_hyphenated_namespace_resolves() {
+    let k = keys(&["ikiuni-renderer"]);
+    assert_eq!(link_target("ikiuni-renderer::c_one", &k), Some(("ikiuni-renderer", "c_one")));
+    let nss = [ns("ikiuni-renderer", &[]), ns("answer", &[("related", "ref[]")])];
+    let r = reg(&[("ikiuni-renderer", "c_one", &[]), ("answer", "niri", &[("related", "ikiuni-renderer::c_one")])]);
+    assert!(validate_links(&r, &nss).is_empty());
+    assert!(links_report(&r, &nss, "ikiuni-renderer::c_one").is_ok_and(|t| t.contains("answer::niri")));
+}
+
+/// The control: a hyphenated namespace nobody declared is refused, and a hyphen past the root is read as
+/// no name.
+#[test]
+fn a_reference_into_an_undeclared_hyphenated_namespace_is_refused() {
+    let k = keys(&["ikiuni-renderer"]);
+    assert_eq!(link_target("ikiuni-other::c_one", &k), None);
+    assert_eq!(link_target("ikiuni-renderer::c-one", &k), None, "a hyphen past the root is no slug");
+    let nss = [ns("ikiuni-renderer", &[])];
+    let r = reg(&[("ikiuni-renderer", "c_one", &[])]);
+    assert!(links_report(&r, &nss, "ikiuni-other::c_one").is_err_and(|e| e.contains("declared namespace")));
+}

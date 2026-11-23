@@ -17,7 +17,7 @@ use refs_e2e::{Clone, Out, fixture, whole};
 /// A refusal, as the person's clone is set up to meet it.
 #[derive(Clone, Copy, Debug)]
 enum Refusal {
-    /// A `reference-transaction` hook of the person's own.
+    /// A `reference-transaction` hook of the person's own, and another where it would be chained.
     TheirHook,
     /// A sparse-checkout file that is not text.
     PatternsNotText,
@@ -33,7 +33,11 @@ impl Refusal {
     fn meet(self, c: &Clone) {
         let common = common(c);
         match self {
-            Refusal::TheirHook => exec::write_executable(&common.join("hooks/reference-transaction"), "#!/bin/sh\n# their own\nexit 0\n"),
+            // one hook of their own is chained; a second, where the chained one would go, is not
+            Refusal::TheirHook => {
+                exec::write_executable(&common.join("hooks/reference-transaction"), "#!/bin/sh\n# their own\nexit 0\n");
+                exec::write_executable(&common.join("hooks/reference-transaction.chained"), "#!/bin/sh\n# their other\nexit 0\n");
+            },
             Refusal::PatternsNotText => {
                 std::fs::create_dir_all(common.join("info")).unwrap();
                 std::fs::write(common.join("info/sparse-checkout"), b"/*\n\xff\xfe not text\n").unwrap();
