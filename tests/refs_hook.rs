@@ -15,9 +15,14 @@ use refs_e2e::fixture::NOTES;
 
 /// A seat on the migrated remote whose instance holds an edit no commit has, with a branch `side`
 /// that merges cleanly (it changes a file of the branch only) and a branch `behind` cut before the
-/// side commit, which rebases onto it.
+/// side commit, which rebases onto it. Its hooks are installed by a copy of the engine at
+/// [`engine_of`], which a test then breaks.
 fn seat_with_branches(w: &World) -> Clone<'_> {
-    let a = fixture::seat(w, "a");
+    let a = w.clone_of("a");
+    let engine = engine_of(w);
+    mockspace_manifest::write_executable(&engine, std::fs::read(refs_e2e::world::BIN).unwrap()).unwrap();
+    let o = w.command(engine.to_str().unwrap(), &a.root).arg("--dir").arg(a.mock()).args(["data-refs", "instantiate"]).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     a.git(&["checkout", "-q", "-b", "behind"]);
     a.write("BEHIND.md", b"behind\n");
     a.commit_all("docs: a file of the branch behind");
@@ -30,49 +35,48 @@ fn seat_with_branches(w: &World) -> Clone<'_> {
     a
 }
 
-/// git with `dir` first on the `PATH`, so a `mock` placed there is the launcher the hook finds.
-fn git_with(c: &Clone, first: &Path, args: &[&str]) -> Out {
-    let path = format!("{}:{}:{}", first.display(), c.w.base().join("shims").display(), std::env::var("PATH").unwrap());
-    let o = c.w.command("git", &c.root).env("PATH", path).args(args).output().unwrap();
-    Out {
-        ok:     o.status.success(),
-        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-    }
+/// Where the engine that installed the hooks of [`seat_with_branches`] is.
+fn engine_of(w: &World) -> PathBuf {
+    w.base().join("engine").join("mockspace")
 }
 
-/// A directory holding a `mock` that runs `body`.
-fn launcher(w: &World, name: &str, body: &str) -> PathBuf {
-    let dir = w.base().join(name);
-    mockspace_manifest::write_executable(&dir.join("mock"), format!("#!/bin/sh\n{body}\n")).unwrap();
-    dir
+fn git(c: &Clone, args: &[&str]) -> Out {
+    c.git_out(args)
 }
 
-/// The launchers the hook must survive: one that fails outright, and an engine from before the
-/// `snapshot` verb, which refuses it the way such an engine does.
-fn broken_launchers(w: &World) -> Vec<(&'static str, PathBuf)> {
+/// The engines the hook must survive, each put where the engine that installed it was: one that
+/// fails outright, an engine from before the `snapshot` verb, which refuses it the way such an
+/// engine does, and none at all, as after a clean of the cache.
+fn broken_engines() -> Vec<(&'static str, Option<&'static str>)> {
     vec![
-        ("a launcher that fails", launcher(w, "failing", "echo 'the launcher broke' >&2\nexit 3")),
+        ("an engine that fails", Some("echo 'the engine broke' >&2\nexit 3")),
         (
             "an engine with no `snapshot`",
-            launcher(
-                w,
-                "older",
-                "echo 'data-refs: `snapshot` is none of status, verify, instantiate, update, restore, commit, trailers or paired' >&2\nexit 1",
-            ),
+            Some("echo 'data-refs: `snapshot` is none of status, verify, instantiate, update, restore, commit, trailers or paired' >&2\nexit 1"),
         ),
+        ("an engine that is gone", None),
     ]
 }
 
-// Mutation: let the hook exit with the launcher's status, as the first version did; the move of
+/// Puts `body` where the engine was, or takes the engine away where it is `None`.
+fn break_engine(w: &World, body: Option<&str>) {
+    let at = engine_of(w);
+    let _ = std::fs::remove_file(&at);
+    if let Some(body) = body {
+        mockspace_manifest::write_executable(&at, format!("#!/bin/sh\n{body}\n")).unwrap();
+    }
+}
+
+// Mutation: let the hook exit with the engine's status, as the first version did; the move of
 // `ORIG_HEAD` is then refused and the person's merge stops on a failure that is not theirs.
 #[test]
-fn a_merge_goes_through_whatever_the_launcher_does() {
+fn a_merge_goes_through_whatever_the_engine_does() {
     let w = fixture::migrated_remote();
     let a = seat_with_branches(&w);
-    for (what, dir) in broken_launchers(&w) {
+    for (what, body) in broken_engines() {
+        break_engine(&w, body);
         let before = a.git(&["rev-parse", "HEAD"]);
-        let o = git_with(&a, &dir, &["merge", "--no-edit", "side"]);
+        let o = git(&a, &["merge", "--no-edit", "side"]);
         assert!(o.ok, "{what}: the merge was stopped: {}", o.all());
         assert_eq!(a.git(&["rev-parse", "HEAD"]), a.git(&["rev-parse", "side"]), "{what}: the merge did not land");
         assert!(o.stderr.contains("mockspace"), "{what}: the failure is said on stderr: {}", o.all());
@@ -83,13 +87,14 @@ fn a_merge_goes_through_whatever_the_launcher_does() {
 
 // Mutation: the same, on a rebase, which moves `ORIG_HEAD` too, after it writes.
 #[test]
-fn a_rebase_goes_through_whatever_the_launcher_does() {
+fn a_rebase_goes_through_whatever_the_engine_does() {
     let w = fixture::migrated_remote();
     let a = seat_with_branches(&w);
     a.git(&["merge", "-q", "--no-edit", "side"]);
-    for (what, dir) in broken_launchers(&w) {
+    for (what, body) in broken_engines() {
+        break_engine(&w, body);
         a.git(&["checkout", "-q", "-B", "work", "behind"]);
-        let o = git_with(&a, &dir, &["rebase", "dev"]);
+        let o = git(&a, &["rebase", "dev"]);
         assert!(o.ok, "{what}: the rebase was stopped: {}", o.all());
         let base = a.git(&["merge-base", "HEAD", "dev"]);
         assert_eq!(base, a.git(&["rev-parse", "dev"]), "{what}: the rebase did not land");
