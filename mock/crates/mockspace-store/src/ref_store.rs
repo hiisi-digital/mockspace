@@ -34,7 +34,8 @@ use crate::store::{Applied, Freshness, Store};
 pub const DATA_REF_ENV: &str = "MOCKSPACE_DATA_REF";
 
 /// The git config key of a clone that names where its writes to mock trees are pushed, where
-/// that is not the remote they are fetched from. Per clone, since the route is the machine's.
+/// that is not the remote they are fetched from. Read from the clone's config or the machine's,
+/// since the route is the machine's network, never from `mockspace.toml`.
 pub const PUSH_URL_KEY: &str = "mockspace.refsPushUrl";
 
 /// What this store knows of the remote.
@@ -297,8 +298,12 @@ impl RefStore {
             if out.ok() {
                 self.git
                     .must(&["update-ref", self.pair.local(), &commit], &[], None)?;
-                self.record_seen(&commit)?;
+                // seen only once the remote it is fetched from is seen to hold it: a relay may take
+                // a push and lose it, and a tip the remote never had would refuse the real one
                 let confirmed = self.verify_pushed(&commit)?;
+                if confirmed {
+                    self.record_seen(&commit)?;
+                }
                 return Ok(self.landed(commit, attempt, confirmed));
             }
             // The push reported a failure. What the remote holds says what happened: our

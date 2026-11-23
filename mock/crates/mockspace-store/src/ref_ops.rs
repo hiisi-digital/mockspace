@@ -78,8 +78,9 @@ impl RefStore {
         }
     }
 
-    /// The last tip this clone saw of the tree: its backup ref, else, in a clone from before the
-    /// backup refs, the local ref.
+    /// The last tip this clone knows of the tree: its backup ref, and where the store has recorded
+    /// none yet, the local ref, which is then the best record the clone has. With neither, the
+    /// clone has seen nothing and the first tip is taken as it is.
     fn last_seen(&self) -> Result<Option<String>, StoreError> {
         match self.tip_of(self.pair.seen())? {
             Some(tip) => Ok(Some(tip)),
@@ -98,14 +99,13 @@ impl RefStore {
     /// an error and the local ref is put back on it, so a rewritten remote is never read as the
     /// data, even after a plain `git fetch` forced the local ref onto it.
     pub(crate) fn fetch_once(&self) -> Result<Freshness, StoreError> {
-        let old = self.local_tip()?;
         let seen = self.last_seen()?;
         let spec = self.pair.fetch_refspec();
         let depth = self.depth.map(|d| d.to_string());
         let mut args = vec!["fetch", "-q"];
         // Depth only for the first fetch. A later depth-limited fetch makes the new tip a
-        // shallow root, and the old tip is then no longer reachable from it.
-        if let (Some(d), None) = (&depth, &old) {
+        // shallow root, and the last tip seen is then no longer reachable from it.
+        if let (Some(d), None) = (&depth, &seen) {
             args.extend(["--depth", d]);
         }
         args.extend([self.remote.as_str(), spec.as_str()]);

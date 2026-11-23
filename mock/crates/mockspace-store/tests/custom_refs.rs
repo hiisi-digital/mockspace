@@ -92,6 +92,21 @@ fn a_write_is_pushed_to_the_relay_the_clone_names_and_read_back_from_the_remote(
     let landed = s.apply(&Edit::new().put("a", "1"), "one", &Reapply).unwrap();
     assert!(landed.confirmed, "the remote it fetches from holds what the relay took");
     assert_eq!(w.tip(MOCK_REF), landed.commit);
+    let one = landed.commit.unwrap();
+    assert_eq!(git(&repo, &["rev-parse", SEEN]), one);
+
+    // a relay that takes the push and never passes it on: a mirror of the remote, so the lease holds
+    let lossy = w.dir.path().join("lossy.git");
+    git(w.dir.path(), &["clone", "-q", "--mirror", &w.remote(), &lossy.to_string_lossy()]);
+    git(&repo, &["config", PUSH_URL_KEY, &lossy.to_string_lossy()]);
+    let err = s.apply(&Edit::new().put("a", "2"), "two", &Reapply).unwrap_err();
+    assert!(matches!(err, StoreError::Verify { .. }), "the read-back asks the remote, not the relay: {err}");
+    assert!(try_git(&lossy, &["rev-parse", "-q", "--verify", MOCK_REF]).is_ok(), "control: the relay took it");
+    assert_eq!(w.tip(MOCK_REF).as_deref(), Some(one.as_str()), "the remote never had it");
+    assert_eq!(git(&repo, &["rev-parse", SEEN]), one, "and the clone does not take it for seen");
+    let fresh = RefStore::new(&repo, w.remote(), RefPair::for_namespace(NS).unwrap());
+    fresh.refresh().unwrap();
+    assert_eq!(fresh.read("a").unwrap().as_deref(), Some(&b"1"[..]), "the clone goes on from the remote's tip");
 }
 
 #[test]

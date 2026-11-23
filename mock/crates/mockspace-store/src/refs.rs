@@ -85,11 +85,13 @@ impl RefPair {
         &self.seen
     }
 
-    /// The forced fetch refspec, `+<remote>:<local>`. Forced because the local ref is a private
-    /// mirror of the remote's, never a place to keep work; what keeps a rewrite out is the check
-    /// against [`RefPair::seen`], not git.
+    /// The fetch refspec, `<remote>:<local>`. Forced (`+`) where the local ref is a private mirror
+    /// under `refs/mock/`, never a place to keep work, and what keeps a rewrite out is the check
+    /// against [`RefPair::seen`]. Not forced where the local ref is anything else, a shadow branch
+    /// above all, which may hold work not pushed yet: git then moves it forward only.
     pub fn fetch_refspec(&self) -> String {
-        format!("+{}:{}", self.remote, self.local)
+        let force = if self.local.starts_with(MOCK_REFS) { "+" } else { "" };
+        format!("{force}{}:{}", self.remote, self.local)
     }
 
     /// The push refspecs of the shadow line in a clone's git config, so a plain `git push` of a
@@ -181,6 +183,7 @@ mod tests {
         let s = RefPair::shadow("work/topic").unwrap();
         assert_eq!((s.local(), s.remote()), ("refs/heads/+/work/topic", "refs/mock/+/work/topic"));
         assert_eq!(s.seen(), "refs/mock-seen/+/work/topic");
+        assert_eq!(s.fetch_refspec(), "refs/mock/+/work/topic:refs/heads/+/work/topic", "never forced over a branch");
         assert_eq!(RefPair::shadow_push_refspec(), "refs/heads/+/*:refs/mock/+/*");
         assert_eq!(RefPair::shadow_fetch_refspec("origin"), "+refs/mock/+/*:refs/remotes/origin/+/*");
     }
