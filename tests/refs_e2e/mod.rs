@@ -31,5 +31,5 @@ pub fn status_of(c: &Clone, ns: &str) -> String {
 
 /// The commit a ref is at on the remote.
 pub fn tip(w: &World, ns: &str) -> String {
-    w.remote_tip(&format!("refs/heads/mock/{ns}")).expect("the ref is on the remote")
+    w.remote_tip(&format!("refs/mock/{ns}")).expect("the ref is on the remote")
 }

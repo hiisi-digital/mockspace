@@ -138,9 +138,9 @@ fn a_mode_change_alone_is_seen_committed_and_round_trips_to_a_second_clone() {
     assert!(status_of(&a, "research").ends_with("changed"), "{}", status_of(&a, "research"));
     assert!(status_of(&a, "benches").ends_with("changed"), "{}", status_of(&a, "benches"));
     a.ok(&["data-refs", "commit"]);
-    let tree = w.remote_git(&["ls-tree", "refs/heads/mock/research", "crlf.txt"]);
+    let tree = w.remote_git(&["ls-tree", "refs/mock/research", "crlf.txt"]);
     assert!(tree.starts_with("100755"), "{tree}");
-    let tree = w.remote_git(&["ls-tree", "refs/heads/mock/benches", "hot/sampler.bin"]);
+    let tree = w.remote_git(&["ls-tree", "refs/mock/benches", "hot/sampler.bin"]);
     assert!(tree.starts_with("100644"), "{tree}");
     b.ok(&["data-refs", "update"]);
     assert_ne!(mode_of(&b, plain), 0, "the mode alone arrived");
@@ -171,7 +171,7 @@ fn build_output_written_into_an_instance_is_neither_changed_nor_committed() {
     assert!(status_of(&a, "research").ends_with("clean"), "{}", status_of(&a, "research"));
     a.write(NOTES, b"an edit\n");
     a.ok(&["data-refs", "commit", "research"]);
-    let listing = w.remote_git(&["ls-tree", "-r", "--name-only", "refs/heads/mock/research"]);
+    let listing = w.remote_git(&["ls-tree", "-r", "--name-only", "refs/mock/research"]);
     assert!(!listing.contains("target/"), "{listing}");
     assert!(listing.contains("20261001_alpha/NOTES.md"));
 }

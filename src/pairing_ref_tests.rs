@@ -21,7 +21,7 @@ fn store_at(remote: &Remote, dir: &Path) -> RefStore {
     RefStore::new(
         dir,
         remote.bare.to_str().unwrap(),
-        RefPair::ref_form("registry").unwrap(),
+        RefPair::for_namespace("registry").unwrap(),
     )
 }
 

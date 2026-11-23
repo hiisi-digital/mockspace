@@ -26,8 +26,8 @@ use crate::registry::RefDecl;
 #[derive(Debug, Clone, Default, Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct DataRefDecl {
-    /// The ref namespace: the ref is `refs/heads/mock/<namespace>` in the branch form and
-    /// `refs/mock/<namespace>` in the ref form. Required, and unique among the declarations.
+    /// The ref namespace: the ref is the orphan custom ref `refs/mock/<namespace>`, on the remote
+    /// and in the clone, and never a branch. Required, and unique among the declarations.
     pub namespace: Option<String>,
     /// The directory under the mock directory the ref holds, relative to it. The root of the ref is
     /// this directory, so one ref holds one directory and writers of different ones never meet.
@@ -35,10 +35,9 @@ pub struct DataRefDecl {
     /// Where the instance is placed, relative to the mock directory. Defaults to `path`, so the
     /// instance is where the directory is read today.
     pub instance:  Option<String>,
-    /// The remote the ref is fetched from and pushed to. Defaults to `origin`.
+    /// The remote the ref is fetched from, and pushed to unless the clone's git config names a
+    /// relay under `mockspace.refsPushUrl`. Defaults to `origin`.
     pub remote:    Option<String>,
-    /// `branch` (the default) or `ref`, as for a registry store.
-    pub form:      Option<String>,
     /// The files of `path` the ref holds, as patterns relative to it (`**/*.md.tmpl`, `*/**`).
     /// Absent, the ref holds every file of the directory and the directory is the ref's alone.
     /// Given, it holds only the files a pattern matches, and the branch keeps the others, so a
@@ -58,7 +57,6 @@ impl DataRefDecl {
             dir:       None,
             namespace: self.namespace.clone(),
             remote:    self.remote.clone(),
-            form:      self.form.clone(),
         }
         .open(repo_root, self.namespace())
     }

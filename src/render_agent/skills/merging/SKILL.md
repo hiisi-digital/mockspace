@@ -46,7 +46,7 @@ A merge commit is judged by what it adds beyond its parents, per staged file.
 
 ## A registry directory kept on a ref
 
-- A directory declared in `[[registry.store]]` of `mockspace.toml` is kept on `refs/mock/<namespace>` (`refs/heads/mock/<namespace>` on the remote) and is not in the tree. A tree merge never meets it, and the tree copy of a mounted directory is not read.
+- A directory declared in `[[registry.store]]` of `mockspace.toml` is kept on the orphan custom ref `refs/mock/<namespace>`, the same name on the remote and never a branch there, and is not in the tree. A tree merge never meets it, and the tree copy of a mounted directory is not read.
 - Writes go through `mock registry-append <namespace>::<id> <field> <value> [--local]`: fetch, run the registry checks on the files as they would stand, push with a lease. When another writer pushed first, the row merge runs and the checks run again: rows added on both sides stay; a row changed two ways is refused and nothing is pushed. A failed fetch is an error, never an empty registry.
 - The `.mockspace/hooks/registry-append` delegate (nearest wins): the `reference-syntax` skill.
 - The writer reads rows, not documents: removing a row a generated document names is not caught at the write, nor by a plain lint-only commit or push. The next `cargo mock`, a commit concluding a merge, or the post-merge and post-rewrite hooks report the dangling reference.

@@ -33,6 +33,10 @@ use crate::store::{Applied, Freshness, Store};
 /// pre-push hook reads it to tell the store's push of data from a push of a branch.
 pub const DATA_REF_ENV: &str = "MOCKSPACE_DATA_REF";
 
+/// The git config key of a clone that names where its writes to mock trees are pushed, where
+/// that is not the remote they are fetched from. Per clone, since the route is the machine's.
+pub const PUSH_URL_KEY: &str = "mockspace.refsPushUrl";
+
 /// What this store knows of the remote.
 pub(crate) enum Seen {
     /// Nothing yet: no refresh and no write.
@@ -102,7 +106,12 @@ impl RefStore {
     /// so it is not what this store's reads saw; `read` and `list` use the tip this store
     /// last refreshed to or wrote.
     pub fn local_tip(&self) -> Result<Option<String>, StoreError> {
-        let spec = format!("{}^{{commit}}", self.pair.local());
+        self.tip_of(self.pair.local())
+    }
+
+    /// The commit at `reference` of the clone, if there is one.
+    pub(crate) fn tip_of(&self, reference: &str) -> Result<Option<String>, StoreError> {
+        let spec = format!("{reference}^{{commit}}");
         let out = self
             .git
             .run(&["rev-parse", "-q", "--verify", &spec], &[], None)?;
@@ -201,6 +210,7 @@ impl RefStore {
         let mut unconfirmed: Vec<String> = Vec::new();
         // the words of the last push that failed without a race, for the end of the attempts
         let mut stuck: Option<String> = None;
+        let target = self.push_target()?;
         for attempt in 1 ..= attempts {
             let is_last = attempt == attempts;
             if !refreshed {
@@ -280,13 +290,14 @@ impl RefStore {
             let refspec = format!("{commit}:{}", self.pair.remote());
             // a repository's pre-push gate is for its branches, and is told which ref this is
             let out = self.git.run(
-                &["push", "-q", &lease, &self.remote, &refspec],
+                &["push", "-q", &lease, &target, &refspec],
                 &[(DATA_REF_ENV, self.pair.remote())],
                 None,
             )?;
             if out.ok() {
                 self.git
                     .must(&["update-ref", self.pair.local(), &commit], &[], None)?;
+                self.record_seen(&commit)?;
                 let confirmed = self.verify_pushed(&commit)?;
                 return Ok(self.landed(commit, attempt, confirmed));
             }
@@ -305,7 +316,7 @@ impl RefStore {
                         stuck = Some(out.stderr);
                     } else {
                         return Err(StoreError::PushRefused {
-                            remote:     self.remote.clone(),
+                            remote:     target.clone(),
                             remote_ref: self.pair.remote().to_owned(),
                             detail:     out.stderr,
                         });
@@ -334,7 +345,7 @@ impl RefStore {
         match stuck {
             Some(detail) => {
                 Err(StoreError::PushRefused {
-                    remote: self.remote.clone(),
+                    remote: target,
                     remote_ref: self.pair.remote().to_owned(),
                     detail,
                 })
@@ -349,6 +360,26 @@ impl RefStore {
 }
 
 impl RefStore {
+    /// Where a write is pushed: the URL the clone's git config names under [`PUSH_URL_KEY`], else
+    /// the remote it fetches from. Measured from a cloud container on 23 November 2026, its git
+    /// proxy answers a push of a custom ref with HTTP 403 and passes a fetch of one, so such a
+    /// clone pushes through a relay of its own and reads the remote directly; the check after the
+    /// push still asks the remote it fetches from, so a relay that took the push and lost it is
+    /// seen (`mock/research/sketches/cloud-proxy-custom-refs/FINDINGS.md`).
+    pub fn push_target(&self) -> Result<String, StoreError> {
+        let out = self.git.run(&["config", "--get", PUSH_URL_KEY], &[], None)?;
+        match out.code {
+            Some(0) if !out.text().is_empty() => Ok(out.text()),
+            Some(0 | 1) => Ok(self.remote.clone()),
+            _ => {
+                Err(StoreError::Git {
+                    command: format!("config --get {PUSH_URL_KEY}"),
+                    detail:  out.stderr,
+                })
+            },
+        }
+    }
+
     fn landed(&self, commit: String, attempts: u32, confirmed: bool) -> Applied {
         self.set_seen(Seen::Tip(commit.clone()));
         Applied {

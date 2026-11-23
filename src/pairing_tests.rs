@@ -484,7 +484,7 @@ fn a_trailer_is_only_made_for_a_name_a_ref_can_have() {
     }
     // one validator: a name is taken here exactly when the store makes a ref of it
     for name in ["registry", "a-b_c9", "-x", "a..b", "A", "a/b.lock"] {
-        assert_eq!(is_ref_name(name), mockspace_store::RefPair::branch_form(name).is_ok(), "{name}");
+        assert_eq!(is_ref_name(name), mockspace_store::RefPair::for_namespace(name).is_ok(), "{name}");
     }
 }
 

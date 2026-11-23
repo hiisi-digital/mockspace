@@ -41,7 +41,7 @@ pub struct World {
     pub tmp:    PathBuf,
 }
 
-pub const TICKET_REF: &str = "refs/heads/mock/registry/ticket";
+pub const TICKET_REF: &str = "refs/mock/registry/ticket";
 
 impl World {
     pub fn new() -> Self {
@@ -80,7 +80,7 @@ impl World {
 }
 /// The ref-mounted stores of `cfg`, with no waiting between attempts.
 pub fn stores(cfg: &dyn RegistryEnv) -> RegistryStores {
-    let pair = RefPair::branch_form("registry/ticket").unwrap();
+    let pair = RefPair::for_namespace("registry/ticket").unwrap();
     let store = RefStore::new(cfg.repo_root(), "origin", pair).with_retry(RetryPolicy::immediate(4));
     RegistryStores::directory(cfg.mock_dir())
         .mount("ticket", Box::new(store))

@@ -301,14 +301,14 @@ fn a_registry_held_on_a_data_ref_is_rewritten_on_the_ref_and_not_in_the_tree() {
     std::fs::write(seeder.join("first.toml"), ROW_ON_A_REF).unwrap();
     git(&["add", "first.toml"]);
     git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed"]);
-    git(&["push", "-q", "origin", "seed:refs/heads/mock/registry/ruling"]);
+    git(&["push", "-q", "origin", "seed:refs/mock/registry/ruling"]);
     assert!(!cfg.mock_dir.join("registry/ruling/first.toml").exists());
 
     let said = plan_of(&cfg, &[NAME]).unwrap().lines.join("\n");
     assert!(said.contains("(on its ref): seed::DESIGN::#the-four-lanes -> seed::design::the_four_lanes"), "{said}");
     assert_eq!(run(&cfg, &[NAME, "--dry-run"]), ExitCode::SUCCESS);
     let held = |remote: &mockspace_store::test_support::Remote| {
-        remote.file("refs/heads/mock/registry/ruling", "first.toml").unwrap()
+        remote.file("refs/mock/registry/ruling", "first.toml").unwrap()
     };
     assert!(held(&remote).contains("seed::DESIGN::#the-four-lanes"), "a dry run writes no ref");
 

@@ -15,7 +15,7 @@ use crate::config::Config;
 use crate::suite::history::{Green, TestRecord};
 use mockspace_store::test_support::{Remote, git};
 
-const REF: &str = "refs/heads/mock/test-history";
+const REF: &str = "refs/mock/test-history";
 
 fn config_text(history: bool) -> String {
     let table = if history { "\n[test.history]\n" } else { "" };
@@ -31,7 +31,7 @@ fn project(remote: &Remote, name: &str, history: bool) -> Config {
 }
 
 fn store(cfg: &Config) -> RefStore {
-    let pair = RefPair::branch_form("test-history").unwrap();
+    let pair = RefPair::for_namespace("test-history").unwrap();
     RefStore::new(&cfg.repo_root, "origin", pair).with_retry(RetryPolicy::immediate(4))
 }
 

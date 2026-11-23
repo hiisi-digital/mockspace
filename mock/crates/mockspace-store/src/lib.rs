@@ -5,9 +5,10 @@
 //! ref backend writes a commit on top of the tip with `--force-with-lease`, so a
 //! namespace keeps its history, and answers a lost race by fetching again and
 //! asking a [`MergeHook`] what the edit is on the tip that won. Fetch and push
-//! go by explicit refspec through a [`RefPair`], so a namespace kept on
-//! `refs/mock/...` can be kept on `refs/heads/mock/...` instead by changing the
-//! pair and nothing else.
+//! go by explicit refspec through a [`RefPair`]. Every mock tree is an orphan
+//! custom ref under `refs/mock/` on the remote and never a branch there; each
+//! clone keeps the last tip it saw of each under `refs/mock-seen/` and refuses a
+//! tip that does not descend from it.
 //!
 //! Plain git only: the crate runs the `git` command and asks no forge anything.
 //!
@@ -56,8 +57,8 @@ pub use merge::{MergeHook, MergeRefusal, Reapply, Refuse};
 pub use path::{symlinks_on, validate_path};
 pub use reader::Reader;
 pub use ref_history::CommitInfo;
-pub use ref_store::{DATA_REF_ENV, RefStore};
-pub use refs::{RefPair, RemoteForm};
+pub use ref_store::{DATA_REF_ENV, PUSH_URL_KEY, RefStore};
+pub use refs::{MOCK_REFS, RefPair, SEEN_REFS, SHADOW_BRANCHES, SHADOW_NAMESPACE};
 pub use retry::RetryPolicy;
 pub use store::{Applied, Freshness, Store};
 

@@ -1270,7 +1270,7 @@ mod byline_hook_tests {
         // standing down and nothing else.
         let (_g, repo, sha) = repo_with_commit("data: mock\n");
         let zero = "0".repeat(40);
-        let data = "refs/heads/mock/research";
+        let data = "refs/mock/research";
         let hook = gen_pre_push("mock", &HookLayout::of(&["crates"]), std::path::Path::new("/dev/null"));
         let run = |marker: Option<&str>, stdin: &str| {
             let script = match marker {
@@ -1285,7 +1285,7 @@ mod byline_hook_tests {
         assert_ne!(run(None, &only_data), 0, "an unmarked push of that ref passed ungated");
         let with_branch = format!("{only_data}refs/heads/main {sha} refs/heads/main {zero}\n");
         assert_ne!(run(Some(data), &with_branch), 0, "a branch pushed beside the data ref passed ungated");
-        assert_ne!(run(Some("refs/heads/mock/other"), &only_data), 0);
+        assert_ne!(run(Some("refs/mock/other"), &only_data), 0);
         assert_ne!(run(Some(data), ""), 0, "a push of no ref passed ungated");
         let _ = std::fs::remove_dir_all(&repo);
     }

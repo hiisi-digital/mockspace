@@ -258,7 +258,7 @@ fn a_cache_directory_is_not_data_though_no_gitignore_names_it() {
     let s = a.ok(&["data-refs", "status", "research"]);
     assert!(s.stdout.trim_end().ends_with("clean"), "{}", s.all());
     a.ok(&["data-refs", "commit", "research"]);
-    let listing = w.remote_git(&["ls-tree", "-r", "--name-only", "refs/heads/mock/research"]);
+    let listing = w.remote_git(&["ls-tree", "-r", "--name-only", "refs/mock/research"]);
     assert!(!listing.contains("probe/build"), "build output reached the ref: {listing}");
 }
 
@@ -307,7 +307,7 @@ fn core_filemode_false_reads_no_file_as_changed_for_its_mode() {
     assert!(s.stdout.trim_end().ends_with("clean"), "a mode alone is a change: {}", s.all());
     a.write(NOTES, b"one real edit\n");
     a.ok(&["data-refs", "commit", "research"]);
-    let tree = w.remote_git(&["ls-tree", "-r", "refs/heads/mock/research"]);
+    let tree = w.remote_git(&["ls-tree", "-r", "refs/mock/research"]);
     assert!(!tree.contains("100755"), "a commit set the executable bit: {tree}");
     assert!(tree.contains("100644"), "{tree}");
 }

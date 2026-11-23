@@ -277,33 +277,17 @@ fn directory_backend() {
 }
 
 #[test]
-fn ref_backend_in_ref_form() {
+fn ref_backend() {
     let w = World::new();
     let store = RefStore::new(
         w.clone_dir("a"),
         w.remote(),
-        RefPair::ref_form("registry/probe").unwrap(),
+        RefPair::for_namespace("registry/probe").unwrap(),
     )
     .with_retry(RetryPolicy::immediate(3));
     suite(&store, Freshness::Empty);
     assert!(w.tip("refs/mock/registry/probe").is_some());
-}
-
-#[test]
-fn ref_backend_in_branch_form() {
-    let w = World::new();
-    let store = RefStore::new(
-        w.clone_dir("a"),
-        w.remote(),
-        RefPair::branch_form("registry/probe").unwrap(),
-    )
-    .with_retry(RetryPolicy::immediate(3));
-    suite(&store, Freshness::Empty);
-    assert!(w.tip("refs/heads/mock/registry/probe").is_some());
-    assert!(
-        w.tip("refs/mock/registry/probe").is_none(),
-        "the branch form leaves nothing outside refs/heads on the remote"
-    );
+    assert!(w.tip("refs/heads/mock/registry/probe").is_none(), "a mock tree is never a branch on the remote");
 }
 
 #[test]

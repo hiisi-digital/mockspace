@@ -19,7 +19,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use mockspace_store::{DirStore, Edit, RefPair, RefStore, RemoteForm, Store, StoreError};
+use mockspace_store::{DirStore, Edit, RefPair, RefStore, Store, StoreError};
 use serde::Deserialize;
 
 /// Why a registry could not be read or written.
@@ -293,24 +293,17 @@ pub struct RefDecl {
     pub dir:       Option<String>,
     /// The ref namespace, `refs/mock/<namespace>`. Each user of it has its own default.
     pub namespace: Option<String>,
-    /// The remote the ref is fetched from and pushed to. Defaults to `origin`.
+    /// The remote the ref is fetched from, and pushed to unless the clone's git config names a
+    /// relay under `mockspace.refsPushUrl`. Defaults to `origin`.
     pub remote:    Option<String>,
-    /// `branch` (the default: `refs/heads/mock/<namespace>` on the remote, which a host that
-    /// takes no ref outside `refs/heads` accepts) or `ref` (`refs/mock/<namespace>` on both sides).
-    pub form:      Option<String>,
 }
 
 impl RefDecl {
     /// The store this declares, over the repository at `repo_root`, for `default_namespace` where
     /// the declaration names none.
     pub fn open(&self, repo_root: &Path, default_namespace: &str) -> Result<RefStore, String> {
-        let form = match self.form.as_deref() {
-            None | Some("branch") => RemoteForm::Branch,
-            Some("ref") => RemoteForm::Ref,
-            Some(other) => return Err(format!("form `{other}` is neither `branch` nor `ref`")),
-        };
         let namespace = self.namespace.as_deref().unwrap_or(default_namespace);
-        let pair = RefPair::for_namespace(namespace, form).map_err(|e| e.to_string())?;
+        let pair = RefPair::for_namespace(namespace).map_err(|e| e.to_string())?;
         let remote = self.remote.clone().unwrap_or_else(|| "origin".into());
         Ok(RefStore::new(repo_root, remote, pair))
     }

@@ -69,13 +69,13 @@ fn one_ref_file_edited_by_two_people_keeps_both_edits_and_is_resolved_by_hand() 
     l.write(&a, ROUND, b"a: the round\n");
     l.write(&b, ROUND, b"b: the round\n");
     a.ok(&["data-refs", "commit", "rounds"]);
-    let tip = w.remote_tip("refs/heads/mock/rounds");
+    let tip = w.remote_tip("refs/mock/rounds");
     let c = b.fails(&["data-refs", "commit", "rounds"]);
     assert!(c.all().contains("data-refs update"), "the refusal names the way on: {}", c.all());
     let u = b.fails(&["data-refs", "update", "rounds"]);
     assert!(u.all().contains(rel), "the refusal names the file: {}", u.all());
     assert_eq!(b.read(ROUND), b"b: the round\n");
-    assert_eq!(w.remote_tip("refs/heads/mock/rounds"), tip, "a refused commit pushed nothing");
+    assert_eq!(w.remote_tip("refs/mock/rounds"), tip, "a refused commit pushed nothing");
     nothing_lost_or_wrongly_committed(&w, &l, &base, &[&a, &b]);
     // by hand: the edit set aside, the file put back as the base has it (a removal is a change here
     // too, which `update` refuses as well), the tip taken, the text both agree on written and committed

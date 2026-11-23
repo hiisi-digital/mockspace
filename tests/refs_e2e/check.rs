@@ -50,7 +50,7 @@ pub fn held_on_remote(w: &World, refs: &[Held]) -> Manifest {
 pub fn held_on_remote_at(w: &World, refs: &[Held], mock: &str) -> Manifest {
     let mut all = Manifest::new();
     for h in refs {
-        let reference = format!("refs/heads/mock/{}", h.ns);
+        let reference = format!("refs/mock/{}", h.ns);
         if w.remote_tip(&reference).is_none() {
             continue;
         }

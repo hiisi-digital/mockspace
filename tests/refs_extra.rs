@@ -38,7 +38,7 @@ fn a_rebase_of_a_branch_cut_before_the_migration_keeps_the_edited_instance_file(
     a.git(&["checkout", "-q", "-f", "dev"]);
     refs_e2e::daily::edit_back_after_forced_way_back(&a, "research", "20261001_alpha/NOTES.md", NOTES, edit, "a rebase of an old branch");
     a.ok(&["data-refs", "commit", "research"]);
-    assert_eq!(w.remote_git(&["show", "refs/heads/mock/research:20261001_alpha/NOTES.md"]).as_bytes(), edit);
+    assert_eq!(w.remote_git(&["show", "refs/mock/research:20261001_alpha/NOTES.md"]).as_bytes(), edit);
 }
 
 // Mutation: write through a symlink in `update`; the file lands outside the instance.
@@ -123,10 +123,10 @@ fn a_declared_ref_not_born_yet_instantiates_empty_and_passes_the_gate() {
     a.ok(&["data-refs", "verify", "extra"]);
     // the standing gate takes it: a command that reads the mock directory runs
     a.ok(&["data-refs", "status", "extra"]);
-    assert!(w.remote_tip("refs/heads/mock/extra").is_none(), "instantiate creates no ref");
+    assert!(w.remote_tip("refs/mock/extra").is_none(), "instantiate creates no ref");
     a.write("mock/extra/first.md", b"first\n");
     a.ok(&["data-refs", "commit", "extra"]);
-    assert!(w.remote_git(&["ls-tree", "-r", "--name-only", "refs/heads/mock/extra"]).contains("first.md"));
+    assert!(w.remote_git(&["ls-tree", "-r", "--name-only", "refs/mock/extra"]).contains("first.md"));
     a.ok(&["data-refs", "verify", "extra"]);
 }
 
@@ -151,12 +151,12 @@ fn two_clones_making_the_same_new_ref_lose_neither_file() {
     l.write(&a, "mock/extra/both.md", b"both, as a wrote it\n");
     l.write(&b, "mock/extra/both.md", b"both, as b wrote it\n");
     a.ok(&["data-refs", "commit", "extra"]);
-    let born = w.remote_tip("refs/heads/mock/extra").expect("the early commit makes the ref");
+    let born = w.remote_tip("refs/mock/extra").expect("the early commit makes the ref");
 
     // the late push is rejected and fetches; the file both made is changed on both sides
     let late = b.fails(&["data-refs", "commit", "extra"]);
     assert!(late.all().contains("data-refs update"), "the refusal names the way on: {}", late.all());
-    assert_eq!(w.remote_tip("refs/heads/mock/extra").as_deref(), Some(born.as_str()), "the late commit pushed over the ref");
+    assert_eq!(w.remote_tip("refs/mock/extra").as_deref(), Some(born.as_str()), "the late commit pushed over the ref");
     let u = b.fails(&["data-refs", "update", "extra"]);
     assert!(u.all().contains("both.md"), "the refusal names the file both made: {}", u.all());
     assert_eq!(b.read("mock/extra/both.md"), b"both, as b wrote it\n", "the refused update wrote over the late file");
@@ -169,7 +169,7 @@ fn two_clones_making_the_same_new_ref_lose_neither_file() {
     b.ok(&["data-refs", "update", "extra"]);
     b.ok(&["data-refs", "commit", "extra"]);
     a.ok(&["data-refs", "update", "extra"]);
-    let tree = w.remote_git(&["ls-tree", "-r", "--name-only", "refs/heads/mock/extra"]);
+    let tree = w.remote_git(&["ls-tree", "-r", "--name-only", "refs/mock/extra"]);
     for (p, text) in [("from-a.md", &b"a\n"[..]), ("from-b.md", b"b\n"), ("both.md", b"both, as a wrote it\n"), ("both-b.md", b"both, as b wrote it\n")] {
         assert!(tree.lines().any(|l| l == p), "{p} is on the ref: {tree}");
         for c in [&a, &b] {

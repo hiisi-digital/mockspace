@@ -78,11 +78,28 @@ impl RefStore {
         }
     }
 
-    /// Bring the remote's ref into the local one. The remote may only have moved
-    /// forward: a tip that does not descend from the one held here is an error and
-    /// the local ref is put back, so a rewritten remote is never read as the data.
+    /// The last tip this clone saw of the tree: its backup ref, else, in a clone from before the
+    /// backup refs, the local ref.
+    fn last_seen(&self) -> Result<Option<String>, StoreError> {
+        match self.tip_of(self.pair.seen())? {
+            Some(tip) => Ok(Some(tip)),
+            None => self.local_tip(),
+        }
+    }
+
+    /// Records `tip` as the last tip this clone saw of the tree.
+    pub(crate) fn record_seen(&self, tip: &str) -> Result<(), StoreError> {
+        self.git.must(&["update-ref", self.pair.seen(), tip], &[], None)?;
+        Ok(())
+    }
+
+    /// Bring the remote's ref into the local one. The remote may only have moved forward from the
+    /// last tip this clone saw, which its backup ref holds: a tip that does not descend from it is
+    /// an error and the local ref is put back on it, so a rewritten remote is never read as the
+    /// data, even after a plain `git fetch` forced the local ref onto it.
     pub(crate) fn fetch_once(&self) -> Result<Freshness, StoreError> {
         let old = self.local_tip()?;
+        let seen = self.last_seen()?;
         let spec = self.pair.fetch_refspec();
         let depth = self.depth.map(|d| d.to_string());
         let mut args = vec!["fetch", "-q"];
@@ -97,17 +114,18 @@ impl RefStore {
             let Some(new) = self.local_tip()? else {
                 return Err(self.fetch_error("fetch reported success but left no local ref".into()));
             };
-            if let Some(old) = &old {
-                if *old != new && !self.descends(old, &new)? {
+            if let Some(seen) = &seen {
+                if *seen != new && !self.descends(seen, &new)? {
                     self.git
-                        .must(&["update-ref", self.pair.local(), old], &[], None)?;
+                        .must(&["update-ref", self.pair.local(), seen], &[], None)?;
                     return Err(StoreError::RemoteRewrote {
                         remote_ref: self.pair.remote().to_owned(),
-                        local_tip:  old.clone(),
+                        local_tip:  seen.clone(),
                         remote_tip: new,
                     });
                 }
             }
+            self.record_seen(&new)?;
             return Ok(Freshness::Fetched {
                 tip: new,
             });
@@ -116,7 +134,7 @@ impl RefStore {
         // not yet written), or it did not answer. Only the remote can say which.
         match self.remote_holds_ref() {
             Ok(false) => {
-                match old {
+                match seen {
                     None => Ok(Freshness::Empty),
                     Some(local_tip) => {
                         Err(StoreError::RemoteLostRef {

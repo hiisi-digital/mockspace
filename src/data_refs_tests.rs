@@ -40,11 +40,15 @@ fn a_path_under_another_refs_path_overlaps_it_both_ways() {
 }
 
 #[test]
-fn a_form_that_is_neither_branch_nor_ref_is_refused() {
-    let mut d = decl("a", "x");
-    d.form = Some("tag".into());
-    let why = validate(&[d]).unwrap_err().join("\n");
-    assert!(why.contains("neither `branch` nor `ref`"), "{why}");
+fn a_data_ref_declares_no_form_and_is_a_custom_ref_on_the_remote() {
+    // the branch form is gone: a `form` key is a misspelt one, refused as the config loads
+    for form in ["branch", "ref"] {
+        let parsed: Result<DataRefDecl, _> =
+            toml_edit::de::from_str(&format!("namespace = \"a\"\npath = \"x\"\nform = \"{form}\"\n"));
+        assert!(parsed.is_err(), "{form}");
+    }
+    let store = decl("a", "x").open(std::path::Path::new(".")).unwrap();
+    assert_eq!(store.pair().remote(), "refs/mock/a");
 }
 
 #[test]

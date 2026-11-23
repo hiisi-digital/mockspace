@@ -109,7 +109,7 @@ fn a_clone_is_shallow_only_when_a_depth_cut_its_history() {
         .unwrap();
     assert!(!a.is_shallow().unwrap(), "the writer holds all of it");
     let b =
-        RefStore::new(w.clone_dir("b"), w.remote(), RefPair::ref_form(NS).unwrap()).with_depth(1);
+        RefStore::new(w.clone_dir("b"), w.remote(), RefPair::for_namespace(NS).unwrap()).with_depth(1);
     b.refresh().unwrap();
     assert!(b.is_shallow().unwrap());
     assert_eq!(

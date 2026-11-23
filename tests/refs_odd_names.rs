@@ -87,7 +87,7 @@ fn a_file_the_ref_would_hold_whose_name_is_not_utf8_is_refused_by_name_and_nothi
     assert!(!o.ok, "{}", o.all());
     assert!(o.all().contains("not text") && o.all().contains("notes/caf"), "the refusal names the file: {}", o.all());
     whole::kept(&c, &before, &whole::capture(&c), &Allowed::default()).unwrap();
-    assert!(w.remote_tip("refs/heads/mock/research").is_none(), "no ref was made");
+    assert!(w.remote_tip("refs/mock/research").is_none(), "no ref was made");
     // the way out: give it a name in UTF-8 on the branch, and the same call goes through
     let from = c.path("mock/research/notes").join(OsStr::from_bytes(NOT_UTF8));
     std::fs::rename(&from, c.path("mock/research/notes/cafe.md")).unwrap();

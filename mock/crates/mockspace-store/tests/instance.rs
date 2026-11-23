@@ -343,7 +343,7 @@ fn an_instance_in_a_linked_worktree_is_excluded_from_that_worktree() {
         "--detach",
         wt.to_str().unwrap(),
     ]);
-    let s = RefStore::new(&wt, w.remote(), RefPair::ref_form(NS).unwrap());
+    let s = RefStore::new(&wt, w.remote(), RefPair::for_namespace(NS).unwrap());
     s.refresh().unwrap();
     let dir = wt.join(".mock").join("registry");
     Instance::new(&s, &dir).unwrap().materialize().unwrap();

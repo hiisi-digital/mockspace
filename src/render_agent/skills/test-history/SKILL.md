@@ -25,7 +25,7 @@
 
 ## History kept on a git ref
 
-- `[test.history]` in `mockspace.toml` keeps the files on a git ref instead of `<mock>/test-history/`: keys `namespace` (default `test-history`), `remote` (default `origin`), `form` (`branch` or `ref`). A run commits nothing to the tree.
+- `[test.history]` in `mockspace.toml` keeps the files on a git ref instead of `<mock>/test-history/`: keys `namespace` (default `test-history`, the ref `refs/mock/test-history`, never a branch) and `remote` (default `origin`). A run commits nothing to the tree.
 - `cargo mock test` fetches the ref at start and writes one commit to it at the end, pushed with a lease.
 - A green may go from a file only when the member's fingerprint now differs from the one it was recorded at, or the workspace no longer has the member. Otherwise the write is refused, nothing is pushed, and the run is worth repeating.
 - After a lost race the guard is asked again of the winner's state: a green the winner recorded at the fingerprint this run still has is not dropped; the write is refused instead. When another run pushed first, the files merge as the driver does and the write is retried. A file the winner removed stays removed.

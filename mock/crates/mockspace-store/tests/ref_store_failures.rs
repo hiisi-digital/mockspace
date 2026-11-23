@@ -1,4 +1,4 @@
-//! The ref backend when a fetch or a push goes wrong: loud failures, refusals, the branch form, a shallow writer.
+//! The ref backend when a fetch or a push goes wrong: loud failures, refusals, a shallow writer.
 #![allow(unused_imports)]
 #[path = "../../../../tests/common/ambient.rs"]
 mod ambient;
@@ -33,7 +33,7 @@ fn an_unreachable_remote_is_an_error_and_never_an_empty_store() {
         .join("nowhere.git")
         .to_string_lossy()
         .into_owned();
-    let s = RefStore::new(w.clone_dir("a"), gone, RefPair::ref_form(NS).unwrap())
+    let s = RefStore::new(w.clone_dir("a"), gone, RefPair::for_namespace(NS).unwrap())
         .with_retry(RetryPolicy::immediate(2));
     assert!(matches!(s.refresh(), Err(StoreError::Fetch { .. })));
     assert!(
@@ -98,7 +98,7 @@ fn a_refusal_that_is_not_a_race_is_not_retried() {
             count.display()
         ),
     );
-    let s = RefStore::new(w.clone_dir("a"), w.remote(), RefPair::ref_form(NS).unwrap())
+    let s = RefStore::new(w.clone_dir("a"), w.remote(), RefPair::for_namespace(NS).unwrap())
         .with_retry(RetryPolicy::immediate(5));
     let err = s
         .apply(&Edit::new().put("a", "1"), "one", &Reapply)
@@ -118,34 +118,6 @@ fn a_refusal_that_is_not_a_race_is_not_retried() {
     assert!(w.tip(MOCK_REF).is_none());
 }
 
-// --- the branch fallback ---------------------------------------------------------------------
-
-#[test]
-fn the_branch_form_is_the_same_store_with_another_remote_ref() {
-    let w = World::new();
-    let pair = RefPair::branch_form(NS).unwrap();
-    let a = RefStore::new(w.clone_dir("a"), w.remote(), pair.clone())
-        .with_retry(RetryPolicy::immediate(3));
-    a.apply(&Edit::new().put("a", "1"), "one", &Reapply)
-        .unwrap();
-    assert_eq!(
-        git(&w.bare, &["branch", "--list", "mock/registry/probe"]).trim(),
-        "mock/registry/probe",
-        "a branch on the remote"
-    );
-    assert!(
-        w.tip(MOCK_REF).is_none(),
-        "and nothing under refs/mock there"
-    );
-
-    let b_dir = w.clone_dir("b");
-    let b = RefStore::new(&b_dir, w.remote(), pair).with_retry(RetryPolicy::immediate(3));
-    assert!(matches!(b.refresh().unwrap(), Freshness::Fetched { .. }));
-    assert_eq!(b.read("a").unwrap().as_deref(), Some(&b"1"[..]));
-    // the local side stays a private ref in the clone, not a branch of it
-    assert_eq!(git(&b_dir, &["branch", "--list"]), "");
-}
-
 // --- a shallow clone ----------------------------------------------------------------------------
 
 #[test]
@@ -161,7 +133,7 @@ fn a_shallow_writer_adds_to_a_long_history() {
         .unwrap();
     }
     let repo = w.clone_dir("shallow");
-    let shallow = RefStore::new(&repo, w.remote(), RefPair::ref_form(NS).unwrap())
+    let shallow = RefStore::new(&repo, w.remote(), RefPair::for_namespace(NS).unwrap())
         .with_retry(RetryPolicy::immediate(3))
         .with_depth(1);
     shallow.refresh().unwrap();

@@ -38,16 +38,16 @@ fn an_edit_a_merge_wrote_over_is_said_refused_and_restored() {
     // said again on the next look, not only the first
     let s = a.ok(&["data-refs", "status", "research"]);
     assert!(s.all().contains(&restore), "the second status forgot it: {}", s.all());
-    let before = w.remote_tip("refs/heads/mock/research");
+    let before = w.remote_tip("refs/mock/research");
     let c = a.fails(&["data-refs", "commit", "research"]);
     assert!(c.all().contains("written over") && c.all().contains("--accept-overwritten"), "{}", c.all());
-    assert_eq!(w.remote_tip("refs/heads/mock/research"), before, "the refusal pushed");
+    assert_eq!(w.remote_tip("refs/mock/research"), before, "the refusal pushed");
     a.ok(&["data-refs", "restore", "research", IN_REF]);
     assert_eq!(a.read(NOTES), b"DIRTY instance edit\n", "restore did not bring the edit back");
     let s = a.ok(&["data-refs", "status", "research"]);
     assert!(!s.all().contains("written over"), "still said after the restore: {}", s.all());
     a.ok(&["data-refs", "commit", "research"]);
-    let on_remote = w.remote_git(&["show", &format!("refs/heads/mock/research:{IN_REF}")]);
+    let on_remote = w.remote_git(&["show", &format!("refs/mock/research:{IN_REF}")]);
     assert_eq!(on_remote, "DIRTY instance edit\n");
 }
 
@@ -61,7 +61,7 @@ fn the_flag_commits_the_bytes_on_disk_and_ends_the_warning() {
     let _ = a.git_out(&["merge", "--abort"]);
     a.write(NOTES, b"what the person means now\n");
     a.ok(&["data-refs", "commit", "research", "--accept-overwritten"]);
-    assert_eq!(w.remote_git(&["show", &format!("refs/heads/mock/research:{IN_REF}")]), "what the person means now\n");
+    assert_eq!(w.remote_git(&["show", &format!("refs/mock/research:{IN_REF}")]), "what the person means now\n");
     let s = a.ok(&["data-refs", "status", "research"]);
     assert!(!s.all().contains("written over"), "{}", s.all());
 }
@@ -135,9 +135,9 @@ fn a_clean_file_a_merge_wrote_over_is_said_and_not_pushed() {
     assert_ne!(a.exists(NOTES).then(|| a.read(NOTES)), Some(instance.clone()), "the control: git wrote over the file");
     let s = a.ok(&["data-refs", "status", "research"]);
     assert!(s.all().contains(&format!("data-refs restore research {IN_REF}")), "{}", s.all());
-    let before = w.remote_tip("refs/heads/mock/research");
+    let before = w.remote_tip("refs/mock/research");
     a.fails(&["data-refs", "commit", "research"]);
-    assert_eq!(w.remote_tip("refs/heads/mock/research"), before, "the old bytes were pushed");
+    assert_eq!(w.remote_tip("refs/mock/research"), before, "the old bytes were pushed");
     a.ok(&["data-refs", "restore", "research", IN_REF]);
     assert_eq!(a.read(NOTES), instance);
     let s = a.ok(&["data-refs", "status", "research"]);
@@ -163,7 +163,7 @@ fn an_edit_made_after_a_merge_is_not_said_to_be_written_over() {
     assert!(!s.all().contains("written over"), "an edit of the person's read as git's: {}", s.all());
     assert!(s.stdout.trim_end().ends_with("changed"), "{}", s.all());
     a.ok(&["data-refs", "commit", "research"]);
-    assert_eq!(w.remote_git(&["show", &format!("refs/heads/mock/research:{IN_REF}")]), "after the merge\n");
+    assert_eq!(w.remote_git(&["show", &format!("refs/mock/research:{IN_REF}")]), "after the merge\n");
 }
 
 // Mutation: leave `sparse.expectFilesOutsideOfPatterns` unset; at the commit from before the
@@ -182,7 +182,7 @@ fn an_edit_a_hard_reset_there_and_back_leaves_on_disk_and_commits() {
     let s = a.ok(&["data-refs", "status", "research"]);
     assert!(!s.all().contains("written over") && s.stdout.trim_end().ends_with("changed"), "{}", s.all());
     a.ok(&["data-refs", "commit", "research"]);
-    assert_eq!(w.remote_git(&["show", &format!("refs/heads/mock/research:{IN_REF}")]), "DIRTY instance edit\n");
+    assert_eq!(w.remote_git(&["show", &format!("refs/mock/research:{IN_REF}")]), "DIRTY instance edit\n");
 }
 
 // Mutation: leave `sparse.expectFilesOutsideOfPatterns` unset. A reset writes the work tree before
@@ -199,7 +199,7 @@ fn an_edit_made_at_a_commit_from_before_the_migration_is_kept_by_the_reset_back(
     a.git(&["reset", "-q", "--hard", dev.trim()]);
     assert_eq!(a.read(NOTES), b"edited at the old commit\n", "the reset back dropped the edit made at the old commit");
     a.ok(&["data-refs", "commit", "research"]);
-    assert_eq!(w.remote_git(&["show", &format!("refs/heads/mock/research:{IN_REF}")]), "edited at the old commit\n");
+    assert_eq!(w.remote_git(&["show", &format!("refs/mock/research:{IN_REF}")]), "edited at the old commit\n");
 }
 
 /// Holds the lock of the backup ref, as another writer, or the transaction a hook runs inside of
@@ -253,9 +253,9 @@ fn an_edit_git_wrote_over_and_edited_again_before_any_engine_command_is_said() {
     a.write(NOTES, b"edited again while the merge stands\n");
     let s = a.ok(&["data-refs", "status", "research"]);
     assert!(s.all().contains(&format!("data-refs restore research {IN_REF}")), "{}", s.all());
-    let before = w.remote_tip("refs/heads/mock/research");
+    let before = w.remote_tip("refs/mock/research");
     a.fails(&["data-refs", "commit", "research"]);
-    assert_eq!(w.remote_tip("refs/heads/mock/research"), before, "the second edit was pushed over the first");
+    assert_eq!(w.remote_tip("refs/mock/research"), before, "the second edit was pushed over the first");
     a.ok(&["data-refs", "restore", "research", IN_REF]);
     assert_eq!(a.read(NOTES), b"DIRTY instance edit\n");
     assert!(history_holds(&a, "edited again while the merge stands\n"));

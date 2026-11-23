@@ -175,7 +175,7 @@ fn a_file_under_a_filter_is_held_as_the_bytes_the_person_has() {
     let model = s.at("research/model.lfs");
     let disk = std::fs::read(root.join(&model)).unwrap();
     assert_eq!(disk, refs_e2e::fixture::bytes(7, 200_000), "the control: the clone had the bytes, not the pointer");
-    let held = w.remote_git(&["show", "refs/heads/mock/research:model.lfs"]);
+    let held = w.remote_git(&["show", "refs/mock/research:model.lfs"]);
     let b = w.clone_of("b");
     b.ok(&["data-refs", "instantiate"]);
     assert_eq!(b.read(&model), disk, "a fresh clone has the bytes");
@@ -215,7 +215,7 @@ fn in_a_round_whose_doc_changelist_is_locked_the_rewritten_templates_wait_on_dis
     c.commit_all("docs: lock the doc changelist");
     consumer::migrate_until_references(&s, &c);
     let readme = s.at("crates/alpha/README.md.tmpl");
-    let tip = w.remote_tip("refs/heads/mock/templates").unwrap();
+    let tip = w.remote_tip("refs/mock/templates").unwrap();
     let before = whole::capture(&c);
     c.ok(&["migrate", "references-to-letkajenkka"]);
     c.commit_all("chore: rewrite references to the letkajenkka spelling");
@@ -224,7 +224,7 @@ fn in_a_round_whose_doc_changelist_is_locked_the_rewritten_templates_wait_on_dis
     let rewritten = s.rewritten();
     whole::kept(&c, &before, &whole::capture(&c), &Allowed { rewritten, commits: true, ..Allowed::default() }).unwrap();
     assert!(String::from_utf8(c.read(&readme)).unwrap().contains("seed::design::the_four_lanes"), "the rewrite is on disk");
-    assert_eq!(w.remote_tip("refs/heads/mock/templates").unwrap(), tip, "the ref is as it was");
+    assert_eq!(w.remote_tip("refs/mock/templates").unwrap(), tip, "the ref is as it was");
     let s = c.ok(&["data-refs", "status", "templates"]);
     assert!(s.stdout.trim_end().ends_with("changed"), "{}", s.all());
 }

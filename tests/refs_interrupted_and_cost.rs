@@ -14,7 +14,7 @@ use refs_e2e::{World, fixture};
 use refs_e2e::fixture::NOTES;
 
 fn remote_notes(w: &World) -> String {
-    w.remote_git(&["show", "refs/heads/mock/research:20261001_alpha/NOTES.md"])
+    w.remote_git(&["show", "refs/mock/research:20261001_alpha/NOTES.md"])
 }
 
 /// The calls of `commit`'s own, each told apart from the call of the same name the copy of the
@@ -42,7 +42,7 @@ fn commit_failing_at(fail_at: &str) -> bool {
     let a = fixture::seat(&w, "a");
     a.write(NOTES, b"an edit that must survive\n");
     a.write("mock/research/new.md", b"a new file\n");
-    let before = w.remote_tip("refs/heads/mock/research").unwrap();
+    let before = w.remote_tip("refs/mock/research").unwrap();
     std::fs::write(&spy.fail, format!("{fail_at}\n")).unwrap();
     let o = a.run(&["data-refs", "commit", "research"]);
     spy.stop_failing();
@@ -57,7 +57,7 @@ fn commit_failing_at(fail_at: &str) -> bool {
     }
     assert_eq!(a.read(NOTES), b"an edit that must survive\n", "{fail_at}: after the recovery");
     assert_eq!(remote_notes(&w), "an edit that must survive\n", "{fail_at}");
-    let n = w.remote_git(&["rev-list", "--count", "refs/heads/mock/research"]);
+    let n = w.remote_git(&["rev-list", "--count", "refs/mock/research"]);
     let was = w.remote_git(&["rev-list", "--count", &before]);
     assert_eq!(n.trim().parse::<u32>().unwrap(), was.trim().parse::<u32>().unwrap() + 1, "{fail_at}: committed once");
     o.ok

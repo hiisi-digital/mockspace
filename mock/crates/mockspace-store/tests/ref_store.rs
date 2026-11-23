@@ -123,7 +123,7 @@ fn a_lost_race_is_rebased_through_the_hook_and_keeps_both_commits() {
     let rival = w.competing_commit(&first, "rival.txt", "r");
 
     let loser_repo = w.clone_dir("b");
-    let loser = RefStore::new(&loser_repo, w.remote(), RefPair::ref_form(NS).unwrap())
+    let loser = RefStore::new(&loser_repo, w.remote(), RefPair::for_namespace(NS).unwrap())
         .with_retry(RetryPolicy::immediate(4));
     loser.refresh().unwrap();
     rival_wins_once(&w, &loser_repo, &rival);
@@ -163,7 +163,7 @@ fn a_hook_that_refuses_leaves_the_winner_in_place() {
         .unwrap();
     let rival = w.competing_commit(&first, "rival.txt", "r");
     let repo = w.clone_dir("b");
-    let loser = RefStore::new(&repo, w.remote(), RefPair::ref_form(NS).unwrap())
+    let loser = RefStore::new(&repo, w.remote(), RefPair::for_namespace(NS).unwrap())
         .with_retry(RetryPolicy::immediate(4));
     loser.refresh().unwrap();
     rival_wins_once(&w, &repo, &rival);
@@ -201,7 +201,7 @@ fn a_hook_can_change_the_edit_to_fit_the_new_tip() {
         .unwrap();
     let rival = w.competing_commit(&first, "counter", "2\n");
     let repo = w.clone_dir("b");
-    let loser = RefStore::new(&repo, w.remote(), RefPair::ref_form(NS).unwrap())
+    let loser = RefStore::new(&repo, w.remote(), RefPair::for_namespace(NS).unwrap())
         .with_retry(RetryPolicy::immediate(4));
     loser.refresh().unwrap();
     rival_wins_once(&w, &repo, &rival);
@@ -222,7 +222,7 @@ fn a_writer_that_keeps_losing_gives_up_loudly() {
     s.apply(&Edit::new().put("one", "1"), "one", &Reapply)
         .unwrap();
     let repo = w.clone_dir("b");
-    let loser = RefStore::new(&repo, w.remote(), RefPair::ref_form(NS).unwrap())
+    let loser = RefStore::new(&repo, w.remote(), RefPair::for_namespace(NS).unwrap())
         .with_retry(RetryPolicy::immediate(3));
     // every push is preceded by another writer moving the ref
     w.install_hook(
@@ -261,7 +261,7 @@ fn many_writers_at_once_lose_nothing() {
         .map(|(i, repo)| {
             let remote = remote.clone();
             std::thread::spawn(move || {
-                let s = RefStore::new(repo, remote, RefPair::ref_form(NS).unwrap())
+                let s = RefStore::new(repo, remote, RefPair::for_namespace(NS).unwrap())
                     .with_retry(RetryPolicy::immediate(80));
                 for n in 0 .. 3 {
                     s.apply(

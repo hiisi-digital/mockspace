@@ -143,18 +143,21 @@ fn a_store_declaration_with_no_directory_is_refused_at_open() {
 }
 
 #[test]
-fn a_form_that_is_neither_branch_nor_ref_is_refused_at_open() {
+fn a_store_declares_no_form_and_is_a_custom_ref_on_the_remote() {
+    // the branch form is gone: a `form` key is a misspelt one, refused as the config loads
+    for form in ["branch", "ref"] {
+        let err = toml_edit::de::from_str::<RefDecl>(&format!("dir = \"ticket\"\nform = \"{form}\"\n")).unwrap_err();
+        assert!(err.to_string().contains("form"), "{err}");
+    }
     let w = World::new();
     let cfg = w.env_of("a", false);
-    let decl = RefDecl {
+    let store = RefDecl {
         dir: Some("ticket".into()),
-        form: Some("both".into()),
         ..Default::default()
-    };
-    let err = RegistryStores::from_decls(&cfg.mock_dir, &cfg.repo_root, &[decl])
-        .err()
-        .unwrap();
-    assert!(matches!(err, RegistryStoreError::Declared(_)), "{err}");
+    }
+    .open(&cfg.repo_root, "registry/ticket")
+    .unwrap();
+    assert_eq!(store.pair().remote(), "refs/mock/registry/ticket");
 }
 
 #[test]

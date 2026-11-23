@@ -87,7 +87,7 @@ fn left(c: &Clone) -> Vec<(String, String)> {
     let config = c.git_out(&["config", "--get-regexp", r"^core\.(sparse|hookspath)|^extensions\.|^index\.sparse"]);
     out.push(("config".into(), config.stdout.replace(&base, "<base>")));
     for (side, dir) in [("here", c.root.as_path()), ("remote", c.w.remote.as_path())] {
-        let names = c.w.sh(dir, "git", &["for-each-ref", "--format=%(refname)", "refs/heads/mock/"]).stdout;
+        let names = c.w.sh(dir, "git", &["for-each-ref", "--format=%(refname)", "refs/mock/"]).stdout;
         for r in names.lines() {
             let tree = c.w.sh(dir, "git", &["rev-parse", &format!("{r}^{{tree}}")]).stdout;
             out.push((format!("{side} {r}"), tree.trim().to_string()));

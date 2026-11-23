@@ -456,7 +456,7 @@ const fn is_hex(s: &str, lengths: &[usize]) -> bool {
 /// Whether `s` is a data ref name, which is also what a trailer calls the ref. The store decides
 /// it, as what it takes for a namespace, so the two cannot come apart.
 pub fn is_ref_name(s: &str) -> bool {
-    mockspace_store::RefPair::ref_form(s).is_ok()
+    mockspace_store::RefPair::for_namespace(s).is_ok()
 }
 
 fn hex(bytes: &[u8]) -> String {

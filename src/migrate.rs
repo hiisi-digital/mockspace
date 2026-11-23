@@ -32,8 +32,8 @@ pub struct Migration {
 pub const MIGRATIONS: &[Migration] = &[
     Migration {
         name:    "directory-to-ref",
-        summary: "--namespace <ns> --path <dir under the mock directory> [--include <pattern>]... [--form \
-                  branch|ref] [--remote <name>]: declares a `[[data_ref]]`, makes its ref from the files the branch \
+        summary: "--namespace <ns> --path <dir under the mock directory> [--include <pattern>]... \
+                  [--remote <name>]: declares a `[[data_ref]]`, makes its ref from the files the branch \
                   tracks there, and takes those files out of the branch's index, leaving them on disk as the \
                   instance",
         plan:    plan_directory_to_ref,

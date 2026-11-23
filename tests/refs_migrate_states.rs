@@ -77,7 +77,7 @@ fn a_changed_or_untracked_file_in_the_directory_refuses_with_nothing_written() {
         let (cfg, tracked) = (a.read("mock/mockspace.toml"), a.tracked());
         let o = research(&a);
         assert!(!o.ok && o.all().contains(path), "{what}: {}", o.all());
-        assert!(w.remote_tip("refs/heads/mock/research").is_none(), "{what}: no ref was pushed");
+        assert!(w.remote_tip("refs/mock/research").is_none(), "{what}: no ref was pushed");
         assert_eq!(a.read("mock/mockspace.toml"), cfg, "{what}");
         assert_eq!(a.tracked(), tracked, "{what}");
         assert_eq!(a.read(path), bytes, "{what}: the file is as it was");

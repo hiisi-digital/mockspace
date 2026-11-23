@@ -13,7 +13,7 @@ use crate::config::Config;
 use crate::data_refs::DataRefDecl;
 
 pub(super) fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan, Vec<String>> {
-    let given = flags(args, &["--namespace", "--path", "--include", "--form", "--remote"])?;
+    let given = flags(args, &["--namespace", "--path", "--include", "--remote"])?;
     let one = |name: &str| given.iter().rev().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string());
     let include: Vec<String> =
         given.iter().filter(|(n, _)| *n == "--include").map(|(_, v)| (*v).to_string()).collect();
@@ -31,7 +31,6 @@ pub(super) fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan,
         path:      one("--path"),
         instance:  None,
         remote:    one("--remote"),
-        form:      one("--form"),
         include:   if include.is_empty() { None } else { Some(include) },
     };
     let ns = decl.namespace().to_string();
@@ -216,7 +215,6 @@ fn table_of(decl: &DataRefDecl) -> String {
     put("namespace", &decl.namespace);
     put("path", &decl.path);
     put("remote", &decl.remote);
-    put("form", &decl.form);
     if let Some(include) = &decl.include {
         let items: Vec<String> = include.iter().map(|p| quoted(p)).collect();
         out.push_str(&format!("include = [{}]\n", items.join(", ")));

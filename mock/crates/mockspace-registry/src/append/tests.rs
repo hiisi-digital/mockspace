@@ -204,7 +204,7 @@ fn an_append_to_a_row_on_a_ref_goes_through_the_writer_and_skips_a_delegate() {
         "the delegate edits the tree, so it is not asked about a row kept on a ref"
     );
     let held = remote
-        .file("refs/heads/mock/registry/ticket", "t.toml")
+        .file("refs/mock/registry/ticket", "t.toml")
         .unwrap();
     assert!(held.contains("said it"), "{held}");
 }

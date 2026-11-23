@@ -91,7 +91,7 @@ fn paired_finds_a_ref_made_again_with_the_same_files_by_its_time_and_digest() {
     assert!(out.status.success());
     let new = String::from_utf8(out.stdout).unwrap().trim().to_string();
     assert_ne!(new, old);
-    w.remote_git(&["update-ref", "refs/heads/mock/research", &new]);
+    w.remote_git(&["update-ref", "refs/mock/research", &new]);
     // a clone that never saw the old hash reads it back by time and digest
     let fresh = fixture::seat(&w, "fresh");
     fresh.git(&["fetch", "-q", "origin", "dev"]);
@@ -107,7 +107,7 @@ fn paired_finds_a_ref_made_again_with_the_same_files_by_its_time_and_digest() {
         .output()
         .unwrap();
     let bad = String::from_utf8(out.stdout).unwrap().trim().to_string();
-    w.remote_git(&["update-ref", "refs/heads/mock/research", &bad]);
+    w.remote_git(&["update-ref", "refs/mock/research", &bad]);
     a.fails(&["data-refs", "paired", "HEAD"]);
 }
 
@@ -145,7 +145,7 @@ fn a_race_on_one_file_loses_neither_edit() {
     let o = a.run(&["data-refs", "update", "research"]);
     assert!(!o.ok, "a file changed on both sides is refused: {}", o.all());
     assert_eq!(a.read(NOTES), b"a's edit\n");
-    let on_ref = w.remote_git(&["show", "refs/heads/mock/research:20261001_alpha/NOTES.md"]);
+    let on_ref = w.remote_git(&["show", "refs/mock/research:20261001_alpha/NOTES.md"]);
     assert_eq!(on_ref, "b's edit\n");
 }
 
@@ -192,7 +192,7 @@ fn paired_survives_a_rehouse_in_the_clone_that_held_the_old_hash() {
         .output()
         .unwrap();
     let new = String::from_utf8(out.stdout).unwrap().trim().to_string();
-    w.remote_git(&["update-ref", "refs/heads/mock/research", &new]);
+    w.remote_git(&["update-ref", "refs/mock/research", &new]);
     a.ok(&["data-refs", "paired", "HEAD"]);
 }
 
@@ -266,7 +266,7 @@ fn a_landing_with_no_line_for_a_born_ref_is_refused_whatever_its_clock_says() {
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    let first = w.remote_git(&["log", "--format=%at", "refs/heads/mock/extra"]);
+    let first = w.remote_git(&["log", "--format=%at", "refs/mock/extra"]);
     assert!(first.trim().parse::<i64>().unwrap() > 1_760_000_000, "the control: the landing's clock is behind the ref's");
     let p = a.fails(&["data-refs", "paired", "HEAD"]);
     assert!(p.all().contains("extra") && p.all().contains("no `Mock-Ref` line"), "{}", p.all());

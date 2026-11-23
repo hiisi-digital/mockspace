@@ -181,7 +181,7 @@ pub fn store(w: &World, name: &str) -> mockspace_store::RefStore {
     mockspace_store::RefStore::new(
         w.clone_dir(name),
         w.remote(),
-        mockspace_store::RefPair::ref_form(NS).unwrap(),
+        mockspace_store::RefPair::for_namespace(NS).unwrap(),
     )
     .with_retry(mockspace_store::RetryPolicy::immediate(4))
 }

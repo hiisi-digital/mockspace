@@ -251,7 +251,7 @@ fn a_stash_of_everything_takes_the_instances_and_its_pop_gives_them_back() {
     a.git(&["stash", "push", "-q", "--include-untracked"]);
     assert_eq!(a.read(NOTES), b"a: before a stash\n");
     a.git(&["stash", "pop", "-q"]);
-    let tips = || -> Vec<Option<String>> { ["research", "templates"].iter().map(|ns| w.remote_tip(&format!("refs/heads/mock/{ns}"))).collect() };
+    let tips = || -> Vec<Option<String>> { ["research", "templates"].iter().map(|ns| w.remote_tip(&format!("refs/mock/{ns}"))).collect() };
     let before = tips();
     a.git(&["stash", "push", "-q", "--all"]);
     assert!(!a.exists(NOTES), "the control: a stash of everything takes the ignored files too");
@@ -377,13 +377,13 @@ fn gc_that_prunes_at_once_takes_a_copy_no_engine_command_has_taken_yet() {
     // the lost copy is said, and `commit` fails with or without `--accept-overwritten`, naming the
     // file that names the copy, and changes nothing
     assert!(all.contains("no longer holds"), "{all}");
-    let tip = a.git_out(&["rev-parse", "-q", "--verify", "refs/heads/mock/research"]).stdout;
+    let tip = a.git_out(&["rev-parse", "-q", "--verify", "refs/mock/research"]).stdout;
     for args in [&["data-refs", "commit", "research"][..], &["data-refs", "commit", "research", "--accept-overwritten"]] {
         let before = refs_e2e::whole::capture(&a);
         let c = a.fails(args);
         assert!(c.all().contains("no longer holds") && c.all().contains(".guard"), "{args:?} names the lost copy: {}", c.all());
         refs_e2e::whole::kept(&a, &before, &refs_e2e::whole::capture(&a), &refs_e2e::whole::Allowed::default()).unwrap();
     }
-    assert_eq!(a.git_out(&["rev-parse", "-q", "--verify", "refs/heads/mock/research"]).stdout, tip, "nothing was committed");
+    assert_eq!(a.git_out(&["rev-parse", "-q", "--verify", "refs/mock/research"]).stdout, tip, "nothing was committed");
     l.kept(&w, &[&a]).unwrap();
 }

@@ -116,7 +116,7 @@ fn a_shallow_writer_overtaken_after_its_push_still_knows_it_landed() {
         ),
     );
     let repo = w.clone_dir("shallow");
-    let shallow = RefStore::new(&repo, w.remote(), RefPair::ref_form(NS).unwrap())
+    let shallow = RefStore::new(&repo, w.remote(), RefPair::for_namespace(NS).unwrap())
         .with_retry(RetryPolicy::immediate(3))
         .with_depth(1);
     shallow.refresh().unwrap();
@@ -202,7 +202,7 @@ fn a_push_that_keeps_dropping_is_reported_as_that_and_not_as_a_lost_race() {
         "    echo 'fatal: the remote end hung up unexpectedly' >&2; exit 128",
         "",
     );
-    let s = RefStore::new(w.clone_dir("a"), w.remote(), RefPair::ref_form(NS).unwrap())
+    let s = RefStore::new(w.clone_dir("a"), w.remote(), RefPair::for_namespace(NS).unwrap())
         .with_retry(RetryPolicy::immediate(2))
         .with_git_program(&shim);
     let err = s
@@ -225,7 +225,7 @@ fn a_store_reads_what_it_saw_even_when_another_store_on_the_clone_moves_the_loca
     a.apply(&Edit::new().put("counter", "1\n"), "one", &Reapply)
         .unwrap();
     let repo = w.clone_dir("shared");
-    let pair = || RefPair::ref_form(NS).unwrap();
+    let pair = || RefPair::for_namespace(NS).unwrap();
     let reader = RefStore::new(&repo, w.remote(), pair()).with_retry(RetryPolicy::immediate(4));
     let other = RefStore::new(&repo, w.remote(), pair()).with_retry(RetryPolicy::immediate(4));
     reader.refresh().unwrap();
@@ -261,7 +261,7 @@ fn a_shallow_store_keeps_refreshing_after_another_writer_moves_the_remote() {
     let shallow = RefStore::new(
         w.clone_dir("shallow"),
         w.remote(),
-        RefPair::ref_form(NS).unwrap(),
+        RefPair::for_namespace(NS).unwrap(),
     )
     .with_retry(RetryPolicy::immediate(2))
     .with_depth(1);
@@ -299,7 +299,7 @@ fn a_push_that_landed_with_every_later_fetch_dropped_is_an_unknown_outcome_not_a
             pushed.display()
         ),
     );
-    let b = RefStore::new(w.clone_dir("b"), w.remote(), RefPair::ref_form(NS).unwrap())
+    let b = RefStore::new(w.clone_dir("b"), w.remote(), RefPair::for_namespace(NS).unwrap())
         .with_retry(RetryPolicy::immediate(2))
         .with_git_program(&shim);
     b.refresh().unwrap();

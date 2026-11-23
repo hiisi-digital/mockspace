@@ -9,7 +9,7 @@ mod refs_e2e;
 use refs_e2e::{World, fixture};
 
 fn on_remote(w: &World) -> String {
-    w.remote_git(&["ls-tree", "-r", "--name-only", "refs/heads/mock/research"])
+    w.remote_git(&["ls-tree", "-r", "--name-only", "refs/mock/research"])
 }
 
 fn ignore(a: &refs_e2e::Clone, lines: &str) {
@@ -63,7 +63,7 @@ fn a_file_the_ref_holds_stays_held_when_a_gitignore_matches_it_later() {
     let held = on_remote(&w);
     assert!(held.contains("20261001_alpha/data.bin") && held.contains("large.bin"), "{held}");
     assert!(!held.contains("new.bin"), "{held}");
-    assert_eq!(w.remote_git(&["show", "refs/heads/mock/research:20261001_alpha/data.bin"]), "changed bytes\n");
+    assert_eq!(w.remote_git(&["show", "refs/mock/research:20261001_alpha/data.bin"]), "changed bytes\n");
 }
 
 // Mutation: name the ignored files in one run of the migration and not the other, or move them.
