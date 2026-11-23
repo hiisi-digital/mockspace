@@ -7,7 +7,8 @@
 //! foresaw, not the way the engine keeps an edit (the backup ref of an instance is), so it is plain
 //! files under `<cache>/mockspace/kept/<seconds>-<pid>/<n>/<absolute path>`, one directory per run
 //! and a number per copy, and a run takes out every directory of a run more than [`KEPT_FOR`]
-//! seconds old. `<cache>` is `$XDG_CACHE_HOME`, or `$HOME/.cache`. A copy that cannot be made stops
+//! seconds old. `<cache>` is `$XDG_CACHE_HOME`, or `$HOME/.cache`, and `$MOCKSPACE_KEPT_DIR`
+//! names another directory instead, as every test binary does. A copy that cannot be made stops
 //! the write: the caller reports it and writes nothing.
 
 use std::io;
@@ -15,12 +16,10 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use mockspace_manifest::ambient::KEPT_DIR;
+
 /// How long a run's copies are kept, in seconds: a day.
 pub const KEPT_FOR: u64 = 24 * 60 * 60;
-
-/// The variable that names the directory to keep the copies in instead of the cache; the test
-/// binaries set it (`mockspace_manifest::ambient::KEPT_DIR`), so a test never writes the person's cache.
-pub const KEPT_DIR: &str = "MOCKSPACE_KEPT_DIR";
 
 /// Where every run keeps its copies, from the environment of this process.
 fn root() -> io::Result<PathBuf> {
@@ -47,10 +46,12 @@ fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
+/// This run's directory, once it is made.
+static RUN: OnceLock<Result<PathBuf, String>> = OnceLock::new();
+
 /// This run's directory, made once, with the runs older than [`KEPT_FOR`] taken out first.
 fn run_dir() -> io::Result<&'static Path> {
-    static DIR: OnceLock<Result<PathBuf, String>> = OnceLock::new();
-    let made = DIR.get_or_init(|| {
+    let made = RUN.get_or_init(|| {
         let root = root().map_err(|e| e.to_string())?;
         let now = now();
         prune(&root, now);
@@ -104,6 +105,50 @@ pub fn keep(path: &Path) -> io::Result<Option<PathBuf>> {
     Ok(Some(to))
 }
 
+/// Every copy of `path` kept under `root`, a directory of runs as [`keep`] makes it: oldest run
+/// first, and within a run in the order the copies were made. Nothing where `root` is not there.
+pub fn copies_under(root: &Path, path: &Path) -> io::Result<Vec<PathBuf>> {
+    let runs = match std::fs::read_dir(root) {
+        Ok(runs) => runs,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut runs: Vec<(u64, PathBuf)> = runs
+        .flatten()
+        .filter_map(|r| Some((r.file_name().to_str()?.split_once('-')?.0.parse().ok()?, r.path())))
+        .collect();
+    runs.sort();
+    let mut out = Vec::new();
+    for (_, run) in runs {
+        out.extend(copies_in_run(&run, path)?);
+    }
+    Ok(out)
+}
+
+/// Every copy of `path` this process kept, in the order it made them.
+pub fn copies_of(path: &Path) -> io::Result<Vec<PathBuf>> {
+    match RUN.get() {
+        Some(Ok(run)) => copies_in_run(run, path),
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// The copies of `path` in the run directory `run`, by the number of each copy.
+fn copies_in_run(run: &Path, path: &Path) -> io::Result<Vec<PathBuf>> {
+    let rel: PathBuf = std::path::absolute(path)?.components().filter(|c| matches!(c, std::path::Component::Normal(_))).collect();
+    let mut found: Vec<(u64, PathBuf)> = match std::fs::read_dir(run) {
+        Ok(copies) => copies
+            .flatten()
+            .filter_map(|n| Some((n.file_name().to_str()?.parse().ok()?, n.path().join(&rel))))
+            .filter(|(_, p)| std::fs::symlink_metadata(p).is_ok())
+            .collect(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e),
+    };
+    found.sort();
+    Ok(found.into_iter().map(|(_, p)| p).collect())
+}
+
 fn copy(from: &Path, to: &Path, meta: &std::fs::Metadata) -> io::Result<()> {
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent)?;
@@ -129,13 +174,6 @@ fn copy(from: &Path, to: &Path, meta: &std::fs::Metadata) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Mutation: spell the variable otherwise in one of the two crates; the tests then write the
-    // person's cache.
-    #[test]
-    fn the_test_binaries_set_the_variable_this_reads() {
-        assert_eq!(KEPT_DIR, mockspace_manifest::ambient::KEPT_DIR);
-    }
 
     // Mutation: prune by the modification time of the directory, or take out a name of another
     // shape; a run of yesterday then stays, or a person's own file in the cache goes.

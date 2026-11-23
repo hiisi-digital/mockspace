@@ -128,7 +128,8 @@ pub unsafe fn scrub_process() {
 }
 
 /// The variable that names where the engine keeps the copies it takes before it writes over a
-/// file, read by `mockspace_store::kept` before the person's cache.
+/// file instead of the person's cache. Defined here once: the scrub sets it, and
+/// `mockspace_store::kept` reads it by this name.
 pub const KEPT_DIR: &str = "MOCKSPACE_KEPT_DIR";
 
 /// Runs [`scrub_process`] before `main`, while the process is one thread, so that

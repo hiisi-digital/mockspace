@@ -550,6 +550,10 @@ use seeded::{mark_seeded, seeded_here};
 #[path = "migrate_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "migrate_kept_tests.rs"]
+mod kept_tests;
+
 /// Keeps a copy of what stands at `path` in the person's cache before a step writes over, renames
 /// or removes it (`mockspace_store::kept`); a copy that cannot be made stops the step.
 fn keep(path: &std::path::Path) -> Result<(), String> {

@@ -97,6 +97,21 @@ fn path_of(cfg: &Config, what: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(git(&cfg.repo_root, &["rev-parse", "--path-format=absolute", "--git-path", what])?))
 }
 
+/// The text of this worktree's sparse-checkout file, empty where there is none. A file that cannot
+/// be read, or is not UTF-8, is refused: taken as empty, the person's lines in it would be dropped
+/// by the write that follows.
+fn patterns(file: &Path) -> Result<String, String> {
+    match std::fs::read_to_string(file) {
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!(
+            "the sparse-checkout file {} cannot be read as text ({e}), so the lines in it are not known and it is not \
+             written; make it readable UTF-8 or move it aside, then run `cargo mock data-refs instantiate`",
+            file.display()
+        )),
+    }
+}
+
 fn has_block(text: &str) -> bool {
     text.lines().any(|l| l == BEGIN)
 }
@@ -107,13 +122,17 @@ fn has_block(text: &str) -> bool {
 pub fn install(cfg: &Config) -> Result<(), String> {
     let lines = managed_lines(cfg)?;
     let file = path_of(cfg, "info/sparse-checkout")?;
-    let existing = std::fs::read_to_string(&file).unwrap_or_default();
+    let existing = patterns(&file)?;
     if lines.is_empty() {
         if has_block(&existing) {
             keep(&file)?;
             std::fs::write(&file, compose(&existing, &[])).map_err(|e| format!("writing {}: {e}", file.display()))?;
         }
-        let _ = std::fs::remove_file(remembered_file(cfg)?);
+        let held = remembered_file(cfg)?;
+        if held.exists() {
+            keep(&held)?;
+            std::fs::remove_file(&held).map_err(|e| format!("removing {}: {e}", held.display()))?;
+        }
         return Ok(());
     }
     let repo = &cfg.repo_root;
@@ -174,6 +193,7 @@ pub fn install(cfg: &Config) -> Result<(), String> {
     let held = remembered_file(cfg)?;
     let declared = serde_json::to_string(&cfg.data_refs).map_err(|e| e.to_string())?;
     if std::fs::read_to_string(&held).ok().as_deref() != Some(declared.as_str()) {
+        keep(&held)?;
         std::fs::write(&held, declared).map_err(|e| format!("writing {}: {e}", held.display()))?;
     }
     super::hook::install(cfg)
@@ -199,7 +219,7 @@ pub fn remembered(cfg: &Config) -> Vec<super::DataRefDecl> {
 pub fn check(cfg: &Config) -> Result<(), String> {
     let lines = managed_lines(cfg)?;
     let file = path_of(cfg, "info/sparse-checkout")?;
-    let existing = std::fs::read_to_string(&file).unwrap_or_default();
+    let existing = patterns(&file)?;
     if lines.is_empty() {
         return if has_block(&existing) {
             Err("this worktree still keeps git from writing over the instance of a ref that is no longer declared (its \

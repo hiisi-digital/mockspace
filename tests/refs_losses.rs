@@ -399,3 +399,30 @@ fn core_filemode_true_reads_a_changed_executable_bit() {
     let s = a.ok(&["data-refs", "status", "research"]);
     assert!(s.stdout.trim_end().ends_with("changed"), "{}", s.all());
 }
+
+// Mutation: let a copy that cannot be made pass, and write on; the bytes on disk are then written
+// over with no copy anywhere. Where the directory of the copies cannot be made, `update` writes
+// nothing at all, and the same call goes through once it can.
+#[test]
+fn a_copy_that_cannot_be_made_stops_the_write_and_leaves_the_work_tree_as_it_was() {
+    let w = fixture::migrated_remote();
+    let a = fixture::seat(&w, "a");
+    let b = fixture::seat(&w, "b");
+    b.write(NOTES, b"b: the ref moves on\n");
+    b.ok(&["data-refs", "commit", "research"]);
+    let was = a.read(NOTES);
+    // a file where the directory of the copies goes: no run can make its directory there
+    let _ = std::fs::remove_dir_all(w.kept_dir());
+    std::fs::write(w.kept_dir(), b"not a directory\n").unwrap();
+    let before = refs_e2e::whole::capture(&a);
+    let o = a.fails(&["data-refs", "update", "research"]);
+    assert!(o.all().contains("keeping a copy"), "the refusal names the copy: {}", o.all());
+    assert_eq!(a.read(NOTES), was, "the file is as it was");
+    refs_e2e::whole::kept(&a, &before, &refs_e2e::whole::capture(&a), &refs_e2e::whole::Allowed::default()).unwrap();
+    // the control: with the directory back, the same call writes the tip and keeps what stood there
+    std::fs::remove_file(w.kept_dir()).unwrap();
+    a.ok(&["data-refs", "update", "research"]);
+    assert_eq!(a.read(NOTES), b"b: the ref moves on\n");
+    let copies = w.kept_copies_of(&a.path(NOTES));
+    assert!(copies.iter().any(|c| std::fs::read(c).unwrap() == was), "the bytes from before are kept: {copies:?}");
+}

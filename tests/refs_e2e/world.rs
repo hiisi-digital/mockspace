@@ -92,6 +92,16 @@ impl World {
         self.tmp.path().canonicalize().unwrap()
     }
 
+    /// Where every command run in this world keeps the copies it takes before a write.
+    pub fn kept_dir(&self) -> PathBuf {
+        self.base().join("kept")
+    }
+
+    /// Every copy of `file` a command of this world kept before it wrote over, changed or removed it.
+    pub fn kept_copies_of(&self, file: &Path) -> Vec<PathBuf> {
+        mockspace_store::kept::copies_under(&self.kept_dir(), file).unwrap()
+    }
+
     pub fn command(&self, program: &str, dir: &Path) -> Command {
         let mut c = Command::new(program);
         c.current_dir(dir)
@@ -104,6 +114,8 @@ impl World {
             .env_remove("GIT_INDEX_FILE")
             .env_remove("MOCK_ROOT")
             .env("MOCKSPACE_BIN", BIN)
+            // the copies the engine keeps before a write, in this world and nowhere else
+            .env(mockspace_manifest::ambient::KEPT_DIR, self.kept_dir())
             .env("REAL_CARGO", std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
             .env("PATH", format!("{}:{}", self.base().join("shims").display(), std::env::var("PATH").unwrap()));
         // the filter is installed for the person, as `git lfs install` does, and applies only where

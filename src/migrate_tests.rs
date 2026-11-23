@@ -6,7 +6,7 @@ use crate::config::Config;
 use crate::registry::engine_world::EngineClone as _;
 use crate::registry::test_world::World;
 
-fn git(dir: &Path, args: &[&str]) -> String {
+pub(super) fn git(dir: &Path, args: &[&str]) -> String {
     let out = std::process::Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -26,7 +26,7 @@ fn write(cfg: &Config, rel: &str, text: &str) {
 
 /// A repository as a consumer has it before any migration: sources and templates side by side
 /// and a research directory, all committed on the branch.
-fn consumer(w: &World, name: &str) -> Config {
+pub(super) fn consumer(w: &World, name: &str) -> Config {
     let cfg = w.clone_of(name, false);
     write(&cfg, "crates/one/src/lib.rs", "pub fn one() {}\n");
     write(&cfg, "crates/one/DESIGN.md.tmpl", "design of one\n");
@@ -42,7 +42,7 @@ fn tracked(cfg: &Config) -> Vec<String> {
     git(&cfg.repo_root, &["ls-files"]).lines().map(str::to_owned).collect()
 }
 
-const RESEARCH: [&str; 5] = ["directory-to-ref", "--namespace", "research", "--path", "research"];
+pub(super) const RESEARCH: [&str; 5] = ["directory-to-ref", "--namespace", "research", "--path", "research"];
 const TEMPLATES: [&str; 7] =
     ["directory-to-ref", "--namespace", "templates", "--path", "crates", "--include", "**/*.md.tmpl"];
 

@@ -124,7 +124,7 @@ fn migrated_under(setup: Setup) {
             let gone: Vec<&str> = tracked.split('\0').filter(|p| !p.is_empty() && !stale.exists(p)).collect();
             assert!(gone.is_empty(), "files of the branch are gone from the worktree: {gone:?}");
             let file = w.base().join("a.git/worktrees/a-stale/info/sparse-checkout");
-            assert!(kept_copies_of(&file).iter().any(|k| std::fs::read_to_string(k).ok().as_deref() == Some(setups::STALE_PATTERNS)), "a copy of {} is in the cache", file.display());
+            assert!(w.kept_copies_of(&file).iter().any(|k| std::fs::read_to_string(k).ok().as_deref() == Some(setups::STALE_PATTERNS)), "a copy of {} is in the cache", file.display());
         },
     }
 
@@ -177,18 +177,4 @@ fn every_migration_keeps_git_shook_dispatching_the_hooks() {
 #[test]
 fn every_migration_keeps_a_bare_clone_with_linked_worktrees() {
     migrated_under(Setup::BareWorktrees);
-}
-
-/// Every copy of `file` the engine kept before it wrote over it, in the directory the test binaries
-/// name for the copies (`mockspace_store::kept`).
-fn kept_copies_of(file: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let root = std::path::PathBuf::from(std::env::var_os(mockspace_manifest::ambient::KEPT_DIR).expect("the scrub names the copies' directory"));
-    let rel: std::path::PathBuf = file.components().filter(|c| matches!(c, std::path::Component::Normal(_))).collect();
-    let Ok(runs) = std::fs::read_dir(&root) else { return Vec::new() };
-    // a run directory holds one numbered directory for each copy
-    runs.flatten()
-        .filter_map(|r| std::fs::read_dir(r.path()).ok())
-        .flat_map(|copies| copies.flatten().map(|n| n.path().join(&rel)).collect::<Vec<_>>())
-        .filter(|p| p.is_file())
-        .collect()
 }
