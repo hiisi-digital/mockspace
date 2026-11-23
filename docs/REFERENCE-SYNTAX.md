@@ -307,8 +307,8 @@ A heading fails loudly instead. Rename it and the citation stops resolving,
 which is a report rather than a lie. A heading is named by the slug a forge gives it, folded into the one
 character set (`-` becomes `_`), so `The four lanes` is `the_four_lanes`, and the link
 rendered for it carries the forge's own slug, `the-four-lanes`, so the anchor a reader
-clicks is the one the link produces. A heading that opens on a digit has no such name
-and cannot be cited by heading.
+clicks is the one the link produces. A heading that opens on a digit is led by `t`, as
+any such name is: `2026 plan` is `t2026_plan`.
 
 Line citations are honest in exactly one situation: a root whose contents do not
 move. Declare that:
@@ -340,7 +340,14 @@ set. Exactly one match
 resolves; several is an error rather than a guess, because the author meant one of
 them and picking silently would point the citation somewhere they did not choose. No
 spelling tells two such files apart, so one is renamed or removed. A file or directory
-whose name cannot fold, because it opens on a digit or holds a dot, cannot be cited.
+whose name cannot fold, because it opens on an underscore or holds a dot, cannot be cited.
+
+A name may not open on a digit, so the host leads one that does with `t`: the research
+file `202611011713_renderer-roadmap.md` is `research::t202611011713_renderer_roadmap`.
+It is cited by its whole stamped name, never by the slug after the stamp, which a
+second file with the same slug would make ambiguous. A file or directory of its own
+named `t` and a twelve-digit stamp would answer the same citation, so the lint
+`a-name-takes-no-led-stamp` refuses one.
 
 The spelling before this syntax (uppercase, extensions, `::#heading`, spaces around
 the separator) is refused, and the refusal names the migration that rewrites it:

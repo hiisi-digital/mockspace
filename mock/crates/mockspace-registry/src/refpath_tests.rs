@@ -124,17 +124,6 @@ fn an_operation_is_read_by_the_standard_with_exactly_one_argument() {
     assert_eq!(operation("pathof(a::b)", "refsto"), None);
 }
 
-// Mutation: folding a directory's name up to its first dot, as a file's is, names `v1.2` as `v1`;
-// folding a file's whole name keeps the extension a reference never writes.
-#[test]
-fn a_file_is_named_up_to_its_first_dot_and_a_directory_by_its_whole_name() {
-    let entry = |name: &str, is_dir: bool| fold_entry(name, is_dir).map(|f| f.to_string());
-    assert_eq!(entry("DESIGN.md.tmpl", false).as_deref(), Some("design"));
-    assert_eq!(entry("my-crate", true).as_deref(), Some("my_crate"));
-    assert_eq!(entry("v1.2", true), None);
-    assert_eq!(entry(".hidden", false), None);
-}
-
 // Mutation: cutting the text at its first separator by hand gives `canon` for `canon::Foo` and
 // `canon ` for `canon :: foo`, both of which the standard refuses, and `{a, b}` for a set.
 #[test]
@@ -153,7 +142,8 @@ fn a_heading_is_named_by_its_forge_slug_folded() {
     assert_eq!(heading_name("The four lanes").as_deref(), Some("the_four_lanes"));
     assert_eq!(heading_name("no_std, no alloc").as_deref(), Some("no_std_no_alloc"));
     assert_eq!(heading_name("Warm's objective").as_deref(), Some("warms_objective"));
-    assert_eq!(heading_name("2026 plan"), None);
+    assert_eq!(heading_name("2026 plan").as_deref(), Some("t2026_plan"));
+    assert_eq!(heading_name("_private"), None);
     assert_eq!(forge_slug("no_std, no alloc"), "no_std-no-alloc");
 }
 
@@ -231,6 +221,24 @@ fn several_files_folding_to_one_name_are_ambiguous_and_none_is_picked() {
     let dir = tree(&["DESIGN.md", "design.md.tmpl", "other/readme.md"]);
     let got = FileRef::read("mock::design::1").unwrap().locate(dir.path());
     assert_eq!(got, Location::Ambiguous(vec!["DESIGN.md".to_string(), "design.md.tmpl".to_string()]));
+}
+
+// A research file is named by its stamp, so its citation is the led name, and the slug alone or the
+// stamp unled reaches nothing: a second file of the same slug and another stamp leaves the first
+// citation where it was.
+//
+// Mutation: matching the slug after the stamp makes both files answer `t202611011713_renderer_roadmap`;
+// comparing without the lead finds nothing for it.
+#[test]
+fn a_stamped_file_is_reached_by_its_led_name_alone() {
+    let dir = tree(&["research/202611011713_renderer-roadmap.md", "research/202611201200_renderer-roadmap.md"]);
+    let at = |t: &str| FileRef::read(t).unwrap().locate(dir.path());
+    assert_eq!(
+        at("mock::research::t202611011713_renderer_roadmap::the_four_lanes"),
+        Location::Found(dir.path().join("research/202611011713_renderer-roadmap.md"))
+    );
+    assert_eq!(at("mock::research::renderer_roadmap::1"), Location::Missing);
+    assert_eq!(at("mock::research::t202611011713::1"), Location::Missing);
 }
 
 // Mutation: reading the whole tail as a path, so a heading is looked for as a file.

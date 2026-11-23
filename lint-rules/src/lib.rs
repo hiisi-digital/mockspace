@@ -40,6 +40,7 @@
 
 pub mod a_bench_runs_only_on_the_generated_driver;
 pub use a_bench_runs_only_on_the_generated_driver::{Runner as BenchRunner, bench_runners};
+mod a_name_takes_no_led_stamp;
 mod bench_results_live_in_the_harness_layout;
 pub mod canon_not_while_panel_open;
 pub mod registry_view;
@@ -1779,6 +1780,7 @@ pub fn all_repo_lints() -> Vec<Box<dyn RepoLint>> {
         Box::new(lints_read_through_the_view::LintsReadThroughTheView),
         Box::new(a_bench_runs_only_on_the_generated_driver::ABenchRunsOnlyOnTheGeneratedDriver),
         Box::new(bench_results_live_in_the_harness_layout::BenchResultsLiveInTheHarnessLayout),
+        Box::new(a_name_takes_no_led_stamp::ANameTakesNoLedStamp),
     ]
 }
 
