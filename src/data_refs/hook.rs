@@ -225,7 +225,8 @@ impl Managed {
             "#!/bin/sh\n{mark}\n# chains: {name}\n# Runs {name}, the hook that stood here before, first, and exits with its status. The copy after it \
              never stops the git command it runs in: every way out of it is exit 0.\n{take}status=0\n\
              chained=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/hooks/{name}\n\
-             if [ -x \"$chained\" ]; then {feed}\"$chained\" \"$@\" || status=$?; fi\n\
+             ran=${{MOCKSPACE_CHAINED_RAN:-}}\nunset MOCKSPACE_CHAINED_RAN\n\
+             if [ -x \"$chained\" ] && [ -z \"$ran\" ]; then {feed}\"$chained\" \"$@\" || status=$?; fi\n\
              {feed}(\n{when}{copy})\nexit $status\n",
             mark = self.mark,
             when = self.when,
@@ -412,3 +413,7 @@ pub(super) fn check(cfg: &Config) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "hook_shook_tests.rs"]
+mod shook_tests;
