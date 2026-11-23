@@ -65,6 +65,30 @@ fn run_dir() -> io::Result<&'static Path> {
     }
 }
 
+/// Makes this run's directory, so a write that follows finds its copy can be made: a caller that
+/// must refuse before it writes anything asks this first, and a copy that could not be made then
+/// stops nothing half done.
+pub fn ready() -> io::Result<()> {
+    run_dir().map(|_| ())
+}
+
+/// The shell function `ms_keep <path>`, for a program with no engine to run: it copies what stands
+/// at `<path>`, an absolute path, into a run directory of its own under the same root and in the
+/// same layout as [`keep`] (`<root>/<seconds>-<pid>/1/<absolute path>`), so [`copies_under`] finds
+/// it and a later run's [`prune`] takes it out after a day. It says where the copy went on stderr,
+/// fails where it could not be made, and never stops the caller, which decides what that means.
+pub const SHELL_KEEP: &str = r#"ms_keep() { # <absolute path>
+    [ -e "$1" ] || [ -L "$1" ] || return 0
+    if [ -n "${MOCKSPACE_KEPT_DIR:-}" ] && [ "${MOCKSPACE_KEPT_DIR#/}" != "$MOCKSPACE_KEPT_DIR" ]; then ms_root=$MOCKSPACE_KEPT_DIR
+    elif [ -n "${XDG_CACHE_HOME:-}" ] && [ "${XDG_CACHE_HOME#/}" != "$XDG_CACHE_HOME" ]; then ms_root=$XDG_CACHE_HOME/mockspace/kept
+    elif [ -n "${HOME:-}" ] && [ "${HOME#/}" != "$HOME" ]; then ms_root=$HOME/.cache/mockspace/kept
+    else echo "mockspace: no absolute XDG_CACHE_HOME or HOME, so $1 is copied nowhere" >&2; return 1
+    fi
+    ms_to="$ms_root/$(date +%s)-$$/1$1"
+    mkdir -p "$(dirname "$ms_to")" && cp -RP "$1" "$ms_to" || { echo "mockspace: $1 could not be copied to $ms_to" >&2; return 1; }
+    echo "mockspace: copied $1 to $ms_to" >&2
+}"#;
+
 /// Takes out every run directory under `root` whose run started more than [`KEPT_FOR`] seconds
 /// before `now`. A name that is not `<seconds>-<pid>` is never touched, and a removal that fails is
 /// left for the next run.
@@ -155,7 +179,7 @@ fn copy(from: &Path, to: &Path, meta: &std::fs::Metadata) -> io::Result<()> {
     }
     let kind = meta.file_type();
     if kind.is_symlink() {
-        std::os::unix::fs::symlink(std::fs::read_link(from)?, to)
+        link_like(from, to)
     } else if kind.is_dir() {
         std::fs::create_dir_all(to)?;
         for e in std::fs::read_dir(from)? {
@@ -168,6 +192,24 @@ fn copy(from: &Path, to: &Path, meta: &std::fs::Metadata) -> io::Result<()> {
     } else {
         // a socket or a fifo holds no bytes to keep
         Ok(())
+    }
+}
+
+/// A link at `to` with the target of the link at `from`, as the target's platform makes one.
+#[cfg(unix)]
+fn link_like(from: &Path, to: &Path) -> io::Result<()> {
+    std::os::unix::fs::symlink(std::fs::read_link(from)?, to)
+}
+
+/// A link at `to` with the target of the link at `from`: a directory link where `from` points at a
+/// directory, else a file link, as Windows tells the two apart.
+#[cfg(windows)]
+fn link_like(from: &Path, to: &Path) -> io::Result<()> {
+    let target = std::fs::read_link(from)?;
+    if std::fs::metadata(from).is_ok_and(|m| m.is_dir()) {
+        std::os::windows::fs::symlink_dir(target, to)
+    } else {
+        std::os::windows::fs::symlink_file(target, to)
     }
 }
 
@@ -224,6 +266,7 @@ mod tests {
 
     // Mutation: follow a link, or copy a directory's files flat; the copy then holds what the link
     // pointed at, or loses the layout.
+    #[cfg(unix)]
     #[test]
     fn a_file_a_link_and_a_directory_are_kept_as_they_stand() {
         let dir = mockspace_manifest::scratch::tempdir().unwrap();
@@ -235,5 +278,43 @@ mod tests {
         copy(&src.join("d"), &to, &std::fs::symlink_metadata(src.join("d")).unwrap()).unwrap();
         assert_eq!(std::fs::read(to.join("e/f")).unwrap(), b"deep");
         assert_eq!(std::fs::read_link(to.join("link")).unwrap(), Path::new("e/f"));
+    }
+
+    // Mutation: put the shell's copy under another layout, or follow its links; `copies_under`
+    // then finds nothing of it, or the copy of the link holds what it pointed at.
+    #[cfg(unix)]
+    #[test]
+    fn the_shell_copy_is_found_where_a_copy_of_the_engine_is_and_keeps_a_link_a_link() {
+        let dir = mockspace_manifest::scratch::tempdir().unwrap();
+        let root = dir.path().join("kept");
+        let src = dir.path().join("inst dir");
+        std::fs::create_dir_all(src.join("d")).unwrap();
+        std::fs::write(src.join("d/f"), b"the edit").unwrap();
+        std::os::unix::fs::symlink("d/f", src.join("link")).unwrap();
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{SHELL_KEEP}\nms_keep \"$1\""))
+            .arg("sh")
+            .arg(&src)
+            .env(KEPT_DIR, &root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let copies = copies_under(&root, &src.join("d/f")).unwrap();
+        assert_eq!(copies.len(), 1, "{copies:?}");
+        assert_eq!(std::fs::read(&copies[0]).unwrap(), b"the edit");
+        let link = copies_under(&root, &src.join("link")).unwrap();
+        assert_eq!(std::fs::read_link(&link[0]).unwrap(), Path::new("d/f"));
+        // a root that cannot be made is said, and the function fails
+        std::fs::write(dir.path().join("blocked"), b"a file where the root goes").unwrap();
+        let blocked = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{SHELL_KEEP}\nms_keep \"$1\""))
+            .arg("sh")
+            .arg(&src)
+            .env(KEPT_DIR, dir.path().join("blocked"))
+            .output()
+            .unwrap();
+        assert!(!blocked.status.success() && String::from_utf8_lossy(&blocked.stderr).contains("could not be copied"));
     }
 }
