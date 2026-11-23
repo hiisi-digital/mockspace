@@ -78,16 +78,30 @@ fn standard_names(text: &str) -> Result<Vec<&str>, Refusal> {
 
 /// An operation `name(argument)` of exactly one argument, as the argument's text.
 ///
-/// `None` when the text is not an operation of that name, or has another number of arguments.
+/// `None` when the text is not an operation of that name, or has another number of arguments. An
+/// argument whose root is written in the host's naming (`pathof(ikiuni-renderer::a_row)`) is read
+/// as [`names`] reads it: the argument is given as written, and the query inside it is the caller's
+/// to read, which still refuses a hyphen past the root.
 #[must_use]
 pub fn operation<'a>(text: &'a str, name: &str) -> Option<&'a str> {
-    let Ok(Query::Operation {
-        name: got,
-        arguments,
-    }) = Query::parse(text)
-    else {
-        return None;
-    };
+    match Query::parse(text) {
+        Ok(Query::Operation { name: got, arguments }) => one_argument(got, arguments, name),
+        Ok(_) => None,
+        Err(_) => {
+            let folded = mockspace_refnames::fold_separators(text)?;
+            let base = folded.as_ptr().addr();
+            let Ok(Query::Operation { name: got, arguments }) = Query::parse(&folded) else {
+                return None;
+            };
+            let one = one_argument(got, arguments, name)?;
+            let at = one.as_ptr().addr() - base;
+            Some(&text[at..at + one.len()])
+        },
+    }
+}
+
+/// The one argument of an operation called `got`, when it is called `name`.
+fn one_argument<'a>(got: &str, arguments: &'a str, name: &str) -> Option<&'a str> {
     let mut args = letkajenkka::Arguments::of(arguments);
     match (got == name, args.next(), args.next()) {
         (true, Some(one), None) => Some(one),
