@@ -388,19 +388,23 @@ fn walk(dir: &Path, names: &[String], out: &mut Vec<PathBuf>) {
     }
 }
 
-/// The line a heading anchor stands at in `file`, and the forge slug a link to it carries.
+/// The line a heading anchor stands at in `file`, and the forge slug a link to it carries. `None`
+/// where no heading folds to `name`, and where two do: the citation would reach either, and is no
+/// anchor until one is renamed.
 #[must_use]
 pub fn heading_in(file: &Path, name: &str) -> Option<(usize, String)> {
     let text = fs::read_to_string(file).ok()?;
     let mut fences = mockspace_refnames::Fences::new();
-    text.lines().enumerate().find_map(|(i, l)| {
+    let mut found = text.lines().enumerate().filter_map(|(i, l)| {
         let trimmed = l.trim_start();
         if !fences.prose(l) || !trimmed.starts_with('#') {
             return None;
         }
         let title = trimmed.trim_start_matches('#').trim();
         (heading_name(title).as_deref() == Some(name)).then(|| (i + 1, forge_slug(title)))
-    })
+    });
+    let one = found.next()?;
+    found.next().is_none().then_some(one)
 }
 
 /// The line an anchor stands at in `file`: a heading's line, or the first line of a span that is

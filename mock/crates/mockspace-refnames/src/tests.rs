@@ -122,7 +122,8 @@ fn a_name_opening_on_a_digit_equals_its_led_spelling_and_nothing_else() {
 // so the two would answer one citation; only such a name is said to take it.
 //
 // Mutation: asking only of a lowercase `t` misses `T202611011713-x`; asking of any digits after the
-// lead refuses `t3_timing_probe`; asking of the led name itself refuses every stamped file.
+// lead refuses `t3_timing_probe`; asking of the name as cited, lead and all, refuses every stamped
+// file.
 #[test]
 fn only_a_name_whose_fold_opens_on_the_lead_and_a_stamp_takes_a_led_stamp() {
     for (name, takes) in [

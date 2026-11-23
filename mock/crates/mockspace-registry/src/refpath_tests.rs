@@ -241,6 +241,31 @@ fn a_stamped_file_is_reached_by_its_led_name_alone() {
     assert_eq!(at("mock::research::t202611011713::1"), Location::Missing);
 }
 
+// A name of its own with a few digits after the lead is let stand by the lint, so where it meets a
+// name the fold leads, the citation reaches both and says so.
+//
+// Mutation: taking the first match, or comparing the led name without its lead, picks one file.
+#[test]
+fn a_name_of_its_own_meeting_a_led_one_is_ambiguous() {
+    let dir = tree(&["r/3_x.md", "r/t3_x.md"]);
+    let got = FileRef::read("mock::r::t3_x::1").unwrap().locate(dir.path());
+    assert_eq!(got, Location::Ambiguous(vec!["3_x.md".to_string(), "t3_x.md".to_string()]));
+}
+
+// Two headings of one file that fold to one name are no anchor: a citation of the name would
+// otherwise reach whichever stands first.
+//
+// Mutation: taking the first heading that matches, as `find_map` does, gives line 1.
+#[test]
+fn two_headings_folding_to_one_name_are_no_anchor() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("d.md");
+    fs::write(&file, "# 2026 plan\n\n# T2026 plan\n\n# Design\n\n# design\n\n# Once\n").unwrap();
+    assert_eq!(heading_in(&file, "t2026_plan"), None);
+    assert_eq!(heading_in(&file, "design"), None);
+    assert_eq!(heading_in(&file, "once"), Some((9, "once".to_string())));
+}
+
 // Mutation: reading the whole tail as a path, so a heading is looked for as a file.
 #[test]
 fn the_last_name_of_a_heading_citation_is_the_heading_and_not_a_file() {

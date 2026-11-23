@@ -82,7 +82,7 @@ impl Folded<'_> {
         self.0.as_bytes()[0].is_ascii_digit()
     }
 
-    /// Whether the name, not led, folds to [`LEAD`] and a stamp of [`STAMP_DIGITS`] digits: the
+    /// Whether the name folds to [`LEAD`] and a stamp of [`STAMP_DIGITS`] digits: the
     /// spelling the fold gives a stamped name, so one citation would reach both.
     ///
     /// Only a stamp is asked of. A shorter run of digits after the lead names things of their own
@@ -91,7 +91,7 @@ impl Folded<'_> {
     #[must_use]
     pub const fn takes_a_led_stamp(&self) -> bool {
         let b = self.0.as_bytes();
-        if self.is_led() || b.len() <= STAMP_DIGITS || fold_byte(b[0]) != LEAD as u8 {
+        if b.len() <= STAMP_DIGITS || fold_byte(b[0]) != LEAD as u8 {
             return false;
         }
         let mut i = 1;

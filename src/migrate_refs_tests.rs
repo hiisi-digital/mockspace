@@ -240,7 +240,7 @@ fn a_registry_file_that_is_not_toml_stops_the_plan_and_is_named() {
     assert!(why.contains("broken.toml"), "{why}");
 }
 
-const LINTS: &str = "\n[lints.a]\nextends = \"stack-lints::no-heap\" # kept comment\n\n[lints.b]\nextends = 'Mockspace::No-Bare-Numeric'\n\n[lints.c]\nextends = \"stack-lints::_lives\"\n\n[lints.d]\nextends = \"mockspace::already_folded\"\n";
+const LINTS: &str = "\n[lints.a]\nextends = \"stack-lints::no-heap\" # kept comment\n\n[lints.b]\nextends = 'Mockspace::No-Bare-Numeric'\n\n[lints.c]\nextends = \"stack-lints::_lives\"\n\n[lints.d]\nextends = \"mockspace::already_folded\"\n\n[lints.e]\nextends = \"stack-lints::9lives\"\n";
 
 // Mutation: a migration that reads only templates and registry data leaves the config spelling alone.
 #[test]
@@ -252,6 +252,7 @@ fn the_preset_shorthands_of_the_config_are_rewritten_and_the_one_that_cannot_be_
     assert!(config.contains("extends = 'mockspace::no_bare_numeric'"), "{config}");
     assert!(config.contains("extends = \"stack-lints::_lives\""), "{config}");
     assert!(config.contains("extends = \"mockspace::already_folded\""), "{config}");
+    assert!(config.contains("extends = \"stack_lints::t9lives\""), "a name opening on a digit is led: {config}");
     assert!(config.starts_with(CONFIG), "the rest of the file is as written");
     let said = plan_of(&r.cfg, &[NAME]).unwrap_err().join("\n");
     assert!(said.contains("left mockspace.toml: stack-lints::_lives"), "{said}");

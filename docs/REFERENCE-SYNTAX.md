@@ -340,7 +340,9 @@ set. Exactly one match
 resolves; several is an error rather than a guess, because the author meant one of
 them and picking silently would point the citation somewhere they did not choose. No
 spelling tells two such files apart, so one is renamed or removed. A file or directory
-whose name cannot fold, because it opens on an underscore or holds a dot, cannot be cited.
+whose name cannot fold, because it opens on an underscore or holds a dot, a space or
+another character outside the set, cannot be cited. Two headings of one file that fold
+to one name are no anchor, for the same reason.
 
 A name may not open on a digit, so the host leads one that does with `t`: the research
 file `202611011713_renderer-roadmap.md` is `research::t202611011713_renderer_roadmap`.
