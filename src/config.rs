@@ -318,6 +318,11 @@ pub struct AgentConfig {
     /// On by default, same reasoning as `sketching_skill`.
     pub benchmarking_skill: bool,
 
+    /// A guard of the project's own the message gate runs first, on every
+    /// tool call: a pre-tool-use hook, read against the repository's root.
+    /// Unset, the gate runs alone.
+    pub message_guard: Option<String>,
+
     /// On by default: a generated rule pointing at `mock tools` and
     /// `mock lints` rather than at a hand-maintained list of either. The knob
     /// exists for the same reason the other two do, no builtin prose lands in
@@ -364,6 +369,7 @@ impl Default for AgentConfig {
             accelerated_interactive_design_talks: false,
             sketching_skill: true,
             benchmarking_skill: true,
+            message_guard: None,
             catalogues: true,
             panel_discipline: false,
             renamed_keys: Vec::new(),
@@ -478,6 +484,9 @@ struct RawAgentConfig {
     /// Opt out of the benchmarking skill builtin; absent means on.
     agent_benchmarking_skill: Option<bool>,
 
+    /// The project's own guard the message gate chains in front of itself.
+    agent_message_guard: Option<String>,
+
     /// Opt out of the catalogues rule builtin; absent means on.
     ///
     /// The rule covers tools and lints, so the key names neither. It was
@@ -532,7 +541,6 @@ struct RawRef {
     /// it indexes when both are called the same thing.
     roots: BTreeMap<String, crate::registry::RefRoot>,
 }
-
 
 #[derive(Deserialize, Default)]
 #[cfg_attr(test, derive(serde::Serialize))]
@@ -911,9 +919,12 @@ impl Config {
             .iter()
             .flat_map(|r| r.store.iter())
             .map(|d| {
-                d.namespace
-                    .clone()
-                    .unwrap_or_else(|| format!("registry/{}", d.dir.as_deref().unwrap_or("").trim_matches('/')))
+                d.namespace.clone().unwrap_or_else(|| {
+                    format!(
+                        "registry/{}",
+                        d.dir.as_deref().unwrap_or("").trim_matches('/')
+                    )
+                })
             })
             .chain(std::iter::once(
                 raw.test
@@ -1072,6 +1083,7 @@ impl Config {
                 .unwrap_or(false),
             sketching_skill: raw_agent.agent_sketching_skill.unwrap_or(true),
             benchmarking_skill: raw_agent.agent_benchmarking_skill.unwrap_or(true),
+            message_guard: raw_agent.agent_message_guard.clone(),
             catalogues: raw_agent.agent_catalogues.unwrap_or(true),
             panel_discipline: raw_agent.agent_panel_discipline.unwrap_or(false),
         };
@@ -1559,7 +1571,12 @@ fn git_answers_for(root: &Path) -> Result<bool, String> {
         .env("LC_ALL", "C")
         .current_dir(root)
         .output()
-        .map_err(|e| format!("git cannot be run to read the clone at {}: {e}", root.display()))?;
+        .map_err(|e| {
+            format!(
+                "git cannot be run to read the clone at {}: {e}",
+                root.display()
+            )
+        })?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         if stderr.contains("not a git repository") {
@@ -1606,7 +1623,12 @@ fn clone_says(repo_root: &Path, key: &str) -> Result<Option<bool>, String> {
         .args(["config", "--local", "--type=bool", "--get", &name])
         .current_dir(repo_root)
         .output()
-        .map_err(|e| format!("git cannot be run to read `{name}` of the clone at {}: {e}", repo_root.display()))?;
+        .map_err(|e| {
+            format!(
+                "git cannot be run to read `{name}` of the clone at {}: {e}",
+                repo_root.display()
+            )
+        })?;
     // 1 is git's answer for a key that is not set.
     if out.status.code() == Some(1) {
         return Ok(None);
@@ -1620,7 +1642,11 @@ fn clone_says(repo_root: &Path, key: &str) -> Result<Option<bool>, String> {
     match String::from_utf8_lossy(&out.stdout).trim() {
         "true" => Ok(Some(true)),
         "false" => Ok(Some(false)),
-        other => Err(format!("`{name}` in this clone's git config reads as `{other}`, not a boolean")),
+        other => {
+            Err(format!(
+                "`{name}` in this clone's git config reads as `{other}`, not a boolean"
+            ))
+        },
     }
 }
 
@@ -2301,7 +2327,11 @@ mod key_lists_cannot_rot {
             // guard working.
             // `tools` is read through toml_edit for the reason `lints` is, its values being a
             // scalar or an array per key (`tool_config::parse`).
-            if *k == "lints" || *k == "lint-crates" || *k == "tools" || launcher.iter().any(|l| l == k) {
+            if *k == "lints"
+                || *k == "lint-crates"
+                || *k == "tools"
+                || launcher.iter().any(|l| l == k)
+            {
                 continue;
             }
             assert!(

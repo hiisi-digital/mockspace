@@ -262,11 +262,11 @@ fn agent_gate_hook_self_heals_then_blocks() {
 fn gate_intact_in(clone: &std::path::Path) -> bool {
     let hook = builtin_mockspace_gate();
     let start = hook.find("_gate_intact() {").expect("the check is defined");
-    let end = hook[start..].find("\n}\n").expect("the check ends") + start + 3;
+    let end = hook[start ..].find("\n}\n").expect("the check ends") + start + 3;
     let script = format!(
         "root='{}'\nvalidator=\"$root/mock/target/hooks/pre-commit\"\n{}\n_gate_intact\n",
         clone.display(),
-        &hook[start..end]
+        &hook[start .. end]
     );
     std::process::Command::new("bash")
         .args(["-c", &script])
@@ -578,7 +578,7 @@ pub(super) fn skill_fixture(design_talks: Option<bool>) -> tempfile::TempDir {
 
 // The same fixture with an arbitrary agent config, for knobs beyond the
 // design-talk one.
-fn skill_fixture_config(config: &str) -> tempfile::TempDir {
+pub(super) fn skill_fixture_config(config: &str) -> tempfile::TempDir {
     let guard = skill_fixture(None);
     let mock = guard.path().join("mock");
     std::fs::write(mock.join("agent").join("config.toml"), config).unwrap();
@@ -666,9 +666,8 @@ fn the_skill_catalogue_names_every_builtin_and_nothing_else() {
 fn sketching_and_benchmarking_can_be_declined() {
     // Default on, but a knob: no builtin prose lands in a consumer's context
     // without one, and declining must actually decline.
-    let fx = skill_fixture_config(
-        "agent_sketching_skill = false\nagent_benchmarking_skill = false\n",
-    );
+    let fx =
+        skill_fixture_config("agent_sketching_skill = false\nagent_benchmarking_skill = false\n");
     let cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
     for name in ["sketching", "benchmarking"] {
@@ -1128,12 +1127,24 @@ fn a_lint_the_repository_turned_off_is_not_in_the_catalogues_rule() {
         .base
         .insert(on.to_string(), mockspace_lint_rules::Severity::HARD_ERROR);
     let builtins = generate_builtin_templates(&cfg, &pack_with_stub_tool());
-    let rule = builtins.rules.iter().find(|r| r.name == "catalogues").unwrap();
-    let set_here = rule.body.split("LINTS SET HERE").nth(1).expect("the group heading");
+    let rule = builtins
+        .rules
+        .iter()
+        .find(|r| r.name == "catalogues")
+        .unwrap();
+    let set_here = rule
+        .body
+        .split("LINTS SET HERE")
+        .nth(1)
+        .expect("the group heading");
     let names: Vec<&str> = set_here
         .split(|c: char| c == ',' || c == ':' || c.is_whitespace())
         .collect();
-    assert!(names.contains(&on), "the control `{on}` is named:\n{}", rule.body);
+    assert!(
+        names.contains(&on),
+        "the control `{on}` is named:\n{}",
+        rule.body
+    );
     assert!(!names.contains(&off), "`{off}` is off:\n{}", rule.body);
 }
 
@@ -1146,10 +1157,22 @@ fn the_catalogues_rule_for_a_repository_that_set_nothing_is_a_pointer() {
     let fx = skill_fixture(None);
     let cfg = crate::config::Config::from_dir(&fx.path().join("mock"));
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
-    let rule = builtins.rules.iter().find(|r| r.name == "catalogues").unwrap();
+    let rule = builtins
+        .rules
+        .iter()
+        .find(|r| r.name == "catalogues")
+        .unwrap();
     let size = rule.body.len();
-    assert!(size < 1_500, "{size} bytes for a repository that set nothing:\n{}", rule.body);
-    assert!(size > 300, "{size} bytes: the pointer to the two commands is missing:\n{}", rule.body);
+    assert!(
+        size < 1_500,
+        "{size} bytes for a repository that set nothing:\n{}",
+        rule.body
+    );
+    assert!(
+        size > 300,
+        "{size} bytes: the pointer to the two commands is missing:\n{}",
+        rule.body
+    );
 }
 
 #[test]
@@ -1642,12 +1665,22 @@ fn the_lint_authoring_rule_names_the_view_and_its_guard() {
         .iter()
         .find(|r| r.name == "lints-read-through-the-view")
         .expect("the builtin rules carry one for lint authors");
-    assert!(rule.apply_to.iter().all(|g| g.ends_with("/lints/**")), "{:?}", rule.apply_to);
+    assert!(
+        rule.apply_to.iter().all(|g| g.ends_with("/lints/**")),
+        "{:?}",
+        rule.apply_to
+    );
     for needed in ["ctx.view()", "`lints-read-through-the-view`", "view.untraced", "view.each"] {
-        assert!(rule.body.contains(needed), "the rule does not name {needed}");
+        assert!(
+            rule.body.contains(needed),
+            "the rule does not name {needed}"
+        );
     }
     let guard = mockspace_lint_rules::lints_read_through_the_view::LintsReadThroughTheView;
-    assert_eq!(mockspace_lint_rules::Lint::name(&guard), "lints-read-through-the-view");
+    assert_eq!(
+        mockspace_lint_rules::Lint::name(&guard),
+        "lints-read-through-the-view"
+    );
 }
 
 /// A consumer's generated surface carries the bench, sketch and test guidance:
@@ -1680,9 +1713,14 @@ fn a_consumer_gets_the_bench_sketch_and_test_rules_skills_and_hook() {
         let text = std::fs::read_to_string(rules.join(format!("{rule}.md")))
             .unwrap_or_else(|e| panic!("{rule}.md was not generated: {e}"));
         assert!(text.contains(says), "{rule}.md does not say {says}");
-        assert!(!text.contains("\npaths:"), "{rule}.md is scoped to paths, so it loads too late");
         assert!(
-            root.join(".github/instructions").join(format!("{rule}.instructions.md")).is_file(),
+            !text.contains("\npaths:"),
+            "{rule}.md is scoped to paths, so it loads too late"
+        );
+        assert!(
+            root.join(".github/instructions")
+                .join(format!("{rule}.instructions.md"))
+                .is_file(),
             "{rule} is missing on the copilot surface"
         );
     }
@@ -1693,8 +1731,9 @@ fn a_consumer_gets_the_bench_sketch_and_test_rules_skills_and_hook() {
         ("sketching", "cargo mock sketches"),
         ("testing", "cargo mock test-units"),
     ] {
-        let text = std::fs::read_to_string(root.join(".claude/skills").join(skill).join("SKILL.md"))
-            .unwrap_or_else(|e| panic!("skill {skill} was not generated: {e}"));
+        let text =
+            std::fs::read_to_string(root.join(".claude/skills").join(skill).join("SKILL.md"))
+                .unwrap_or_else(|e| panic!("skill {skill} was not generated: {e}"));
         assert!(text.contains(says), "skill {skill} does not say {says}");
     }
 
@@ -1711,7 +1750,11 @@ fn a_consumer_gets_the_bench_sketch_and_test_rules_skills_and_hook() {
             .iter()
             .filter(|e| e["matcher"] == tool)
             .flat_map(|e| e["hooks"].as_array().cloned().unwrap_or_default())
-            .any(|h| h["command"].as_str().is_some_and(|c| c.contains("mockspace-guide.sh")));
+            .any(|h| {
+                h["command"]
+                    .as_str()
+                    .is_some_and(|c| c.contains("mockspace-guide.sh"))
+            });
         assert!(wired, "the guide hook is not wired for {tool}");
     }
 }
@@ -1723,7 +1766,11 @@ fn the_bookends_live_in_the_mockspace_rule_and_nowhere_else() {
     let mock_guard = skill_fixture(None);
     let mock = mock_guard.path().join("mock");
     let root = mock.parent().expect("the fixture's mock dir has a parent");
-    std::fs::write(mock.join("agent").join("PREAMBLE.md.tmpl"), "CONSUMER-PREAMBLE-LINE\n").unwrap();
+    std::fs::write(
+        mock.join("agent").join("PREAMBLE.md.tmpl"),
+        "CONSUMER-PREAMBLE-LINE\n",
+    )
+    .unwrap();
 
     let cfg = crate::config::Config::from_dir(&mock);
     generate_agent_rules(
@@ -1737,11 +1784,18 @@ fn the_bookends_live_in_the_mockspace_rule_and_nowhere_else() {
     let banner = std::fs::read_to_string(rules.join("mockspace.md"))
         .expect("the mockspace rule was not generated");
     for must in [BUILTIN_PREAMBLE, BUILTIN_POSTAMBLE, "CONSUMER-PREAMBLE-LINE"] {
-        assert!(banner.contains(must), "the mockspace rule lacks {must}:\n{banner}");
+        assert!(
+            banner.contains(must),
+            "the mockspace rule lacks {must}:\n{banner}"
+        );
     }
-    assert!(!banner.contains("\npaths:"), "the mockspace rule must load every session");
-    let copilot = std::fs::read_to_string(root.join(".github/instructions/mockspace.instructions.md"))
-        .expect("the copilot mockspace rule was not generated");
+    assert!(
+        !banner.contains("\npaths:"),
+        "the mockspace rule must load every session"
+    );
+    let copilot =
+        std::fs::read_to_string(root.join(".github/instructions/mockspace.instructions.md"))
+            .expect("the copilot mockspace rule was not generated");
     assert!(copilot.contains("applyTo: \"**\""), "{copilot}");
 
     // The control: every other generated rule and skill is checked, and there
@@ -1752,14 +1806,24 @@ fn the_bookends_live_in_the_mockspace_rule_and_nowhere_else() {
             others.push(entry.path());
         }
     }
-    for entry in std::fs::read_dir(root.join(".claude/skills")).unwrap().flatten() {
+    for entry in std::fs::read_dir(root.join(".claude/skills"))
+        .unwrap()
+        .flatten()
+    {
         others.push(entry.path().join("SKILL.md"));
     }
-    assert!(others.len() > 5, "too few generated files to mean anything: {others:?}");
+    assert!(
+        others.len() > 5,
+        "too few generated files to mean anything: {others:?}"
+    );
     for path in others {
         let text = std::fs::read_to_string(&path).unwrap();
         for bookend in [BUILTIN_PREAMBLE, BUILTIN_POSTAMBLE, "CONSUMER-PREAMBLE-LINE"] {
-            assert!(!text.contains(bookend), "{} repeats a bookend", path.display());
+            assert!(
+                !text.contains(bookend),
+                "{} repeats a bookend",
+                path.display()
+            );
         }
     }
 }
@@ -1769,5 +1833,8 @@ fn a_claude_rule_scoped_to_everything_has_no_paths_block_and_a_narrower_scope_ke
     assert_eq!(format_claude_paths(&["**".to_string()]), "");
     let both = format_claude_paths(&["**".to_string(), "src/**".to_string()]);
     assert!(both.starts_with("---\npaths:\n"), "{both}");
-    assert!(both.contains("  - \"**\"") && both.contains("  - \"src/**\""), "{both}");
+    assert!(
+        both.contains("  - \"**\"") && both.contains("  - \"src/**\""),
+        "{both}"
+    );
 }

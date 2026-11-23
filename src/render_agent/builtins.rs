@@ -47,6 +47,7 @@ pub(crate) fn builtin_check_message(cfg: &Config) -> String {
     let launcher_lookup = super::helpers::find_launcher(&format!(
         "the message gate cannot run: no mockspace launcher on PATH. Policy is configured in {mock_rel}/agent/config.toml and enforced by the engine, so guessing a weaker rule here would contradict it. Install with: cargo install cargo-mock"
     ));
+    let message_guard = message_guard_chain(cfg.agent.message_guard.as_deref());
     format!(
         r##"#!/usr/bin/env bash
 # @matchers: *
@@ -63,6 +64,7 @@ __INPUT=$(cat)
 command -v jq >/dev/null 2>&1 \
     || deny "the message gate cannot run: jq is not on PATH. It refuses rather than passing what it cannot read; install jq and retry."
 
+{message_guard}
 TOOL_NAME=$(echo "$__INPUT" | jq -r '.tool_name // ""' 2>/dev/null || echo "")
 COMMAND=$(_extract "command")
 FILE_PATH=""
@@ -280,7 +282,8 @@ pub(crate) fn builtin_write_guard(cfg: &Config) -> String {
         .to_string_lossy()
         .to_string();
     let src_grep = super::helpers::ere_group(&super::helpers::src_dirs_from_mock(cfg));
-    let ask_phase_gate = super::helpers::ask_check_edit("changelist-required", "changelist-required", "REPO_ROOT");
+    let ask_phase_gate =
+        super::helpers::ask_check_edit("changelist-required", "changelist-required", "REPO_ROOT");
     format!(
         r##"#!/usr/bin/env bash
 # Built-in mockspace hook: phase gate enforcement

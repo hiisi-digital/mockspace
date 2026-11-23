@@ -691,6 +691,10 @@ A repository with `[lints.forbidden-imports]` rules also gets one `forbidden-imp
 Optional. Configures agent-integration behaviour. Empty defaults when the file is absent.
 
 ```toml
+# A guard of the project's own that `check-message.sh` runs first, on every tool
+# call, read against the repository's root. Unset (default): the gate runs alone.
+agent_message_guard = "../scripts/hooks/publish-guard.sh"
+
 [attribution]
 # Byline policy when ${PROJECT_UPPER}_AGENT_MODE is unset or "assistant".
 # Empty (default): NO Co-Authored-By lines permitted; human is sole author.
@@ -702,6 +706,8 @@ non_autonomous = ""
 # Non-empty glob pattern: commits must carry at least one matching byline.
 autonomous = ""
 ```
+
+`agent_message_guard` names a guard a project keeps for every repository it holds, its own policy for published text, so that a session opened inside one repository, which loads that repository's hooks alone, still runs it. The guard is a pre-tool-use hook: the call's JSON on stdin, a refusal as a `permissionDecision` of `deny` on stdout or as exit 2 with the reason on stderr. The gate carries a refusal through with its reason, and refuses where the guard exits with anything else or is not there, since a chain configured and silently missing is a gate that passes what it never read.
 
 Glob patterns use bash `[[ == ]]` matching semantics: `*`, `?`, `[...]`. Patterns without wildcards are literal equality. Mockspace has no hardcoded defaults for agent names, emails, or byline formats; consumers configure what their workflow expects. Every value in `config.toml` applies equally to every supported agent platform.
 
