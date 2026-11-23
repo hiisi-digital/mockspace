@@ -567,7 +567,7 @@ Staged, unstaged and untracked changes all count. Conversation and file layout: 
 - `cargo check` in `{mock_dir}`; the mock must compile.
 - `cargo mock`: check, parse, lints, clean `docs/` top level, generate docs and agent files.
 - Flags: `--lint-only`, `--generate-only` (`--stage`, `--commit-regenerated`), `--doc-only`, `--scope <crates>`, `--commit`, `--strict`, `--dir <path>`.
-- `cargo mock check` is the readiness report; `cargo mock tools` / `cargo mock lints` list everything; `cargo mock help <command>` is one command's help. `cargo mock clean` removes output; `activate` / `deactivate` set `core.hooksPath`.
+- `cargo mock check` is the readiness report; `cargo mock tools` / `cargo mock lints` list everything; `cargo mock help <command>` is one command's help. `cargo mock clean` removes output; `activate` / `deactivate` put the gate in and take it out: through git-shook, which then holds `core.hooksPath`, where `git shook` runs, and by setting `core.hooksPath` itself where it does not.
 - Tests: `cargo mock test` (the `testing` skill). Real crates: the `real-code-guard` skill.
 
 ## Never

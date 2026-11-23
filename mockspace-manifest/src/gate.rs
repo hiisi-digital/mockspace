@@ -214,20 +214,31 @@ ms_chain() {{
 /// manifest registers what it does, and recorded a copy of it under `declined/`
 /// that still equals the file. Where no copy was kept, because the hook arrived
 /// after the adoption, the chain is the only thing that runs it and stays.
-pub const SHOOK_KEEPS: &str = r##"ms_shook_keeps() { # <git-common-dir> <hook>
+///
+/// Two questions, one body. `ms_shook_keeps` asks it of `hooks/<hook>`, the file
+/// the chain would run. `ms_shook_keeps_chained` asks it of `hooks/<hook>.chained`,
+/// where the data refs move the person's hook when they put the engine's in its
+/// place: git-shook adopted the person's hook first, so its entry already runs
+/// what is now the `.chained` file, and the engine's hook, which runs that file
+/// again, must be told not to (`MOCKSPACE_CHAINED_RAN`, see the data refs' hook).
+/// The engine's hook itself is still the chain's to run: it holds the copy of
+/// the files of an instance, which no entry does.
+pub const SHOOK_KEEPS: &str = r##"ms_shook_ran() { # <git-common-dir> <hook> <file the chain would run>
     hp=$(git config --get core.hooksPath 2>/dev/null) || return 1
     [ -n "$hp" ] || return 1
     [ "$(cd "$hp" 2>/dev/null && pwd -P)" = "$(cd "$1/shook/hooks" 2>/dev/null && pwd -P)" ] || return 1
     # the kept copy runs as the entry, so it stands for the original only while
     # it still equals it: a hook adopted from another directory, or edited since,
     # is a different file and the chain is what runs the current one
-    if [ -f "$1/shook/entries/$2/00-existing" ] && cmp -s "$1/shook/kept/$2" "$1/hooks/$2"; then
+    if [ -f "$1/shook/entries/$2/00-existing" ] && cmp -s "$1/shook/kept/$2" "$3"; then
         return 0
     fi
     # a hook git-shook left in place because a manifest registers what it does:
     # the copy it recorded equal to the file means the entry already runs it
-    [ -f "$1/shook/declined/$2" ] && cmp -s "$1/shook/declined/$2" "$1/hooks/$2"
-}"##;
+    [ -f "$1/shook/declined/$2" ] && cmp -s "$1/shook/declined/$2" "$3"
+}
+ms_shook_keeps() { ms_shook_ran "$1" "$2" "$1/hooks/$2"; }
+ms_shook_keeps_chained() { ms_shook_ran "$1" "$2" "$1/hooks/$2.chained"; }"##;
 
 /// The full script for one durable hook.
 ///

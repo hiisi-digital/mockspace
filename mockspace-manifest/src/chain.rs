@@ -41,8 +41,16 @@ fi
 own="$gd/hooks/{name}"
 [ -x "$own" ] || exit 0
 {SHOOK_KEEPS}
-if [ -d "$gd/shook" ] && ms_shook_keeps "$gd" {name}; then
-    exit 0
+if [ -d "$gd/shook" ]; then
+    if ms_shook_keeps "$gd" {name}; then
+        exit 0
+    fi
+    # the engine's hook stands here and chains the person's, which git-shook
+    # adopted and runs as an entry: the engine's hook runs, its chained run does not
+    if ms_shook_keeps_chained "$gd" {name}; then
+        MOCKSPACE_CHAINED_RAN=1
+        export MOCKSPACE_CHAINED_RAN
+    fi
 fi
 exec "$own" "$@"
 "##
