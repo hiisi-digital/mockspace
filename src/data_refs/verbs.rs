@@ -98,6 +98,9 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> ExitCode {
     let remembered = sparse::remembered(cfg);
     let undeclared: Vec<&DataRefDecl> =
         remembered.iter().filter(|r| !cfg.data_refs.iter().any(|d| d.namespace() == r.namespace())).collect();
+    if *verb == "snapshot" {
+        mark_tracked(cfg, &undeclared);
+    }
     if *verb != "snapshot" {
         // at such a commit the files of an instance are the branch's too, and a forced way back
         // (`checkout -f`, `reset --hard`) writes over an edit carried there with no reference
@@ -156,6 +159,21 @@ fn guard_undeclared(cfg: &crate::config::Config, undeclared: &[&DataRefDecl]) {
         if let Err(e) = copied {
             eprintln!("{ns}: this commit declares no such ref, and the copy of the files of its instance could not be made: {e}");
         }
+    }
+}
+
+/// Says for the monitor whether the index of this worktree tracks a file of a declared or
+/// remembered instance, so the monitor copies the files before every git command while it does. An
+/// index that cannot be read is taken as tracking one, so the copy goes on. What cannot be said is
+/// said and stops nothing.
+fn mark_tracked(cfg: &crate::config::Config, undeclared: &[&DataRefDecl]) {
+    let tracked = cfg
+        .data_refs
+        .iter()
+        .chain(undeclared.iter().copied())
+        .any(|d| d.tracked(&cfg.repo_root, &cfg.mock_dir).map_or(true, |t| !t.is_empty()));
+    if let Err(e) = super::monitor::mark(cfg, tracked) {
+        eprintln!("data-refs: whether the index tracks a file of an instance could not be said for the monitor: {e}");
     }
 }
 

@@ -299,6 +299,8 @@ impl DataRefDecl {
 mod gate;
 mod hook;
 mod landing;
+mod monitor;
+pub use monitor::mark_engine_process;
 mod sparse;
 mod standing;
 pub use gate::{repo_lints_pass, run_gated};

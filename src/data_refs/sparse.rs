@@ -19,7 +19,8 @@
 //! that conflicts on a path the migration took off the branch writes the branch's bytes whatever
 //! the patterns say, but git moves `ORIG_HEAD` first, and a checkout moves `HEAD`, and the hooks
 //! copy the files of every instance into its backup ref, so the next engine command names what git
-//! wrote over and `restore` brings it back. `instantiate`, `commit` and the migration write both;
+//! wrote over and `restore` brings it back; the monitor of `monitor` copies them before git reads the
+//! work tree while the index tracks any of them. `instantiate`, `commit` and the migration write both;
 //! `verify` checks both and names a block whose declaration is gone. Every file this changes is
 //! kept in the person's cache first (`mockspace_store::kept`).
 
@@ -153,6 +154,7 @@ pub fn install(cfg: &Config) -> Result<(), String> {
         args.extend([key, value]);
         git(repo, &args)?;
     }
+    super::monitor::install(cfg, scope, || keep_config(cfg, per_worktree))?;
     if cone {
         eprintln!(
             "data-refs: the sparse checkout of this worktree was in cone mode, and is now in the full pattern mode the \
@@ -230,7 +232,8 @@ pub fn check(cfg: &Config) -> Result<(), String> {
                     instantiate` sets that up"
             .to_string());
     }
-    super::hook::check(cfg)
+    super::hook::check(cfg)?;
+    super::monitor::check(cfg)
 }
 
 /// Keeps a copy of what stands at `path` in the person's cache before it is written over, changed

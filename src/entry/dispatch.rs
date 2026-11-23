@@ -254,6 +254,11 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // (`run` and `run_with_custom_lints` both land here before doing anything
     // else); no thread has been spawned yet.
     unsafe { sanitize_git_env() };
+    // every git this process runs is the engine's, and the monitor of the data refs copies nothing
+    // for it, since the engine copies the instances itself
+    //
+    // SAFETY: as above.
+    unsafe { crate::data_refs::mark_engine_process() };
 
     let args: Vec<String> = std::env::args().collect();
 

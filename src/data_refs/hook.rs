@@ -10,7 +10,8 @@
 //! of a commit from before the migration leaves an edited instance file on disk, skipped, where the
 //! commit tracks it (`sparse.expectFilesOutsideOfPatterns`); the plain way back to a branch that does
 //! not track it then deletes it, and no reference moves before that. The copy taken on the way there
-//! holds the edit, so the next engine command says what git took and `restore` brings it back.
+//! holds the edit, so the next engine command says what git took and `restore` brings it back. An
+//! edit made there after it is copied by the monitor of `monitor`, before git reads the work tree.
 //!
 //! Neither hook ever stops the person's command: each exits 0 whatever the launcher does, and says a
 //! failure on stderr, since a command refused for a copy that could not be made is a stop the person
@@ -36,7 +37,7 @@ use mockspace_store::Git;
 use crate::config::Config;
 
 /// The part of both hooks that runs the copy, never stopping git.
-const SNAPSHOT: &str = r#"[ -z "${MOCKSPACE_SNAPSHOT:-}" ] || exit 0
+pub(super) const SNAPSHOT: &str = r#"[ -z "${MOCKSPACE_SNAPSHOT:-}" ] || exit 0
 if command -v mock >/dev/null 2>&1; then launcher=mock
 elif command -v cargo-mock >/dev/null 2>&1; then launcher=cargo-mock
 else

@@ -108,6 +108,22 @@ fn history_holds_at(c: &refs_e2e::Clone, ns: &str, name: &str, text: &[u8]) -> b
 // way back deletes it, which the copy the `post-checkout` hook took on the way there holds.
 #[test]
 fn an_edit_taken_to_an_old_commit_by_checkout_with_no_engine_command_since_is_kept_on_every_way_back() {
+    there_and_back(false);
+}
+
+// Mutation: leave the monitor out of `core.fsmonitor`, or let it copy nothing while `HEAD` sits at
+// a commit that tracks a file of an instance. The edit made at the old commit, after the
+// `post-checkout` hook copied the files there, is then in no copy when the plain way back deletes the
+// file, since that hook runs after git's delete and no reference moves before it; the monitor git
+// asks before it reads the work tree is the one thing that runs first.
+#[test]
+fn an_edit_made_at_an_old_commit_with_no_engine_command_since_is_kept_on_every_way_back() {
+    there_and_back(true);
+}
+
+/// Every way to a commit from before the migration and back, plain git with no engine command
+/// between; where `edit_there`, the file is edited again after arriving there.
+fn there_and_back(edit_there: bool) {
     let ways: [(&[&str], &[&str]); 9] = [
         (&["checkout", "-q", "-f"], &["checkout", "-q", "-f", "dev"]),
         (&["checkout", "-q"], &["checkout", "-q", "-f", "dev"]),
@@ -139,6 +155,10 @@ fn an_edit_taken_to_an_old_commit_by_checkout_with_no_engine_command_since_is_ke
             lost.push(format!("{there:?}: the way there wrote over the edit"));
             continue;
         }
+        let last: &[u8] = if edit_there { b"a: edited again at the old commit\n" } else { text };
+        if edit_there {
+            l.write(&a, NOTES, last);
+        }
         let b = a.git_out(back);
         if !b.ok {
             lost.push(format!("{there:?} then {back:?}: the way back was refused: {}", b.all()));
@@ -148,7 +168,7 @@ fn an_edit_taken_to_an_old_commit_by_checkout_with_no_engine_command_since_is_ke
         let what = format!("{there:?} then {back:?}");
         match l.kept(&w, &[&a]) {
             Err(e) => lost.push(format!("{what}: {e}")),
-            Ok(()) => edit_back_after_forced_way_back(&a, "research", "20261001_alpha/NOTES.md", NOTES, text, &what),
+            Ok(()) => edit_back_after_forced_way_back(&a, "research", "20261001_alpha/NOTES.md", NOTES, last, &what),
         }
     }
     assert!(lost.is_empty(), "the edit is lost:\n{}", lost.join("\n"));
