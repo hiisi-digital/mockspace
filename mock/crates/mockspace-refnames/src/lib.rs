@@ -29,7 +29,7 @@ use letkajenkka::ident::{is_body, is_start};
 use letkajenkka::{Path, Selector};
 
 /// A name as a reference writes it, folded from what a filesystem, a document or a config calls
-/// it: case lowered and each hyphen an underscore.
+/// it: case lowered, each hyphen an underscore, and [`LEAD`] set before a name opening on a digit.
 ///
 /// Only [`fold`] makes one, so every value folds into an identifier of the standard. It holds the
 /// name as given and is never allocated: it writes itself folded through `Display` and compares
@@ -38,12 +38,19 @@ use letkajenkka::{Path, Selector};
 pub struct Folded<'a>(&'a str);
 
 /// `name` folded into the standard's character set, or `None` where no folding makes an identifier
-/// of it: it is empty, opens on a digit or an underscore, or holds a character the fold does not
-/// map into the set (a dot, a space, a separator, anything outside ASCII).
+/// of it: it is empty, opens on an underscore, or holds a character the fold does not map into the
+/// set (a dot, a space, a separator, anything outside ASCII).
+///
+/// The standard gives the fold of a host's naming to the host (letkajenkka `SPEC.md` 3.2) and lets
+/// no name open on a digit, so a name that does, a research file's stamp, is led by [`LEAD`]:
+/// `202611011713_renderer-roadmap.md` is cited as `t202611011713_renderer_roadmap`. Never by the
+/// slug after the stamp, which a second file of the same slug would make ambiguous. A name of the
+/// host's own that reads as a led stamp is refused by the lint `a-name-takes-no-led-stamp`,
+/// through [`Folded::takes_a_led_stamp`], so a citation reaches one of the two.
 #[must_use]
 pub const fn fold(name: &str) -> Option<Folded<'_>> {
     let bytes = name.as_bytes();
-    if bytes.is_empty() || !is_start(fold_byte(bytes[0])) {
+    if bytes.is_empty() || !(bytes[0].is_ascii_digit() || is_start(fold_byte(bytes[0]))) {
         return None;
     }
     let mut i = 1;
@@ -54,6 +61,48 @@ pub const fn fold(name: &str) -> Option<Folded<'_>> {
         i += 1;
     }
     Some(Folded(name))
+}
+
+/// The letter [`fold`] sets before a name opening on a digit.
+pub const LEAD: char = 't';
+
+/// The digits of a stamp, `YYYYMMDDHHMM`, that a research file or a round opens on.
+pub const STAMP_DIGITS: usize = 12;
+
+/// What a directory entry is called in a reference: a directory by its whole name, a file by its
+/// name up to its first dot, so the extensions are never written.
+#[must_use]
+pub fn entry(name: &str, is_dir: bool) -> Option<Folded<'_>> {
+    if is_dir { fold(name) } else { fold(name.split('.').next().unwrap_or_default()) }
+}
+
+impl Folded<'_> {
+    /// Whether the fold sets [`LEAD`] before the name.
+    const fn is_led(&self) -> bool {
+        self.0.as_bytes()[0].is_ascii_digit()
+    }
+
+    /// Whether the name folds to [`LEAD`] and a stamp of [`STAMP_DIGITS`] digits: the
+    /// spelling the fold gives a stamped name, so one citation would reach both.
+    ///
+    /// Only a stamp is asked of. A shorter run of digits after the lead names things of their own
+    /// (`t3_timing_probe`, a probe `t4_update`), and where one of them meets a name led by the fold,
+    /// the reference reads as ambiguous and says so.
+    #[must_use]
+    pub const fn takes_a_led_stamp(&self) -> bool {
+        let b = self.0.as_bytes();
+        if b.len() <= STAMP_DIGITS || fold_byte(b[0]) != LEAD as u8 {
+            return false;
+        }
+        let mut i = 1;
+        while i <= STAMP_DIGITS {
+            if !b[i].is_ascii_digit() {
+                return false;
+            }
+            i += 1;
+        }
+        b.len() == STAMP_DIGITS + 1 || !b[STAMP_DIGITS + 1].is_ascii_digit()
+    }
 }
 
 const fn fold_byte(b: u8) -> u8 {
@@ -75,6 +124,9 @@ pub fn fold_separators(text: &str) -> Option<String> {
 
 impl fmt::Display for Folded<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_led() {
+            fmt::Write::write_char(f, LEAD)?;
+        }
         for b in self.0.bytes() {
             fmt::Write::write_char(f, char::from(fold_byte(b)))?;
         }
@@ -84,6 +136,14 @@ impl fmt::Display for Folded<'_> {
 
 impl PartialEq<str> for Folded<'_> {
     fn eq(&self, other: &str) -> bool {
+        let other = if self.is_led() {
+            match other.strip_prefix(LEAD) {
+                Some(rest) => rest,
+                None => return false,
+            }
+        } else {
+            other
+        };
         self.0.len() == other.len()
             && self
                 .0

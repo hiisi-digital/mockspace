@@ -240,7 +240,7 @@ fn a_registry_file_that_is_not_toml_stops_the_plan_and_is_named() {
     assert!(why.contains("broken.toml"), "{why}");
 }
 
-const LINTS: &str = "\n[lints.a]\nextends = \"stack-lints::no-heap\" # kept comment\n\n[lints.b]\nextends = 'Mockspace::No-Bare-Numeric'\n\n[lints.c]\nextends = \"stack-lints::9lives\"\n\n[lints.d]\nextends = \"mockspace::already_folded\"\n";
+const LINTS: &str = "\n[lints.a]\nextends = \"stack-lints::no-heap\" # kept comment\n\n[lints.b]\nextends = 'Mockspace::No-Bare-Numeric'\n\n[lints.c]\nextends = \"stack-lints::_lives\"\n\n[lints.d]\nextends = \"mockspace::already_folded\"\n\n[lints.e]\nextends = \"stack-lints::9lives\"\n";
 
 // Mutation: a migration that reads only templates and registry data leaves the config spelling alone.
 #[test]
@@ -250,11 +250,12 @@ fn the_preset_shorthands_of_the_config_are_rewritten_and_the_one_that_cannot_be_
     let config = read(&r.cfg, "mockspace.toml");
     assert!(config.contains("extends = \"stack_lints::no_heap\" # kept comment"), "{config}");
     assert!(config.contains("extends = 'mockspace::no_bare_numeric'"), "{config}");
-    assert!(config.contains("extends = \"stack-lints::9lives\""), "{config}");
+    assert!(config.contains("extends = \"stack-lints::_lives\""), "{config}");
     assert!(config.contains("extends = \"mockspace::already_folded\""), "{config}");
+    assert!(config.contains("extends = \"stack_lints::t9lives\""), "a name opening on a digit is led: {config}");
     assert!(config.starts_with(CONFIG), "the rest of the file is as written");
     let said = plan_of(&r.cfg, &[NAME]).unwrap_err().join("\n");
-    assert!(said.contains("left mockspace.toml: stack-lints::9lives"), "{said}");
+    assert!(said.contains("left mockspace.toml: stack-lints::_lives"), "{said}");
     assert!(!said.contains("rewrite mockspace.toml"), "a second run rewrites nothing: {said}");
 }
 
@@ -356,7 +357,7 @@ fn a_directory_that_is_no_repository_is_refused_naming_git() {
     assert_eq!(std::fs::read_to_string(dir.path().join("A.md.tmpl")).unwrap(), TEMPLATE);
 }
 
-const ARRAYS: &str = "[lints.a]\nextends = \"stack-lints::no-heap\"\n\n[lints.b]\nextends = [\"Mockspace::No-Bare-Numeric\", \"stack-lints::9lives\"]\n";
+const ARRAYS: &str = "[lints.a]\nextends = \"stack-lints::no-heap\"\n\n[lints.b]\nextends = [\"Mockspace::No-Bare-Numeric\", \"stack-lints::_lives\"]\n";
 
 // The v2 loader reads `lints.toml` and `mock/lints.toml` before `mockspace.toml`, so a spelling there
 // is read as surely as one in the config, and an array of presets is read item by item.
@@ -373,14 +374,14 @@ fn every_file_the_loaders_read_for_presets_is_rewritten_and_an_array_of_them_ite
     for file in ["lints.toml", "mock/lints.toml"] {
         assert!(said.contains(&format!("rewrite {file}: stack-lints::no-heap -> stack_lints::no_heap")), "{said}");
         assert!(said.contains(&format!("rewrite {file}: Mockspace::No-Bare-Numeric -> mockspace::no_bare_numeric")), "{said}");
-        assert!(said.contains(&format!("left {file}: stack-lints::9lives")), "{said}");
+        assert!(said.contains(&format!("left {file}: stack-lints::_lives")), "{said}");
     }
     assert_eq!(run(&r.cfg, &[NAME]), ExitCode::SUCCESS);
     for file in ["lints.toml", "mock/lints.toml"] {
         let text = read(&r.cfg, file);
         assert_eq!(
             text,
-            "[lints.a]\nextends = \"stack_lints::no_heap\"\n\n[lints.b]\nextends = [\"mockspace::no_bare_numeric\", \"stack-lints::9lives\"]\n",
+            "[lints.a]\nextends = \"stack_lints::no_heap\"\n\n[lints.b]\nextends = [\"mockspace::no_bare_numeric\", \"stack-lints::_lives\"]\n",
             "{file}"
         );
     }

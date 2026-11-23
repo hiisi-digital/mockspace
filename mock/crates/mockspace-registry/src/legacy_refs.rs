@@ -142,7 +142,7 @@ pub fn preset_shorthand(old: &str) -> Outcome {
             Some(n) => folded.push(n.to_string()),
             None => {
                 return Outcome::Left(format!(
-                    "`{p}` has no name under the standard (it opens on a digit or holds a character outside a-z, 0-9, _ and -)"
+                    "`{p}` has no name under the standard (it opens on an underscore or holds a character outside a-z, 0-9, _ and -)"
                 ));
             },
         }
@@ -268,12 +268,12 @@ fn citation(parts: &[&str], ctx: &Ctx<'_>) -> Outcome {
     let mut names = Vec::new();
     for (i, c) in comps.iter().enumerate() {
         let last = i + 1 == comps.len();
-        let folded = if last { mockspace_refnames::fold(c.split('.').next().unwrap_or_default()) } else { mockspace_refnames::fold(c) };
+        let folded = mockspace_refnames::entry(c, !last);
         match folded {
             Some(n) => names.push(n.to_string()),
             None => {
                 return Outcome::Left(format!(
-                    "`{c}` has no name under the standard (it opens on a digit, or holds a dot or a character \
+                    "`{c}` has no name under the standard (it opens on an underscore, or holds a dot or a character \
                      outside a-z, 0-9 and _), so the file cannot be cited"
                 ));
             },
@@ -285,8 +285,8 @@ fn citation(parts: &[&str], ctx: &Ctx<'_>) -> Outcome {
                 Some(name) => (Some(name), Some(at)),
                 None => {
                     return Outcome::Left(format!(
-                        "heading `{title}` has no name under the standard (it opens on a digit, or holds a \
-                         character outside a-z, 0-9 and _)"
+                        "heading `{title}` has no name under the standard (it is empty, opens on an underscore, or holds \
+                         a character outside a-z, 0-9 and _)"
                     ));
                 },
             },

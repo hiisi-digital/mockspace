@@ -64,6 +64,9 @@ fn each_old_form_is_written_the_new_way_and_reaches_what_it_did() {
         ("seed::DESIGN::#warms-objective", "seed::design::warms_objective", "DESIGN.md", Some(7)),
         ("seed::Crates::My-Crate::NOTES::#tiling", "seed::crates::my_crate::notes::tiling", "Crates/My-Crate/NOTES.md", Some(3)),
         ("seed::Intro::1", "seed::intro::1", "Intro.md", None),
+        // a name opening on a digit is led, a directory and a heading alike
+        ("seed::2024-notes::A::1", "seed::t2024_notes::a::1", "2024-notes/A.md", None),
+        ("seed::DESIGN::#2026-plan", "seed::design::t2026_plan", "DESIGN.md", Some(9)),
     ];
     for (old, new, file, line) in rows {
         assert_eq!(run(old), Outcome::Rewritten((*new).to_string()), "{old}");
@@ -103,7 +106,7 @@ fn what_is_in_the_new_spelling_already_or_is_no_reference_is_left_alone_unnamed(
 }
 
 // Mutation: writing the new spelling where it resolves differently (dropping the check that it
-// reaches the same file) rewrites `seed::dup::thing::1`, `seed::same::a_b::1` and the 2024 notes.
+// reaches the same file) rewrites `seed::dup::thing::1` and `seed::same::a_b::1`.
 #[test]
 fn a_reference_the_new_spelling_cannot_reach_the_same_target_with_is_left_and_named() {
     let left = |old: &str, part: &str| match run(old) {
@@ -113,8 +116,7 @@ fn a_reference_the_new_spelling_cannot_reach_the_same_target_with_is_left_and_na
     left("seed::Dup::Thing::1", "no file");
     left("seed::dup::Thing::1", "several files");
     left("seed::same::a-b::1", "several files");
-    left("seed::2024-notes::A::1", "has no name");
-    left("seed::DESIGN::#2026-plan", "has no name");
+    left("seed::DESIGN::#_x", "no heading");
     left("seed::DESIGN::#no-such-heading", "no heading");
     left("seed::DESIGN::0", "neither a heading nor a line");
     left("seed::DESIGN::#", "empty heading");
@@ -163,11 +165,12 @@ fn a_preset_shorthand_is_folded_into_the_standards_names() {
     assert_eq!(said("stack-lints::no-heap"), Outcome::Rewritten("stack_lints::no_heap".into()));
     assert_eq!(said("mockspace::No-Bare-Numeric"), Outcome::Rewritten("mockspace::no_bare_numeric".into()));
     assert_eq!(said("mockspace::no_bare_numeric"), Outcome::Same);
+    assert_eq!(said("stack-lints::9lives"), Outcome::Rewritten("stack_lints::t9lives".into()));
 }
 
 #[test]
 fn a_preset_shorthand_that_is_not_a_host_and_a_name_is_left_and_says_why() {
-    for bad in ["no-heap", "a::b::c", "stack-lints::9lives", "::x", "x::"] {
+    for bad in ["no-heap", "a::b::c", "stack-lints::_lives", "::x", "x::"] {
         let Outcome::Left(why) = preset_shorthand(bad) else { panic!("{bad}") };
         assert!(!why.is_empty(), "{bad}");
     }
