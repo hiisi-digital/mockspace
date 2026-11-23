@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use letkajenkka::{Query, Selector};
-use mockspace_refnames::{Folded, fold};
+use mockspace_refnames::fold;
 use regex::Regex;
 
 /// The migration that rewrites a repository's references from the spelling before the standard.
@@ -127,16 +127,6 @@ pub fn root(text: &str) -> Option<&str> {
 /// by the syntax, each trimmed, and an empty item no item.
 pub fn list(raw: &str) -> impl Iterator<Item = &str> {
     letkajenkka::Arguments::of(raw).map(str::trim).filter(|s| !s.is_empty())
-}
-
-/// What a file or a directory is called in a reference: the whole name of a directory, and the name
-/// up to its first dot for a file, so the extensions are never written.
-fn fold_entry(name: &str, is_dir: bool) -> Option<Folded<'_>> {
-    if is_dir {
-        fold(name)
-    } else {
-        fold(name.split('.').next().unwrap_or_default())
-    }
 }
 
 /// A heading as GitHub anchors it, by the slugger it follows: lowercased, then every character
@@ -387,7 +377,7 @@ fn listing(dir: &Path) -> std::rc::Rc<[Entry]> {
 fn walk(dir: &Path, names: &[String], out: &mut Vec<PathBuf>) {
     let Some((name, rest)) = names.split_first() else { return };
     for entry in listing(dir).iter() {
-        if !fold_entry(&entry.name, entry.is_dir).is_some_and(|f| f == name.as_str()) {
+        if !mockspace_refnames::entry(&entry.name, entry.is_dir).is_some_and(|f| f == name.as_str()) {
             continue;
         }
         if entry.is_dir {
@@ -398,19 +388,23 @@ fn walk(dir: &Path, names: &[String], out: &mut Vec<PathBuf>) {
     }
 }
 
-/// The line a heading anchor stands at in `file`, and the forge slug a link to it carries.
+/// The line a heading anchor stands at in `file`, and the forge slug a link to it carries. `None`
+/// where no heading folds to `name`, and where two do: the citation would reach either, and is no
+/// anchor until one is renamed.
 #[must_use]
 pub fn heading_in(file: &Path, name: &str) -> Option<(usize, String)> {
     let text = fs::read_to_string(file).ok()?;
     let mut fences = mockspace_refnames::Fences::new();
-    text.lines().enumerate().find_map(|(i, l)| {
+    let mut found = text.lines().enumerate().filter_map(|(i, l)| {
         let trimmed = l.trim_start();
         if !fences.prose(l) || !trimmed.starts_with('#') {
             return None;
         }
         let title = trimmed.trim_start_matches('#').trim();
         (heading_name(title).as_deref() == Some(name)).then(|| (i + 1, forge_slug(title)))
-    })
+    });
+    let one = found.next()?;
+    found.next().is_none().then_some(one)
 }
 
 /// The line an anchor stands at in `file`: a heading's line, or the first line of a span that is
