@@ -144,6 +144,7 @@ mod tests {
             description: None,
             value_field: None,
             group_by: None,
+            path: Vec::new(),
             fields,
         }]
     }

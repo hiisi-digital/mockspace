@@ -262,6 +262,7 @@ fn every_field_a_real_instance_carries_is_a_known_key() {
         description: Some("what holds".into()),
         value_field: Some("statement".into()),
         group_by:    Some("domain".into()),
+        path:        Vec::new(),
         fields:      vec![mockspace::registry::RegistryField {
             name:        "statement".into(),
             r#type:      "string".into(),

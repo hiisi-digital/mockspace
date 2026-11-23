@@ -171,12 +171,25 @@ const COMMANDS: &[Cmd] = &[
         name:    "links",
         summary: "list a registry row's links from both ends",
         args:    &[],
-        help:    "Takes `<namespace>::<slug>` and prints what the row links to and \
+        help:    "Takes `<namespace>::<id>` and prints what the row links to and \
                   what links to it, each with the field that states the link. A \
                   link is written once, on one row, in a `ref` or `ref[]` field \
-                  as `namespace::slug` or in a field typed as a namespace; the \
+                  as `namespace::id` or in a field typed as a namespace; the \
                   other end is derived here and by `refsto`, so nobody writes \
                   both sides.",
+    },
+    Cmd {
+        name:    "select",
+        summary: "list the registry rows a query over their ids selects",
+        args:    &[],
+        help:    "Takes one query in the letkajenkka standard over the tree of row ids, the namespace \
+                  first: `ticket::question::engine` (every row whose id begins `question::engine`), \
+                  `ticket::**::internals::**` (`**` any depth, none included), `ticket::*::engine`, \
+                  `ticket::{task, question}::engine::*` (a set, in written order) or a whole id. Prints \
+                  each selected row's `namespace::id`, one a line, in byte order of the ids under each \
+                  wildcard and each row once; prints nothing and exits 0 when nothing matches. An \
+                  ordinal, a range, a constraint, an operation, a namespace nobody declared and a field \
+                  step after a row named whole are refused with exit status 1; `query` resolves a field.",
     },
     Cmd {
         name:    "data-refs",

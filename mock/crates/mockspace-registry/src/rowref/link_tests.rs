@@ -19,20 +19,39 @@ fn keys<'a>(names: &[&'a str]) -> BTreeSet<&'a str> {
 fn an_item_of_two_segments_naming_a_namespace_is_a_link() {
     assert_eq!(
         link_target("slot::display", &keys(&["slot"])),
-        Some(("slot", "display"))
+        Some(("slot", "display".to_string()))
     );
 }
 
-/// The control: three segments are a file citation, whatever the first one is
-/// called. Without it the test above is equally consistent with a function that
-/// returns every item split on the first separator.
+/// The control: a file citation is no link. Without it the test above is equally
+/// consistent with a function that returns every item split on the first separator.
+///
+/// This said "three segments are a citation whatever the first is called" while a
+/// row's id was one name. An id may now be a path, so what tells a link from a
+/// citation is the first name alone (a namespace or a root, which
+/// `namespace-root-collision` keeps apart) and a line selector, which no id has.
+/// The meaning kept is that a citation into a root never reads as a link.
 #[test]
 fn a_file_citation_is_not_a_link() {
     assert_eq!(link_target("slot::design::12", &keys(&["slot"])), None);
     assert_eq!(
-        link_target("research::dir::file::heading", &keys(&["research"])),
+        link_target("research::dir::file::heading", &keys(&["slot"])),
         None
     );
+}
+
+#[test]
+fn a_link_to_a_path_id_carries_every_name_after_the_namespace() {
+    assert_eq!(
+        link_target("ticket::question::engine::allowed", &keys(&["ticket"])),
+        Some(("ticket", "question::engine::allowed".to_string()))
+    );
+    let nss = [ns("ticket", &[]), ns("answer", &[("related", "ref[]")])];
+    let good = reg(&[("ticket", "question::engine", &[]), ("answer", "a", &[("related", "ticket::question::engine")])]);
+    assert!(validate_links(&good, &nss).is_empty());
+    assert_eq!(links_of(&good, &nss, "answer::a").outgoing, [Link::new("related", "ticket::question::engine")]);
+    let bad = reg(&[("ticket", "question::engine", &[]), ("answer", "a", &[("related", "ticket::question::motor")])]);
+    assert_eq!(kinds(&validate_links(&bad, &nss)), ["unknown-row-reference"]);
 }
 
 /// Two segments whose first names no namespace are not a link either, so
@@ -237,9 +256,9 @@ fn the_report_refuses_what_is_not_a_row() {
     assert!(missing.contains("no row `slot::displya`"), "{missing}");
     assert!(missing.contains("Did you mean `display`?"), "{missing}");
     let bare = links_report(&r, &nss, "display").unwrap_err();
-    assert!(bare.contains("not `namespace::slug`"), "{bare}");
+    assert!(bare.contains("not `namespace::id`"), "{bare}");
     let unknown = links_report(&r, &nss, "nothing::display").unwrap_err();
-    assert!(unknown.contains("not `namespace::slug`"), "{unknown}");
+    assert!(unknown.contains("not `namespace::id`"), "{unknown}");
 }
 
 /// A link in a table cell is rendered as a reference, which the pass after it
@@ -302,7 +321,7 @@ fn a_namespace_named_like_a_root_is_a_link_and_the_setup_is_reported() {
     let nss = [ns("research", &[]), ns("answer", &[("related", "ref[]")])];
     assert_eq!(
         link_target("research::dir", &keys(&["research"])),
-        Some(("research", "dir"))
+        Some(("research", "dir".to_string()))
     );
     let r = reg(&[("answer", "niri", &[("related", "research::dir")])]);
     let found = validate_links(&r, &nss);
@@ -394,7 +413,7 @@ fn an_internal_root_filter_does_not_eat_a_link() {
 #[test]
 fn a_reference_into_a_hyphenated_namespace_resolves() {
     let k = keys(&["ikiuni-renderer"]);
-    assert_eq!(link_target("ikiuni-renderer::c_one", &k), Some(("ikiuni-renderer", "c_one")));
+    assert_eq!(link_target("ikiuni-renderer::c_one", &k), Some(("ikiuni-renderer", "c_one".to_string())));
     let nss = [ns("ikiuni-renderer", &[]), ns("answer", &[("related", "ref[]")])];
     let r = reg(&[("ikiuni-renderer", "c_one", &[]), ("answer", "niri", &[("related", "ikiuni-renderer::c_one")])]);
     assert!(validate_links(&r, &nss).is_empty());

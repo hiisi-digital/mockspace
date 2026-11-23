@@ -98,3 +98,41 @@ pub fn put(rel: &str, text: &str) -> Vec<(String, Option<Vec<u8>>)> {
 pub fn ids(reg: &Registry) -> Vec<String> {
     reg.rows.keys().cloned().collect()
 }
+
+/// A namespace declaring `fields` as `(name, type, required)` and folding `path` into its ids.
+pub fn namespace(key: &str, fields: &[(&str, &str, bool)], path: &[&str]) -> RegistryNamespace {
+    RegistryNamespace {
+        key:         key.into(),
+        title:       None,
+        description: None,
+        value_field: None,
+        group_by:    None,
+        path:        path.iter().map(|p| (*p).into()).collect(),
+        fields:      fields
+            .iter()
+            .map(|(name, ty, required)| {
+                RegistryField {
+                    name:        (*name).into(),
+                    r#type:      (*ty).into(),
+                    required:    *required,
+                    description: None,
+                    visibility:  FieldVisibility::Public,
+                    values:      Vec::new(),
+                    min:         None,
+                    max:         None,
+                }
+            })
+            .collect(),
+    }
+}
+
+/// The registry the loader makes of one file `t.toml` holding `text`.
+pub fn rows_from(text: &str, namespaces: &[RegistryNamespace]) -> Registry {
+    crate::load::rows_of_texts(Path::new("reg"), vec![("t.toml".to_string(), Some(text.to_string()))], namespaces, None)
+}
+
+/// The registry the loader makes of several files, each `(name, text)`.
+pub fn rows_from_files(files: &[(&str, &str)], namespaces: &[RegistryNamespace]) -> Registry {
+    let files = files.iter().map(|(n, t)| ((*n).to_string(), Some((*t).to_string()))).collect();
+    crate::load::rows_of_texts(Path::new("reg"), files, namespaces, None)
+}

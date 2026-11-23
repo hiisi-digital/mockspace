@@ -32,7 +32,7 @@ pub enum Resolved {
     /// One row: `law::keys`.
     Row {
         namespace: String,
-        slug:      String,
+        id:        String,
         /// What the row says, for a reader who has only the reference.
         fields:    Vec<(String, String)>,
     },
@@ -70,9 +70,9 @@ impl Resolved {
             } => render_markdown_table(columns, rows),
             // A row has no page to link to, so its slug is the whole answer.
             Resolved::Row {
-                slug,
+                id,
                 ..
-            } => slug.clone(),
+            } => id.clone(),
             Resolved::Field(v) => v.clone(),
             Resolved::Citation {
                 text,
@@ -108,10 +108,10 @@ impl Resolved {
             },
             Resolved::Row {
                 namespace,
-                slug,
+                id,
                 fields,
             } => {
-                let mut out = format!("{namespace}::{slug}\n");
+                let mut out = format!("{namespace}::{id}\n");
                 let width = fields.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
                 for (k, v) in fields {
                     out.push_str(&format!("  {k:<width$}  {}\n", unlink(v)));
@@ -229,7 +229,7 @@ pub fn table_cells(ns: &RegistryNamespace, reg: &Registry) -> (Vec<String>, Vec<
                 .iter()
                 .map(|c| {
                     if c == "id" {
-                        r.slug.clone()
+                        r.id.clone()
                     } else {
                         r.fields.get(c).cloned().unwrap_or_default()
                     }

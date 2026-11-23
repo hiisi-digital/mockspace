@@ -150,6 +150,7 @@ mod tests {
             description: None,
             value_field: value_field.map(|s| s.to_string()),
             group_by:    None,
+            path: Vec::new(),
             fields:      vec![],
         }
     }
@@ -170,7 +171,7 @@ mod tests {
     fn reg_with(slug: &str, namespace: &str, fields: &[(&str, &str)]) -> Registry {
         let mut reg = Registry::default();
         let row = RegistryRow {
-            slug:      slug.into(),
+            id:        slug.into(),
             namespace: namespace.into(),
             source:    PathBuf::from("t.toml"),
             fields:    fields
@@ -279,7 +280,7 @@ mod tests {
     fn reference_is_builtin_and_renders_as_a_citation() {
         let mut reg = Registry::default();
         let row = RegistryRow {
-            slug:      "burns_hunt".into(),
+            id:        "burns_hunt".into(),
             namespace: "reference".into(),
             source:    PathBuf::from("t.toml"),
             fields:    [
@@ -787,7 +788,7 @@ mod tests {
         // settles before any document reads it.
         let mut reg = reg_with("keys", "law", &[("statement", "closed")]);
         let row = RegistryRow {
-            slug:      "derived".into(),
+            id:        "derived".into(),
             namespace: "law".into(),
             source:    PathBuf::from("t.toml"),
             fields:    [(
@@ -836,7 +837,7 @@ mod tests {
         let mut reg = reg_with("base", "law", &[("statement", "closed")]);
         for i in 0 .. ROWS {
             let row = RegistryRow {
-                slug:      format!("row{i}"),
+                id:        format!("row{i}"),
                 namespace: "law".into(),
                 source:    PathBuf::from("t.toml"),
                 fields:    [("statement".to_string(), "{{ law::base::statement }}".to_string())]
@@ -891,7 +892,7 @@ mod tests {
         // The question a rule telling an agent where to edit is asking.
         let mut reg = Registry::default();
         let row = RegistryRow {
-            slug:      "keys".into(),
+            id:        "keys".into(),
             namespace: "law".into(),
             source:    PathBuf::from("/r/mock/registry/law/seam.toml"),
             fields:    BTreeMap::new(),
@@ -918,7 +919,7 @@ mod tests {
     fn a_method_chain_narrows_what_an_expression_resolved_to() {
         let mut reg = Registry::default();
         let row = RegistryRow {
-            slug:      "keys".into(),
+            id:        "keys".into(),
             namespace: "law".into(),
             source:    PathBuf::from("/r/mock/registry/law/seam.toml"),
             fields:    BTreeMap::new(),
@@ -1186,7 +1187,7 @@ mod tests {
             ("rank", "the rank law", "store"),
         ] {
             let row = RegistryRow {
-                slug:      slug.into(),
+                id:        slug.into(),
                 namespace: "law".into(),
                 source:    PathBuf::from("t.toml"),
                 fields:    [
@@ -1278,7 +1279,7 @@ mod tests {
         // noise around the only part worth reading.
         let r = Resolved::Row {
             namespace: "law".into(),
-            slug:      "keys".into(),
+            id:        "keys".into(),
             fields:    vec![(
                 "crates".into(),
                 "[world](120_WORLD.md), [store](130_STORE.md)".into(),

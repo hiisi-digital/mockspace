@@ -165,7 +165,7 @@ pub fn value_field_targets(namespaces: &[RegistryNamespace]) -> Vec<RegistryFind
 
 /// Check every row reference against the rows that exist.
 ///
-/// A row reference is a bare slug. The field's type already names the
+/// A row reference is a bare id, one name or a path. The field's type already names the
 /// namespace, so repeating it in the value would be a second place for the two
 /// to disagree, and a qualified value is refused rather than accepted as a
 /// second spelling: one thing written two ways needs normalising everywhere it
@@ -175,6 +175,7 @@ pub fn validate_row_references(
     namespaces: &[RegistryNamespace],
 ) -> Vec<RegistryFinding> {
     let bearing = row_reference_fields(namespaces);
+    let keys = link::namespace_keys(namespaces);
     let mut out = Vec::new();
 
     for row in reg.rows.values() {
@@ -204,19 +205,25 @@ pub fn validate_row_references(
             // meant a trailing comma was reported while a leading one was not,
             // which is an arbitrary difference for an author to run into.
             for item in raw.split(", ").map(str::trim) {
-                if !is_valid_slug(item) {
-                    let hint = match crate::names(item).ok().as_deref() {
-                        Some(&[ns, slug]) if ns == target => {
-                            format!(" Write `{slug}`: the field's type already says `{target}`.")
-                        },
-                        Some(&[ns, _]) => {
-                            format!(
+                // An item opening on a declared namespace and naming no row of the target is the
+                // target written qualified, or another namespace written into a field typed for
+                // one: refused as the shape it is, with how to write it, before it is looked up
+                // as an id of the target that happens to begin with that name.
+                let qualified = format!("{target}::{item}");
+                let hint = match crate::names(item).ok().as_deref() {
+                    Some([ns, rest @ ..]) if !rest.is_empty() && keys.contains(ns) && !reg.rows.contains_key(&qualified) => {
+                        if *ns == target {
+                            Some(format!(" Write `{}`: the field's type already says `{target}`.", rest.join("::")))
+                        } else {
+                            Some(format!(
                                 " It names namespace `{ns}`, but this field is typed `{target}`; a field references one namespace and the type is where that is stated."
-                            )
-                        },
-                        _ => String::new(),
-                    };
-                    out.push(malformed_slug(row, name, item, hint));
+                            ))
+                        }
+                    },
+                    _ => None,
+                };
+                if !is_valid_row_id(item) || hint.is_some() {
+                    out.push(malformed_slug(row, name, item, hint.unwrap_or_default()));
                     continue;
                 }
                 out.extend(dangling(reg, row, name, target, item));
@@ -235,7 +242,7 @@ fn malformed_slug(row: &RegistryRow, field: &str, item: &str, hint: String) -> R
     RegistryFinding {
         kind:    "malformed-row-reference",
         message: format!(
-            "{}: field `{field}` holds `{item}`, which is not a slug (snake_case, starting with a letter).{hint}",
+            "{}: field `{field}` holds `{item}`, which is not a row id (snake_case names, each starting with a letter, joined by `::`).{hint}",
             row.qualified()
         ),
         source:  Some(row.source.clone()),
@@ -280,8 +287,8 @@ fn nearest(reg: &Registry, namespace: &str, slug: &str) -> String {
     }
     let best = ids
         .iter()
-        .filter_map(|q| crate::names(q).ok().and_then(|n| n.get(1).copied()))
-        .map(|s| (edit_distance(slug, s), s))
+        .filter_map(|q| reg.rows.get(q))
+        .map(|r| (edit_distance(slug, &r.id), r.id.as_str()))
         .min_by_key(|(d, _)| *d);
     match best {
         // A third of the length, so a short slug is not matched to an
@@ -337,7 +344,7 @@ fn for_each_edge(
 /// An edge comes from two kinds of field. A field typed as a namespace holds
 /// bare slugs of that namespace. A field typed `ref` or `ref[]` holds file
 /// citations and row links, and only the items that are links
-/// (`namespace::slug`, see [`link_target`]) are edges. Both go through this one
+/// (`namespace::id`, see [`link_target`]) are edges. Both go through this one
 /// function, so `refsto`, the lint view and `links_of` cannot disagree about
 /// what a link is.
 fn for_each_edge_by_field(
@@ -386,7 +393,7 @@ fn for_each_edge_by_field(
 /// to be maintained. This is what makes a demand-side question answerable:
 /// given a slot, which rows answer it.
 ///
-/// Returned as `namespace::slug`, sorted, each appearing once however many of
+/// Returned as `namespace::id`, sorted, each appearing once however many of
 /// its fields point at the target.
 pub fn referrers(reg: &Registry, namespaces: &[RegistryNamespace], qualified: &str) -> Vec<String> {
     let mut out = BTreeSet::new();

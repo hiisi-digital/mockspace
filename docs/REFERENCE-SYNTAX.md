@@ -16,7 +16,7 @@ folds its own names into that character set where it resolves.
 
 | Written | Refers to | Renders as |
 |---|---|---|
-| `{{ reg::spike::foo }}` | a registry row | its slug, as plain text |
+| `{{ reg::spike::foo }}` | a registry row | its id, as plain text |
 | `{{ reg::spike::foo::question }}` | one field of a row | that field's value |
 | `{{ reg::spike }}` | a whole namespace | its table, inline |
 | `{{ seed::design::844 }}` | a place in a file | a line link |
@@ -24,7 +24,7 @@ folds its own names into that character set where it resolves.
 The registry writes no page into the docs directory. A namespace is read, validated and
 queried, and a table of it is written wherever a template asks for one with
 `{{ reg::spike }}`, in that template's own document. A row
-reference has no document to link to, so it renders as the row's slug. A page an
+reference has no document to link to, so it renders as the row's id. A page an
 earlier version wrote is removed by the sweep of `docs/`. Row text is checked where a
 template or a table renders it; a row nothing renders is not scanned for references
 that resolve to nothing.
@@ -46,18 +46,31 @@ a plausible-looking wrong one.
 Provenance fields in registry data need no braces. The field is already
 declared to hold references, so there is nothing to disambiguate.
 
-## Identity: slugs, not numbers
+## Identity: ids, not numbers
 
-A row is `namespace::slug`, where the slug is snake_case and unique within its
-namespace: `vocab::xpbd`, `spike::actuator_fit_converges`.
+A row is `namespace::id`, where the id is one or more snake_case names joined by
+`::`, unique within its namespace: `vocab::xpbd`, `spike::actuator_fit_converges`,
+`ticket::question::engine::deps_allowed`.
 
-Slugs rather than numbers because a number carries no meaning, and an
+Names rather than numbers because a number carries no meaning, and an
 identifier carrying no meaning has to be *managed*: never reused, never
 renumbered, never reordered, since any of those silently repoints every
-reference to it. A slug needs none of that discipline. It says what it refers
+reference to it. A name needs none of that discipline. It says what it refers
 to, it survives reordering, and it stays readable in prose.
 
-A row's whole identity is that pair, its key path. The files a registry is
+An id of several names puts its row in a tree. The ids of a namespace are the
+leaves, and every proper prefix of one is a branch: `ticket::question::engine` is
+the branch holding `ticket::question::engine::deps_allowed`. A node has one type,
+so no id may be a proper prefix of another in its namespace; one that is reports
+`id-is-a-branch`, naming both rows and their files. That is what lets a reference
+say no more than it means: `{{ ticket::question::engine::deps_allowed::status }}`
+is the row `question::engine::deps_allowed` and its field `status`, because at most
+one prefix of the names after the namespace is a row. A row's anchor on its
+namespace's table is its names with `_` as `-`, joined by `.`
+(`question.engine.deps-allowed`), so two ids differing only in where a separator
+falls never anchor alike.
+
+A row's whole identity is its key path. The files a registry is
 written in are no part of it: any number of `*.toml` files, under any names and
 in any directories under `registry/`, make one registry, and splitting,
 merging, renaming or moving a file changes nothing a reader, a check or a
@@ -66,6 +79,68 @@ lists its rows by key path rather than by the order of the files holding them,
 and a grouped table orders its groups by the group value, with rows that have
 no group value last under a heading of their own. The same key path in two files is an
 error naming both, and a file and line in a report is only a place to look.
+
+### Ids folded from fields
+
+A namespace may fold some of its fields into its rows' ids, in order:
+
+```toml
+[[registry.namespace]]
+key = "ticket"
+path = ["kind", "subject"]
+
+[[registry.namespace.field]]
+name = "kind"
+type = "kind"
+required = true
+
+[[registry.namespace.field]]
+name = "subject"
+type = "subject"
+```
+
+```toml
+[[ticket]]
+id = "question::engine::internals::deps_allowed"
+```
+
+The row's id is the value of each named field in turn, then one leaf name. Each value
+is the id of a row of the namespace its field references, and is itself a path where
+that namespace's ids are, so the row above has `kind = "question"`, `subject =
+"engine::internals"` and the leaf `deps_allowed`. The loader writes the fields from the
+id, so anything reading `kind` reads it as before, and the id is the one place it is
+written: a row that also writes a folded field reports `folded-field-written`.
+
+Each field `path` names is declared on the namespace with the type of one row of
+another declared namespace, no `[]`; anything else reports `unfit-path-field` at the
+declaration. A field declared `required = false` may be absent, and is then no segment
+of the id at all. The id is read against the ids each referenced namespace holds, every
+way it can be: an id that reads no way, because a segment names no row where one is
+needed, or that reads more than one way, reports `unfoldable-id` with the readings.
+
+### Selecting rows
+
+`cargo mock select <query>` prints the `namespace::id` of each row a query over the
+tree of ids selects, one a line, and nothing at all, with exit status 0, when the query
+matches nothing. The query is a path in the standard, the namespace first:
+
+| Query | Selects |
+|---|---|
+| `ticket::question::engine::deps_allowed` | that row |
+| `ticket::question::engine` | every row below the branch |
+| `ticket::question::engine::**` | the same: `**` is any depth, none included |
+| `ticket::**::internals::**` | every row with `internals` anywhere in its id |
+| `ticket::*::engine` | every row whose id has `engine` second |
+| `ticket::{task, question}::engine::*` | the rows below each member, in written order |
+
+A node stands for the rows at or below it. Under a wildcard rows come in byte order of
+their ids, and each row comes once however many paths reach it. An ident naming nothing
+under a declared namespace selects nothing, and a first step naming no declared
+namespace is refused. Also refused, since they select no rows: an ordinal or a range,
+which a branch does not take; a constraint, as the registry declares no shapes; an
+operation; and a field step from a row the query names whole, which is `cargo mock
+query`'s to resolve. After a wildcard the tree holds rows and branches together, and a
+step that would be a field of a row passes over that row rather than failing the query.
 
 ## Roots
 
@@ -181,15 +256,15 @@ description = "Rulings this one replaces."
 ```toml
 [[answer]]
 id = "niri"
-slot = "display"          # a bare slug, never "slot::display"
+slot = "display"          # a bare id, never "slot::display"
 ```
 
-**The value is a bare slug.** The type already names the namespace, and writing it
+**The value is a bare id**, one name or a path (`subject = "engine::internals"`). The type already names the namespace, and writing it
 again in every value is a second place for the two to disagree; a qualified value
 is refused rather than accepted as a second spelling, because one thing written two
 ways has to be normalised everywhere it is read and the normalisations drift.
 
-A slug naming no row is reported, with the nearest existing slug named where there
+An id naming no row is reported, with the nearest existing id named where there
 is a near one, so a typo and a genuinely absent row do not read alike. It also keeps
 its reference form wherever it is rendered, rather than vanishing, so the
 unresolved-token check reports it a second time in the generated document.
@@ -200,27 +275,27 @@ reference the namespace.
 
 **A namespace declaring `value_field` cannot be referenced this way**, and that is
 refused at the declaration too. A reference into such a namespace renders that
-field's text rather than the slug, which is right for a constant stated once and
+field's text rather than the id, which is right for a constant stated once and
 wrong for a relation: the reference exists to name a row, and the text arrives in a
 table cell after the cell's own escaping has run, so a value carrying a pipe ends
 the column early.
 
-**A reference to a row gives its slug as plain text**, in a table cell and in a
-`{{ ns::slug }}` in prose alike, because the registry writes no page for it to link to.
+**A reference to a row gives its id as plain text**, in a table cell and in a
+`{{ ns::id }}` in prose alike, because the registry writes no page for it to link to.
 
 ### One field for a relation
 
 A relation between rows goes in one field typed `ref[]`, whichever namespace the
 other row is in. An item of it is one of two shapes that cannot be mistaken for each
-other: a citation has a root, a path and an anchor, so three segments or more
-(`research::dir::file::heading`), and a link to a row has two, a declared namespace
-and a slug.
+other: a citation opens on a root (`research::dir::file::heading`), and a link to a
+row opens on a declared namespace, with every name after it the row's id, one name or a
+path (`ticket::question::engine::deps_allowed`).
 
 ```toml
 [[registry.namespace.field]]
 name = "related"
 type = "ref[]"
-description = "Every row this one relates to, written as namespace::slug."
+description = "Every row this one relates to, written as namespace::id."
 ```
 
 ```toml
@@ -229,26 +304,26 @@ id = "niri"
 related = ["slot::display", "ruling::wayland_first", "research::notes::niri::tiling"]
 ```
 
-The first segment of a link is checked against the declared namespaces, and a slug
-naming no row is reported as `unknown-row-reference`, a slug that is not a slug as
+The first name of a link is checked against the declared namespaces, and an id
+naming no row is reported as `unknown-row-reference`, an id that is no path of names as
 `malformed-row-reference`. Only the first is scoped: it gates the commit or push that
 changes the file holding the link, and is a warning on a plain run or one that leaves
 that file alone, so a row can be retired before every citation of it is gone. A
 template citing a row is scoped the same way, to the template, and so is one written in
 the spelling before the letkajenkka standard that `cargo mock migrate
-references-to-letkajenkka` rewrites into a link, until it is rewritten. A slug that is
-not a slug, any other text the standard refuses, and every other finding gate every
+references-to-letkajenkka` rewrites into a link, until it is rewritten. An id that is
+no path of names, any other text the standard refuses, and every other finding gate every
 run. A root cannot carry the name of a
 namespace
-(`namespace-root-collision`), so a two-segment item is a link exactly when it names
-one. In a table cell a link gives the row's slug as plain text, as any reference to
+(`namespace-root-collision`), so an item is a link exactly when its first name is a
+namespace. In a table cell a link gives the row's id as plain text, as any reference to
 a row does.
 
 **A field per target namespace is the wrong shape.** A schema with a field for each
 namespace a row can relate to is a list of places a relation could be written, and a
 relation written in two of them says the same thing twice. The link is written once,
 on one row; the other end is derived, by `refsto` and by `cargo mock links
-<namespace>::<slug>`, which lists both ends of a row's links with the field each one
+<namespace>::<id>`, which lists both ends of a row's links with the field each one
 is written in.
 
 ### Asking what points at a row
@@ -268,22 +343,22 @@ segment of every reference into the namespace. A file holding `[[spike]]` rows
 validates against the spike schema wherever it sits, so a project files by
 subject rather than by kind and the registry stays queryable by kind.
 
-**A row's identity is its slug**, under the `id` key, snake_case and unique
-within its namespace. Slugs rather than numbers because a number carries no
+**A row's identity is its id**, under the `id` key, one or more snake_case names
+joined by `::` and unique within its namespace. Names rather than numbers because a number carries no
 meaning and an identifier carrying no meaning has to be managed: never reused,
 never renumbered, never reordered, since any of those silently repoints every
 reference to it.
 
 **There is no `prefix`.** An earlier design derived an identifier pattern from a
 per-namespace prefix, so a row was `SPK-042`. That is gone: the schema generator
-emits the slug grammar directly, and a project still declaring `prefix` has it
+emits the id grammar directly, and a project still declaring `prefix` has it
 silently ignored, because the namespace struct no longer carries the field.
 
 The older document describing the prefixed form is
 `docs/research/202607181700_registry-of-terms-design.md`. It is kept as the
 record of how this was reasoned, and it is superseded on **two** points.
 
-**Identity**, by this section: a row is a slug, not a prefixed number.
+**Identity**, by this section: a row is an id of names, not a prefixed number.
 
 **How a reference is recognised**, by the form at the top of this document. That
 design specifies pattern-scanning, where "a bare `SPK-042` becomes a link". This
@@ -335,7 +410,7 @@ host folds its own naming into that set. `{{ mock::design::12 }}` finds
 rendered output there, and `my_crate` is the directory `my-crate`. The one exception is
 the root of a path of two names or more, which may be written as it was declared: a
 namespace named after its directory, `ikiuni-renderer`, is reached as
-`ikiuni-renderer::a_row`. Every name after the root, and a slug on its own, keeps the
+`ikiuni-renderer::a_row`. Every name after the root, and every name of a row's id, keeps the
 set. Exactly one match
 resolves; several is an error rather than a guess, because the author meant one of
 them and picking silently would point the citation somewhere they did not choose. No
@@ -367,7 +442,9 @@ mockspace's own, each taking one query: `{{ pathof(mock::design::12) }}`. The po
 chain after a finished operation, `{{ pathof(crates::store).dir() }}`, is mockspace's too
 and is no part of the syntax, which has no step after an operation. The
 syntax also has sets (`{a, b}`), wildcards (`*`, `**`) and constraints (`<name>`); a reference here is a plain path of
-names, so each of those is refused where a row or a citation is expected.
+names, so each of those is refused where a row or a citation is expected. `cargo mock
+select` is where they mean something: it takes sets and wildcards over the tree of row
+ids (see Selecting rows) and refuses the rest.
 
 ## What is checked
 
@@ -375,14 +452,16 @@ The same validator runs over registry data and over prose, so a citation cannot
 rot in one and pass in the other.
 
 Reported: a reference to a row nothing declares; a field a row does not carry;
-a slug declared twice in one namespace, which no per-file schema can catch
-because each file is valid alone; a citation that does not parse; a root nobody
+an id declared twice in one namespace, which no per-file schema can catch
+because each file is valid alone; an id that is a proper prefix of another in its
+namespace; a folded field written by its row, an id that does not fold, and a `path`
+naming a field that cannot fold; a citation that does not parse; a root nobody
 declared; a citation matching several files; and one whose line is past the end
 of its file. A row reference naming no row, or written qualified rather than as a
-bare slug. A field type naming neither a builtin nor a namespace, and a namespace
+bare id. A field type naming neither a builtin nor a namespace, and a namespace
 whose key shadows a builtin type.
 
-Everything a JSON Schema can express (required fields, slug shape, types,
+Everything a JSON Schema can express (required fields, id shape, types,
 unknown keys) is checked by running the generated schema through a TOML
 validator instead. Two implementations of one contract drift, and the schema is
 the one an editor already uses.

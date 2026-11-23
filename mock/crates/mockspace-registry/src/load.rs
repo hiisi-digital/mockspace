@@ -75,6 +75,9 @@ pub(crate) fn rows_of_texts(
     namespaces: &[RegistryNamespace],
     wanted: Option<&BTreeSet<String>>,
 ) -> Registry {
+    // A namespace's ids are read against the ids of the namespaces they fold, so those load too.
+    let closed = wanted.map(|w| crate::fold::with_path_targets(namespaces, w));
+    let wanted = closed.as_ref();
     let mut reg = Registry::default();
     let known: BTreeSet<&str> = namespaces.iter().map(|n| n.key.as_str()).collect();
     let source_of = |rel: &str| {
@@ -134,7 +137,7 @@ pub(crate) fn rows_of_texts(
                     fields.insert(fk.to_string(), value_to_string(fv));
                 }
                 let row = RegistryRow {
-                    slug: slug.to_string(),
+                    id: slug.to_string(),
                     namespace: key.to_string(),
                     source: path.clone(),
                     fields,
@@ -165,6 +168,7 @@ pub(crate) fn rows_of_texts(
     for ids in reg.by_namespace.values_mut() {
         ids.sort();
     }
+    crate::fold::fold_ids(&mut reg, namespaces);
     // Unfiltered, the population is every file the walk met, readable or not.
     reg.files_read = if wanted.is_none() { all_files } else { read };
     reg

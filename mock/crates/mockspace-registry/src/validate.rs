@@ -200,6 +200,10 @@ pub enum GateScope {
 pub const FINDING_KINDS: &[&str] = &[
     "reference-cycle",
     "duplicate-id",
+    "id-is-a-branch",
+    "unfoldable-id",
+    "folded-field-written",
+    "unfit-path-field",
     "malformed-provenance",
     "unknown-provenance-root",
     "unresolvable-provenance",
@@ -255,6 +259,7 @@ const NAMESPACE_KEYS: &[&str] = &[
     "value_field",
     "group_by",
     "field",
+    "path",
     "console_direct",
 ];
 
@@ -434,6 +439,8 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
 /// Validate what the generated schemas cannot.
 pub fn validate(namespaces: &[RegistryNamespace], reg: &Registry) -> Vec<RegistryFinding> {
     let mut out = unquoted_times(namespaces, reg);
+    out.extend(crate::id_branches(reg));
+    out.extend(crate::fold::fold_findings(namespaces, reg));
     for (id, sources) in &reg.duplicates {
         out.push(RegistryFinding {
             kind: "duplicate-id",

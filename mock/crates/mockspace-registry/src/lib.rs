@@ -19,9 +19,12 @@
 //!
 //! # Identity
 //!
-//! A row is identified by its namespace and a slug: `vocab::xpbd`,
-//! `spike::actuator_fit_converges`. Slugs are snake_case and unique within
-//! their namespace.
+//! A row is identified by its namespace and an id: `vocab::xpbd`,
+//! `spike::actuator_fit_converges`, `ticket::question::engine::allowed`. An id is
+//! one or more snake_case names joined by `::`, unique within its namespace and
+//! never a proper prefix of another id there, so a namespace's ids are the leaves
+//! of one tree (`ids`). A namespace may fold some of its fields into its ids
+//! (`fold`), and a query over the tree selects rows (`select`).
 //!
 //! That pair is the row's key path, and it is the whole of the row's identity.
 //! The files a registry is written in are no part of it: any number of
@@ -33,10 +36,10 @@
 //! path declared in two files is refused, with both files named, and where a
 //! row lives is only ever given as a place to look.
 //!
-//! Slugs rather than numbers because a number carries no meaning, and an
+//! Names rather than numbers because a number carries no meaning, and an
 //! identifier carrying no meaning has to be *managed*: never reused, never
 //! renumbered, never reordered, since any of those silently repoints every
-//! reference to it. A slug needs none of that discipline. It says what it
+//! reference to it. A name needs none of that discipline. It says what it
 //! refers to, it survives reordering, and it stays readable in prose.
 //!
 //! # References
@@ -62,6 +65,8 @@ pub mod append;
 mod bounds;
 mod check;
 mod env;
+mod fold;
+mod ids;
 mod load;
 pub mod merge;
 mod model;
@@ -73,6 +78,7 @@ mod resolve;
 mod resolved;
 mod rowref;
 mod schema_replay;
+mod select;
 mod stores;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_world;
@@ -82,6 +88,8 @@ mod writer;
 pub use bounds::*;
 pub use check::*;
 pub use env::*;
+pub use fold::{FoldFault, IdFault, fold_row_id, unfit_path_fields};
+pub use ids::*;
 pub use load::*;
 pub use model::*;
 pub use refpath::*;
@@ -91,6 +99,7 @@ pub use resolve::*;
 pub use resolved::*;
 pub use rowref::*;
 pub use schema_replay::input_key;
+pub use select::*;
 pub use stores::*;
 pub use validate::*;
 pub use writer::*;

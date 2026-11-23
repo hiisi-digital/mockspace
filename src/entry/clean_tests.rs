@@ -169,6 +169,7 @@ fn every_dispatched_subcommand_is_in_the_known_list() {
         "status",
         "query",
         "links",
+        "select",
         "check",
         "clean",
         "pdf",

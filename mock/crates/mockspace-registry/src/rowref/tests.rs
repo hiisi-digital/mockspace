@@ -18,6 +18,7 @@ pub(super) fn ns(key: &str, fields: &[(&str, &str)]) -> RegistryNamespace {
         description: None,
         value_field: None,
         group_by:    None,
+        path: Vec::new(),
         fields:      fields
             .iter()
             .map(|(name, ty)| {
@@ -42,7 +43,7 @@ pub(super) fn reg(rows: &[(&str, &str, &[(&str, &str)])]) -> Registry {
     let mut reg = Registry::default();
     for (namespace, slug, fields) in rows {
         let row = RegistryRow {
-            slug:      (*slug).into(),
+            id:        (*slug).into(),
             namespace: (*namespace).into(),
             source:    PathBuf::from("t.toml"),
             fields:    fields

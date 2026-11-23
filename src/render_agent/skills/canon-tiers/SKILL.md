@@ -4,9 +4,9 @@ Three tiers; each governs the one below, in one direction only.
 
 ## The canon is typed rows
 
-- Typed rows in a registry, in namespaces the project declares: declared fields, a snake_case slug each, provenance saying what each row rests on.
+- Typed rows in a registry, in namespaces the project declares: declared fields, an id of snake_case names each, provenance saying what each row rests on.
 - `canon_paths` in `mockspace.toml` says which of that is the canon, and is what `mock check` refuses a write to while a panel is open. **Here it is {canon_location}.**
-- Rows, not prose: a typed field can be pointed at from a design, counted, checked for a slug that names nothing, and rendered into many documents that cannot drift.
+- Rows, not prose: a typed field can be pointed at from a design, counted, checked for an id that names nothing, and rendered into many documents that cannot drift.
 
 {canon_view_paragraphs}
 

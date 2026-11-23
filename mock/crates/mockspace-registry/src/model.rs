@@ -125,6 +125,20 @@ pub struct RegistryNamespace {
     pub group_by:    Option<String>,
     #[serde(default, rename = "field")]
     pub fields:      Vec<RegistryField>,
+    /// The fields whose values fold into each row's id, in the order they stand in it.
+    ///
+    /// Empty, the default, means a row's id is whatever the row writes. Non-empty, a row's id is
+    /// the value of each of these fields in turn, then one leaf name: with `path = ["kind",
+    /// "subject"]` a row `question::engine::internals::allowed` has `kind = "question"`,
+    /// `subject = "engine::internals"` and the leaf `allowed`. Each field is declared on this
+    /// namespace with the type of one row of another namespace, and its value is that row's id,
+    /// which may itself be a path. The loader derives the values from the id, so the id is their
+    /// one owner and a row writing one of them is the `folded-field-written` finding. A field
+    /// declared optional (`required = false`) may be absent, and then it is simply not a segment;
+    /// an id that reads more than one way is the `unfoldable-id` finding, as is one that reads
+    /// none. See [`crate::fold_row_id`].
+    #[serde(default)]
+    pub path:        Vec<String>,
 }
 
 impl RegistryNamespace {
@@ -147,8 +161,11 @@ pub fn is_valid_slug(s: &str) -> bool {
 /// One row.
 #[derive(Debug, Clone)]
 pub struct RegistryRow {
-    /// The slug, unique within its namespace.
-    pub slug:      String,
+    /// The row's id, unique within its namespace: a path of one or more names under the
+    /// letkajenkka standard, `allowed` or `question::engine::allowed`, written `::` joined as the
+    /// row writes it. No row's id is a proper prefix of another's in its namespace
+    /// (`id-is-a-branch`), so the ids of a namespace are the leaves of one tree.
+    pub id:        String,
     pub namespace: String,
     /// Where it was declared, so an error can point at a file.
     pub source:    PathBuf,
@@ -156,14 +173,14 @@ pub struct RegistryRow {
 }
 
 impl RegistryRow {
-    /// `namespace::slug`, the form a reference selects and a page anchors.
+    /// `namespace::id`, the form a reference selects and a page anchors.
     pub fn qualified(&self) -> String {
-        format!("{}::{}", self.namespace, self.slug)
+        format!("{}::{}", self.namespace, self.id)
     }
 
-    /// The anchor for this row on its namespace page.
+    /// The anchor for this row on its namespace page: [`row_anchor`] of its id.
     pub fn anchor(&self) -> String {
-        self.slug.replace('_', "-")
+        row_anchor(&self.id)
     }
 }
 
@@ -219,6 +236,9 @@ pub struct Registry {
     /// carried to the resolved view, and empty on the per-row view for the reason
     /// `files_read` is.
     pub unquoted_times: Vec<UnquotedTime>,
+    /// Every row of a namespace declaring `path` whose id did not fold into its fields, or which
+    /// wrote a folded field itself. Populated by the loader and carried as `unquoted_times` is.
+    pub folds:          Vec<FoldFault>,
 }
 
 impl Registry {
@@ -268,6 +288,7 @@ pub fn builtin_vocab() -> RegistryNamespace {
         // Vocab is the case that motivates grouping: its rows belong to
         // several unrelated closed sets and a flat table mixes them.
         group_by: Some("kind".to_string()),
+        path: Vec::new(),
         fields: vec![
             f("kind", false, "Which closed set this belongs to. Omit when the project has only one."),
             f("name", true, "The term."),
@@ -321,6 +342,7 @@ pub fn builtin_reference() -> RegistryNamespace {
         ),
         value_field: None,
         group_by: Some("kind".to_string()),
+        path: Vec::new(),
         fields: vec![
             f("title", true, "The work's own title, as published."),
             f("authors", false, "Authors as published. Omitted where the venue is the author."),

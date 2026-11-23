@@ -43,15 +43,21 @@ pub fn placeholder_spans(line: &str) -> Vec<(core::ops::Range<usize>, &str)> {
     out
 }
 
-/// Every `reg::` reference in `text`, as `(qualified, field)` pairs.
+/// Every row reference in `text`, as `(qualified, field)` pairs: the row's `namespace::id` and the
+/// field step after it, where there is one.
 ///
 /// Explicit rather than scanned. An earlier form auto-linked any token that
 /// looked like an identifier, which meant guessing whether a token was a
-/// reference at all. Requiring `reg::` makes a reference something the author
+/// reference at all. Requiring a placeholder makes a reference something the author
 /// states.
+///
+/// Where the id ends is the registry's to say, since an id may be a path, so the reference is read
+/// by [`Registry::locate`]. A reference naming no row is returned whole, as `(namespace::rest,
+/// None)`, so the check that reports it can name what was written.
 pub fn find_registry_refs(
     text: &str,
     namespaces: &BTreeSet<String>,
+    reg: &Registry,
 ) -> Vec<(String, Option<String>)> {
     let mut found = Vec::new();
     let mut fences = mockspace_refnames::Fences::new();
@@ -66,28 +72,27 @@ pub fn find_registry_refs(
         for (_, expr) in placeholder_exprs(line) {
             // A text the standard refuses, or one that is no plain path, is no row reference; the
             // gate that reports an expression nothing resolved is the one that says why.
-            let Ok(mut parts) = crate::names(&expr) else { continue };
-            // The prefix is optional and carries nothing, so drop it and treat
-            // both spellings as the one reference they are.
-            if parts.first() == Some(&REGISTRY_ROOT) {
-                parts.remove(0);
-            }
+            let Ok(parts) = crate::names(&expr) else { continue };
+            // The prefix is optional and carries nothing, so it is skipped and both spellings
+            // are the one reference they are.
+            let after = &parts[usize::from(parts.first() == Some(&REGISTRY_ROOT)) ..];
             // Slot zero decides what this is. A declared namespace makes it a
             // row reference; anything else is a citation root or a crate, which
             // are checked elsewhere and by different rules.
-            let Some(ns) = parts.first() else { continue };
-            if !namespaces.contains(*ns) {
+            let Some(ns) = after.first() else { continue };
+            if !namespaces.contains(*ns) || after.len() < 2 {
                 continue;
             }
-            match parts.len() {
-                3 => {
-                    found.push((
-                        format!("{}::{}", parts[0], parts[1]),
-                        Some(parts[2].to_string()),
-                    ))
+            match reg.locate(after) {
+                Some(at) => {
+                    match at.fields {
+                        [] => found.push((at.row.qualified(), None)),
+                        [field] => found.push((at.row.qualified(), Some(field.to_string()))),
+                        // a walk through a field is resolution's to check, not this
+                        _ => {},
+                    }
                 },
-                2 => found.push((format!("{}::{}", parts[0], parts[1]), None)),
-                _ => {},
+                None => found.push((after.join("::"), None)),
             }
         }
     }
@@ -102,7 +107,7 @@ pub fn dangling_references(
     namespaces: &BTreeSet<String>,
 ) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
-    for (qualified, field) in find_registry_refs(text, namespaces) {
+    for (qualified, field) in find_registry_refs(text, namespaces, reg) {
         match reg.get(&qualified) {
             None => {
                 out.insert(qualified.clone());

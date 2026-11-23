@@ -92,7 +92,7 @@ fn a_field_that_is_not_a_list_is_refused() {
 fn the_arguments_are_a_target_a_field_and_a_value() {
     let a = parse(&["ticket::first", "answers", "v"]).unwrap();
     assert_eq!(
-        (a.ns, a.id, a.field, a.value, a.local),
+        (a.ns, a.id.as_str(), a.field, a.value, a.local),
         ("ticket", "first", "answers", "v", false)
     );
     assert!(

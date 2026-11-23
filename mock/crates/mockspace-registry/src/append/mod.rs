@@ -30,7 +30,8 @@ const USAGE: &str = "usage: cargo mock registry-append <namespace>::<id> <field>
 /// What was asked.
 struct Ask<'a> {
     ns:    &'a str,
-    id:    &'a str,
+    /// The row's id, a path of one name or more.
+    id:    String,
     field: &'a str,
     value: &'a str,
     local: bool,
@@ -42,12 +43,16 @@ fn parse<'a>(args: &[&'a str]) -> Result<Ask<'a>, String> {
     let [target, field, value] = rest.as_slice() else {
         return Err(USAGE.to_string());
     };
-    let &[ns, id] = crate::names(target).unwrap_or_default().as_slice() else {
+    let names = crate::names(target).unwrap_or_default();
+    let [ns, id @ ..] = names.as_slice() else {
         return Err(format!("`{target}` is not <namespace>::<id>\n{USAGE}"));
     };
+    if id.is_empty() {
+        return Err(format!("`{target}` is not <namespace>::<id>\n{USAGE}"));
+    }
     Ok(Ask {
-        ns,
-        id,
+        ns: *ns,
+        id: id.join("::"),
         field,
         value,
         local,
@@ -122,7 +127,7 @@ fn step(cfg: &dyn RegistryEnv, args: &[&str]) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("{rel}: the file is gone"))
         .and_then(|b| String::from_utf8(b).map_err(|_| format!("{rel} is not UTF-8")))?;
-    match edit::append(&text, ask.ns, ask.id, ask.field, ask.value)? {
+    match edit::append(&text, ask.ns, &ask.id, ask.field, ask.value)? {
         Some(next) => {
             let message = format!("registry: add to `{}` of {}::{}", ask.field, ask.ns, ask.id);
             RegistryWriter::new(cfg, &stores)

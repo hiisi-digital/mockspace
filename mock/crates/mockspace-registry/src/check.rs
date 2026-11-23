@@ -76,6 +76,7 @@ pub fn check(
     findings.extend(crate::value_field_targets(namespaces));
     findings.extend(crate::misplaced_bounds(namespaces));
     findings.extend(crate::unfit_values(namespaces));
+    findings.extend(crate::unfit_path_fields(namespaces));
     findings.extend(crate::validate_row_references(registry, namespaces));
 
     let inert_keys = config_text.map(crate::config_unknown_keys).unwrap_or_default();

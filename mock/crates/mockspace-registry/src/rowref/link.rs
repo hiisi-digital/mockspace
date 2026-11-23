@@ -12,12 +12,11 @@
 //! of them said the same thing twice.
 //!
 //! An item of such a field is one of two shapes that cannot be mistaken for each
-//! other. A file citation has a root, a path and an anchor, so three segments or
-//! more: `research::dir::file::heading`. A row link has two, a declared
-//! namespace and a slug: `tenet::engine_time`. The first segment of a link is
-//! checked against the declared namespaces, and `namespace-root-collision`
-//! keeps a root from carrying the same name, so a two-segment item is a link
-//! exactly when it names a namespace.
+//! other. A file citation opens on a root: `research::dir::file::heading`. A row
+//! link opens on a declared namespace, and every name after it is the row's id:
+//! `tenet::engine_time`, or `ticket::question::engine::allowed` where ids are
+//! paths. `namespace-root-collision` keeps a root from carrying a namespace's
+//! name, so an item is a link exactly when its first name is a namespace.
 //!
 //! The link is written once, on one row. The other end is derived: `links_of`
 //! lists a row's links from both ends, and `refsto` finds the rows linking to
@@ -25,19 +24,20 @@
 
 use super::*;
 
-/// The namespace and slug of an item that links a row, when it is one: a path of exactly two
-/// names, the first a declared namespace.
+/// The namespace and id of an item that links a row, when it is one: a path of two names or more,
+/// the first a declared namespace and every name after it the row's id, `::` joined. A link names a
+/// row and never a field of one, so nothing after the id is read.
 ///
 /// An item the standard refuses is no link. It is a citation that does not parse, and the finding
 /// for it carries the rule it broke, so `slot::Not-A-Slug` is reported as the uppercase it is.
-pub fn link_target<'a>(item: &'a str, namespaces: &BTreeSet<&str>) -> Option<(&'a str, &'a str)> {
+pub fn link_target<'a>(item: &'a str, namespaces: &BTreeSet<&str>) -> Option<(&'a str, String)> {
     match crate::names(item.trim()).ok()?.as_slice() {
-        &[namespace, slug] if namespaces.contains(namespace) => Some((namespace, slug)),
+        [namespace, id @ ..] if !id.is_empty() && namespaces.contains(namespace) => Some((*namespace, id.join("::"))),
         _ => None,
     }
 }
 
-/// The declared namespace keys, which is what makes a two-segment item a link.
+/// The declared namespace keys, which is what makes an item a link.
 pub fn namespace_keys(namespaces: &[RegistryNamespace]) -> BTreeSet<&str> {
     namespaces.iter().map(|n| n.key.as_str()).collect()
 }
@@ -88,7 +88,7 @@ pub fn validate_links(reg: &Registry, namespaces: &[RegistryNamespace]) -> Vec<R
                 let Some((target, slug)) = link_target(item, &keys) else {
                     continue;
                 };
-                out.extend(super::dangling(reg, row, name, target, slug));
+                out.extend(super::dangling(reg, row, name, target, &slug));
             }
         }
     }
@@ -111,12 +111,12 @@ pub fn links_report(
     let Some((namespace, slug)) = link_target(id, &keys) else {
         let known: Vec<&str> = keys.iter().copied().collect();
         return Err(format!(
-            "`{id}` is not `namespace::slug` of a declared namespace ({}).",
+            "`{id}` is not `namespace::id` of a declared namespace ({}).",
             known.join(", ")
         ));
     };
     if !reg.rows.contains_key(id) {
-        let near = super::nearest(reg, namespace, slug);
+        let near = super::nearest(reg, namespace, &slug);
         return Err(format!("no row `{id}`.{near}"));
     }
     let links = links_of(reg, namespaces, id);
@@ -194,7 +194,7 @@ pub fn cmd_links(cfg: &dyn RegistryEnv, id: &str) -> std::process::ExitCode {
     use std::process::ExitCode;
 
     if id.trim().is_empty() {
-        eprintln!("usage: cargo mock links <namespace>::<slug>");
+        eprintln!("usage: cargo mock links <namespace>::<id>");
         return ExitCode::FAILURE;
     }
     let registry = match load_registry_for(cfg) {

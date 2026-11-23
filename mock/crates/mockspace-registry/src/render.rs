@@ -5,6 +5,10 @@
 
 use super::*;
 
+/// The form of a row id the generated schema holds an id and a row reference to, as a JSON string:
+/// one or more names of the standard joined by `::`. What [`crate::is_valid_row_id`] accepts.
+const ROW_ID_PATTERN: &str = r#""^[a-z][a-z0-9_]*(::[a-z][a-z0-9_]*)*$""#;
+
 /// Generate a JSON Schema per namespace, plus the tool configuration binding
 /// them, into `<mock>/registry/.schemas/`.
 ///
@@ -48,7 +52,7 @@ pub fn generate_schemas(
     for ns in namespaces {
         let mut props = String::new();
         props.push_str(&format!(
-            "        \"id\": {{\n          \"type\": \"string\",\n          \"pattern\": \"^[a-z][a-z0-9_]*$\",\n          \"description\": \"The slug: snake_case, unique within this namespace. A slug says what it refers to, so it survives reordering and stays readable in prose, which a number does not.\"\n        }}"
+            "        \"id\": {{\n          \"type\": \"string\",\n          \"pattern\": {ROW_ID_PATTERN},\n          \"description\": \"The id: one or more snake_case names joined by `::`, unique within this namespace and never a proper prefix of another id in it. An id says what it refers to, so it survives reordering and stays readable in prose, which a number does not.\"\n        }}"
         ));
         let mut required = vec!["id".to_string()];
 
@@ -101,10 +105,10 @@ pub fn generate_schemas(
             };
             let ty = match (row_ref, f.r#type.as_str()) {
                 (Some((_, true)), _) => {
-                    member("\"type\": \"string\", \"pattern\": \"^[a-z][a-z0-9_]*$\"")
+                    member(&format!("\"type\": \"string\", \"pattern\": {ROW_ID_PATTERN}"))
                 },
                 (Some((_, false)), _) => {
-                    scalar("\"type\": \"string\", \"pattern\": \"^[a-z][a-z0-9_]*$\"")
+                    scalar(&format!("\"type\": \"string\", \"pattern\": {ROW_ID_PATTERN}"))
                 },
                 // A bound is only ever on an integer; on any other type it is refused
                 // by `misplaced_bounds` rather than emitted where it would mean nothing.
@@ -151,7 +155,8 @@ pub fn generate_schemas(
                 ",\n        {}: {{\n          {ty}{desc}\n        }}",
                 json_string(&f.name)
             ));
-            if f.required {
+            // A folded field is written in the id and nowhere else, so no row carries it as a key.
+            if f.required && !ns.path.contains(&f.name) {
                 required.push(f.name.clone());
             }
         }
@@ -468,7 +473,7 @@ fn render_rows(
                     // Markdown has no per-row anchor of its own, and the
                     // alternative of a separate anchor block below the table
                     // duplicates every row to say nothing new.
-                    return format!("<a id=\"{}\"></a>{}", row.anchor(), row.slug);
+                    return format!("<a id=\"{}\"></a>{}", row.anchor(), row.id);
                 }
                 // A row reference is stored as a bare slug and rendered as a
                 // reference, which the pass that follows turns into the row's slug.
@@ -513,8 +518,8 @@ pub fn short_citation(row: &RegistryRow) -> String {
     match (f("authors"), f("year")) {
         (Some(a), Some(y)) => format!("{a} {y}"),
         (Some(a), None) => a,
-        (None, Some(y)) => format!("{}, {y}", f("title").unwrap_or_else(|| row.slug.clone())),
-        (None, None) => f("title").unwrap_or_else(|| row.slug.clone()),
+        (None, Some(y)) => format!("{}, {y}", f("title").unwrap_or_else(|| row.id.clone())),
+        (None, None) => f("title").unwrap_or_else(|| row.id.clone()),
     }
 }
 
@@ -532,7 +537,7 @@ pub fn format_citation(row: &RegistryRow) -> String {
         out.push_str(&a);
         out.push_str(", ");
     }
-    out.push_str(&f("title").unwrap_or_else(|| row.slug.clone()));
+    out.push_str(&f("title").unwrap_or_else(|| row.id.clone()));
     if let Some(v) = f("venue") {
         let year = f("year").map(|y| format!(" {y}")).unwrap_or_default();
         out.push_str(&format!(" ({v}{year})"));
@@ -579,6 +584,7 @@ mod closed_value_set_placement {
             description: None,
             value_field: None,
             group_by:    None,
+            path: Vec::new(),
             fields:      vec![RegistryField {
                 name: "f".into(),
                 r#type: ty.into(),
