@@ -97,10 +97,13 @@ pub fn operation<'a>(text: &'a str, name: &str) -> Option<&'a str> {
 
 /// The name a text opens on, where it parses as a path whose first step is a name: the namespace or
 /// the root of a reference. `None` for a text the standard refuses, and for one opening on anything
-/// but a name, since neither says what it reaches.
+/// but a name, since neither says what it reaches. A root written in the host's naming
+/// (`ikiuni-renderer::a_row`) is read as [`names`] reads it.
 #[must_use]
 pub fn root(text: &str) -> Option<&str> {
-    let path = Query::parse(text).ok()?.path()?;
+    let Some(path) = Query::parse(text).ok().and_then(Query::path) else {
+        return mockspace_refnames::root_in_host_naming(text)?.first().copied();
+    };
     match path.steps().next()?.selector {
         Selector::Ident(name) => Some(name),
         _ => None,

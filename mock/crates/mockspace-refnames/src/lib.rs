@@ -179,17 +179,20 @@ pub fn plain(path: Path<'_>) -> Option<impl Iterator<Item = &str>> {
     })
 }
 
-/// The names of `text` read under the standard alone, `None` when the standard refuses it or it is
-/// not a path of plain names.
+/// The names of `text` under the standard alone.
+///
+/// `None` when the standard refuses it or it is not a path of plain names.
 #[must_use]
 pub fn standard_names(text: &str) -> Option<Vec<&str>> {
     plain(letkajenkka::Query::parse(text).ok()?.path()?).map(Iterator::collect)
 }
 
-/// The names of `text` where its root alone carries a hyphen, each as written in `text`: a namespace
-/// named after its directory (`ikiuni-renderer::a_row`). `None` unless the path has two names or
-/// more and no name past the root needs the fold, so a hyphen past the root stays refused. The fold
-/// is byte for byte, so each name read from the folded text stands at the same place in `text`.
+/// The names of `text` where its root alone carries a hyphen, each as written in `text`.
+///
+/// The root is a namespace named after its directory (`ikiuni-renderer::a_row`). `None` unless the
+/// path has two names or more and no name past the root needs the fold, so a hyphen past the root
+/// stays refused. The fold is byte for byte, so each name read from the folded text stands at the
+/// same place in `text`.
 #[must_use]
 pub fn root_in_host_naming(text: &str) -> Option<Vec<&str>> {
     let folded = fold_separators(text)?;

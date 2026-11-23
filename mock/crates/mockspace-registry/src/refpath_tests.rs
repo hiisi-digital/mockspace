@@ -135,6 +135,18 @@ fn a_root_is_the_first_name_of_a_text_the_standard_reads_as_a_path() {
     }
 }
 
+// A root written in the host's naming, a namespace named after its directory, is the root of its
+// reference as `names` reads it; a hyphen past the root and a slug on its own are still no root.
+//
+// Mutation: reading `root` under the standard alone gives `None` for the first text, and reading it
+// with every hyphen folded gives `Some("ikiuni_renderer")` or a root for the second.
+#[test]
+fn a_root_in_the_hosts_naming_is_the_root_of_its_reference() {
+    assert_eq!(root("ikiuni-renderer::a_row"), Some("ikiuni-renderer"));
+    assert_eq!(root("ikiuni-renderer::c-one"), None, "a hyphen past the root");
+    assert_eq!(root("ikiuni-renderer"), None, "a slug on its own keeps the standard's set");
+}
+
 // Mutation: dropping the hyphen-to-underscore fold from `heading_name`, or keeping the `_` out of
 // the forge slug, gives `no_std-no-alloc`, which is no name.
 #[test]
