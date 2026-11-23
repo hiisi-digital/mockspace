@@ -362,7 +362,7 @@ mod tests {
             max:         None,
         }];
         let reg = reg_with("seam", "law", &[("rests_on", "nosuchroot::design::1")]);
-        let found = validate::validate_provenance(
+        let found = validate_provenance(
             Path::new("."),
             &BTreeMap::new(),
             &BTreeSet::new(),
@@ -395,7 +395,7 @@ mod tests {
             max:         None,
         }];
         let reg = reg_with("seam", "law", &[("derives_from", "nosuchroot::design::1")]);
-        let found = validate::validate_provenance(
+        let found = validate_provenance(
             Path::new("."),
             &BTreeMap::new(),
             &BTreeSet::new(),
@@ -429,7 +429,7 @@ mod tests {
             max:         None,
         }];
         let reg = reg_with("seam", "law", &[("provenance", "nosuchroot::design::1")]);
-        let found = validate::validate_provenance(
+        let found = validate_provenance(
             Path::new("."),
             &BTreeMap::new(),
             &BTreeSet::new(),
@@ -467,7 +467,7 @@ mod tests {
             max:         None,
         }];
         let reg = reg_with("seam", "law", &[("rests_on", "nosuchroot::design::1")]);
-        let found = validate::validate_provenance(
+        let found = validate_provenance(
             Path::new("."),
             &BTreeMap::new(),
             &BTreeSet::new(),

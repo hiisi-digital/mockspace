@@ -13,15 +13,19 @@
 
 use std::collections::BTreeSet;
 
-use super::{FIELD_KEYS, FINDING_KINDS, NAMESPACE_KEYS, UNREAD_NAMESPACE_KEYS};
+use super::FINDING_KINDS;
+use crate::config_keys::{FIELD_KEYS, NAMESPACE_KEYS, UNREAD_NAMESPACE_KEYS};
 
 const MODEL: &str = include_str!("model.rs");
 
 /// Every file that emits a registry finding kind, as source.
-const PRODUCERS: [&str; 7] = [
+const PRODUCERS: [&str; 10] = [
     include_str!("validate.rs"),
+    include_str!("provenance.rs"),
+    include_str!("config_keys.rs"),
     include_str!("bounds.rs"),
     include_str!("resolve.rs"),
+    include_str!("resolve_data.rs"),
     include_str!("rowref/mod.rs"),
     include_str!("check.rs"),
     include_str!("ids.rs"),

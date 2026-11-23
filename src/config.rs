@@ -2234,7 +2234,7 @@ mod key_lists_cannot_rot {
         assert!(!keys.is_empty(), "control: the instance declares something");
         for k in &keys {
             assert!(
-                crate::registry::validate::REF_ROOT_KEYS.contains(&k.as_str()),
+                crate::registry::REF_ROOT_KEYS.contains(&k.as_str()),
                 "`{k}` is a field of RefRoot and is missing from REF_ROOT_KEYS, so a \
                  config declaring it would be reported as unknown and fail the gate"
             );
@@ -2246,7 +2246,7 @@ mod key_lists_cannot_rot {
         // the other direction. a key left in the list after its field went
         // away is a key the check silently permits forever.
         let keys = declared_keys(&crate::registry::RefRoot::default());
-        for k in crate::registry::validate::REF_ROOT_KEYS {
+        for k in crate::registry::REF_ROOT_KEYS {
             assert!(
                 keys.iter().any(|e| e == k),
                 "REF_ROOT_KEYS names `{k}`, which RefRoot no longer carries"
