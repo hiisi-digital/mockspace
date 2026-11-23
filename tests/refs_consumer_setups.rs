@@ -79,22 +79,15 @@ fn migrated_with(setup: Setup, monitor: Monitor) {
     let _ = c.run(&["status"]);
     let before_any = c.git(&["rev-parse", "HEAD"]).trim().to_string();
     let mut said = String::new();
-    let mut ways = Vec::new();
     for (k, args) in s.calls().iter().enumerate() {
         let args = strs(args);
-        let mut before = whole::capture(&c);
-        let mut run = c.run(&args);
+        let before = whole::capture(&c);
+        let run = c.run(&args);
         if !run.ok {
             if let Err(e) = whole::kept(&c, &before, &whole::capture(&c), &s.allowed(k)) {
                 panic!("{setup:?} {args:?}: the stopped run lost something:\n{e}\n{}", run.all());
             }
-            let Some(did) = setup.way_on(&c, &run) else {
-                panic!("{setup:?} {args:?}: stopped, on nothing this setup explains:\n{}", run.all());
-            };
-            ways.push(did);
-            before = whole::capture(&c);
-            run = c.run(&args);
-            assert!(run.ok, "{setup:?} {args:?}: not finished once the person took the way on:\n{}", run.all());
+            panic!("{setup:?} {args:?}: stopped, where no setup stops a migration:\n{}", run.all());
         }
         said.push_str(&run.all());
         if let Err(e) = whole::kept(&c, &before, &whole::capture(&c), &s.allowed(k)) {
@@ -114,9 +107,10 @@ fn migrated_with(setup: Setup, monitor: Monitor) {
             assert_ne!(cone, "true", "the block needs the full pattern mode");
         },
         Setup::OwnRefHook => {
-            assert_eq!(ways.len(), 1, "the engine stopped once on the person's hook: {ways:?}");
-            let moved = c.hooks_dir().join("reference-transaction.mine");
-            assert_eq!(std::fs::read_to_string(&moved).unwrap(), OWN_HOOK, "the person's hook, moved aside by them, is as it was");
+            let chained = c.hooks_dir().join("reference-transaction.chained");
+            assert_eq!(std::fs::read_to_string(&chained).unwrap(), OWN_HOOK, "the person's hook, chained, is as it was");
+            let hook = std::fs::read_to_string(c.hooks_dir().join("reference-transaction")).unwrap();
+            assert!(hook.contains("# chains: reference-transaction.chained"), "the engine's hook runs it: {hook}");
         },
         Setup::HooksPath => {
             let own = w.base().join("own-hooks");

@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::world::{Clone, Out, World};
+use super::world::{Clone, World};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Setup {
@@ -74,24 +74,6 @@ impl Setup {
         c
     }
 
-    /// What the person does where a migration stops on this setup and says why: `Some` with the
-    /// steps taken, where the run names what this setup is expected to stop it on, and `None` where
-    /// the stop is not one this setup explains.
-    pub fn way_on(&self, c: &Clone, out: &Out) -> Option<String> {
-        match self {
-            // the hook is never written over; the engine names it, and the person moves it aside
-            Setup::OwnRefHook => {
-                let hook = c.hooks_dir().join("reference-transaction");
-                let said = out.all();
-                if !(said.contains("reference-transaction") && said.contains("a hook of your own")) {
-                    return None;
-                }
-                std::fs::rename(&hook, hook.with_extension("mine")).unwrap();
-                Some(format!("moved {} aside", hook.display()))
-            },
-            _ => None,
-        }
-    }
 }
 
 impl World {

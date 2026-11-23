@@ -57,7 +57,36 @@ impl Refusal {
 ///
 /// [`Refusal::Syntax`] when the standard refuses the text, [`Refusal::NotPlain`] when it parses and
 /// is not a path of names.
+///
+/// The root of a path of two names or more may be written in the host's own naming, as a namespace
+/// named after its directory is (`ikiuni-renderer::a_row`): the root is given as written, so it
+/// meets the key it was declared under. Every name after it is the standard's spelling alone, and
+/// so is a path of one name, which is a slug.
 pub fn names(text: &str) -> Result<Vec<&str>, Refusal> {
+    match standard_names(text) {
+        Err(refused) => root_in_host_naming(text).ok_or(refused),
+        read => read,
+    }
+}
+
+/// The names of `text` where its root alone carries a hyphen, each as written in `text`. The fold
+/// is byte for byte, so each name read from the folded text stands at the same place in `text`.
+fn root_in_host_naming(text: &str) -> Option<Vec<&str>> {
+    let folded = mockspace_refnames::fold_separators(text)?;
+    let base = folded.as_ptr().addr();
+    let read: Vec<&str> = standard_names(&folded)
+        .ok()?
+        .into_iter()
+        .map(|n| {
+            let at = n.as_ptr().addr() - base;
+            &text[at..at + n.len()]
+        })
+        .collect();
+    (read.len() >= 2 && read[1..].iter().all(|n| mockspace_refnames::fold_separators(n).is_none())).then_some(read)
+}
+
+/// The names of `text` read under the standard alone.
+fn standard_names(text: &str) -> Result<Vec<&str>, Refusal> {
     let query = Query::parse(text).map_err(Refusal::Syntax)?;
     let Some(path) = query.path() else { return Err(Refusal::NotPlain) };
     mockspace_refnames::plain(path).map(Iterator::collect).ok_or(Refusal::NotPlain)

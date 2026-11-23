@@ -159,18 +159,21 @@ fn verify_names_a_worktree_with_no_backup_hook_and_instantiate_repairs_it() {
     a.ok(&["data-refs", "verify"]);
 }
 
-// Mutation: overwrite a hook of the person's own to install ours.
+// Mutation: overwrite a hook of the person's own to install ours, or leave it standing in place
+// of ours. The person's hook is then lost, or git never copies an edit before it writes over it.
 #[test]
-fn a_reference_transaction_hook_of_the_persons_own_is_refused_and_kept() {
+fn a_reference_transaction_hook_of_the_persons_own_is_chained_and_kept() {
     let w = fixture::migrated_remote();
     let a = fixture::seat(&w, "a");
     let hook = own_hook(&a);
     std::fs::write(&hook, "#!/bin/sh\n# my own\nexit 0\n").unwrap();
-    let o = a.fails(&["data-refs", "instantiate"]);
-    assert!(o.all().contains("reference-transaction"), "{}", o.all());
-    assert_eq!(std::fs::read_to_string(&hook).unwrap(), "#!/bin/sh\n# my own\nexit 0\n", "the hook is as it was");
     let v = a.fails(&["data-refs", "verify"]);
-    assert!(v.all().contains("reference-transaction"), "{}", v.all());
+    assert!(v.all().contains("reference-transaction") && v.all().contains("instantiate"), "{}", v.all());
+    // the instances are there already, which `instantiate` says, and it writes the hooks whatever
+    let _ = a.run(&["data-refs", "instantiate"]);
+    let chained = hook.with_file_name("reference-transaction.chained");
+    assert_eq!(std::fs::read_to_string(&chained).unwrap(), "#!/bin/sh\n# my own\nexit 0\n", "the hook is kept whole");
+    a.ok(&["data-refs", "verify"]);
 }
 
 // ---- the sparse block follows the declarations ----

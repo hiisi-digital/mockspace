@@ -57,7 +57,20 @@ pub const fn fold(name: &str) -> Option<Folded<'_>> {
 }
 
 const fn fold_byte(b: u8) -> u8 {
-    if b == b'-' { b'_' } else { b.to_ascii_lowercase() }
+    if b == HOST_SEPARATOR { b'_' } else { b.to_ascii_lowercase() }
+}
+
+/// The separator of a host's own naming that [`fold`] makes an underscore.
+const HOST_SEPARATOR: u8 = b'-';
+
+/// `text` with each hyphen the underscore [`fold`] makes of it and nothing else changed, byte for
+/// byte, so a name read from the result sits at the same place in `text`; and whether there was
+/// any. The case is kept: a reference whose root is a host's name, a namespace named after its
+/// directory, is read with this and its names taken from `text` where they stand.
+#[must_use]
+pub fn fold_separators(text: &str) -> Option<String> {
+    let sep = char::from(HOST_SEPARATOR);
+    text.contains(sep).then(|| text.replace(sep, "_"))
 }
 
 impl fmt::Display for Folded<'_> {

@@ -31,6 +31,14 @@
 //! so `snapshot` makes the copy as objects and names it beside the instance's record, and the next
 //! engine command folds it into the ref (see `mockspace_store`'s `instance/pending.rs`).
 //!
+//! A hook of the person's own found where one of these goes, git-lfs's `post-checkout` or a
+//! workspace's shim that regenerates after a pull, is chained, never refused or written over: it is
+//! moved beside the engine's as `<event>.chained`, and the engine's runs it first, with the same
+//! arguments and input, and exits with its status, so it does all it did before and the copy runs
+//! after it. The engine's hook names the chained one on a `# chains: <event>.chained` line, which
+//! a tool that writes a hook of its own reads to write there instead. Only where that place is
+//! taken too, by a hook other than the one already chained, is it refused, naming both.
+//!
 //! The hooks are the repository's own, in `<git-common-dir>/hooks`, which no other repository reads.
 //! Where `core.hooksPath` points at the gate's durable directory, the gate's hook of the same name
 //! there hands over to it (`mockspace_manifest::gate::CHAIN_HOOKS`), and the same where git-shook
@@ -172,7 +180,12 @@ struct Managed {
     when:      &'static str,
     /// What a hook of the person's own has to do instead, for the refusal that names it.
     wanted:    &'static str,
+    /// Whether git gives the hook input on stdin, which a chained hook and the copy both read.
+    input:     bool,
 }
+
+/// What a hook of the person's own found where the engine's goes is named, beside it, once chained.
+const CHAINED: &str = "chained";
 
 const MANAGED: [Managed; 2] = [
     Managed {
@@ -181,6 +194,7 @@ const MANAGED: [Managed; 2] = [
         old_marks: &["# mockspace data refs: copies an edited instance file before git writes over it (managed, do not edit)"],
         when:      "[ \"$1\" = prepared ] || exit 0\nmoved=\nwhile read -r _ _ ref; do\n    [ \"$ref\" = ORIG_HEAD ] && moved=1\ndone\n[ -n \"$moved\" ] || exit 0\n",
         wanted:    "have its `prepared` case run `mock data-refs snapshot` when a line of its input ends in ` ORIG_HEAD`",
+        input:     true,
     },
     Managed {
         event:     "post-checkout",
@@ -189,24 +203,51 @@ const MANAGED: [Managed; 2] = [
         // a branch checkout that moved HEAD from a commit; a new worktree or a clone has nothing to keep
         when:      "[ \"$3\" = 1 ] || exit 0\n[ \"$1\" != \"$2\" ] || exit 0\ncase \"$1\" in *[!0]*) ;; *) exit 0 ;; esac\n",
         wanted:    "have it run `mock data-refs snapshot` when its third argument is 1 and its first two differ",
+        input:     false,
     },
 ];
 
 impl Managed {
-    fn text(&self, engine: &Engine) -> String {
+    /// The hook, and where `chains`, the one that runs the hook kept at [`Managed::chained`] first.
+    fn text(&self, engine: &Engine, chains: bool) -> String {
+        if !chains {
+            return format!(
+                "#!/bin/sh\n{}\n# Never stops the git command it runs in: every way out is exit 0.\n{}{}",
+                self.mark,
+                self.when,
+                engine.snapshot(true)
+            );
+        }
+        let name = self.chained_name();
+        // the input is read once and given to each; the `.` keeps its last newline through `$(...)`
+        let (take, feed) = if self.input { ("input=$(cat; echo .)\ninput=${input%.}\n", "printf '%s' \"$input\" | ") } else { ("", "") };
         format!(
-            "#!/bin/sh\n{}\n# Never stops the git command it runs in: every way out is exit 0.\n{}{}",
-            self.mark,
-            self.when,
-            engine.snapshot(true)
+            "#!/bin/sh\n{mark}\n# chains: {name}\n# Runs {name}, the hook that stood here before, first, and exits with its status. The copy after it \
+             never stops the git command it runs in: every way out of it is exit 0.\n{take}status=0\n\
+             chained=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/hooks/{name}\n\
+             if [ -x \"$chained\" ]; then {feed}\"$chained\" \"$@\" || status=$?; fi\n\
+             {feed}(\n{when}{copy})\nexit $status\n",
+            mark = self.mark,
+            when = self.when,
+            copy = engine.snapshot(true),
         )
+    }
+
+    /// The file name a hook of the person's own is moved to when it is chained.
+    fn chained_name(&self) -> String {
+        format!("{}.{CHAINED}", self.event)
+    }
+
+    /// Where a hook of the person's own is kept once chained, beside the engine's.
+    fn chained(&self, common: &std::path::Path) -> PathBuf {
+        common.join("hooks").join(self.chained_name())
     }
 
     fn state(&self, common: &std::path::Path) -> Result<(PathBuf, Hook), String> {
         let path = common.join("hooks").join(self.event);
         let state = match std::fs::read_to_string(&path) {
             Ok(text) if text.contains(self.mark) || self.old_marks.iter().any(|m| text.contains(m)) => Hook::Ours(text),
-            Ok(_) => Hook::Foreign,
+            Ok(text) => Hook::Foreign(text),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Hook::Absent,
             Err(e) => return Err(format!("reading {}: {e}", path.display())),
         };
@@ -227,18 +268,28 @@ fn common_dir(cfg: &Config) -> Result<PathBuf, String> {
 enum Hook {
     Absent,
     Ours(String),
-    Foreign,
+    Foreign(String),
 }
 
 /// The hooks [`write`] writes, decided with nothing written.
 pub(super) struct Planned {
     engine: Engine,
-    write:  Vec<(&'static Managed, PathBuf)>,
+    write:  Vec<Step>,
     gate:   Option<PathBuf>,
 }
 
+/// One hook [`write`] writes: where `chain`, the person's hook at `path` is moved there first and
+/// the engine's runs it.
+struct Step {
+    m:      &'static Managed,
+    path:   PathBuf,
+    chain:  Option<PathBuf>,
+    chains: bool,
+}
+
 /// What [`write`] does, or the refusal that stops it: a hook of the person's own is never written
-/// over, and every one is named.
+/// over. It is chained, and refused, naming both, only where the place it would be chained to holds
+/// another.
 pub(super) fn plan(cfg: &Config) -> Result<Planned, String> {
     let engine = Engine::of(cfg)?;
     let common = common_dir(cfg)?;
@@ -246,16 +297,26 @@ pub(super) fn plan(cfg: &Config) -> Result<Planned, String> {
     let mut foreign = Vec::new();
     for m in &MANAGED {
         let (path, state) = m.state(&common)?;
+        let chained = m.chained(&common);
+        let taken = chained.symlink_metadata().is_ok();
         match state {
-            Hook::Foreign => foreign.push(format!(
-                "{} is a hook of your own, and the copy of the files of an instance before git writes over them needs a \
-                 `{}` hook: {}, never stopping git, or move it aside and run `cargo mock data-refs instantiate`",
+            // the one chained already, written over the engine's (`git lfs update --force` does): the
+            // engine's is written again and the chained one stays as it is
+            Hook::Foreign(text) if taken && std::fs::read_to_string(&chained).is_ok_and(|c| c == text) => {
+                write.push(Step { m, path, chain: None, chains: true });
+            },
+            Hook::Foreign(_) if taken => foreign.push(format!(
+                "{} is a hook of your own, and {} holds the one chained before it, so neither is written over: the copy \
+                 of the files of an instance before git writes over them needs a `{}` hook that does both, never \
+                 stopping git: {}; or move one of them aside and run `cargo mock data-refs instantiate`, which chains it",
                 path.display(),
+                chained.display(),
                 m.event,
                 m.wanted
             )),
-            Hook::Ours(text) if text == m.text(&engine) => {},
-            _ => write.push((m, path)),
+            Hook::Foreign(_) => write.push(Step { m, path, chain: Some(chained), chains: true }),
+            Hook::Ours(text) if text == m.text(&engine, taken) => {},
+            _ => write.push(Step { m, path, chain: None, chains: taken }),
         }
     }
     if !foreign.is_empty() {
@@ -272,12 +333,15 @@ pub(super) fn plan(cfg: &Config) -> Result<Planned, String> {
 /// Writes the hooks [`plan`] decided into the repository's own hooks directory, each kept in the
 /// cache first, and makes sure git reaches them.
 pub(super) fn write(planned: Planned) -> Result<(), String> {
-    for (m, path) in planned.write {
+    for Step { m, path, chain, chains } in planned.write {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("creating {}: {e}", parent.display()))?;
         }
         mockspace_store::kept::keep(&path).map_err(|e| format!("keeping a copy of {} before writing over it: {e}", path.display()))?;
-        mockspace_manifest::write_executable(&path, m.text(&planned.engine)).map_err(|e| format!("writing {}: {e}", path.display()))?;
+        if let Some(to) = chain {
+            std::fs::rename(&path, &to).map_err(|e| format!("moving {} to {} to chain it: {e}", path.display(), to.display()))?;
+        }
+        mockspace_manifest::write_executable(&path, m.text(&planned.engine, chains)).map_err(|e| format!("writing {}: {e}", path.display()))?;
     }
     if let Some(dir) = planned.gate {
         let _ = mockspace_manifest::gate::install_durable_hooks(&dir, mockspace_manifest::gate::HOOK_VERSION);
@@ -305,12 +369,19 @@ pub(super) fn check(cfg: &Config) -> Result<(), String> {
     let engine = Engine::of(cfg)?;
     for m in &MANAGED {
         let (path, state) = m.state(&common)?;
+        let chains = m.chained(&common).symlink_metadata().is_ok();
         match state {
-            Hook::Ours(text) if current_or_live(&text, m.mark, &engine, |e| m.text(e)) => {},
-            Hook::Foreign => {
+            Hook::Ours(text) if current_or_live(&text, m.mark, &engine, |e| m.text(e, chains)) => {},
+            Hook::Foreign(_) => {
+                let then = if chains {
+                    "`cargo mock data-refs instantiate` writes the engine's again where it is the one chained beside \
+                     it, and otherwise names both"
+                } else {
+                    "`cargo mock data-refs instantiate` chains it"
+                };
                 return Err(format!(
                     "{} is a hook of your own that does not copy the files of an instance before git writes over them; \
-                     see `cargo mock data-refs instantiate`",
+                     {then}",
                     path.display()
                 ));
             },
