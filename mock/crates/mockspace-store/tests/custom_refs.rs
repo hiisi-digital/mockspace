@@ -100,13 +100,36 @@ fn a_write_is_pushed_to_the_relay_the_clone_names_and_read_back_from_the_remote(
     git(w.dir.path(), &["clone", "-q", "--mirror", &w.remote(), &lossy.to_string_lossy()]);
     git(&repo, &["config", PUSH_URL_KEY, &lossy.to_string_lossy()]);
     let err = s.apply(&Edit::new().put("a", "2"), "two", &Reapply).unwrap_err();
-    assert!(matches!(err, StoreError::Verify { .. }), "the read-back asks the remote, not the relay: {err}");
-    assert!(try_git(&lossy, &["rev-parse", "-q", "--verify", MOCK_REF]).is_ok(), "control: the relay took it");
+    let StoreError::Verify { commit: two, .. } = &err else {
+        panic!("the read-back asks the remote, not the relay: {err}");
+    };
+    assert_eq!(git(&lossy, &["rev-parse", MOCK_REF]), *two, "control: the relay took it");
+    assert_eq!(git(&repo, &["rev-parse", MOCK_REF]), one, "the local ref is not moved onto it");
     assert_eq!(w.tip(MOCK_REF).as_deref(), Some(one.as_str()), "the remote never had it");
     assert_eq!(git(&repo, &["rev-parse", SEEN]), one, "and the clone does not take it for seen");
     let fresh = RefStore::new(&repo, w.remote(), RefPair::for_namespace(NS).unwrap());
     fresh.refresh().unwrap();
     assert_eq!(fresh.read("a").unwrap().as_deref(), Some(&b"1"[..]), "the clone goes on from the remote's tip");
+}
+
+#[test]
+fn a_first_write_a_lossy_relay_dropped_leaves_the_tree_unborn_here_and_writable() {
+    let w = World::new();
+    let repo = w.clone_dir("a");
+    let lossy = w.dir.path().join("lossy.git");
+    git(w.dir.path(), &["clone", "-q", "--mirror", &w.remote(), &lossy.to_string_lossy()]);
+    git(&repo, &["config", PUSH_URL_KEY, &lossy.to_string_lossy()]);
+    let s = RefStore::new(&repo, w.remote(), RefPair::for_namespace(NS).unwrap()).with_retry(RetryPolicy::immediate(2));
+    let err = s.apply(&Edit::new().put("a", "1"), "one", &Reapply).unwrap_err();
+    assert!(matches!(err, StoreError::Verify { .. }), "{err}");
+    assert!(try_git(&repo, &["rev-parse", "-q", "--verify", MOCK_REF]).is_err(), "no local ref names the lost commit");
+    assert!(try_git(&repo, &["rev-parse", "-q", "--verify", SEEN]).is_err(), "nor the backup ref");
+
+    // the next write, through a relay that passes it on, makes the tree
+    git(&repo, &["config", PUSH_URL_KEY, &format!("file://{}", w.remote())]);
+    let landed = s.apply(&Edit::new().put("a", "1"), "one", &Reapply).unwrap();
+    assert!(landed.confirmed);
+    assert_eq!(w.tip(MOCK_REF), landed.commit);
 }
 
 #[test]

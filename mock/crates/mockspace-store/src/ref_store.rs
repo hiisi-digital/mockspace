@@ -296,12 +296,13 @@ impl RefStore {
                 None,
             )?;
             if out.ok() {
-                self.git
-                    .must(&["update-ref", self.pair.local(), &commit], &[], None)?;
-                // seen only once the remote it is fetched from is seen to hold it: a relay may take
-                // a push and lose it, and a tip the remote never had would refuse the real one
+                // the local ref and the backup ref move only once the remote it is fetched from is
+                // seen to hold the commit: a relay may take a push and lose it, and a tip the remote
+                // never had, standing in either, would refuse the real one on the next fetch
                 let confirmed = self.verify_pushed(&commit)?;
                 if confirmed {
+                    self.git
+                        .must(&["update-ref", self.pair.local(), &commit], &[], None)?;
                     self.record_seen(&commit)?;
                 }
                 return Ok(self.landed(commit, attempt, confirmed));
