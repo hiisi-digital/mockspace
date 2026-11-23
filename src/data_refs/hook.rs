@@ -247,7 +247,7 @@ impl Managed {
         let path = common.join("hooks").join(self.event);
         let state = match std::fs::read_to_string(&path) {
             Ok(text) if text.contains(self.mark) || self.old_marks.iter().any(|m| text.contains(m)) => Hook::Ours(text),
-            Ok(_) => Hook::Foreign,
+            Ok(text) => Hook::Foreign(text),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Hook::Absent,
             Err(e) => return Err(format!("reading {}: {e}", path.display())),
         };
@@ -268,7 +268,7 @@ fn common_dir(cfg: &Config) -> Result<PathBuf, String> {
 enum Hook {
     Absent,
     Ours(String),
-    Foreign,
+    Foreign(String),
 }
 
 /// The hooks [`write`] writes, decided with nothing written.
@@ -300,7 +300,12 @@ pub(super) fn plan(cfg: &Config) -> Result<Planned, String> {
         let chained = m.chained(&common);
         let taken = chained.symlink_metadata().is_ok();
         match state {
-            Hook::Foreign if taken => foreign.push(format!(
+            // the one chained already, written over the engine's (`git lfs update --force` does): the
+            // engine's is written again and the chained one stays as it is
+            Hook::Foreign(text) if taken && std::fs::read_to_string(&chained).is_ok_and(|c| c == text) => {
+                write.push(Step { m, path, chain: None, chains: true });
+            },
+            Hook::Foreign(_) if taken => foreign.push(format!(
                 "{} is a hook of your own, and {} holds the one chained before it, so neither is written over: the copy \
                  of the files of an instance before git writes over them needs a `{}` hook that does both, never \
                  stopping git: {}; or move one of them aside and run `cargo mock data-refs instantiate`, which chains it",
@@ -309,7 +314,7 @@ pub(super) fn plan(cfg: &Config) -> Result<Planned, String> {
                 m.event,
                 m.wanted
             )),
-            Hook::Foreign => write.push(Step { m, path, chain: Some(chained), chains: true }),
+            Hook::Foreign(_) => write.push(Step { m, path, chain: Some(chained), chains: true }),
             Hook::Ours(text) if text == m.text(&engine, taken) => {},
             _ => write.push(Step { m, path, chain: None, chains: taken }),
         }
@@ -367,10 +372,16 @@ pub(super) fn check(cfg: &Config) -> Result<(), String> {
         let chains = m.chained(&common).symlink_metadata().is_ok();
         match state {
             Hook::Ours(text) if current_or_live(&text, m.mark, &engine, |e| m.text(e, chains)) => {},
-            Hook::Foreign => {
+            Hook::Foreign(_) => {
+                let then = if chains {
+                    "`cargo mock data-refs instantiate` writes the engine's again where it is the one chained beside \
+                     it, and otherwise names both"
+                } else {
+                    "`cargo mock data-refs instantiate` chains it"
+                };
                 return Err(format!(
                     "{} is a hook of your own that does not copy the files of an instance before git writes over them; \
-                     `cargo mock data-refs instantiate` chains it",
+                     {then}",
                     path.display()
                 ));
             },

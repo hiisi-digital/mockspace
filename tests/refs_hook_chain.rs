@@ -105,6 +105,26 @@ fn an_already_chained_hook_stays_put() {
     assert!(!hooks(&c).join("post-checkout.chained.chained").exists());
 }
 
+// Mutation: refuse wherever the chained place is taken. `git lfs update --force` writes git-lfs's
+// hook over the engine's, the same text as the one chained, and every `instantiate` then refuses
+// until the person deletes a file by hand.
+#[test]
+fn the_chained_hook_written_back_over_the_engine_s_is_taken_as_chained_and_the_engine_s_written_again() {
+    let w = fixture::migrated_remote();
+    let c = w.clone_of("a");
+    logger(&c, "git-lfs", false, 0);
+    exec::write_executable(&hooks(&c).join("post-checkout"), LFS_POST_CHECKOUT);
+    c.ok(&["data-refs", "instantiate"]);
+    exec::write_executable(&hooks(&c).join("post-checkout"), LFS_POST_CHECKOUT);
+    let v = c.fails(&["data-refs", "verify"]);
+    assert!(v.all().contains("writes the engine's again"), "{}", v.all());
+    let o = c.run(&["data-refs", "instantiate"]);
+    assert!(!o.all().contains("a hook of your own"), "not refused: {}", o.all());
+    assert!(read(&hooks(&c).join("post-checkout")).contains("# chains: post-checkout.chained"));
+    assert_eq!(read(&hooks(&c).join("post-checkout.chained")), LFS_POST_CHECKOUT);
+    c.ok(&["data-refs", "verify"]);
+}
+
 // Mutation: give the chained `reference-transaction` hook no input, or let it take the input the
 // copy reads. Its own work is then done on nothing, or the copy never sees the move of `ORIG_HEAD`.
 #[test]
