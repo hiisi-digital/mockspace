@@ -82,8 +82,10 @@ enum Step {
     /// Take these paths (from the repository root) out of the index, leaving the files.
     Untrack(Vec<String>),
     /// Keep git from writing over the instances of every ref the config declares once the steps
-    /// before have run: the sparse checkout of this worktree and the hook that copies an edit.
-    KeepGitOff,
+    /// before have run: the sparse checkout of this worktree and the hook that copies an edit. It
+    /// carries the declarations the config holds by then, which the run checks before its first
+    /// step, so a refusal of this one comes before anything is written.
+    KeepGitOff(Vec<DataRefDecl>),
     /// Rename a file, both paths from the repository root.
     Rename {
         from: String,
@@ -138,6 +140,11 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         println!("dry run: nothing was changed");
         return ExitCode::SUCCESS;
     }
+    if let Err(why) = preflight(cfg, &plan) {
+        eprintln!("migrate: {why}");
+        eprintln!("migrate: nothing was changed");
+        return ExitCode::FAILURE;
+    }
     for step in &plan.steps {
         if let Err(why) = carry_out(cfg, step) {
             eprintln!("migrate: stopped, and the steps before this one stand: {why}");
@@ -147,6 +154,21 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     }
     println!("done: {}", plan.after);
     ExitCode::SUCCESS
+}
+
+/// Every refusal a step of `plan` would make part way, made before the first step: a copy that
+/// cannot be kept in the cache, and whatever stops git being kept off the instances the config
+/// declares once the run is through, a hook or a monitor of the person's own among them.
+fn preflight(cfg: &Config, plan: &Plan) -> Result<(), String> {
+    mockspace_store::kept::ready().map_err(|e| format!("no copy of a file can be kept in the cache before it is written: {e}"))?;
+    for step in &plan.steps {
+        if let Step::KeepGitOff(after) = step {
+            let mut then = cfg.clone();
+            then.data_refs = after.clone();
+            crate::data_refs::keep_git_off_preflight(&then).map_err(|why| format!("keeping git from writing over the instance: {why}"))?;
+        }
+    }
+    Ok(())
 }
 
 fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
@@ -197,7 +219,7 @@ fn carry_out(cfg: &Config, step: &Step) -> Result<(), String> {
         },
         // the declared instance is now what git would write over on a checkout of an older commit;
         // the config is read again, since a step before may have appended the declaration
-        Step::KeepGitOff => Config::try_from_dir(&cfg.mock_dir)
+        Step::KeepGitOff(_) => Config::try_from_dir(&cfg.mock_dir)
             .and_then(|again| crate::data_refs::keep_git_off_the_instances(&again))
             .map_err(|why| format!("keeping git from writing over the instance: {why}")),
         Step::Rename {

@@ -1,6 +1,6 @@
 //! Losses a review of the data-ref branch found: git writing over an edited instance file in a
 //! merge, build output that never reaches the ref, a mode a filesystem makes up, and a sparse
-//! block that hides a tracked file.
+//! block that hides a tracked file. The monitor's are in `refs_monitor.rs`.
 
 #[path = "common/ambient.rs"]
 mod ambient;
@@ -171,90 +171,6 @@ fn a_reference_transaction_hook_of_the_persons_own_is_refused_and_kept() {
     assert_eq!(std::fs::read_to_string(&hook).unwrap(), "#!/bin/sh\n# my own\nexit 0\n", "the hook is as it was");
     let v = a.fails(&["data-refs", "verify"]);
     assert!(v.all().contains("reference-transaction"), "{}", v.all());
-}
-
-fn monitor(c: &refs_e2e::Clone) -> std::path::PathBuf {
-    let common = c.git(&["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-    std::path::Path::new(common.trim()).join("hooks/mockspace-fsmonitor")
-}
-
-// Mutation: leave `verify` blind to the monitor, or `instantiate` not writing it again; an edit
-// made at a commit from before the migration is then lost on the plain way back with nothing said.
-#[test]
-fn verify_names_a_worktree_with_no_monitor_and_instantiate_repairs_it() {
-    let w = fixture::migrated_remote();
-    let a = fixture::seat(&w, "a");
-    a.ok(&["data-refs", "verify"]);
-    let set = a.git(&["config", "core.fsmonitor"]);
-    assert_eq!(set.trim(), format!("'{}'", monitor(&a).display()), "the setting names the monitor, quoted for the shell");
-    for broken in ["unset", "removed"] {
-        if broken == "unset" {
-            a.git(&["config", "--unset", "core.fsmonitor"]);
-        } else {
-            std::fs::remove_file(monitor(&a)).unwrap();
-        }
-        let o = a.fails(&["data-refs", "verify"]);
-        assert!(o.all().contains("monitor") && o.all().contains("instantiate"), "{broken}: {}", o.all());
-        let _ = a.run(&["data-refs", "instantiate"]);
-        a.ok(&["data-refs", "verify"]);
-    }
-}
-
-// Mutation: write the setting over a `core.fsmonitor` of the person's own; their monitor is then
-// gone with no word.
-#[test]
-fn a_core_fsmonitor_of_the_persons_own_is_refused_and_kept() {
-    let w = fixture::migrated_remote();
-    let a = fixture::seat(&w, "a");
-    a.git(&["config", "core.fsmonitor", "true"]);
-    let o = a.fails(&["data-refs", "instantiate"]);
-    assert!(o.all().contains("core.fsmonitor is set to true"), "{}", o.all());
-    assert_eq!(a.git(&["config", "core.fsmonitor"]).trim(), "true", "the setting is as it was");
-    let v = a.fails(&["data-refs", "verify"]);
-    assert!(v.all().contains("core.fsmonitor is set to true"), "{}", v.all());
-}
-
-// Mutation: have the monitor run the copy whatever the file says, or answer git with no `/`. The
-// copy then costs every git command a run of the engine, or git takes a file changed on disk for an
-// unchanged one. The monitor copies only while the index tracks a file of an instance, and git
-// sees every change with it as without it.
-#[test]
-fn the_monitor_copies_only_while_the_index_tracks_a_file_of_an_instance_and_hides_no_change() {
-    let w = fixture::migrated_remote();
-    let a = fixture::seat(&w, "a");
-    let tracked = || std::path::PathBuf::from(a.git(&["rev-parse", "--path-format=absolute", "--git-path", "mock-data-refs.tracked"]).trim());
-    let copies = || a.git_out(&["rev-list", "--count", "refs/mock-backup/research"]).stdout.trim().to_string();
-    a.write(NOTES, b"edited on dev\n");
-    let _ = a.run(&["data-refs", "status"]);
-    let before = copies();
-    for _ in 0 .. 3 {
-        a.git(&["status", "--short"]);
-    }
-    assert_eq!(copies(), before, "a git command on dev copies nothing");
-    assert!(!tracked().exists(), "on dev the index tracks no file of an instance");
-    let file = a.git(&["ls-files"]).lines().next().unwrap().to_string();
-    let was = a.read(&file);
-    a.write(&file, b"changed on disk\n");
-    let s = a.git(&["status", "--porcelain"]);
-    assert!(s.contains(&file), "git sees the change through the monitor: {s}");
-    let migration = a.git(&["log", "-1", "--format=%H", "--", "mock/research"]);
-    let pre = a.git(&["rev-parse", &format!("{}~1", migration.trim())]);
-    a.write(&file, &was);
-    let s = a.git(&["status", "--porcelain"]);
-    assert!(!s.contains(&file), "git sees the file back as it was through the monitor: {s}");
-    a.git(&["checkout", "-q", pre.trim()]);
-    assert!(tracked().exists(), "at a commit from before the migration the index tracks the files of the instance");
-    a.write(NOTES, b"edited at the old commit\n");
-    a.git(&["status", "--short"]);
-    let held = a.git(&["rev-list", "refs/mock-backup/research"]);
-    let kept = held.lines().any(|c| {
-        a.git(&["ls-tree", "-r", "--name-only", c]).lines().filter(|p| p.ends_with("NOTES.md")).any(|p| {
-            a.git_out(&["show", &format!("{c}:{p}")]).stdout == "edited at the old commit\n"
-        })
-    });
-    assert!(kept, "a git command there copies the edit made there");
-    a.git(&["checkout", "-q", "dev"]);
-    assert!(!tracked().exists(), "back on dev the file is gone");
 }
 
 // ---- the sparse block follows the declarations ----

@@ -93,6 +93,15 @@ pub fn run(cfg: &crate::config::Config, args: &[&str]) -> ExitCode {
             return ExitCode::FAILURE;
         },
     };
+    // the two verbs that keep git off the instances refuse what would stop that before they write
+    // anything, so a refusal leaves the instances, the config and the index as they were
+    if matches!(*verb, "instantiate" | "commit") {
+        if let Err(why) = sparse::preflight(cfg) {
+            eprintln!("{why}");
+            eprintln!("data-refs: nothing was changed");
+            return ExitCode::FAILURE;
+        }
+    }
     // a branch cut before a migration declares none of the refs its worktree still holds, so the copy of
     // the files goes by the declarations this worktree last installed as well
     let remembered = sparse::remembered(cfg);

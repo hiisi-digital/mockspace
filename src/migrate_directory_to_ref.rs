@@ -71,7 +71,7 @@ pub(super) fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan,
                 "an earlier run of this migration moved `{ns}` and did not keep git from writing over its instance; \
                  finishing it"
             )],
-            steps: vec![Step::KeepGitOff],
+            steps: vec![Step::KeepGitOff(cfg.data_refs.clone())],
             after: "commit the config and the removals on this branch".to_string(),
         });
     }
@@ -161,6 +161,7 @@ pub(super) fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan,
     }
 
     let table = table_of(&decl);
+    let decl_for_after = decl.clone();
     let (mut lines, mut steps) = (Vec::new(), Vec::new());
     if recorded {
         lines.push(format!("an earlier run of this migration made the ref of `{ns}`; finishing it"));
@@ -184,7 +185,11 @@ pub(super) fn plan_directory_to_ref(cfg: &Config, args: &[&str]) -> Result<Plan,
     }
     lines.extend(tracked.iter().map(|p| format!("untrack {p}")));
     steps.push(Step::Untrack(tracked));
-    steps.push(Step::KeepGitOff);
+    let mut after = cfg.data_refs.clone();
+    if !declared {
+        after.push(decl_for_after);
+    }
+    steps.push(Step::KeepGitOff(after));
     Ok(Plan {
         lines,
         steps,

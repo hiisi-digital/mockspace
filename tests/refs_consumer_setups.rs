@@ -18,7 +18,32 @@ fn strs(a: &[String]) -> Vec<&str> {
     a.iter().map(String::as_str).collect()
 }
 
+/// What `core.fsmonitor` holds in the person's clone before the engine first runs there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Monitor {
+    /// Nothing.
+    None,
+    /// git-shook's dispatcher, with a monitor of the person's own registered as the entry that
+    /// answers git.
+    Dispatcher,
+    /// `true`, git's own daemon.
+    Daemon,
+}
+
+/// The monitor of the person's own, tracked on their branch: it says it ran, in a log outside the
+/// tree, and answers git that any file may have changed, by the version git asks for.
+fn their_monitor(log: &std::path::Path) -> String {
+    format!(
+        "#!/bin/sh\necho \"ran $*\" >> '{}'\nif [ \"$1\" = 1 ]; then printf '/\\0'; else printf 'theirs\\0/\\0'; fi\n",
+        log.display()
+    )
+}
+
 fn migrated_under(setup: Setup) {
+    migrated_with(setup, Monitor::None);
+}
+
+fn migrated_with(setup: Setup, monitor: Monitor) {
     let s = consumer::ELSEWHERE;
     let w = consumer::remote(&s);
     assert!(
@@ -27,6 +52,28 @@ fn migrated_under(setup: Setup) {
          built) first on the PATH, since the clone set up with it is a case this test owes"
     );
     let c = setup.clone_in(&w, "a");
+    let log = w.base().join("their-monitor.log");
+    match monitor {
+        Monitor::None => {},
+        Monitor::Daemon => {
+            c.git(&["config", "core.fsmonitor", "true"]);
+        },
+        Monitor::Dispatcher => {
+            c.write("their-monitor", their_monitor(&log).as_bytes());
+            let mut manifest = c.read("shook.toml");
+            manifest.extend_from_slice(b"\n[hooks.fsmonitor-watchman]\nanswers = true\nrun = [\"sh\", \"their-monitor\"]\n");
+            c.write("shook.toml", &manifest);
+            c.commit_all("chore: a monitor of their own, through git-shook");
+            let o = w.sh(&c.root, "git", &["shook", "install", "--yes"]);
+            assert!(o.ok, "git shook install: {}", o.all());
+            let common = c.git(&["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+            let dispatcher = std::path::Path::new(common.trim()).join("shook/hooks/fsmonitor-watchman");
+            assert!(dispatcher.is_file(), "the control: git-shook made the dispatcher");
+            c.git(&["config", "core.fsmonitor", dispatcher.to_str().unwrap()]);
+            c.git(&["status", "--short"]);
+            assert!(std::fs::read_to_string(&log).is_ok_and(|l| l.contains("ran 2")), "the control: their monitor answers git");
+        },
+    }
     s.add_ignored_output(&c);
     // the engine sets the clone up on its first run, before any migration
     let _ = c.run(&["status"]);
@@ -90,6 +137,20 @@ fn migrated_under(setup: Setup) {
         Setup::Shook => {
             let path = c.git(&["config", "core.hooksPath"]).trim().to_string();
             assert!(path.ends_with("shook/hooks"), "git-shook holds `core.hooksPath` still: {path}");
+            // the monitor is an entry of git-shook's dispatcher, which is `core.fsmonitor`
+            let fsmonitor = c.git(&["config", "core.fsmonitor"]).trim().trim_matches('\'').to_string();
+            assert!(fsmonitor.ends_with("shook/hooks/fsmonitor-watchman"), "{monitor:?}: git-shook's dispatcher is the monitor git asks: {fsmonitor}");
+            let listed = w.sh(&c.root, "git", &["shook", "list"]);
+            assert!(listed.stdout.contains("0-mockspace-data-refs"), "{monitor:?}: the monitor is registered: {}", listed.all());
+            if monitor == Monitor::Dispatcher {
+                let before = std::fs::read_to_string(&log).unwrap_or_default().len();
+                c.git(&["status", "--short"]);
+                let after = std::fs::read_to_string(&log).unwrap_or_default();
+                assert!(after.len() > before, "their monitor still runs for every git command");
+                let common = c.git(&["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+                let answers = std::fs::read_to_string(std::path::Path::new(common.trim()).join("shook/answers/fsmonitor-watchman")).unwrap();
+                assert_eq!(answers.trim(), "tidy", "their monitor answers git still");
+            }
         },
         Setup::BareWorktrees => {
             let side = c.at(w.base().join("a-side"));
@@ -139,7 +200,7 @@ fn migrated_under(setup: Setup) {
         let mut edited = c.read(&file);
         edited.extend_from_slice(format!("edited in the instance, {n}\n").as_bytes());
         c.write(&file, &edited);
-        let what = format!("{setup:?}, {}", if by_reset { "a reset there and back" } else { "a checkout there and a forced one back" });
+        let what = format!("{setup:?}, {monitor:?}, {}", if by_reset { "a reset there and back" } else { "a checkout there and a forced one back" });
         if by_reset {
             c.git(&["reset", "-q", "--hard", &before_any]);
             c.git(&["reset", "-q", "--hard", &tip]);
@@ -152,6 +213,18 @@ fn migrated_under(setup: Setup) {
         }
         refs_e2e::daily::edit_back_after_forced_way_back(&c, "research", rel, &file, &edited, &what);
     }
+    // and the plain way there and back with plain git alone, the file edited again at the commit from
+    // before the migration: the monitor copies that edit before git deletes the file on the way back
+    let mut edited = c.read(&file);
+    edited.extend_from_slice(b"edited in the instance, 2\n");
+    c.write(&file, &edited);
+    c.git(&["checkout", "-q", &before_any]);
+    edited.extend_from_slice(b"edited again at the commit from before the migration\n");
+    c.write(&file, &edited);
+    let back = c.git_out(&["checkout", "-q", "dev"]);
+    let what = format!("{setup:?}, {monitor:?}, a plain checkout there and back with an edit made there");
+    assert!(back.ok, "{what}: the plain way back goes: {}", back.all());
+    refs_e2e::daily::edit_back_after_forced_way_back(&c, "research", rel, &file, &edited, &what);
 }
 
 #[test]
@@ -172,6 +245,23 @@ fn every_migration_keeps_core_hooks_path_at_a_directory_of_the_persons_own() {
 #[test]
 fn every_migration_keeps_git_shook_dispatching_the_hooks() {
     migrated_under(Setup::Shook);
+}
+
+// Mutation: refuse a `core.fsmonitor` of the person's own, or write the engine's monitor over it.
+// The migration then stops on the setting, or their monitor answers git no more; with the monitor
+// an entry of git-shook beside theirs, both run, and the edit made at a commit from before the
+// migration is kept on the plain way back.
+#[test]
+fn every_migration_keeps_git_shook_dispatching_a_monitor_of_the_persons_own() {
+    migrated_with(Setup::Shook, Monitor::Dispatcher);
+}
+
+// Mutation: refuse `core.fsmonitor=true`, or leave it where git-shook holds the hooks. The
+// migration then stops on it, or git asks no program before it reads the work tree and the edit
+// made at a commit from before the migration is lost on the plain way back.
+#[test]
+fn every_migration_keeps_git_shook_dispatching_with_gits_own_daemon_set() {
+    migrated_with(Setup::Shook, Monitor::Daemon);
 }
 
 #[test]

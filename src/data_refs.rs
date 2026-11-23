@@ -304,7 +304,7 @@ pub use monitor::mark_engine_process;
 mod sparse;
 mod standing;
 pub use gate::{repo_lints_pass, run_gated};
-pub use sparse::{check as git_is_kept_off_the_instances, install as keep_git_off_the_instances};
+pub use sparse::{check as git_is_kept_off_the_instances, install as keep_git_off_the_instances, preflight as keep_git_off_preflight};
 pub use standing::standing;
 pub use landing::trailer_lines;
 

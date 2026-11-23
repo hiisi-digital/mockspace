@@ -117,23 +117,46 @@ fn has_block(text: &str) -> bool {
 }
 
 /// Writes the managed block for this worktree, turns the sparse checkout on for it without applying
-/// it (nothing already in the tree is removed by this), and installs the hook that copies an edit.
-/// Where no ref is declared any more, takes the block out.
+/// it (nothing already in the tree is removed by this), and installs the hooks and the monitor that
+/// copy an edit. Where no ref is declared any more, takes the block out. Every refusal is made by
+/// [`preflight`] before the first write.
 pub fn install(cfg: &Config) -> Result<(), String> {
+    write(cfg, preflight(cfg)?)
+}
+
+/// What [`install`] writes, decided with nothing written.
+pub struct Planned {
+    file:     PathBuf,
+    existing: String,
+    lines:    Vec<String>,
+    /// Where at least one ref is declared: the rest of the plan.
+    on:       Option<On>,
+}
+
+struct On {
+    /// The keys to set, in the config `scope` names.
+    set:          Vec<(&'static str, &'static str)>,
+    scope:        &'static [&'static str],
+    per_worktree: bool,
+    cone:         bool,
+    /// The patterns files of the other worktrees, made to read every path first.
+    elsewhere:    Vec<PathBuf>,
+    monitor:      super::monitor::Planned,
+    hooks:        super::hook::Planned,
+}
+
+/// Every refusal of [`install`], made before anything is written: a patterns file that is not text,
+/// a hook or a monitor of the person's own that cannot run beside the engine's, a config git cannot
+/// read, a cache no copy can be made in. Returns what `install` writes.
+pub fn preflight(cfg: &Config) -> Result<Planned, String> {
     let lines = managed_lines(cfg)?;
     let file = path_of(cfg, "info/sparse-checkout")?;
     let existing = patterns(&file)?;
+    // a copy is made before every write that follows, and one that cannot be made would stop it
+    // part way
+    mockspace_store::kept::ready().map_err(|e| format!("no copy of a file can be kept in the cache before it is written: {e}"))?;
     if lines.is_empty() {
-        if has_block(&existing) {
-            keep(&file)?;
-            std::fs::write(&file, compose(&existing, &[])).map_err(|e| format!("writing {}: {e}", file.display()))?;
-        }
-        let held = remembered_file(cfg)?;
-        if held.exists() {
-            keep(&held)?;
-            std::fs::remove_file(&held).map_err(|e| format!("removing {}: {e}", held.display()))?;
-        }
-        return Ok(());
+        return Ok(Planned { file, existing, lines, on: None });
     }
     let repo = &cfg.repo_root;
     // a failed read is an error, never read as the setting being off: the patterns a person keeps
@@ -150,30 +173,56 @@ pub fn install(cfg: &Config) -> Result<(), String> {
     // fetched into or moved there again. The switch goes into the common config, and each worktree
     // keeps its own patterns file; where per-worktree config is on already, it stays the worktree's.
     let per_worktree = setting("extensions.worktreeConfig")?;
-    if !was_on && !per_worktree {
-        // turning the shared switch on reads the patterns file of every other worktree, and one an
-        // earlier sparse checkout left behind would hide the branch's files it leaves out there
-        neutral_files_elsewhere(cfg, &file)?;
-    }
-    let scope: &[&str] = if per_worktree { &["--worktree"] } else { &[] };
+    // turning the shared switch on reads the patterns file of every other worktree, and one an
+    // earlier sparse checkout left behind would hide the branch's files it leaves out there
+    let elsewhere = if !was_on && !per_worktree { files_elsewhere(cfg, &file)? } else { Vec::new() };
+    let scope: &'static [&'static str] = if per_worktree { &["--worktree"] } else { &[] };
     // the edit is kept on disk where git un-skips a file present outside the patterns: at a commit
     // from before the migration the file then stays skipped, and the forced ways back keep it
-    let want = [("core.sparseCheckout", "true"), ("core.sparseCheckoutCone", "false"), ("sparse.expectFilesOutsideOfPatterns", "true")];
-    let mut kept = false;
-    for (key, value) in want {
-        if config(repo, &["--type=bool"], key)?.as_deref() == Some(value) {
-            continue;
+    let mut set = Vec::new();
+    for (key, value) in [("core.sparseCheckout", "true"), ("core.sparseCheckoutCone", "false"), ("sparse.expectFilesOutsideOfPatterns", "true")] {
+        if config(repo, &["--type=bool"], key)?.as_deref() != Some(value) {
+            set.push((key, value));
         }
-        if !kept {
-            keep_config(cfg, per_worktree)?;
-            kept = true;
+    }
+    let monitor = super::monitor::plan(cfg)?;
+    let hooks = super::hook::plan(cfg)?;
+    Ok(Planned { file, existing, lines, on: Some(On { set, scope, per_worktree, cone, elsewhere, monitor, hooks }) })
+}
+
+/// Writes what [`preflight`] decided, each file kept in the cache first.
+fn write(cfg: &Config, planned: Planned) -> Result<(), String> {
+    let Planned { file, existing, lines, on } = planned;
+    let Some(on) = on else {
+        if has_block(&existing) {
+            keep(&file)?;
+            std::fs::write(&file, compose(&existing, &[])).map_err(|e| format!("writing {}: {e}", file.display()))?;
         }
+        for held in [remembered_file(cfg)?, path_of(cfg, super::hook::DIRS)?] {
+            if held.exists() {
+                keep(&held)?;
+                std::fs::remove_file(&held).map_err(|e| format!("removing {}: {e}", held.display()))?;
+            }
+        }
+        return Ok(());
+    };
+    let On { set, scope, per_worktree, cone, elsewhere, monitor, hooks } = on;
+    // first the monitor, whose registration with git-shook is the step a program outside the engine
+    // carries out
+    super::monitor::write(cfg, monitor, scope, || keep_config(cfg, per_worktree))?;
+    for f in elsewhere {
+        keep(&f)?;
+        std::fs::write(&f, "/*\n").map_err(|e| format!("writing {}: {e}", f.display()))?;
+    }
+    if !set.is_empty() {
+        keep_config(cfg, per_worktree)?;
+    }
+    for (key, value) in set {
         let mut args = vec!["config"];
         args.extend_from_slice(scope);
         args.extend([key, value]);
-        git(repo, &args)?;
+        git(&cfg.repo_root, &args)?;
     }
-    super::monitor::install(cfg, scope, || keep_config(cfg, per_worktree))?;
     if cone {
         eprintln!(
             "data-refs: the sparse checkout of this worktree was in cone mode, and is now in the full pattern mode the \
@@ -190,13 +239,25 @@ pub fn install(cfg: &Config) -> Result<(), String> {
         keep(&file)?;
         std::fs::write(&file, text).map_err(|e| format!("writing {}: {e}", file.display()))?;
     }
-    let held = remembered_file(cfg)?;
     let declared = serde_json::to_string(&cfg.data_refs).map_err(|e| e.to_string())?;
-    if std::fs::read_to_string(&held).ok().as_deref() != Some(declared.as_str()) {
-        keep(&held)?;
-        std::fs::write(&held, declared).map_err(|e| format!("writing {}: {e}", held.display()))?;
+    for (held, want) in [(remembered_file(cfg)?, declared), (path_of(cfg, super::hook::DIRS)?, instance_dirs(cfg))] {
+        if std::fs::read_to_string(&held).ok().as_deref() != Some(want.as_str()) {
+            keep(&held)?;
+            std::fs::write(&held, want).map_err(|e| format!("writing {}: {e}", held.display()))?;
+        }
     }
-    super::hook::install(cfg)
+    super::hook::write(hooks)
+}
+
+/// The directory of every declared instance, absolute, one to a line: what the hooks and the monitor
+/// copy as it stands where the engine that installed them is gone. A path with a line break in it
+/// cannot be one line, and is left out.
+fn instance_dirs(cfg: &Config) -> String {
+    let mut dirs: Vec<String> =
+        cfg.data_refs.iter().map(|d| d.instance_dir(&cfg.mock_dir).to_string_lossy().into_owned()).filter(|d| !d.contains('\n')).collect();
+    dirs.sort();
+    dirs.dedup();
+    dirs.iter().map(|d| format!("{d}\n")).collect()
 }
 
 /// Where this worktree keeps the declarations it last installed.
@@ -252,6 +313,15 @@ pub fn check(cfg: &Config) -> Result<(), String> {
                     instantiate` sets that up"
             .to_string());
     }
+    // the hooks copy these as they stand where their engine is gone
+    let dirs = path_of(cfg, super::hook::DIRS)?;
+    if std::fs::read_to_string(&dirs).ok() != Some(instance_dirs(cfg)) {
+        return Err(format!(
+            "this worktree does not name the directories of its instances for the hooks ({}), which copy them as they stand \
+             where the engine that installed them is gone; `cargo mock data-refs instantiate` sets that up",
+            dirs.display()
+        ));
+    }
     super::hook::check(cfg)?;
     super::monitor::check(cfg)
 }
@@ -275,11 +345,12 @@ fn keep_config(cfg: &Config, per_worktree: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Makes the patterns file of every worktree but this one read every path, before the shared
-/// switch turns the sparse checkout on for all of them: lines a sparse checkout that is off left
-/// there would otherwise hide the branch's files they leave out at that worktree's next checkout.
-/// Each file is kept in the cache first. A worktree with no such file reads every path already.
-fn neutral_files_elsewhere(cfg: &Config, own: &Path) -> Result<(), String> {
+/// The patterns file of every worktree but this one that does not read every path, for [`write`] to
+/// make read every path before the shared switch turns the sparse checkout on for all of them: lines
+/// a sparse checkout that is off left there would otherwise hide the branch's files they leave out at
+/// that worktree's next checkout. Each is kept in the cache before it is written. A worktree with no
+/// such file reads every path already. Nothing is written here.
+fn files_elsewhere(cfg: &Config, own: &Path) -> Result<Vec<PathBuf>, String> {
     let common = PathBuf::from(git(&cfg.repo_root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?);
     let mut files = vec![common.join("info").join("sparse-checkout")];
     match std::fs::read_dir(common.join("worktrees")) {
@@ -288,19 +359,18 @@ fn neutral_files_elsewhere(cfg: &Config, own: &Path) -> Result<(), String> {
         Err(e) => return Err(format!("reading the worktrees of {}: {e}", common.display())),
     }
     let own = own.canonicalize().unwrap_or_else(|_| own.to_path_buf());
+    let mut out = Vec::new();
     for f in files {
         if f.canonicalize().unwrap_or_else(|_| f.clone()) == own {
             continue;
         }
-        match std::fs::read_to_string(&f) {
-            Ok(text) if text == "/*\n" => {},
-            Ok(_) => {
-                keep(&f)?;
-                std::fs::write(&f, "/*\n").map_err(|e| format!("writing {}: {e}", f.display()))?;
-            },
+        // read as bytes: whatever it holds, the copy keeps it as it is
+        match std::fs::read(&f) {
+            Ok(bytes) if bytes == b"/*\n" => {},
+            Ok(_) => out.push(f),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
             Err(e) => return Err(format!("reading {}: {e}", f.display())),
         }
     }
-    Ok(())
+    Ok(out)
 }

@@ -293,6 +293,14 @@ fn kept_own(c: &Clone, was: &Own, now: &Own, commits: bool, reachable: &mut dyn 
             None if k == "core.hookspath"
                 && now.config.iter().any(|(nk, nv)| nk == k && mockspace_manifest::gate::is_ours(nv))
                 && (mockspace_manifest::gate::is_ours(v) || now.config.iter().any(|(nk, nv)| nk == SAVED_HOOKS_PATH && nv == v)) => {},
+            // git-shook, installed for the clone to run a monitor of the person's own beside the
+            // engine's, takes the key from the gate, which it registers as one of its entries
+            None if k == "core.hookspath"
+                && mockspace_manifest::gate::is_ours(v)
+                && now.config.iter().any(|(nk, nv)| nk == k && nv.ends_with("/shook/hooks")) => {},
+            // a `core.fsmonitor` of the person's own, taken over by git-shook's dispatcher or the
+            // engine's monitor, with the config that held it kept in the cache first
+            None if k == "core.fsmonitor" && took_over_monitor(c, v, now) => {},
             None => bad.push(format!("config {k}: was {v:?}, now {:?}", now.config.iter().filter(|(nk, _)| nk == k).map(|(_, v)| v).collect::<Vec<_>>())),
         }
     }
@@ -312,6 +320,19 @@ fn kept_own(c: &Clone, was: &Own, now: &Own, commits: bool, reachable: &mut dyn 
             },
         }
     }
+}
+
+/// Whether `core.fsmonitor`, once `was`, now names git-shook's dispatcher or the engine's monitor,
+/// and a copy of the config that held `was` is in the cache.
+fn took_over_monitor(c: &Clone, was: &str, now: &Own) -> bool {
+    let common = PathBuf::from(text(c, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).unwrap());
+    let names = |v: &str| {
+        let v = v.trim_matches('\'');
+        v == common.join("shook/hooks/fsmonitor-watchman").to_string_lossy() || v == common.join("hooks/mockspace-fsmonitor").to_string_lossy()
+    };
+    let taken = now.config.iter().any(|(k, v)| k == "core.fsmonitor" && names(v));
+    let line = format!("fsmonitor = {was}");
+    taken && c.w.kept_copies_of(&common.join("config")).iter().any(|k| std::fs::read_to_string(k).is_ok_and(|t| t.contains(&line)))
 }
 
 /// What the engine writes for itself on a run that lints: its build directories and the taplo

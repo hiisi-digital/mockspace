@@ -58,6 +58,8 @@ mod driver_scope_tests;
 mod gitignore;
 pub(crate) use gitignore::*;
 mod shook;
+/// The gate registered with git-shook, for the data refs' monitor that hands the hooks to it.
+pub(crate) use shook::register as register_gate_with_shook;
 mod activate;
 pub use activate::{activate, deactivate, is_active};
 mod lints;
