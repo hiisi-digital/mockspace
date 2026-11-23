@@ -10,7 +10,6 @@ members = [
     "bench-harness",
     "bench-macro",
     "bench-matrix",
-    "benches",
     "benches/variants/multiply-xor",
     "benches/variants/bitwise-rotate",
     # v2 code, kept under `mock/` and built here, since the v1 engine takes it by path. `mock/` is a
@@ -50,13 +49,12 @@ keywords = ["design-rounds", "lints", "workflow", "mockspace"]
 # that waits on v1 and v2 artifacts being able to coexist there, or on v2 reaching
 # implementation and the two merging.
 exclude = ["docs/"]
-# The `benches/` directory at the workspace root belongs to the
-# `self-bench` workspace member, not to this crate. Without this flag
-# cargo's edition-2021 auto-discovery picks up `benches/src/main.rs`
-# as a bench target named "src" of the root mockspace crate and tries
-# to compile it against this crate's deps: which lack the
-# mockspace-bench-core / mockspace-bench-harness imports the file
-# actually needs. Disabling auto-discovery is the targeted fix.
+# The `benches/` directory at the workspace root is the bench tree the
+# generated driver runs (`mock --dir . bench run`), not this crate's.
+# Without this flag cargo's auto-discovery would take a `main.rs` of a
+# directory there for a bench target of the root mockspace crate and
+# compile it against this crate's deps, which lack the bench crates.
+# Disabling auto-discovery is the targeted fix.
 autobenches = false
 
 [[bin]]

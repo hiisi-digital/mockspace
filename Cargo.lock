@@ -502,14 +502,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "self-bench"
-version = "0.0.0"
-dependencies = [
- "mockspace-bench-core",
- "mockspace-bench-harness",
-]
-
-[[package]]
 name = "semver"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"

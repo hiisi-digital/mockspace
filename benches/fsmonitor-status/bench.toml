@@ -1,0 +1,21 @@
+# `git status` in a clone whose research directory is on a data ref, on `dev` and at the commit
+# just before the migration, with the monitor in `core.fsmonitor` and without it. The arms run
+# git as a person does; the delta of an arm with the monitor against the same place without it is
+# what the monitor costs a git command there. Needs MOCKSPACE_BENCH_ENGINE, the absolute path of a
+# built `mockspace`, which makes the world and sets each clone up.
+title = "git status with and without the data refs' monitor"
+workload = "default"
+arms = ["none_dev", "monitor_dev", "none_old", "monitor_old"]
+points = [1]
+baseline = "none_dev"
+may_differ = false
+required = true
+
+[timing]
+passes = 3
+runs_per_pass = 20
+batch_size = 1
+harness_runs = 1
+cooldowns_ms = [0]
+validation_seeds = 2
+determinism_check_seeds = 1
