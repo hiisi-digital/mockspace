@@ -542,6 +542,7 @@ struct RawRef {
     roots: BTreeMap<String, crate::registry::RefRoot>,
 }
 
+
 #[derive(Deserialize, Default)]
 #[cfg_attr(test, derive(serde::Serialize))]
 #[serde(default)]
@@ -919,12 +920,9 @@ impl Config {
             .iter()
             .flat_map(|r| r.store.iter())
             .map(|d| {
-                d.namespace.clone().unwrap_or_else(|| {
-                    format!(
-                        "registry/{}",
-                        d.dir.as_deref().unwrap_or("").trim_matches('/')
-                    )
-                })
+                d.namespace
+                    .clone()
+                    .unwrap_or_else(|| format!("registry/{}", d.dir.as_deref().unwrap_or("").trim_matches('/')))
             })
             .chain(std::iter::once(
                 raw.test
@@ -1571,12 +1569,7 @@ fn git_answers_for(root: &Path) -> Result<bool, String> {
         .env("LC_ALL", "C")
         .current_dir(root)
         .output()
-        .map_err(|e| {
-            format!(
-                "git cannot be run to read the clone at {}: {e}",
-                root.display()
-            )
-        })?;
+        .map_err(|e| format!("git cannot be run to read the clone at {}: {e}", root.display()))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         if stderr.contains("not a git repository") {
@@ -1623,12 +1616,7 @@ fn clone_says(repo_root: &Path, key: &str) -> Result<Option<bool>, String> {
         .args(["config", "--local", "--type=bool", "--get", &name])
         .current_dir(repo_root)
         .output()
-        .map_err(|e| {
-            format!(
-                "git cannot be run to read `{name}` of the clone at {}: {e}",
-                repo_root.display()
-            )
-        })?;
+        .map_err(|e| format!("git cannot be run to read `{name}` of the clone at {}: {e}", repo_root.display()))?;
     // 1 is git's answer for a key that is not set.
     if out.status.code() == Some(1) {
         return Ok(None);
@@ -1642,11 +1630,7 @@ fn clone_says(repo_root: &Path, key: &str) -> Result<Option<bool>, String> {
     match String::from_utf8_lossy(&out.stdout).trim() {
         "true" => Ok(Some(true)),
         "false" => Ok(Some(false)),
-        other => {
-            Err(format!(
-                "`{name}` in this clone's git config reads as `{other}`, not a boolean"
-            ))
-        },
+        other => Err(format!("`{name}` in this clone's git config reads as `{other}`, not a boolean")),
     }
 }
 
@@ -2327,11 +2311,7 @@ mod key_lists_cannot_rot {
             // guard working.
             // `tools` is read through toml_edit for the reason `lints` is, its values being a
             // scalar or an array per key (`tool_config::parse`).
-            if *k == "lints"
-                || *k == "lint-crates"
-                || *k == "tools"
-                || launcher.iter().any(|l| l == k)
-            {
+            if *k == "lints" || *k == "lint-crates" || *k == "tools" || launcher.iter().any(|l| l == k) {
                 continue;
             }
             assert!(

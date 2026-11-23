@@ -54,8 +54,8 @@ mod builtins;
 mod message_guard;
 pub(crate) use message_guard::*;
 mod guide_hook;
-pub(crate) use builtins::*;
 pub(crate) use guide_hook::*;
+pub(crate) use builtins::*;
 mod wire;
 pub(crate) use wire::*;
 mod catalogue;
@@ -78,9 +78,9 @@ mod message_scope_tests;
 #[cfg(test)]
 mod src_dirs_tests;
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod unsubstituted_tests;
+#[cfg(test)]
+mod tests;
 #[cfg(test)]
 mod write_guard_merge_tests;
 #[cfg(test)]
@@ -297,7 +297,10 @@ pub fn generate_agent_rules(
 
             // Claude: .claude/rules/<name>.md with paths: frontmatter
             let claude_fm = format_claude_paths(&apply_to);
-            let claude_content = format!("{claude_fm}\n{}", format_with_header(&header_md, &body));
+            let claude_content = format!(
+                "{claude_fm}\n{}",
+                format_with_header(&header_md, &body)
+            );
             let claude_path = claude_rules_dir.join(format!("{stem}.md"));
             render_design::write_generated(&claude_path, &claude_content);
             eprintln!("  {}", claude_path.display());
@@ -305,8 +308,10 @@ pub fn generate_agent_rules(
 
             // Copilot: .github/instructions/<name>.instructions.md with applyTo: frontmatter
             let copilot_fm = format_copilot_apply_to(&apply_to);
-            let copilot_content =
-                format!("{copilot_fm}\n{}", format_with_header(&header_md, &body));
+            let copilot_content = format!(
+                "{copilot_fm}\n{}",
+                format_with_header(&header_md, &body)
+            );
             let copilot_path = copilot_instructions_dir.join(format!("{stem}.instructions.md"));
             render_design::write_generated(&copilot_path, &copilot_content);
             eprintln!("  {}", copilot_path.display());
@@ -444,7 +449,10 @@ pub fn generate_agent_rules(
             // Claude: .claude/skills/<name>/SKILL.md
             let claude_skill_dir = claude_skills_dir.join(&skill_name);
             let _ = fs::create_dir_all(&claude_skill_dir);
-            let claude_content = format!("{skill_fm}\n{}", format_with_header(&header_md, &body));
+            let claude_content = format!(
+                "{skill_fm}\n{}",
+                format_with_header(&header_md, &body)
+            );
             let claude_path = claude_skill_dir.join("SKILL.md");
             render_design::write_generated(&claude_path, &claude_content);
             eprintln!("  {}", claude_path.display());
@@ -453,7 +461,10 @@ pub fn generate_agent_rules(
             // Copilot: .github/skills/<name>/SKILL.md
             let copilot_skill_dir = copilot_skills_dir.join(&skill_name);
             let _ = fs::create_dir_all(&copilot_skill_dir);
-            let copilot_content = format!("{skill_fm}\n{}", format_with_header(&header_md, &body));
+            let copilot_content = format!(
+                "{skill_fm}\n{}",
+                format_with_header(&header_md, &body)
+            );
             let copilot_path = copilot_skill_dir.join("SKILL.md");
             render_design::write_generated(&copilot_path, &copilot_content);
             eprintln!("  {}", copilot_path.display());

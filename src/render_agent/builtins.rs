@@ -282,8 +282,7 @@ pub(crate) fn builtin_write_guard(cfg: &Config) -> String {
         .to_string_lossy()
         .to_string();
     let src_grep = super::helpers::ere_group(&super::helpers::src_dirs_from_mock(cfg));
-    let ask_phase_gate =
-        super::helpers::ask_check_edit("changelist-required", "changelist-required", "REPO_ROOT");
+    let ask_phase_gate = super::helpers::ask_check_edit("changelist-required", "changelist-required", "REPO_ROOT");
     format!(
         r##"#!/usr/bin/env bash
 # Built-in mockspace hook: phase gate enforcement
