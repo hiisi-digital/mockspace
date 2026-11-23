@@ -19,7 +19,8 @@ use crate::config_keys::{FIELD_KEYS, NAMESPACE_KEYS, UNREAD_NAMESPACE_KEYS};
 const MODEL: &str = include_str!("model.rs");
 
 /// Every file that emits a registry finding kind, as source.
-const PRODUCERS: [&str; 10] = [
+const PRODUCERS: [&str; 11] = [
+    include_str!("select.rs"),
     include_str!("validate.rs"),
     include_str!("provenance.rs"),
     include_str!("config_keys.rs"),

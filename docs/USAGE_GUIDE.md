@@ -131,9 +131,8 @@ Those are the transitions. The subcommands that are not transitions:
 | `cargo mock check` | Readiness report: git state, phase, build, tests, lints |
 | `cargo mock check-message` | Lint one commit message, pull request body or comment against the configured policy, and for a commit with its author and committer (`--author`, `--committer`) |
 | `cargo mock check-edit` | Ask one per-crate lint (`--lint`) whether a Rust file (`--file`) would be clean once an edit is made: stdin is the new text, or with `--replace <file>` the text that replaces the one in that file. Takes `--edits <file>`, a JSON list of replacements, for a multi-edit tool. Exits 0 clean, 1 with the lint's blocking findings, 2 when the request cannot be answered (an unknown lint or gate, a lint judging the whole crate, a relative `--file`). The generated `forbidden-imports` hook calls it |
-| `cargo mock query` | Query the registry |
+| `cargo mock query` | Query the registry, with the syntax a reference uses: a row, a field, a table, or a pattern over row ids (`ticket::question::engine`, `ticket::**::internals::**`, a set) printing the rows it selects |
 | `cargo mock links <namespace>::<id>` | The rows a row links to and the rows linking to it, with the `ref` field each link is written in |
-| `cargo mock select <query>` | The `namespace::id` of each row a query over the tree of row ids selects, one a line: a prefix (`ticket::question::engine`), `*`, `**` or a set; nothing on no match |
 | `cargo mock bench` | Run the bench harness: `init`, `add <bench> [<arm>]`, `run [<bench>...]`, `report`, `list`, `test`, `migrate`, `disasm <bench> <arm> <symbol>` (one exported function's disassembly, written under `results/<bench>/disasm/`) |
 | `cargo mock sketches` | Every sketch under `<mock>/research/sketches/` with the outcome its `FINDINGS.md` records; `--open` keeps those with none, or with a source that times something |
 | `cargo mock test-units` | How each member's tests divide into binaries, which are wide, and the files under `tests/` no binary claims |

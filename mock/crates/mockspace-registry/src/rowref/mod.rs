@@ -175,7 +175,6 @@ pub fn validate_row_references(
     namespaces: &[RegistryNamespace],
 ) -> Vec<RegistryFinding> {
     let bearing = row_reference_fields(namespaces);
-    let keys = link::namespace_keys(namespaces);
     let mut out = Vec::new();
 
     for row in reg.rows.values() {
@@ -205,20 +204,19 @@ pub fn validate_row_references(
             // meant a trailing comma was reported while a leading one was not,
             // which is an arbitrary difference for an author to run into.
             for item in raw.split(", ").map(str::trim) {
-                // An item opening on a declared namespace and naming no row of the target is the
-                // target written qualified, or another namespace written into a field typed for
-                // one: refused as the shape it is, with how to write it, before it is looked up
-                // as an id of the target that happens to begin with that name.
+                // The target written qualified, `slot::display` in a field typed `slot` where
+                // `display` is a row and `slot::display` is not: refused as that, with what to
+                // write. Any other id naming no row is an id naming no row, whatever its first
+                // name happens to be.
                 let qualified = format!("{target}::{item}");
                 let hint = match crate::names(item).ok().as_deref() {
-                    Some([ns, rest @ ..]) if !rest.is_empty() && keys.contains(ns) && !reg.rows.contains_key(&qualified) => {
-                        if *ns == target {
-                            Some(format!(" Write `{}`: the field's type already says `{target}`.", rest.join("::")))
-                        } else {
-                            Some(format!(
-                                " It names namespace `{ns}`, but this field is typed `{target}`; a field references one namespace and the type is where that is stated."
-                            ))
-                        }
+                    Some([ns, rest @ ..])
+                        if !rest.is_empty()
+                            && *ns == target
+                            && !reg.rows.contains_key(&qualified)
+                            && reg.rows.contains_key(&format!("{target}::{}", rest.join("::"))) =>
+                    {
+                        Some(format!(" Write `{}`: the field's type already says `{target}`.", rest.join("::")))
                     },
                     _ => None,
                 };

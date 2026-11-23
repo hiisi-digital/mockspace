@@ -52,6 +52,7 @@ pub const FINDING_KINDS: &[&str] = &[
     "unfoldable-id",
     "folded-field-written",
     "unfit-path-field",
+    "namespace-fold-collision",
     "malformed-provenance",
     "unknown-provenance-root",
     "unresolvable-provenance",

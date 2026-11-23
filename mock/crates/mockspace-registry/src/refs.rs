@@ -75,7 +75,7 @@ pub fn find_registry_refs(
             let Ok(parts) = crate::names(&expr) else { continue };
             // The prefix is optional and carries nothing, so it is skipped and both spellings
             // are the one reference they are.
-            let after = &parts[usize::from(parts.first() == Some(&REGISTRY_ROOT)) ..];
+            let after = crate::names_after_root(&parts);
             // Slot zero decides what this is. A declared namespace makes it a
             // row reference; anything else is a citation root or a crate, which
             // are checked elsewhere and by different rules.
@@ -92,6 +92,8 @@ pub fn find_registry_refs(
                         _ => {},
                     }
                 },
+                // A branch of the id tree stands for the rows below it, and resolves as they do.
+                None if reg.is_branch(after) => {},
                 None => found.push((after.join("::"), None)),
             }
         }

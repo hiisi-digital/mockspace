@@ -46,15 +46,18 @@ A postfix chain narrows a result, left to right: `{{ pathof(crates::store).dir()
 
 ## Ids folded from fields
 
-`path = ["kind", "subject"]` on a `[[registry.namespace]]` folds those fields into each row's id, in order: `id = "question::engine::internals::allowed"` gives `kind = "question"` and `subject = "engine::internals"`, then the leaf `allowed`.
+`path = ["kind", "subject"]` on a `[[registry.namespace]]` folds those fields into each row's id, in order, then any number of free names, then one leaf: `id = "question::engine::internals::deps::allowed"` gives `kind = "question"`, `subject = "engine::internals"`, the free name `deps` and the leaf `allowed`. Free names are branches of the id tree, rows of nothing, chosen as describes the row best.
 
-- Each named field is declared on the namespace, typed as one row of another namespace (no `[]`); its value is that row's id, itself a path where that namespace's are. `unfit-path-field` otherwise.
-- The loader writes the fields from the id; a row writing one itself is `folded-field-written`.
-- A field with `required = false` may be absent, and is then no segment. An id reading no way, or more than one, is `unfoldable-id`.
+- Each named field is declared on the namespace, `required = true`, typed as one row of another namespace (no `[]`); its value is that row's id, itself a path where that namespace's are. An optional one, which free names would make readable two ways, or any other shape is `unfit-path-field`.
+- The loader writes the fields from the id; a row writing one itself is `folded-field-written`. An id reading no way, or more than one, is `unfoldable-id`.
 
 ## Selecting rows
 
-`cargo mock select <query>` prints the `namespace::id` of every row a query over the id tree selects, one a line, nothing on no match. A branch stands for every row below it: `ticket::question::engine`, `ticket::**::internals::**` (`**` any depth, none included), `ticket::*::engine`, `ticket::{task, question}::engine::*` (written order kept), each row once and in byte order under a wildcard. Ordinals, ranges, constraints and a field step after a row named whole are refused; `cargo mock query` resolves a field.
+Any reference may select: `{{ ticket::question::engine }}` (a branch: every row below it), `ticket::**::internals::**` (`**` any depth, none included), `ticket::*::engine`, `ticket::{task, question}::engine::*` (written order kept), and `cargo mock query` the same. Rows of one namespace are its table, holding just them, so `.count()`, `.select(id)` and `.where(...)` narrow it; a field step after a wildcard gives each row's value, and `pathof`, `sourcesof` and `refsto` take a selection. Under a wildcard members come in byte order of their names, step by step (`a::b` before `a0`), each row once.
+
+- A wildcard matching nothing is an empty answer; a step naming nothing where no step before it widened fails.
+- After a wildcard a row whose namespace declares no such field is passed over (this host yields, not fails); a step past a field, an ordinal, a range and a constraint fail.
+- A namespace is written in the standard's spelling (`web_renderer`, never `web-renderer`); two namespaces folding to one name is `namespace-fold-collision`.
 
 ## Merging registry files
 

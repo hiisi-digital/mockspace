@@ -197,7 +197,8 @@ pub fn load_registry_for_expr_from(
     namespaces: &[RegistryNamespace],
     expr: &str,
 ) -> Result<Registry, RegistryStoreError> {
-    if expr.contains("refsto") || expr.contains("sourcesof") {
+    // A query opening on a wildcard may reach every namespace.
+    if expr.contains("refsto") || expr.contains("sourcesof") || expr.trim_start().starts_with('*') {
         return load_registry_from(stores, namespaces, None);
     }
     let keys: BTreeSet<&str> = namespaces.iter().map(|n| n.key.as_str()).collect();
@@ -206,6 +207,14 @@ pub fn load_registry_for_expr_from(
         .into_iter()
         .map(String::from)
         .collect();
+    // A query names a namespace in the standard's spelling, `ikiuni_renderer` for `ikiuni-renderer`.
+    let written: BTreeSet<&str> = expr.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
+    wanted.extend(
+        namespaces
+            .iter()
+            .filter(|n| mockspace_refnames::fold(&n.key).is_some_and(|f| written.iter().any(|w| f == *w)))
+            .map(|n| n.key.clone()),
+    );
     loop {
         let reg = load_registry_from(stores, namespaces, Some(&wanted))?;
         let mut reach: BTreeSet<String> = BTreeSet::new();

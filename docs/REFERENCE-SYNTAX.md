@@ -97,32 +97,37 @@ required = true
 [[registry.namespace.field]]
 name = "subject"
 type = "subject"
+required = true
 ```
 
 ```toml
 [[ticket]]
-id = "question::engine::internals::deps_allowed"
+id = "question::engine::internals::deps::allowed"
 ```
 
-The row's id is the value of each named field in turn, then one leaf name. Each value
-is the id of a row of the namespace its field references, and is itself a path where
-that namespace's ids are, so the row above has `kind = "question"`, `subject =
-"engine::internals"` and the leaf `deps_allowed`. The loader writes the fields from the
-id, so anything reading `kind` reads it as before, and the id is the one place it is
-written: a row that also writes a folded field reports `folded-field-written`.
+The row's id is the value of each named field in turn, then any number of free names,
+none included, then one leaf name. Each value is the id of a row of the namespace its
+field references, and is itself a path where that namespace's ids are; the free names
+are branches of the id tree and rows of nothing, written as describes the row best. So
+the row above has `kind = "question"`, `subject = "engine::internals"`, the free name
+`deps` and the leaf `allowed`. The loader writes the fields from the id, so anything
+reading `kind` reads it as before, and the id is the one place it is written: a row
+that also writes a folded field reports `folded-field-written`.
 
-Each field `path` names is declared on the namespace with the type of one row of
-another declared namespace, no `[]`; anything else reports `unfit-path-field` at the
-declaration. A field declared `required = false` may be absent, and is then no segment
-of the id at all. The id is read against the ids each referenced namespace holds, every
-way it can be: an id that reads no way, because a segment names no row where one is
-needed, or that reads more than one way, reports `unfoldable-id` with the readings.
+Each field `path` names is declared on the namespace, `required = true`, with the type of
+one row of another declared namespace, no `[]`; anything else reports
+`unfit-path-field` at the declaration. A folded field may not be optional: free names
+may follow it, so an id could read with the field or without it and its names free. The
+id is read against the ids each referenced namespace holds, every way it can be: an id
+that reads no way, because a segment names no row where one is needed or no leaf is
+left, or that reads more than one way, reports `unfoldable-id` with the readings.
 
 ### Selecting rows
 
-`cargo mock select <query>` prints the `namespace::id` of each row a query over the
-tree of ids selects, one a line, and nothing at all, with exit status 0, when the query
-matches nothing. The query is a path in the standard, the namespace first:
+Any reference whose path widens, or names a branch of a namespace's id tree, selects
+rows, in a document and at `cargo mock query` alike; there is no second query language.
+The first step is the namespace, in the standard's spelling (`web_renderer`, never
+`web-renderer`; two namespaces folding to one name report `namespace-fold-collision`):
 
 | Query | Selects |
 |---|---|
@@ -132,15 +137,27 @@ matches nothing. The query is a path in the standard, the namespace first:
 | `ticket::**::internals::**` | every row with `internals` anywhere in its id |
 | `ticket::*::engine` | every row whose id has `engine` second |
 | `ticket::{task, question}::engine::*` | the rows below each member, in written order |
+| `ticket::*::engine::*::*::title` | the `title` of each row the pattern reaches |
 
-A node stands for the rows at or below it. Under a wildcard rows come in byte order of
-their ids, and each row comes once however many paths reach it. An ident naming nothing
-under a declared namespace selects nothing, and a first step naming no declared
-namespace is refused. Also refused, since they select no rows: an ordinal or a range,
-which a branch does not take; a constraint, as the registry declares no shapes; an
-operation; and a field step from a row the query names whole, which is `cargo mock
-query`'s to resolve. After a wildcard the tree holds rows and branches together, and a
-step that would be a field of a row passes over that row rather than failing the query.
+Rows of one namespace come as that namespace's table, holding just them, so
+`{{ ticket::question::** }}` is a table and `{{ ticket::question::**.count() }}` a number;
+`.where`, `.select`, `.first` and `.last` narrow it as they do a whole table. Rows of
+several namespaces, and fields, come as a list. `pathof`, `sourcesof` and `refsto` take a
+selection: each file, each source and each referring row once.
+
+A node stands for the rows at or below it. Under a wildcard members come in byte order of
+their names, step by step: `a::b` comes before `a0`, since `a` is before `a0`. Each row,
+and each field of a row, comes once however many paths reach it, a set's members in the
+order written.
+
+A wildcard matching nothing is an empty answer. A step naming nothing, where no step
+before it widened, fails, and the reference is left as written and reported. A step from
+a row names a field when the namespace declares it (`id` included, internal fields not);
+a namespace is a uniform branch, and after a widening step this host yields rather than
+fails, passing over a row whose namespace declares no such field, so
+`ticket::**::internals::**` keeps the rows with `internals` in their ids. A step past a
+field, an ordinal or a range (a branch has no order), and a constraint (the registry
+declares no shapes) fail.
 
 ## Roots
 
@@ -409,8 +426,8 @@ host folds its own naming into that set. `{{ mock::design::12 }}` finds
 `DESIGN.md.tmpl` without the author tracking whether a document is a template here and
 rendered output there, and `my_crate` is the directory `my-crate`. The one exception is
 the root of a path of two names or more, which may be written as it was declared: a
-namespace named after its directory, `ikiuni-renderer`, is reached as
-`ikiuni-renderer::a_row`. Every name after the root, and every name of a row's id, keeps the
+namespace named after its directory, `web-renderer`, is reached as
+`web-renderer::a_row`. Every name after the root, and every name of a row's id, keeps the
 set. Exactly one match
 resolves; several is an error rather than a guess, because the author meant one of
 them and picking silently would point the citation somewhere they did not choose. No
@@ -441,10 +458,10 @@ An operation is a name and one query in parentheses. `refsto` is reserved by the
 mockspace's own, each taking one query: `{{ pathof(mock::design::12) }}`. The postfix
 chain after a finished operation, `{{ pathof(crates::store).dir() }}`, is mockspace's too
 and is no part of the syntax, which has no step after an operation. The
-syntax also has sets (`{a, b}`), wildcards (`*`, `**`) and constraints (`<name>`); a reference here is a plain path of
-names, so each of those is refused where a row or a citation is expected. `cargo mock
-select` is where they mean something: it takes sets and wildcards over the tree of row
-ids (see Selecting rows) and refuses the rest.
+syntax also has sets (`{a, b}`), wildcards (`*`, `**`) and constraints (`<name>`). Sets
+and wildcards select over the registry's row ids, its fields and the operations above
+(see Selecting rows); a citation is a plain path into one file, so there they are
+refused, and a constraint is refused everywhere, as no shape is declared.
 
 ## What is checked
 

@@ -95,7 +95,7 @@ pub use bounds::*;
 pub use check::*;
 pub use config_keys::*;
 pub use env::*;
-pub use fold::{FoldFault, IdFault, fold_row_id, unfit_path_fields};
+pub use fold::{FoldFault, IdFault, fold_row_id, folded_fields_written, unfit_path_fields};
 pub use ids::*;
 pub use load::*;
 pub use model::*;
@@ -146,6 +146,10 @@ pub fn cmd_query(cfg: &dyn RegistryEnv, expr: &str) -> std::process::ExitCode {
         eprintln!("  law.where(...).count()           how many");
         eprintln!("  pathof(law::keys)                where it is declared");
         eprintln!("  sourcesof(law::keys)             what it rests on");
+        eprintln!("  ticket::question::engine         every row whose id begins `question::engine`");
+        eprintln!("  ticket::**::internals::**        every row with `internals` in its id");
+        eprintln!("  ticket::{{task, question}}::*     the rows below each, in written order");
+        eprintln!("  ticket::*::engine::title         a field of each row the pattern reaches");
         eprintln!();
         eprintln!("Every one of these is valid in a document template too.");
         return ExitCode::FAILURE;
@@ -188,12 +192,16 @@ pub fn cmd_query(cfg: &dyn RegistryEnv, expr: &str) -> std::process::ExitCode {
             // resolves to nothing is reported rather than rendered as something
             // plausible, and that holds here too.
             eprintln!("no result: `{}` does not resolve", expr.trim());
+            if let Some(why) = select::refusal(namespaces, &registry, expr.trim()) {
+                eprintln!("{why}");
+            }
 
             // Say what was available rather than only that something was not.
             // A query naming a column that does not exist is the common
             // mistake, and the columns are right there to list.
-            let base = expr.trim().split(['.', ':']).next().unwrap_or("").trim();
-            if let Some(ns) = namespaces.iter().find(|n| n.key == base) {
+            let text = chain::split_methods(expr.trim()).map_or_else(|| expr.trim().to_string(), |(b, _)| b);
+            let base = crate::root(&text).unwrap_or_default();
+            if let Some(ns) = namespaces.iter().find(|n| mockspace_refnames::fold(&n.key).is_some_and(|f| f == base)) {
                 let (columns, rows) = table_cells(ns, &registry);
                 eprintln!("`{base}` has {} rows and these columns:", rows.len());
                 eprintln!("  {}", columns.join(", "));

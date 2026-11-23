@@ -59,7 +59,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
     ));
     for ns in crate::registry::BUILTIN_NAMESPACES {
         roots_doc.push_str(&format!(
-            "- `{ns}::<slug>` -> the builtin `{ns}` namespace\n"
+            "- `{ns}::<id>` -> the builtin `{ns}` namespace\n"
         ));
     }
     let mut names: Vec<&String> = cfg.registry_roots.keys().collect();
@@ -123,7 +123,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             )
         };
         // The relations, from the declared types. A reader authoring a row needs
-        // to know which of its fields take a slug from another namespace, and
+        // to know which of its fields take the id of a row of another namespace, and
         // the alternative to generating it here is a hand-written list that
         // stops matching the config the first time a field is added.
         let relations: Vec<String> = ns
@@ -135,8 +135,8 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                     .iter()
                     .any(|n| n.key == target)
                     .then(|| {
-                        let card = if many { "slugs" } else { "a slug" };
-                        format!("`{}` takes {card} from `{target}`", f.name)
+                        let card = if many { "ids of rows" } else { "the id of a row" };
+                        format!("`{}` takes {card} of `{target}`", f.name)
                     })
             })
             .collect();
@@ -145,9 +145,22 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
         } else {
             format!(" ({})", relations.join("; "))
         };
+        // The id's shape: one name or a path, or for a namespace folding fields into its ids, those
+        // fields, the free names after them and the leaf, with the fields never written apart.
+        let shape = if ns.path.is_empty() {
+            format!("`{}::<id>`, the id one name or several joined by `::`", ns.key)
+        } else {
+            let folded: Vec<String> = ns.path.iter().map(|p| format!("<{p}>")).collect();
+            format!(
+                "`{}::{}::<free names>::<leaf>`, the id folding {} (never written as fields) and any free names before one leaf",
+                ns.key,
+                folded.join("::"),
+                ns.path.iter().map(|p| format!("`{p}`")).collect::<Vec<_>>().join(", ")
+            )
+        };
         ns_doc.push_str(&format!(
-            "- `{}::<slug>`: {}{}{}{}\n",
-            ns.key,
+            "- {}: {}{}{}{}\n",
+            shape,
             short_sentence(&ns.description.clone().unwrap_or_else(|| ns.title())),
             value,
             relation_note,
@@ -213,7 +226,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
     let canon_view_paragraphs = if canon_is_the_reserved_directory {
         format!(
             "`{mock_rel}/canon/` is the reading surface, not the authority.\n\n\
-             - Its `.md.tmpl` documents pull the canon in with `{{{{ <ns> }}}}` (a whole namespace) or `{{{{ <ns>::<slug>::<field> }}}}` (one field).\n\
+             - Its `.md.tmpl` documents pull the canon in with `{{{{ <ns> }}}}` (a whole namespace) or `{{{{ <ns>::<id>::<field> }}}}` (one field).\n\
              - Those documents are a view. Changing what the canon says means changing rows; editing the view changes nothing and is overwritten at the next generation.\n\
              - A canon file is `.md.tmpl` generated from rows. A `.md` there holding canon prose no row backs is the failure this shape prevents."
         )
@@ -233,7 +246,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                 "**/*.toml".to_string(),
             ],
             body:     format!(
-                "## Reference syntax\n\n- Write `{{{{ root::step::step }}}}`, a path in the letkajenkka standard, in any `*.md.tmpl` and in a registry field declared to hold one. Braces required; code fences are left alone. A reference pointing nowhere is reported.\n- A citation is `root::path::anchor`; anchor on a heading (`the_four_lanes`), not a line number. Steps are lowercase names with `_`, no hyphen, dot or extension; the host folds `DESIGN.md` to `design`.\n- `{{{{ <ns> }}}}` renders a namespace's table; `{{{{ <ns>::<id>::<field> }}}}` one field.\n- A row's id is one or more snake_case names joined by `::` (`question::engine::allowed`), never a number, and never a proper prefix of another id in its namespace. `cargo mock select <ns>::<prefix>` lists the rows under a prefix; `*`, `**` and sets work there.\n- Relate rows through one `ref[]` field: an item opening on a namespace is a link (`<ns>::<id>`), one opening on a root a citation (`research::<dir>::<file>::<heading>`). Write a link once; `refsto` and `cargo mock links <ns>::<id>` derive the other end. Bad links: `unknown-row-reference`, `malformed-row-reference`.\n\n### Roots\n\n{roots_doc}\n### Namespaces\n\n{ns_doc}\nThe `reference-syntax` skill: row-typed fields, `pathof` / `sourcesof` / `refsto`, postfix chains.\n"
+                "## Reference syntax\n\n- Write `{{{{ root::step::step }}}}`, a path in the letkajenkka standard, in any `*.md.tmpl` and in a registry field declared to hold one. Braces required; code fences are left alone. A reference pointing nowhere is reported.\n- A citation is `root::path::anchor`; anchor on a heading (`the_four_lanes`), not a line number. Steps are lowercase names with `_`, no hyphen, dot or extension; the host folds `DESIGN.md` to `design`.\n- `{{{{ <ns> }}}}` renders a namespace's table; `{{{{ <ns>::<id>::<field> }}}}` one field.\n- A row's id is one or more snake_case names joined by `::` (`question::engine::allowed`), never a number, and never a proper prefix of another id in its namespace. `{{{{ <ns>::<prefix> }}}}` and `cargo mock query <ns>::<prefix>` give the rows under a prefix; `*`, `**` and sets work in any reference.\n- Relate rows through one `ref[]` field: an item opening on a namespace is a link (`<ns>::<id>`), one opening on a root a citation (`research::<dir>::<file>::<heading>`). Write a link once; `refsto` and `cargo mock links <ns>::<id>` derive the other end. Bad links: `unknown-row-reference`, `malformed-row-reference`.\n\n### Roots\n\n{roots_doc}\n### Namespaces\n\n{ns_doc}\nThe `reference-syntax` skill: row-typed fields, `pathof` / `sourcesof` / `refsto`, postfix chains.\n"
             ),
         },
         BuiltinRule {

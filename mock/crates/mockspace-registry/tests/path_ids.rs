@@ -37,6 +37,7 @@ required = true
 [[registry.namespace.field]]
 name = "subject"
 type = "subject"
+required = true
 
 [[registry.namespace.field]]
 name = "title"
@@ -76,8 +77,8 @@ id = "task::engine::render::split"
 title = "Split the pass"
 
 [[ticket]]
-id = "task::loose"
-title = "No subject"
+id = "task::engine::render::loose"
+title = "No needs"
 "#;
 
 fn project(rows: &str) -> (tempfile::TempDir, Env) {
@@ -131,11 +132,11 @@ fn a_document_reads_a_path_id_its_fields_and_a_one_name_id_beside_it() {
     let out = resolve(
         &env,
         "a {{ ticket::question::engine::internals::deps_allowed::title }} b \
-         {{ reg::ticket::task::loose::title }} c {{ ticket::question::engine::internals::deps_allowed::subject }} \
+         {{ reg::ticket::task::engine::render::loose::title }} c {{ ticket::question::engine::internals::deps_allowed::subject }} \
          d {{ kind::task }}",
     );
     assert!(out.contains("a Which deps are allowed b"), "{out}");
-    assert!(out.contains("b No subject c"), "{out}");
+    assert!(out.contains("b No needs c"), "{out}");
     assert!(out.contains("c engine::internals d"), "the folded field reads as a written one: {out}");
     assert!(out.contains("d task"), "{out}");
 }
@@ -146,21 +147,64 @@ fn the_operations_take_a_path_id() {
     let out = resolve(&env, "{{ pathof(ticket::task::engine::render::split) }}");
     assert!(out.ends_with("mock/registry/rows.toml"), "{out}");
     let out = resolve(&env, "{{ refsto(ticket::task::engine::render::split) }}");
-    assert!(out.contains("deps_allowed") || out.contains("question::engine::internals"), "{out}");
-    assert!(!out.contains("{{"), "{out}");
+    assert_eq!(out, "question::engine::internals::deps_allowed");
 }
 
 #[test]
-fn a_reference_through_a_branch_or_to_no_row_is_left_and_reported() {
+fn a_branch_resolves_as_its_rows_and_a_missing_row_is_left_and_reported() {
     let (_tmp, env) = project(ROWS);
     let reg = load_registry_for(&env).unwrap();
     let keys = env.namespaces().iter().map(|n| n.key.clone()).collect();
-    let text = "{{ ticket::question::engine }} {{ ticket::task::loose::nothing }} {{ ticket::task::loose::title }}";
+    let text = "{{ ticket::question::engine }} {{ ticket::task::engine::render::loose::nothing }} \
+                {{ ticket::task::engine::render::loose::title }} {{ ticket::idea }}";
     let d = dangling_references(text, &reg, &keys);
-    assert!(d.contains("ticket::question::engine"), "a branch is no row: {d:?}");
-    assert!(d.contains("ticket::task::loose::nothing"), "{d:?}");
-    assert_eq!(d.len(), 2, "{d:?}");
-    assert_eq!(resolve(&env, "{{ ticket::question::engine }}"), "{{ ticket::question::engine }}");
+    assert_eq!(
+        d.into_iter().collect::<Vec<_>>(),
+        ["ticket::idea", "ticket::task::engine::render::loose::nothing"],
+        "a branch stands for its rows and is no dangling reference"
+    );
+    let out = resolve(&env, "{{ ticket::question::engine.count() }}");
+    assert_eq!(out, "1");
+}
+
+#[test]
+fn a_widening_reference_resolves_through_the_one_reader() {
+    let (_tmp, env) = project(ROWS);
+    // Rows of one namespace are its table, holding just them, and every table method narrows it.
+    let out = resolve(&env, "{{ ticket::**::render::**.count() }} {{ ticket::task::*.select(id) }}");
+    assert!(out.starts_with("2 "), "{out}");
+    assert!(out.contains("task::engine::render::loose") && out.contains("task::engine::render::split"), "{out}");
+    assert!(!out.contains("deps_allowed"), "{out}");
+    // A field step after a wildcard is each row's value of it.
+    let out = resolve(&env, "{{ ticket::{task, question}::engine::*::*::title }}");
+    assert_eq!(out, "No needs, Split the pass, Which deps are allowed");
+    // A wildcard matching nothing is an empty table, and a name naming nothing fails and is left.
+    assert_eq!(resolve(&env, "{{ ticket::*::nothing.count() }}"), "0");
+    assert_eq!(resolve(&env, "{{ ticket::idea::** }}"), "{{ ticket::idea::** }}");
+    // The operations take a selection where it means something.
+    let out = resolve(&env, "{{ pathof(ticket::**) }}");
+    assert!(out.ends_with("mock/registry/rows.toml") && !out.contains(','), "each file once: {out}");
+    let out = resolve(&env, "{{ refsto(ticket::task::**) }}");
+    assert_eq!(out, "question::engine::internals::deps_allowed");
+}
+
+#[test]
+fn the_check_holds_the_path_declaration() {
+    let (_tmp, env) = project(ROWS);
+    let unfit = CONFIG.replace("name = \"subject\"\ntype = \"subject\"\nrequired = true\n", "name = \"subject\"\ntype = \"subject\"\n");
+    let tmp = mockspace_manifest::scratch::tempdir().unwrap();
+    let mock = tmp.path().join("mock");
+    std::fs::create_dir_all(mock.join("registry")).unwrap();
+    std::fs::create_dir(tmp.path().join(".git")).unwrap();
+    std::fs::write(mock.join("mockspace.toml"), unfit).unwrap();
+    let bad = Env::from_dir(&mock).unwrap();
+    let reg = load_registry_for(&bad).unwrap();
+    let kinds = |env: &Env, reg: &mockspace_registry::Registry| -> Vec<&'static str> {
+        mockspace_registry::check(env, reg, &[], None, None).findings.iter().map(|f| f.kind).collect()
+    };
+    assert!(kinds(&bad, &reg).contains(&"unfit-path-field"), "{:?}", kinds(&bad, &reg));
+    let good = load_registry_for(&env).unwrap();
+    assert!(!kinds(&env, &good).contains(&"unfit-path-field"));
 }
 
 #[test]
@@ -168,12 +212,13 @@ fn selection_reads_the_tree_the_folded_ids_make() {
     let (_tmp, env) = project(ROWS);
     let reg = load_registry_for(&env).unwrap();
     let ids = |q: &str| -> Vec<String> {
-        reg.select(env.namespaces(), q).unwrap().iter().map(|r| r.qualified()).collect()
+        reg.select_rows(env.namespaces(), q).unwrap().iter().map(|r| r.qualified()).collect()
     };
     assert_eq!(ids("ticket::*::engine"), [
         "ticket::question::engine::internals::deps_allowed",
+        "ticket::task::engine::render::loose",
         "ticket::task::engine::render::split"
     ]);
-    assert_eq!(ids("ticket::**::render::**"), ["ticket::task::engine::render::split"]);
+    assert_eq!(ids("ticket::**::render::**"), ["ticket::task::engine::render::loose", "ticket::task::engine::render::split"]);
     assert_eq!(ids("subject::engine"), ["subject::engine::internals", "subject::engine::render"]);
 }

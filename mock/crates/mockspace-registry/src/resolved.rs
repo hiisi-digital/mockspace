@@ -207,7 +207,12 @@ pub fn row_fields(ns: &RegistryNamespace, row: &RegistryRow) -> Vec<(String, Str
 
 /// The columns and cells a namespace's table shows.
 pub fn table_cells(ns: &RegistryNamespace, reg: &Registry) -> (Vec<String>, Vec<Vec<String>>) {
-    let ids = reg.by_namespace.get(&ns.key).cloned().unwrap_or_default();
+    table_cells_of(ns, reg, reg.by_namespace.get(&ns.key).map_or(&[][..], Vec::as_slice))
+}
+
+/// The columns and cells of the rows `ids` (qualified, in the order given) of a namespace's table:
+/// the columns any of them fills, as the whole table has the columns any of its rows fills.
+pub fn table_cells_of(ns: &RegistryNamespace, reg: &Registry, ids: &[String]) -> (Vec<String>, Vec<Vec<String>>) {
     let mut columns = vec!["id".to_string()];
     for f in &ns.fields {
         if f.visibility == super::FieldVisibility::Internal {
@@ -260,7 +265,7 @@ fn render_markdown_table(columns: &[String], rows: &[Vec<String>]) -> String {
                 // Markdown only: a terminal showing raw HTML would be showing
                 // the reader the mechanism instead of the answer.
                 if Some(i) == id_col {
-                    format!("<a id=\"{}\"></a>{cell}", cell.replace('_', "-"))
+                    format!("<a id=\"{}\"></a>{cell}", super::row_anchor(c))
                 } else {
                     cell
                 }

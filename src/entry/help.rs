@@ -165,7 +165,15 @@ const COMMANDS: &[Cmd] = &[
         help:    "Runs a query expression (a root or namespace path, the same \
                   syntax a `{{ root::selector }}` reference uses) against the \
                   registry. The expression is the token right after `query`; an \
-                  absent one queries nothing.",
+                  absent one queries nothing. A path over row ids may widen: \
+                  `ticket::question::engine` (a branch: every row below it), \
+                  `ticket::**::internals::**`, `ticket::{task, question}::engine::*`; rows of one \
+                  namespace print as its table, holding just them, which `.count()`, `.select(id)` \
+                  and the other table methods narrow, and a field step after a wildcard prints \
+                  each row's value. Under a wildcard members come in byte order of their names, \
+                  step by step. A wildcard matching nothing is an empty answer; a step naming \
+                  nothing where no step before it widened, an ordinal, a range and a constraint \
+                  fail with the reason.",
     },
     Cmd {
         name:    "links",
@@ -177,19 +185,6 @@ const COMMANDS: &[Cmd] = &[
                   as `namespace::id` or in a field typed as a namespace; the \
                   other end is derived here and by `refsto`, so nobody writes \
                   both sides.",
-    },
-    Cmd {
-        name:    "select",
-        summary: "list the registry rows a query over their ids selects",
-        args:    &[],
-        help:    "Takes one query in the letkajenkka standard over the tree of row ids, the namespace \
-                  first: `ticket::question::engine` (every row whose id begins `question::engine`), \
-                  `ticket::**::internals::**` (`**` any depth, none included), `ticket::*::engine`, \
-                  `ticket::{task, question}::engine::*` (a set, in written order) or a whole id. Prints \
-                  each selected row's `namespace::id`, one a line, in byte order of the ids under each \
-                  wildcard and each row once; prints nothing and exits 0 when nothing matches. An \
-                  ordinal, a range, a constraint, an operation, a namespace nobody declared and a field \
-                  step after a row named whole are refused with exit status 1; `query` resolves a field.",
     },
     Cmd {
         name:    "data-refs",

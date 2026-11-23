@@ -130,7 +130,7 @@ fn resolve_row(
     // fields are rewritten the values they cite are final.
     path.push(id.to_string());
     for value in row.fields.values() {
-        for (dep, _) in find_registry_refs(value, ns_keys, reg) {
+        for dep in crate::resolve_ops::row_deps(value, ns_keys, by_key, namespaces, reg) {
             resolve_row(
                 &dep, reg, by_key, ns_keys, namespaces, view, roots, repo_root, docs_dir, cfg,
                 done, path, findings,
@@ -144,7 +144,7 @@ fn resolve_row(
     // row fills it, and nothing below recurses, so one view serves every row in turn.
     view.rows.clear();
     for value in row.fields.values() {
-        for (dep, _) in find_registry_refs(value, ns_keys, reg) {
+        for dep in crate::resolve_ops::row_deps(value, ns_keys, by_key, namespaces, reg) {
             if view.rows.contains_key(&dep) {
                 continue;
             }

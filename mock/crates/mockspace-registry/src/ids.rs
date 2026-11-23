@@ -49,6 +49,21 @@ pub fn row_anchor(id: &str) -> String {
     }
 }
 
+/// `steps` without the registry root it opens on, where it opens on one and a step follows it:
+/// `reg::ticket::a` reads as `ticket::a`. The one place the optional root is passed over, for names
+/// and for a parsed path's steps alike.
+pub fn after_registry_root<T>(steps: &[T], is_root: impl Fn(&T) -> bool) -> &[T] {
+    match steps {
+        [first, _, ..] if is_root(first) => &steps[1 ..],
+        _ => steps,
+    }
+}
+
+/// [`after_registry_root`] over the names of a reference.
+pub fn names_after_root<'a, 'n>(names: &'a [&'n str]) -> &'a [&'n str] {
+    after_registry_root(names, |n| *n == REGISTRY_ROOT)
+}
+
 /// A row a reference names, and the names of the reference after the row's id.
 #[derive(Debug, Clone, Copy)]
 pub struct RowAt<'r, 'n> {
@@ -69,10 +84,7 @@ impl Registry {
     /// The one place a reference is split into a row and its fields. Every reader of a row
     /// reference comes through here, so a path id and a one-name id are read alike.
     pub fn locate<'r, 'n>(&'r self, names: &'n [&'n str]) -> Option<RowAt<'r, 'n>> {
-        let names = match names.first() {
-            Some(&REGISTRY_ROOT) => &names[1 ..],
-            _ => names,
-        };
+        let names = names_after_root(names);
         let (namespace, after) = names.split_first()?;
         if !self.by_namespace.contains_key(*namespace) {
             return None;
@@ -86,6 +98,17 @@ impl Registry {
                 }
             })
         })
+    }
+
+    /// Whether the names of a reference, after the optional registry root, are a namespace and a
+    /// proper prefix of one of its ids: a branch of the id tree, which stands for the rows below it.
+    pub fn is_branch(&self, names: &[&str]) -> bool {
+        let names = names_after_root(names);
+        if names.len() < 2 {
+            return false;
+        }
+        let stem = format!("{}::", names.join("::"));
+        self.rows.range(stem.clone() ..).next().is_some_and(|(q, _)| q.starts_with(&stem))
     }
 
     /// [`Self::locate`] of a reference's text, owned, for a caller holding no names: the row's

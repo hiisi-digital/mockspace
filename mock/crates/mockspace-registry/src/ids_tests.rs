@@ -130,3 +130,34 @@ fn the_prefix_pairs_are_a_pure_function_of_the_ids() {
     );
     assert!(id_prefix_pairs(&["a::b", "a::c", "ab"]).is_empty());
 }
+
+#[test]
+fn a_table_anchors_a_path_id_as_its_row_does() {
+    let id = "question::engine_x::deps_allowed";
+    let table = crate::Resolved::Table {
+        namespace: "ticket".into(),
+        columns:   vec!["id".into()],
+        rows:      vec![vec![id.into()]],
+    };
+    let md = table.to_markdown();
+    assert!(md.contains(&format!("<a id=\"{}\"></a>{id}", row_anchor(id))), "{md}");
+    assert!(md.contains("question.engine-x.deps-allowed"), "{md}");
+}
+
+#[test]
+fn the_registry_root_is_passed_over_by_one_function() {
+    assert_eq!(names_after_root(&["reg", "ticket", "a"]), ["ticket", "a"]);
+    assert_eq!(names_after_root(&["ticket", "a"]), ["ticket", "a"]);
+    // `reg` alone names the root and nothing in it, and is kept as written.
+    assert_eq!(names_after_root(&["reg"]), ["reg"]);
+}
+
+#[test]
+fn a_branch_is_a_proper_prefix_of_an_id_and_no_row() {
+    let reg = rows_from(ROWS, &tickets());
+    assert!(reg.is_branch(&["ticket", "question"]));
+    assert!(reg.is_branch(&["reg", "ticket", "question", "engine"]));
+    assert!(!reg.is_branch(&["ticket", "question", "engine", "allowed"]), "a row is no branch");
+    assert!(!reg.is_branch(&["ticket", "quest"]), "a text prefix is no branch");
+    assert!(!reg.is_branch(&["ticket"]));
+}

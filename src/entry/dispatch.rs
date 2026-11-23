@@ -838,15 +838,6 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     .unwrap_or("");
                 return registry::cmd_links(&cfg, id);
             },
-            "select" => {
-                let query = args
-                    .iter()
-                    .skip_while(|a| a.as_str() != "select")
-                    .nth(1)
-                    .map(String::as_str)
-                    .unwrap_or("");
-                return registry::cmd_select(&cfg, query);
-            },
             "check" => {
                 return cmd_check(&cfg);
             },

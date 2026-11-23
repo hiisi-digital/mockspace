@@ -402,3 +402,26 @@ fn a_reference_to_a_row_that_exists_is_an_edge_in_both() {
         "answer::niri"
     ]);
 }
+
+/// A path id naming no row is an id naming no row, whatever its first name: `task::engine::gone`
+/// in a field typed `ticket` is a ticket id beginning with `task`, and in a field typed `task` it is
+/// no qualified value, since `engine::gone` names no task either. Only the target written in front
+/// of a row of it is the qualified spelling refused above.
+#[test]
+fn a_path_id_opening_on_a_namespace_and_naming_no_row_is_unknown_not_malformed() {
+    let nss = [ns("task", &[]), ns("ticket", &[]), ns("answer", &[("ticket", "ticket"), ("task", "task")])];
+    let r = reg(&[
+        ("task", "engine::here", &[]),
+        ("ticket", "task::engine::here", &[]),
+        ("answer", "a", &[("ticket", "task::engine::gone"), ("task", "task::engine::gone")]),
+    ]);
+    let found = validate_row_references(&r, &nss);
+    assert_eq!(kinds(&found), ["unknown-row-reference", "unknown-row-reference"], "{found:?}");
+    // The control: a ticket id that begins with `task` and names a row is accepted.
+    let ok = reg(&[
+        ("task", "engine::here", &[]),
+        ("ticket", "task::engine::here", &[]),
+        ("answer", "a", &[("ticket", "task::engine::here"), ("task", "engine::here")]),
+    ]);
+    assert!(validate_row_references(&ok, &nss).is_empty());
+}

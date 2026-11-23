@@ -6,18 +6,19 @@
 //! The fields a namespace folds into its rows' ids.
 //!
 //! A namespace declaring `path = ["kind", "subject"]` gives each row the id
-//! `<kind>::<subject>::<leaf>`, where each value is the id of a row of the namespace the field
-//! references, itself a path where that namespace's ids are, and the leaf is one name. The id is
-//! the one place the values are written; the loader reads them back into the row's fields, so a
-//! reader of `kind` finds it where it always was.
+//! `<kind>::<subject>::<free names>::<leaf>`: each folded value is the id of a row of the namespace
+//! its field references, itself a path where that namespace's ids are; then any number of free
+//! names, none included, which are branches of the id tree and rows of nothing, chosen as describes
+//! the row best; then one leaf name. The id is the one place the folded values are written; the
+//! loader reads them back into the row's fields, so a reader of `kind` finds it where it always was.
 //!
-//! The fields fold in their declared order. A field declared optional may be absent, and then it
-//! is no segment at all. Reading an id is a search over the ids each referenced namespace holds,
-//! so it is decided by the data rather than by counting names, and an id is read every way it can
-//! be: none is `unfoldable-id`, and so is more than one, since a reader must not be the one to
-//! choose.
+//! The fields fold in their declared order and every one is required: an optional one could be
+//! absent and its names read as free names, so the id would read two ways, and the declaration is
+//! refused (`unfit-path-field`). Reading an id is a search over the ids each referenced namespace
+//! holds, decided by the data rather than by counting names, and an id is read every way it can be:
+//! none is `unfoldable-id`, and so is more than one, since a reader must not be the one to choose.
 //!
-//! [`fold_row_id`] and [`row_id_names`] are pure, over the declaration and the ids alone, so a
+//! [`fold_row_id`], [`folded_fields_written`] and [`row_id_names`] are pure, over the declaration and the ids alone, so a
 //! tool holding rows its own way reads ids by the same rule the loader does.
 
 use super::*;
@@ -30,7 +31,7 @@ pub enum IdFault {
     UnfitPath(String),
     /// The id is no path of plain names, as [`row_id_names`] says it.
     NotAnId(String),
-    /// No reading of the id gives each required field a row of its namespace and leaves one leaf.
+    /// No reading of the id gives each folded field a row of its namespace and leaves a leaf.
     NoReading,
     /// More than one reading does: each as the field values it would give.
     Ambiguous(Vec<Vec<(String, String)>>),
@@ -96,15 +97,13 @@ pub struct FoldFault {
     pub fault:  IdFault,
 }
 
-/// One field of a namespace's `path`: its name, the namespace it references, and whether a row
-/// must carry it.
+/// One field of a namespace's `path`: its name and the namespace it references.
 struct PathField<'a> {
-    name:     &'a str,
-    target:   &'a str,
-    required: bool,
+    name:   &'a str,
+    target: &'a str,
 }
 
-/// The path fields of `ns`, or why its `path` names one that is not one row reference.
+/// The path fields of `ns`, or why its `path` names one that cannot fold.
 fn path_fields<'a>(ns: &'a RegistryNamespace, declared: &BTreeSet<&str>) -> Result<Vec<PathField<'a>>, String> {
     let mut out: Vec<PathField<'a>> = Vec::new();
     for name in &ns.path {
@@ -116,16 +115,17 @@ fn path_fields<'a>(ns: &'a RegistryNamespace, declared: &BTreeSet<&str>) -> Resu
             return Err(format!("{at}, and declares no field of that name"));
         };
         match row_reference_target(&field.r#type) {
-            Some((target, false)) if declared.contains(target) && target != ns.key => {
-                out.push(PathField {
-                    name,
-                    target,
-                    required: field.required,
-                });
-            },
             Some((target, false)) if target == ns.key => {
                 return Err(format!("{at}, which references `{target}` itself, so no id could be read before it"));
             },
+            Some((target, false)) if declared.contains(target) && !field.required => {
+                return Err(format!(
+                    "{at}, and declares it optional. Free names may follow the folded fields, so an id \
+                     could read with `{name}` or without it and its names as free names; declare it \
+                     `required = true`."
+                ));
+            },
+            Some((target, false)) if declared.contains(target) => out.push(PathField { name, target }),
             _ => {
                 return Err(format!(
                     "{at}, which is typed `{}`. A folded field holds one row of another declared namespace, so its type is that namespace's key, with no `[]`.",
@@ -137,7 +137,7 @@ fn path_fields<'a>(ns: &'a RegistryNamespace, declared: &BTreeSet<&str>) -> Resu
     Ok(out)
 }
 
-/// How an id of `ns` reads, for a message: each field and its namespace, then the leaf.
+/// How an id of `ns` reads, for a message: each field and its namespace, the free names, the leaf.
 fn path_shape(ns: &RegistryNamespace) -> String {
     let mut parts: Vec<String> = ns
         .path
@@ -145,25 +145,25 @@ fn path_shape(ns: &RegistryNamespace) -> String {
         .map(|name| {
             let f = ns.fields.iter().find(|f| &f.name == name);
             let target = f.and_then(|f| row_reference_target(&f.r#type)).map_or("?", |(t, _)| t);
-            let optional = if f.is_some_and(|f| f.required) { "" } else { ", optional" };
-            format!("`{name}` (a row of `{target}`{optional})")
+            format!("`{name}` (a row of `{target}`)")
         })
         .collect();
+    parts.push("any free names".to_string());
     parts.push("one leaf name".to_string());
     parts.join(", then ")
 }
 
-/// The values a row's id gives the fields its namespace folds, in `path` order, an absent optional
-/// field left out.
+/// The values a row's id gives the fields its namespace folds, in `path` order.
 ///
-/// `referenced` holds, for each namespace, the ids of its rows (bare, without the namespace). A
-/// namespace with no `path` folds nothing and any id is returned no values.
+/// `referenced` holds, for each namespace, the ids of its rows (bare, without the namespace). The
+/// names after the folded values and before the leaf are free and give no field. A namespace with
+/// no `path` folds nothing and any id is returned no values.
 ///
 /// # Errors
 ///
 /// [`IdFault::UnfitPath`] where the declaration is unfit, [`IdFault::NotAnId`] where the id is no
 /// path, [`IdFault::NoReading`] or [`IdFault::Ambiguous`] where it reads no way or several. Never
-/// [`IdFault::Written`], which is about the row's fields and not its id.
+/// [`IdFault::Written`], which is about the row's fields and not its id ([`folded_fields_written`]).
 pub fn fold_row_id(
     ns: &RegistryNamespace,
     referenced: &BTreeMap<String, BTreeSet<String>>,
@@ -184,7 +184,13 @@ pub fn fold_row_id(
     }
 }
 
-/// Every reading of `names` as `fields` then one leaf, appended to `out`.
+/// The fields of `ns`'s `path` among `written`, the keys a row writes: each one only the id may
+/// hold, so each is the `folded-field-written` finding. Pure, for a tool reading rows its own way.
+pub fn folded_fields_written<'a>(ns: &RegistryNamespace, written: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
+    written.into_iter().filter(|k| ns.path.iter().any(|p| p == k)).collect()
+}
+
+/// Every reading of `names` as `fields`, then free names, then one leaf, appended to `out`.
 fn read(
     fields: &[PathField<'_>],
     referenced: &BTreeMap<String, BTreeSet<String>>,
@@ -193,7 +199,8 @@ fn read(
     out: &mut Vec<Vec<(String, String)>>,
 ) {
     let Some((field, rest)) = fields.split_first() else {
-        if names.len() == 1 {
+        // What is left is the free names and the leaf, and the leaf is there.
+        if !names.is_empty() {
             out.push(taken.clone());
         }
         return;
@@ -207,9 +214,6 @@ fn read(
             read(rest, referenced, &names[n ..], taken, out);
             taken.pop();
         }
-    }
-    if !field.required {
-        read(rest, referenced, names, taken, out);
     }
 }
 
@@ -268,12 +272,14 @@ pub(crate) fn fold_ids(reg: &mut Registry, namespaces: &[RegistryNamespace]) {
         let Some(keys) = reg.by_namespace.get(&ns.key).cloned() else { continue };
         for q in keys {
             let Some(row) = reg.rows.get_mut(&q) else { continue };
-            for field in ns.path.iter().filter(|f| row.fields.contains_key(*f)) {
+            let written: Vec<String> =
+                folded_fields_written(ns, row.fields.keys().map(String::as_str)).into_iter().map(String::from).collect();
+            for field in written {
                 reg.folds.push(FoldFault {
                     namespace: ns.key.clone(),
                     row:    q.clone(),
                     source: row.source.clone(),
-                    fault:  IdFault::Written(field.clone()),
+                    fault:  IdFault::Written(field),
                 });
             }
             match fold_row_id(ns, &referenced, &row.id) {

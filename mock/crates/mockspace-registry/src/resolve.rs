@@ -187,7 +187,7 @@ pub fn resolve_typed(
     // `sourcesof(x)` is what x RESTS ON: its provenance. Plural, because
     // provenance is an array and a claim usually has several sources.
     if let Some(inner) = crate::operation(expr, "pathof") {
-        return resolve_pathof(inner, by_key, reg, repo_root, cfg).map(Resolved::Path);
+        return resolve_pathof(inner, by_key, reg, repo_root, cfg);
     }
     if let Some(inner) = crate::operation(expr, "refsto") {
         return resolve_refsto(inner, by_key, reg, roots, repo_root, docs_dir, cfg)
@@ -195,17 +195,14 @@ pub fn resolve_typed(
     }
 
     if let Some(inner) = crate::operation(expr, "sourcesof") {
-        return resolve_sourcesof(inner, by_key, reg, roots, repo_root, docs_dir, cfg).map(
-            |joined| {
-                Resolved::List(
-                    joined
-                        .split(", ")
-                        .filter(|s| !s.is_empty())
-                        .map(str::to_string)
-                        .collect(),
-                )
-            },
-        );
+        return resolve_sourcesof(inner, by_key, reg, roots, repo_root, docs_dir, cfg).map(Resolved::List);
+    }
+
+    // A query that widens, or a plain path naming a branch of a namespace's id tree, selects rows:
+    // `ticket::question::**`, `ticket::{task, question}::engine`. The one reader of every path into
+    // the registry that is not one row or one field of it.
+    if let Some(found) = crate::resolve_ops::resolve_selection(expr, by_key, reg, cfg) {
+        return found;
     }
 
     let parts = crate::names(expr).unwrap_or_default();

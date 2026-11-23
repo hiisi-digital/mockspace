@@ -73,7 +73,7 @@ a record.
   `ticket::question::engine::**` select alike. This is how op's "querying for
   ticket::question::engine gives all engine related tickets" holds.
 - Ident, set (by `Path::expand`, written order kept), `*` (byte order of the member names), `**` (the
-  node first, then every node below it in byte order, which is byte order of the ids). Each row is
+  node first, then every node below it, members in byte order of their names step by step; this is not byte order of the joined ids, as `a::b` comes before `a0`, corrected in pass 2 below). Each row is
   kept once at its first place over the whole query. The standard says a set's expansion is not
   deduplicated (8.3); what is deduplicated here is the rows selected, which the brief asked for and
   which 8.4 asks of `**`.
@@ -186,3 +186,97 @@ Runs on the tip, a crate at a time:
   into slugs") is data work in the repositories that hold tickets, and needs a `path` declared there
   first; nothing here rewrites a project's rows.
 - `refsto`, `pathof` and `sourcesof` take a path id but not a selection; widening them was not asked.
+
+## Review pass 1
+
+This section supersedes the account above where they differ: the `select` verb is gone,
+folded fields cannot be optional, and selection runs inside resolution.
+
+Op, 23 November, verbatim, on the names between a ticket's kind and its leaf: "Fully arbitrary,
+as describes the ticket best."
+
+- A, free names. A namespace with `path` now takes any number of free names after its folded
+  fields and before the leaf: with `path = ["kind"]`, `question::engine::internals::deps::allowed`
+  has kind `question`, free names `engine::internals::deps` and leaf `allowed`. Free names are
+  branches only. Free names make every optional folded field readable two ways, so `path_fields`
+  refuses an optional one as `unfit-path-field` and says why. Tests in `fold_tests.rs`: free names
+  with one and with two folded fields, no leaf, a first name naming no kind, an optional field
+  refused, a two-way reading with required fields, and the pure functions.
+- 1. A step naming nothing where nothing widened now fails (`SelectRefusal::NoSuch`). After a
+  widening step it yields nothing for that branch. I changed the module doc and the tests that
+  locked the old behaviour: `a_step_naming_nothing_where_nothing_widened_fails` and
+  `a_wildcard_matching_nothing_is_an_empty_answer`, and in `tests/the_query_verb_takes_a_pattern.rs`
+  `a_step_naming_nothing_fails_and_says_why`.
+- 2. Ordering. The docs now say byte order of each name, step by step. Fixed in
+  `REFERENCE-SYNTAX.md`, the `query` help, the skill, `select.rs` and line 76 above. Fixture `t`
+  with `a0` and `a::b`: `t::**` and `t::*` give `[a::b, a0]`.
+- 3. `render_markdown_table` anchors through `row_anchor`. Tested on
+  `question::engine_x::deps_allowed` (`a_table_anchors_a_path_id_as_its_row_does`).
+- 4. `templates.rs` now teaches `<ns>::<id>` everywhere, and a row-reference field "takes the id
+  of a row of" its target. A folding namespace's entry gives `ns::<kind>::<subject>::<free
+  names>::<leaf>` and says the folded fields are never written. Every other entry says the id is
+  one name or several joined by `::`.
+- 5. `malformed-row-reference` is kept for one case only: the target namespace written in front
+  of the id of one of its rows. Any other valid id naming no row is `unknown-row-reference`.
+  Tested with `task` and `ticket` and the value `task::engine::gone` in fields typed `ticket` and
+  `task`.
+- 6. One reader. `resolve_typed` sends any path that widens, or a plain path naming a branch, to
+  `resolve_ops::resolve_selection`, and that calls `Registry::select`. So `{{ }}`,
+  `cargo mock query` and data fields all read it alike.
+  - What a selection returns: rows of one namespace are that namespace's table holding just
+    them, so `.count()`, `.where`, `.select`, `.first` and `.last` narrow it. Rows of several
+    namespaces, and fields, are a list.
+  - `pathof`, `sourcesof` and `refsto` take a selection, each file, source and referrer once.
+  - `resolve_data` resolves a row's selected rows before the row itself (`row_deps`).
+  - `find_registry_refs` no longer reports a branch as dangling.
+  - Removed: the `select` verb, its help entry and its dispatch, plus `cmd_select`.
+    `cargo mock query` takes the pattern, and when a query is refused it prints the refusal's
+    reason after "no result".
+  - A step from a row names a field exactly when the namespace declares it (`id` included,
+    internal fields not). After a widening step, a row whose namespace has no such field is
+    passed over. The docs say this host yields rather than fails.
+  - Refused: a step past a field (`PastField`).
+  - Updated docs: `REFERENCE-SYNTAX.md` (Selecting rows, What the syntax leaves to mockspace),
+    `USAGE_GUIDE.md`, the skill and the rule text.
+  - Tests: `path_ids.rs` (`a_widening_reference_resolves_through_the_one_reader`,
+    `a_branch_resolves_as_its_rows_and_a_missing_row_is_left_and_reported`) and
+    `the_query_verb_takes_a_pattern.rs`.
+- 7/8. Namespace names are folded only by `mockspace_refnames::fold`. A query must write the
+  folded spelling, and the hyphen spelling is a syntax refusal. Two namespaces that fold to one
+  name are refused as `Ambiguous` in a query and reported as the new finding
+  `namespace-fold-collision`, called from `check`. Row ids are standard names already, so
+  nothing in them is folded. `load_registry_for_expr_from` reads a namespace written folded, and
+  reads everything for a query opening on a wildcard.
+- 9. `after_registry_root` (generic over names and steps) and `names_after_root` in `ids.rs` are
+  the one way the root is skipped. `locate`, `refs.rs`, `resolve_ops.rs` and `select.rs` use them.
+  `cmd_query`'s column hint now takes the namespace from `crate::root` after `split_methods`.
+  - New public pure functions for ticket-model: `folded_fields_written(ns, written_keys)`, and
+    `select_ids(query, &[&str]) -> Result<Vec<&str>, SelectRefusal>` over qualified ids. Each
+    goes through the same walk as `Registry::select`.
+- 10. Tests added or fixed:
+  - `the_check_holds_the_path_declaration` (`path_ids.rs`) fails if `check` stops calling
+    `unfit_path_fields`.
+  - A path field typed as an undeclared namespace is an `unfit-path-field` case.
+  - The `refsto` assertion now checks one exact value.
+  - The selection tests assert ids, not counts.
+- 11. The unreachable arm is gone. `walk` and `from_record` were rewritten.
+- The public-tree guard. `docs/REFERENCE-SYNTAX.md` and the skill named a private project in
+  their namespace example. It is now `web-renderer`.
+
+Runs on the tip:
+
+- `cargo test -p mockspace-registry`: 232 lib, 8 `path_ids`, 7 `without_the_engine`. All passed.
+- `cargo test -p mockspace` with these filters: `registry` 128, `refs` 59, `select` 41,
+  `help` 32, `render_agent` 212, `config` 140, `migrate` 58. Also
+  `--test the_query_verb_takes_a_pattern` 5, `--test the_public_tree_names_no_private_project` 7,
+  `--test the_query_loads_its_own_namespace` 5. All passed.
+- `clean_tests`: 9 passed, plus the known red `suggest_subcommand_declines_far_words`.
+
+Changed again by this pass:
+
+- `select_tests.rs` was rewritten for the rules above.
+- `fold_tests.rs`: the optional-field test is now the refusal test. The two-way test uses
+  required fields, and the pure-function test uses a required subject.
+- `path_ids.rs`: subject is required in its config, `task::loose` became
+  `task::engine::render::loose`, and the branch test now expects the branch to resolve.
+- `tests/the_select_verb_lists_rows.rs` became `tests/the_query_verb_takes_a_pattern.rs`.
