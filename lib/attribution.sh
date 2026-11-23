@@ -92,7 +92,8 @@ attribution_selfcheck() {
              ATTRIBUTION_AGENT_TAGS ATTRIBUTION_AGENT_TOOLS ATTRIBUTION_AGENT_GIVEN \
              ATTRIBUTION_AGENT_VENDORS ATTRIBUTION_AGENT_MACHINES ATTRIBUTION_AGENT_HEADS \
              ATTRIBUTION_AGENT_COMPANIONS \
-             ATTRIBUTION_ADVERT_URL_RE ATTRIBUTION_ADVERT_PHRASE_RE ATTRIBUTION_ADVERT_RE; do
+             ATTRIBUTION_ADVERT_URL_RE ATTRIBUTION_ADVERT_PHRASE_RE ATTRIBUTION_ADVERT_WORDS_RE \
+             ATTRIBUTION_ADVERT_RE; do
         if [[ -z "${!p:-}" ]]; then
             log_error "attribution: ${p} is empty; refusing to report clean"
             return 1
@@ -120,6 +121,8 @@ attribution_selfcheck() {
         log_error "attribution: the identity net does not recognise a name the caller passes"; return 1; }
     attribution_has_advert 'see https://claude.ai/code' || {
         log_error "attribution: the advert net does not recognise a known advert"; return 1; }
+    attribution_has_advert 'Generated with Claude Code' || {
+        log_error "attribution: the advert net does not recognise an advert in plain words"; return 1; }
     # And one that must NOT match, because a net that matches everything also
     # never reports clean and is just as broken.
     if attribution_is_attribution_trailer 'docs: describe the copilot surface'; then

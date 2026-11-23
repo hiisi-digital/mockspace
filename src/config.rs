@@ -318,6 +318,11 @@ pub struct AgentConfig {
     /// On by default, same reasoning as `sketching_skill`.
     pub benchmarking_skill: bool,
 
+    /// A guard of the project's own the message gate runs first, on every
+    /// tool call: a pre-tool-use hook, read against the repository's root.
+    /// Unset, the gate runs alone.
+    pub message_guard: Option<String>,
+
     /// On by default: a generated rule pointing at `mock tools` and
     /// `mock lints` rather than at a hand-maintained list of either. The knob
     /// exists for the same reason the other two do, no builtin prose lands in
@@ -364,6 +369,7 @@ impl Default for AgentConfig {
             accelerated_interactive_design_talks: false,
             sketching_skill: true,
             benchmarking_skill: true,
+            message_guard: None,
             catalogues: true,
             panel_discipline: false,
             renamed_keys: Vec::new(),
@@ -477,6 +483,9 @@ struct RawAgentConfig {
 
     /// Opt out of the benchmarking skill builtin; absent means on.
     agent_benchmarking_skill: Option<bool>,
+
+    /// The project's own guard the message gate chains in front of itself.
+    agent_message_guard: Option<String>,
 
     /// Opt out of the catalogues rule builtin; absent means on.
     ///
@@ -1072,6 +1081,7 @@ impl Config {
                 .unwrap_or(false),
             sketching_skill: raw_agent.agent_sketching_skill.unwrap_or(true),
             benchmarking_skill: raw_agent.agent_benchmarking_skill.unwrap_or(true),
+            message_guard: raw_agent.agent_message_guard.clone(),
             catalogues: raw_agent.agent_catalogues.unwrap_or(true),
             panel_discipline: raw_agent.agent_panel_discipline.unwrap_or(false),
         };
