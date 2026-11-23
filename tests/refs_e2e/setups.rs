@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::world::{Clone, Out, World};
+use super::world::{Clone, World};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Setup {
