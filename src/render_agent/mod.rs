@@ -51,6 +51,8 @@ const RENAMED_BUILTIN_RULES: &[(&str, &str)] = &[
 mod helpers;
 pub(crate) use helpers::*;
 mod builtins;
+mod message_guard;
+pub(crate) use message_guard::*;
 mod guide_hook;
 pub(crate) use guide_hook::*;
 pub(crate) use builtins::*;

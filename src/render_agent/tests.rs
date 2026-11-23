@@ -578,7 +578,7 @@ pub(super) fn skill_fixture(design_talks: Option<bool>) -> tempfile::TempDir {
 
 // The same fixture with an arbitrary agent config, for knobs beyond the
 // design-talk one.
-fn skill_fixture_config(config: &str) -> tempfile::TempDir {
+pub(super) fn skill_fixture_config(config: &str) -> tempfile::TempDir {
     let guard = skill_fixture(None);
     let mock = guard.path().join("mock");
     std::fs::write(mock.join("agent").join("config.toml"), config).unwrap();
