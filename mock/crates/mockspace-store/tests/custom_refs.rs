@@ -7,8 +7,8 @@ mod ambient;
 
 mod common;
 
-use common::{MOCK_REF, NS, World, git, store, try_git};
-use mockspace_store::{Edit, PUSH_URL_KEY, Reader, Reapply, RefPair, RefStore, RetryPolicy, Store, StoreError};
+use common::{MOCK_REF, NS, World, git, git_shim, inst_dir, read, seeded, store, try_git};
+use mockspace_store::{Edit, Instance, PUSH_URL_KEY, Reader, Reapply, RefPair, RefStore, RetryPolicy, Store, StoreError};
 
 const SEEN: &str = "refs/mock-seen/registry/probe";
 
@@ -130,6 +130,37 @@ fn a_first_write_a_lossy_relay_dropped_leaves_the_tree_unborn_here_and_writable(
     let landed = s.apply(&Edit::new().put("a", "1"), "one", &Reapply).unwrap();
     assert!(landed.confirmed);
     assert_eq!(w.tip(MOCK_REF), landed.commit);
+}
+
+#[test]
+fn an_instance_whose_write_was_not_confirmed_keeps_the_edit_on_disk() {
+    let w = World::new();
+    let a = seeded(&w);
+    // b's push lands, and every fetch after it fails, so the remote cannot be asked about it
+    let pushed = w.dir.path().join("pushed");
+    let shim = git_shim(
+        &w,
+        &format!("    touch '{}'", pushed.display()),
+        &format!("    if [ -e '{}' ]; then echo 'fatal: unable to access: could not resolve host' >&2; exit 128; fi", pushed.display()),
+    );
+    let b = RefStore::new(w.clone_dir("b"), w.remote(), RefPair::for_namespace(NS).unwrap())
+        .with_retry(RetryPolicy::immediate(2))
+        .with_git_program(&shim);
+    b.refresh().unwrap();
+    let (da, db) = (inst_dir(&w, "a", "registry"), inst_dir(&w, "b", "registry"));
+    let (ia, ib) = (Instance::new(&a, &da).unwrap(), Instance::new(&b, &db).unwrap());
+    ia.materialize().unwrap();
+    ib.materialize().unwrap();
+    // a moves the tip past b's base, so b's edit is rebased onto a tip b never had on disk
+    std::fs::write(da.join("ticket/won.toml"), "id = \"won\"\n").unwrap();
+    ia.apply("won", &Reapply).unwrap();
+    std::fs::write(db.join("ticket/t1.toml"), "id = \"t1\"\nedited = true\n").unwrap();
+    let applied = ib.apply("edit t1", &Reapply).unwrap();
+    assert!(applied.changed && !applied.confirmed, "control: the push went out and was not confirmed");
+    assert_eq!(read(&db, "ticket/t1.toml"), "id = \"t1\"\nedited = true\n", "the edit is still on disk");
+    let repo_b = w.dir.path().join("b");
+    assert_ne!(git(&repo_b, &["rev-parse", MOCK_REF]), applied.commit.clone().unwrap(), "the local ref did not move onto it");
+    assert_eq!(w.file(MOCK_REF, "ticket/t1.toml").as_deref(), Some("id = \"t1\"\nedited = true"), "control: it landed");
 }
 
 #[test]

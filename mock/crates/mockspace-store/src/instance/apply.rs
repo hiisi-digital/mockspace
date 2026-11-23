@@ -35,6 +35,12 @@ impl Instance<'_> {
         let edit = self.edit_of(&delta)?;
         let built_on = delta.base.commit().map(Oid::as_str);
         let applied = self.store.apply_from(built_on, &edit, message, &tracked)?;
+        // A write the remote was not seen to hold leaves the local ref on the tip before it, which
+        // does not settle what was sent: the directory and its base stay as they are, and the next
+        // update follows the commit where it landed or says where it was lost.
+        if applied.changed && !applied.confirmed {
+            return Ok(applied);
+        }
         // Of what was sent, the files the tip now settles: all of them when the hook was never
         // asked, else the ones it returned an entry for. A file it left out was not written.
         let mut settled = delta.sent;
