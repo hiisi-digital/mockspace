@@ -20,6 +20,10 @@ mockspace-verdicts = { path = "../verdicts" }
 mockspace-bench-layout = { path = "../bench-layout" }
 tree-sitter = "0.24"
 tree-sitter-rust = "0.23"
+# The one parser of a hierarchical reference path.
+letkajenkka = "=0.0.1-rc.1"
+# The names of a reference, folded and read plain, as every mockspace crate reads them.
+mockspace-refnames = { path = "../mock/crates/mockspace-refnames" }
 
 [dev-dependencies]
 # The scrub of the environment a test runs in, the one copy of it.

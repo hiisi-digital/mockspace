@@ -153,3 +153,69 @@ pub(crate) fn report(
     }
     (gated, demoted)
 }
+
+/// The findings for the references of one generated document that resolved to nothing and were
+/// rendered literally, `found` as the generation's scan gives them, braces included.
+///
+/// A reference to a row gates the run that changes `template`, the document's template, as a row
+/// citing a missing row does; a computed document has no template, and its findings gate every
+/// run. A row reference is one into a declared namespace under the standard, or one the reference
+/// migration reads as a row reference in the spelling before the standard and rewrites, which keeps
+/// the scope it had then, which the design holds as provisional. Everything else, a crate,
+/// an undeclared namespace, a text the standard refuses and the migration does not rewrite into a
+/// row reference, is a defect of the document itself and gates every run. A group holding a text
+/// the standard refuses says how a repository in the older spelling is migrated.
+pub(crate) fn dangling(
+    file: &str,
+    found: &[&str],
+    template: Option<&Path>,
+    namespaces: &std::collections::BTreeSet<&str>,
+) -> Vec<RegistryFinding> {
+    let inner = |e: &str| e.trim_matches(|c: char| c == '{' || c == '}').trim().to_owned();
+    let is_row_ref = |e: &&str| {
+        let text = inner(e);
+        crate::registry::root(&text).is_some_and(|r| namespaces.contains(r))
+            || mockspace_registry::legacy_refs::legacy_row_namespace(&text, namespaces).is_some()
+    };
+    let (rows, rest): (Vec<&str>, Vec<&str>) = found.iter().copied().partition(is_row_ref);
+    let mut out = Vec::new();
+    for (to_rows, group) in [(true, rows), (false, rest)] {
+        if group.is_empty() {
+            continue;
+        }
+        let mut shown = group.clone();
+        shown.sort_unstable();
+        shown.dedup();
+        shown.truncate(4);
+        let gate = match (template, to_rows) {
+            (Some(t), true) => GateScope::WhenChanged(t.to_path_buf()),
+            _ => GateScope::Always,
+        };
+        let refused = group.iter().any(|e| {
+            crate::registry::placeholder_exprs(e).iter().any(|(_, inner)| {
+                matches!(crate::registry::FileRef::read(inner), Err(crate::registry::Refusal::Syntax(_)))
+            })
+        });
+        let hint = if refused {
+            format!(
+                " Some are not references under the letkajenkka standard; `cargo mock migrate {}` rewrites a \
+                 repository written in the spelling before it.",
+                crate::registry::MIGRATION
+            )
+        } else {
+            String::new()
+        };
+        out.push(RegistryFinding {
+            kind: "dangling-reference",
+            message: format!(
+                "{file}: {} reference(s) resolved to nothing and were rendered literally ({}). A reference \
+                 that resolves to nothing is worse than prose, because it looks checked.{hint}",
+                group.len(),
+                shown.join(", ")
+            ),
+            source: template.map(Path::to_path_buf),
+            gate,
+        });
+    }
+    out
+}

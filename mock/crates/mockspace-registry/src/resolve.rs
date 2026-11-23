@@ -24,6 +24,7 @@ pub fn resolve_all(
     docs_dir: &Path,
     cfg: &dyn RegistryEnv,
 ) -> String {
+    let _scope = crate::refpath::cache_scope();
     // One pass. Data is resolved bottom-up before any document renders, so a
     // reference inside a row's field is already inlined by the time a table
     // carrying it expands, and re-running over the output would only find
@@ -44,17 +45,12 @@ fn resolve_once(
         namespaces.iter().map(|n| (n.key.as_str(), n)).collect();
 
     let mut out = String::with_capacity(text.len());
-    let mut in_fence = false;
+    let mut fences = mockspace_refnames::Fences::new();
     for (i, line) in text.lines().enumerate() {
         if i > 0 {
             out.push('\n');
         }
-        if line.trim_start().starts_with("```") {
-            in_fence = !in_fence;
-            out.push_str(line);
-            continue;
-        }
-        if in_fence {
+        if !fences.prose(line) {
             out.push_str(line);
             continue;
         }
@@ -348,17 +344,14 @@ fn apply_methods(value: Resolved, methods: &[String]) -> Option<Resolved> {
 
             // List verbs.
             ("first", _) => {
-                Resolved::Field(v.as_scalar().split(", ").next().unwrap_or("").to_string())
+                Resolved::Field(crate::refpath::list(&v.as_scalar()).next().unwrap_or("").to_string())
             },
             ("last", _) => {
-                Resolved::Field(v.as_scalar().split(", ").last().unwrap_or("").to_string())
+                Resolved::Field(crate::refpath::list(&v.as_scalar()).last().unwrap_or("").to_string())
             },
             ("count", _) => {
                 Resolved::Count(
-                    v.as_scalar()
-                        .split(", ")
-                        .filter(|s| !s.trim().is_empty())
-                        .count(),
+                    crate::refpath::list(&v.as_scalar()).count(),
                 )
             },
             _ => return None,
@@ -387,9 +380,9 @@ fn resolve_pathof(
     repo_root: &Path,
     cfg: &dyn RegistryEnv,
 ) -> Option<String> {
-    let parts: Vec<&str> = expr.split("::").map(str::trim).collect();
+    let parts = crate::names(expr).unwrap_or_default();
 
-    if parts[0] == CRATE_ROOT && parts.len() == 2 {
+    if parts.first() == Some(&CRATE_ROOT) && parts.len() == 2 {
         return cfg.crate_dir(parts[1]).map(|dir| rel_to_repo(&dir, repo_root));
     }
 
@@ -408,8 +401,8 @@ fn resolve_pathof(
         return Some(String::new());
     }
     let rel = cfg.roots().get(&r.root)?;
-    match resolve_cited_path(&repo_root.join(rel), &r.path) {
-        PathResolution::Found(target) => Some(rel_to_repo(&target, repo_root)),
+    match r.locate(&repo_root.join(rel)) {
+        Location::Found(target) => Some(rel_to_repo(&target, repo_root)),
         _ => None,
     }
 }
@@ -427,7 +420,7 @@ fn resolve_sourcesof(
     docs_dir: &Path,
     cfg: &dyn RegistryEnv,
 ) -> Option<String> {
-    let mut segs: Vec<&str> = expr.split("::").map(str::trim).collect();
+    let mut segs = crate::names(expr).ok()?;
     if segs.first() == Some(&REGISTRY_ROOT) {
         segs.remove(0);
     }
@@ -436,9 +429,8 @@ fn resolve_sourcesof(
     }
     let row = reg.get(&format!("{}::{}", segs[0], segs[1]))?;
     let raw = row.fields.get("provenance")?;
-    let rendered: Vec<String> = raw
-        .split(", ")
-        .filter_map(|c| resolve_expr(c.trim(), by_key, reg, roots, repo_root, docs_dir, cfg))
+    let rendered: Vec<String> = crate::refpath::list(raw)
+        .filter_map(|c| resolve_expr(c, by_key, reg, roots, repo_root, docs_dir, cfg))
         .filter(|r| !r.is_empty())
         .collect();
     Some(rendered.join(", "))
@@ -463,7 +455,7 @@ fn resolve_refsto(
     docs_dir: &Path,
     cfg: &dyn RegistryEnv,
 ) -> Option<Vec<String>> {
-    let mut segs: Vec<&str> = expr.split("::").map(str::trim).collect();
+    let mut segs = crate::names(expr).ok()?;
     if segs.first() == Some(&REGISTRY_ROOT) {
         segs.remove(0);
     }
@@ -543,25 +535,16 @@ pub fn resolve_typed(
     //
     // `sourcesof(x)` is what x RESTS ON: its provenance. Plural, because
     // provenance is an array and a claim usually has several sources.
-    if let Some(inner) = expr
-        .strip_prefix("pathof(")
-        .and_then(|r| r.strip_suffix(')'))
-    {
-        return resolve_pathof(inner.trim(), by_key, reg, repo_root, cfg).map(Resolved::Path);
+    if let Some(inner) = crate::operation(expr, "pathof") {
+        return resolve_pathof(inner, by_key, reg, repo_root, cfg).map(Resolved::Path);
     }
-    if let Some(inner) = expr
-        .strip_prefix("refsto(")
-        .and_then(|r| r.strip_suffix(')'))
-    {
-        return resolve_refsto(inner.trim(), by_key, reg, roots, repo_root, docs_dir, cfg)
+    if let Some(inner) = crate::operation(expr, "refsto") {
+        return resolve_refsto(inner, by_key, reg, roots, repo_root, docs_dir, cfg)
             .map(Resolved::List);
     }
 
-    if let Some(inner) = expr
-        .strip_prefix("sourcesof(")
-        .and_then(|r| r.strip_suffix(')'))
-    {
-        return resolve_sourcesof(inner.trim(), by_key, reg, roots, repo_root, docs_dir, cfg).map(
+    if let Some(inner) = crate::operation(expr, "sourcesof") {
+        return resolve_sourcesof(inner, by_key, reg, roots, repo_root, docs_dir, cfg).map(
             |joined| {
                 Resolved::List(
                     joined
@@ -574,16 +557,21 @@ pub fn resolve_typed(
         );
     }
 
-    let parts: Vec<&str> = expr.split("::").map(str::trim).collect();
+    let parts = crate::names(expr).unwrap_or_default();
 
-    if parts[0] == CRATE_ROOT && parts.len() == 2 {
+    if parts.first() == Some(&CRATE_ROOT) && parts.len() == 2 {
         // A crate reference. Checked like any other: a crate that does not
         // exist is reported rather than linked into nothing, which is what
         // turns a crate mention in prose from a string into something the
         // build verifies.
         return resolve_crate_ref(parts[1], cfg, docs_dir).map(|link| {
             Resolved::Citation {
-                text: parts[1].to_string(),
+                // The crate as the project spells it, which the reference does not: it names the
+                // crate in the standard's character set, so `my_crate` shows as `my-crate`.
+                text: link
+                    .strip_prefix('[')
+                    .and_then(|l| l.split_once("]("))
+                    .map_or_else(|| parts[1].to_string(), |(shown, _)| shown.to_string()),
                 link: link
                     .rsplit_once('(')
                     .and_then(|(_, l)| l.strip_suffix(')'))
@@ -609,12 +597,12 @@ pub fn resolve_typed(
         return by_key.get(parts[0]).map(|ns| table_of(ns, reg));
     }
 
-    if by_key.contains_key(parts[0]) && parts.len() >= 2 {
+    if parts.first().is_some_and(|p| by_key.contains_key(p)) && parts.len() >= 2 {
         let rewritten = format!("{}::{}", REGISTRY_ROOT, parts.join("::"));
         return resolve_typed(&rewritten, by_key, reg, roots, repo_root, docs_dir, cfg);
     }
 
-    if parts[0] == REGISTRY_ROOT {
+    if parts.first() == Some(&REGISTRY_ROOT) {
         return match parts.len() {
             // A whole namespace: its table, inline.
             2 => by_key.get(parts[1]).map(|ns| table_of(ns, reg)),
@@ -679,9 +667,7 @@ pub fn resolve_typed(
                     {
                         let raw = row.fields.get(parts[3])?;
                         return Some(Resolved::List(
-                            raw.split(", ")
-                                .map(str::trim)
-                                .filter(|v| !v.is_empty())
+                            crate::refpath::list(raw)
                                 .map(|slug| {
                                     let expr = format!("{target}::{slug}");
                                     // A slug that resolves to nothing keeps its
@@ -736,36 +722,45 @@ pub fn resolve_typed(
     // provenance is the point; what does not appear is the path, which is the
     // only part that leaks.
     if let Some(label) = cfg.prose_roots().get(&r.root) {
+        let path = r.path_text();
         return Some(Resolved::Citation {
-            text: match &r.anchor {
-                Anchor::Heading(h) => format!("{label}, {} ({h})", r.path),
-                Anchor::Line(n) => format!("{label}, {} line {n}", r.path),
+            text: match r.anchor() {
+                Anchor::Heading(h) => format!("{label}, {path} ({h})"),
+                Anchor::Lines(lo, hi) if lo == hi => format!("{label}, {path} line {lo}"),
+                Anchor::Lines(lo, hi) => format!("{label}, {path} lines {lo} to {hi}"),
             },
             link: None,
         });
     }
 
     let rel = roots.get(&r.root)?;
-    match resolve_cited_path(&repo_root.join(rel), &r.path) {
-        PathResolution::Found(target) => {
-            let link = relative_from(docs_dir, &target);
-            Some(match &r.anchor {
-                Anchor::Heading(h) => {
-                    Resolved::Citation {
-                        text: format!("{}/{}#{h}", r.root, r.path),
-                        link: Some(format!("{link}#{h}")),
-                    }
-                },
-                Anchor::Line(n) => {
-                    Resolved::Citation {
-                        text: format!("{}/{}:{n}", r.root, r.path),
-                        link: Some(format!("{link}#L{n}")),
-                    }
-                },
-            })
+    let Location::Found(target) = r.locate(&repo_root.join(rel)) else { return None };
+    let link = relative_from(docs_dir, &target);
+    let shown = format!("{}/{}", r.root, r.path_text());
+    Some(match r.anchor() {
+        // The link carries the slug a forge gives the heading it found, so the anchor a reader
+        // follows is the one the forge has, and a heading the file does not hold resolves to
+        // nothing rather than to a link that lands at the top.
+        Anchor::Heading(h) => {
+            let (_, forge) = heading_in(&target, &h)?;
+            Resolved::Citation {
+                text: format!("{shown}#{forge}"),
+                link: Some(format!("{link}#{forge}")),
+            }
         },
-        _ => None,
-    }
+        Anchor::Lines(lo, hi) if lo == hi => {
+            Resolved::Citation {
+                text: format!("{shown}:{lo}"),
+                link: Some(format!("{link}#L{lo}")),
+            }
+        },
+        Anchor::Lines(lo, hi) => {
+            Resolved::Citation {
+                text: format!("{shown}:{lo}-{hi}"),
+                link: Some(format!("{link}#L{lo}-L{hi}")),
+            }
+        },
+    })
 }
 
 /// Resolve every reference held inside registry data, bottom-up.

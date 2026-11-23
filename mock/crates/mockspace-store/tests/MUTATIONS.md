@@ -40,3 +40,12 @@ The reported-failed push and the dropped connection use a stand-in for the `git`
 | Index records are LF-separated, so a path beginning with a quote is read as C-quoted and removes another file | `ref_backend_in_ref_form`, `ref_backend_in_branch_form` (the quoted-path case in `conformance.rs`) |
 | Every fetch is depth-limited, so the new tip is a shallow root and the old tip no longer descends | `a_shallow_store_keeps_refreshing_after_another_writer_moves_the_remote` |
 | A push that landed with every later fetch dropped returns a plain fetch error, read as never pushed | `a_push_that_landed_with_every_later_fetch_dropped_is_an_unknown_outcome_not_a_plain_failure` |
+
+## The blobs of a commit, written in one process
+
+Made to `src/ref_ops.rs`, 11 November 2026.
+
+| Change | Red tests |
+| --- | --- |
+| The staged files are hashed without `--no-filters`, so the attributes and filters of the repository change the bytes | `a_commit_of_many_files_holds_each_ones_bytes_and_mode_through_any_filter` |
+| Each file's blob is written by a `hash-object` of its own, as before | `a_migration_starts_no_more_git_processes_on_a_tree_five_times_larger`, in the launcher's `refs_cost_scaling.rs` |

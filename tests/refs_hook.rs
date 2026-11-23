@@ -1,0 +1,249 @@
+//! The `reference-transaction` hook that copies an edited instance file before git writes over it:
+//! it never stops the person's git command, it lands where git runs it in an activated repository
+//! without touching a directory other repositories share, and turning on per-worktree config for
+//! the sparse checkout leaves a bare clone and its linked worktrees working.
+
+#[path = "common/ambient.rs"]
+mod ambient;
+mod refs_e2e;
+
+use std::path::{Path, PathBuf};
+
+use refs_e2e::{Clone, Out, World, fixture};
+
+use refs_e2e::fixture::NOTES;
+
+/// A seat on the migrated remote whose instance holds an edit no commit has, with a branch `side`
+/// that merges cleanly (it changes a file of the branch only) and a branch `behind` cut before the
+/// side commit, which rebases onto it. Its hooks are installed by a copy of the engine at
+/// [`engine_of`], which a test then breaks.
+fn seat_with_branches(w: &World) -> Clone<'_> {
+    let a = w.clone_of("a");
+    let engine = engine_of(w);
+    mockspace_manifest::write_executable(&engine, std::fs::read(refs_e2e::world::BIN).unwrap()).unwrap();
+    let o = w.command(engine.to_str().unwrap(), &a.root).arg("--dir").arg(a.mock()).args(["data-refs", "instantiate"]).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    a.git(&["checkout", "-q", "-b", "behind"]);
+    a.write("BEHIND.md", b"behind\n");
+    a.commit_all("docs: a file of the branch behind");
+    a.git(&["checkout", "-q", "dev"]);
+    a.git(&["checkout", "-q", "-b", "side"]);
+    a.write("README.md", b"# fixture, changed on the side\n");
+    a.commit_all("docs: change the readme on the side");
+    a.git(&["checkout", "-q", "dev"]);
+    a.write(NOTES, b"an edit no commit holds\n");
+    a
+}
+
+/// Where the engine that installed the hooks of [`seat_with_branches`] is.
+fn engine_of(w: &World) -> PathBuf {
+    w.base().join("engine").join("mockspace")
+}
+
+fn git(c: &Clone, args: &[&str]) -> Out {
+    c.git_out(args)
+}
+
+/// The engines the hook must survive, each put where the engine that installed it was: one that
+/// fails outright, an engine from before the `snapshot` verb, which refuses it the way such an
+/// engine does, and none at all, as after a clean of the cache.
+fn broken_engines() -> Vec<(&'static str, Option<&'static str>)> {
+    vec![
+        ("an engine that fails", Some("echo 'the engine broke' >&2\nexit 3")),
+        (
+            "an engine with no `snapshot`",
+            Some("echo 'data-refs: `snapshot` is none of status, verify, instantiate, update, restore, commit, trailers or paired' >&2\nexit 1"),
+        ),
+        ("an engine that is gone", None),
+    ]
+}
+
+/// Puts `body` where the engine was, or takes the engine away where it is `None`.
+fn break_engine(w: &World, body: Option<&str>) {
+    let at = engine_of(w);
+    let _ = std::fs::remove_file(&at);
+    if let Some(body) = body {
+        mockspace_manifest::write_executable(&at, format!("#!/bin/sh\n{body}\n")).unwrap();
+    }
+}
+
+// Mutation: let the hook exit with the engine's status, as the first version did; the move of
+// `ORIG_HEAD` is then refused and the person's merge stops on a failure that is not theirs.
+#[test]
+fn a_merge_goes_through_whatever_the_engine_does() {
+    let w = fixture::migrated_remote();
+    let a = seat_with_branches(&w);
+    for (what, body) in broken_engines() {
+        break_engine(&w, body);
+        let before = a.git(&["rev-parse", "HEAD"]);
+        let o = git(&a, &["merge", "--no-edit", "side"]);
+        assert!(o.ok, "{what}: the merge was stopped: {}", o.all());
+        assert_eq!(a.git(&["rev-parse", "HEAD"]), a.git(&["rev-parse", "side"]), "{what}: the merge did not land");
+        assert!(o.stderr.contains("mockspace"), "{what}: the failure is said on stderr: {}", o.all());
+        a.git(&["reset", "-q", "--keep", before.trim()]);
+        assert_eq!(a.read(NOTES), b"an edit no commit holds\n", "{what}: the edit is on disk");
+    }
+}
+
+// Mutation: the same, on a rebase, which moves `ORIG_HEAD` too, after it writes.
+#[test]
+fn a_rebase_goes_through_whatever_the_engine_does() {
+    let w = fixture::migrated_remote();
+    let a = seat_with_branches(&w);
+    a.git(&["merge", "-q", "--no-edit", "side"]);
+    for (what, body) in broken_engines() {
+        break_engine(&w, body);
+        a.git(&["checkout", "-q", "-B", "work", "behind"]);
+        let o = git(&a, &["rebase", "dev"]);
+        assert!(o.ok, "{what}: the rebase was stopped: {}", o.all());
+        let base = a.git(&["merge-base", "HEAD", "dev"]);
+        assert_eq!(base, a.git(&["rev-parse", "dev"]), "{what}: the rebase did not land");
+        assert!(o.stderr.contains("mockspace"), "{what}: the failure is said on stderr: {}", o.all());
+        a.git(&["checkout", "-q", "dev"]);
+    }
+}
+
+/// `core.hooksPath` of the clone, where it is set.
+fn hooks_path(c: &Clone) -> Option<String> {
+    let o = c.git_out(&["config", "--local", "core.hooksPath"]);
+    o.ok.then(|| o.stdout.trim().to_string())
+}
+
+/// The repository's own hooks directory, which no other repository reads.
+fn own_hooks(c: &Clone) -> PathBuf {
+    let common = c.git(&["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    PathBuf::from(common.trim()).join("hooks")
+}
+
+fn backup_holds_the_edit(c: &Clone) -> bool {
+    let tree = c.git_out(&["ls-tree", "-r", "--name-only", "refs/mock-backup/research"]);
+    if !tree.ok {
+        return false;
+    }
+    tree.stdout.lines().filter(|p| p.ends_with("20261001_alpha/NOTES.md")).any(|p| {
+        c.git_out(&["show", &format!("refs/mock-backup/research:{p}")]).stdout == "an edit no commit holds\n"
+    })
+}
+
+/// A merge of `feat`, a branch cut before the migration that edits the notes, which git answers by
+/// writing the branch's bytes over the instance file; then the merge is abandoned.
+fn merge_the_old_branch(c: &Clone) {
+    let _ = c.git_out(&["merge", "--no-edit", "feat"]);
+    let _ = c.git_out(&["merge", "--abort"]);
+}
+
+// Mutation: write the hook where `git rev-parse --git-path hooks/...` points, which follows
+// `core.hooksPath`; in an activated repository that is the gate's durable directory, shared by
+// every repository on the machine and replaced on a version bump.
+#[test]
+fn in_an_activated_repository_the_hook_is_the_repositorys_own_and_git_runs_it() {
+    let w = World::new();
+    let a = fixture::migrated_with_an_old_branch_editing_the_notes(&w);
+    let key = hooks_path(&a).expect("the fixture is activated: the engine points `core.hooksPath` at the gate");
+    let shared = Path::new(&key).join("reference-transaction");
+    let text = std::fs::read_to_string(&shared).unwrap_or_default();
+    assert!(!text.contains("data-refs snapshot"), "the shared directory carries the data-ref hook: {text}");
+    assert!(!text.contains(a.root.to_str().unwrap()), "the shared directory names this repository: {text}");
+    let own = std::fs::read_to_string(own_hooks(&a).join("reference-transaction")).unwrap_or_default();
+    assert!(own.contains("data-refs snapshot"), "the repository's own hook is not there: {own}");
+    a.write(NOTES, b"an edit no commit holds\n");
+    merge_the_old_branch(&a);
+    assert!(backup_holds_the_edit(&a), "git did not run the hook through the gate's directory");
+}
+
+// Mutation: keep the hook only in a directory a version bump or `cargo clean` replaces; the copy of
+// an edit then stops with nothing said until `instantiate` runs again.
+#[test]
+fn the_hook_survives_the_gate_directory_made_again_and_a_clean_of_the_build() {
+    let w = World::new();
+    let a = fixture::migrated_with_an_old_branch_editing_the_notes(&w);
+    let key = hooks_path(&a).expect("activated");
+    // the durable directory as a version bump leaves it: a new, empty directory that the next run
+    // of the engine fills, and the build directory gone
+    std::fs::remove_dir_all(&key).unwrap();
+    let _ = std::fs::remove_dir_all(a.path("mock/target"));
+    a.ok(&["data-refs", "verify"]);
+    a.write(NOTES, b"an edit no commit holds\n");
+    merge_the_old_branch(&a);
+    assert!(backup_holds_the_edit(&a), "the copy stopped after the gate directory was made again");
+}
+
+// Mutation: turn on `extensions.worktreeConfig` with `core.bare = true` left in the common config;
+// every linked worktree of a bare clone then reads itself as bare and git refuses to work in it.
+#[test]
+fn a_bare_clone_and_its_linked_worktrees_keep_working() {
+    let w = fixture::migrated_remote();
+    let bare = w.base().join("bare.git");
+    assert!(w.sh(&w.base(), "git", &["clone", "-q", "--bare", w.remote.to_str().unwrap(), bare.to_str().unwrap()]).ok);
+    let (one, two) = (w.base().join("one"), w.base().join("two"));
+    for (dir, branch) in [(&one, "first"), (&two, "second")] {
+        let o = w.sh(&bare, "git", &["worktree", "add", "-q", "-b", branch, dir.to_str().unwrap(), "dev"]);
+        assert!(o.ok, "{}", o.all());
+    }
+    let c = Clone { w: &w, root: one.clone() };
+    for kv in [["user.name", "tester"], ["user.email", "tester@example.com"]] {
+        c.git(&["config", kv[0], kv[1]]);
+    }
+    c.ok(&["data-refs", "instantiate"]);
+    for dir in [&one, &two] {
+        let o = w.sh(dir, "git", &["status", "--porcelain"]);
+        assert!(o.ok, "git status in {}: {}", dir.display(), o.all());
+        let o = w.sh(dir, "git", &["rev-parse", "--is-bare-repository"]);
+        assert_eq!(o.stdout.trim(), "false", "{} reads itself as bare: {}", dir.display(), o.all());
+    }
+    let o = w.sh(&bare, "git", &["rev-parse", "--is-bare-repository"]);
+    assert_eq!(o.stdout.trim(), "true", "the bare clone is no longer bare: {}", o.all());
+    c.ok(&["data-refs", "verify"]);
+}
+
+// Mutation: take the repository's hooks from `GIT_DIR` alone; in a linked worktree that is the
+// worktree's own directory, which holds no hooks, and the copy never runs there.
+#[test]
+fn in_a_linked_worktree_of_an_activated_repository_git_runs_the_hook() {
+    let w = World::new();
+    let a = fixture::migrated_with_an_old_branch_editing_the_notes(&w);
+    assert!(hooks_path(&a).is_some(), "the fixture is activated");
+    let wt = a.at(a.worktree_add("wt", "other"));
+    wt.ok(&["data-refs", "instantiate"]);
+    wt.write(NOTES, b"an edit no commit holds\n");
+    merge_the_old_branch(&wt);
+    assert!(backup_holds_the_edit(&wt), "git did not run the hook from the linked worktree");
+}
+
+// Mutation: none; this pins the order of git the hook rests on. A merge moves `ORIG_HEAD` before it
+// writes the work tree, so the copy the hook takes then holds what the merge writes over; a reset
+// and a rebase move it after, so for those the copy that counts is the one taken before them. The
+// day git changes that order, this test says so and the account of the hook goes with it.
+#[test]
+fn git_moves_orig_head_before_it_writes_in_a_merge_and_after_in_a_reset_and_a_rebase() {
+    let w = World::new();
+    for (args, before) in [(&["merge", "-q", "--no-edit", "dev"][..], true), (&["reset", "-q", "--hard", "dev"], false), (&["rebase", "-q", "dev"], false)] {
+        let dir = w.base().join(format!("order-{}", args[0]));
+        let git = |a: &[&str]| {
+            let o = w.command("git", &dir).args(a).output().unwrap();
+            assert!(o.status.success(), "{a:?}: {}", String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stderr).into_owned()
+        };
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&["init", "-q", "-b", "dev"]);
+        std::fs::write(dir.join("f"), "here\n").unwrap();
+        git(&["add", "f"]);
+        git(&["commit", "-q", "-m", "here"]);
+        git(&["branch", "other"]);
+        std::fs::write(dir.join("f"), "dev\n").unwrap();
+        git(&["commit", "-q", "-am", "dev"]);
+        git(&["checkout", "-q", "other"]);
+        std::fs::write(dir.join("g"), "other\n").unwrap();
+        git(&["add", "g"]);
+        git(&["commit", "-q", "-m", "other"]);
+        let hook = dir.join(".git/hooks/reference-transaction");
+        mockspace_manifest::write_executable(
+            &hook,
+            "#!/bin/sh\n[ \"$1\" = prepared ] || exit 0\nwhile read -r _ _ r; do [ \"$r\" = ORIG_HEAD ] && echo \"at ORIG_HEAD: $(cat f)\" >&2; done\nexit 0\n",
+        )
+        .unwrap();
+        let said = git(args);
+        let seen = if before { "at ORIG_HEAD: here" } else { "at ORIG_HEAD: dev" };
+        assert!(said.contains(seen), "{args:?}: {said}");
+    }
+}

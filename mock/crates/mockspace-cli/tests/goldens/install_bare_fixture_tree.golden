@@ -394,6 +394,19 @@ Declared per repository under `<mock>/tools/<name>/`, one directory each, or
 shipped by a lint pack, and listed with their kind by `cargo mock tools`.
 `cargo mock help <name>` prints one in full.
 
+**A maker whose products git ignores runs before the checks that read them.**
+A product the repository does not commit exists nowhere on a fresh checkout, so
+the launcher runs the maker ahead of `cargo mock test` and the lints.
+
+- It applies where every declared write is a fixed path git ignores. A pattern,
+  an argument in a write, or a tracked path keeps the maker out, and it runs
+  only when invoked.
+- It runs when a product is missing, or when a file matching `Tool::inputs` is
+  newer than the oldest product. A maker declaring no inputs runs once, while a
+  product is missing.
+- It runs with no arguments, held to its declaration as when invoked. A failing
+  maker stops the run, since a check would read nothing.
+
 ## A tool's findings are the same type a lint produces
 
 Severity configuration then works unchanged, rendering is shared, and a check

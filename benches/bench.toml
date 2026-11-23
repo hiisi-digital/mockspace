@@ -7,12 +7,17 @@
 title = "u64 hash-mix function comparison"
 workload = "default"
 master_seed = 0x1234_5678_9ABC_DEF0
+# the two mixers scramble differently by design, so their outputs are not compared
+may_differ = true
 
 # Variant entries hold the cargo target stem (no `lib` prefix, no
 # `.dylib`/`.so`/`.dll` suffix). The harness shapes each path with the
 # platform prefix and suffix, so this manifest is portable across hosts.
+# eight bytes: the u64 each arm reads, which the generated driver hands over as
+# the input of a cell of that many bytes (the runs before it, at n = 1, came
+# from the driver of its own that built a u64 input)
 [[bench.hash-mix.sizes]]
-n = 1
+n = 8
 variants = [
     "../target/release/multiply_xor",
     "../target/release/bitwise_rotate",

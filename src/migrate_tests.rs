@@ -6,7 +6,7 @@ use crate::config::Config;
 use crate::registry::engine_world::EngineClone as _;
 use crate::registry::test_world::World;
 
-fn git(dir: &Path, args: &[&str]) -> String {
+pub(super) fn git(dir: &Path, args: &[&str]) -> String {
     let out = std::process::Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -26,7 +26,7 @@ fn write(cfg: &Config, rel: &str, text: &str) {
 
 /// A repository as a consumer has it before any migration: sources and templates side by side
 /// and a research directory, all committed on the branch.
-fn consumer(w: &World, name: &str) -> Config {
+pub(super) fn consumer(w: &World, name: &str) -> Config {
     let cfg = w.clone_of(name, false);
     write(&cfg, "crates/one/src/lib.rs", "pub fn one() {}\n");
     write(&cfg, "crates/one/DESIGN.md.tmpl", "design of one\n");
@@ -42,7 +42,7 @@ fn tracked(cfg: &Config) -> Vec<String> {
     git(&cfg.repo_root, &["ls-files"]).lines().map(str::to_owned).collect()
 }
 
-const RESEARCH: [&str; 5] = ["directory-to-ref", "--namespace", "research", "--path", "research"];
+pub(super) const RESEARCH: [&str; 5] = ["directory-to-ref", "--namespace", "research", "--path", "research"];
 const TEMPLATES: [&str; 7] =
     ["directory-to-ref", "--namespace", "templates", "--path", "crates", "--include", "**/*.md.tmpl"];
 
@@ -292,7 +292,7 @@ fn a_run_stopped_after_the_ref_was_made_is_finished_by_the_same_call() {
     assert_eq!(run(&cfg, &RESEARCH), ExitCode::SUCCESS);
     // as it stands where the config step failed: the ref made here, no table, the files tracked
     std::fs::write(&cfg.config_path, &before).unwrap();
-    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    git(&cfg.repo_root, &["add", "--sparse", "-f", "--", "mock/research"]);
     let again = Config::from_dir(&cfg.mock_dir);
     assert!(again.data_refs.is_empty());
 
@@ -306,9 +306,9 @@ fn a_run_stopped_after_the_ref_was_made_is_finished_by_the_same_call() {
 
     // the control: a directory changed since the ref was made is not finished over
     std::fs::write(&cfg.config_path, &before).unwrap();
-    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    git(&cfg.repo_root, &["add", "--sparse", "-f", "--", "mock/research"]);
     write(&cfg, "research/note.md", "changed since\n");
-    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    git(&cfg.repo_root, &["add", "--sparse", "-f", "--", "mock/research"]);
     git(&cfg.repo_root, &["commit", "-q", "-m", "changed since"]);
     let why = plan(&Config::from_dir(&cfg.mock_dir), &RESEARCH).unwrap_err().join("\n");
     assert!(why.contains("changed since"), "{why}");
@@ -323,7 +323,7 @@ fn a_run_stopped_inside_the_seed_is_finished_by_the_same_call() {
     // as it stands where the seed pushed and was stopped before it recorded the directory: the
     // ref made, no record, no table, the files tracked
     std::fs::write(&cfg.config_path, &before).unwrap();
-    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    git(&cfg.repo_root, &["add", "--sparse", "-f", "--", "mock/research"]);
     std::fs::remove_dir_all(cfg.repo_root.join(".git/mock-instances")).unwrap();
     let again = Config::from_dir(&cfg.mock_dir);
 
@@ -337,10 +337,10 @@ fn a_run_stopped_inside_the_seed_is_finished_by_the_same_call() {
 
     // the control: the same stop, and the branch's files are not the ref's any more
     std::fs::write(&cfg.config_path, &before).unwrap();
-    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    git(&cfg.repo_root, &["add", "--sparse", "-f", "--", "mock/research"]);
     std::fs::remove_dir_all(cfg.repo_root.join(".git/mock-instances")).unwrap();
     write(&cfg, "research/note.md", "changed since\n");
-    git(&cfg.repo_root, &["add", "-f", "--", "mock/research"]);
+    git(&cfg.repo_root, &["add", "--sparse", "-f", "--", "mock/research"]);
     git(&cfg.repo_root, &["commit", "-q", "-m", "changed since"]);
     let why = plan(&Config::from_dir(&cfg.mock_dir), &RESEARCH).unwrap_err().join("\n");
     assert!(why.contains("do not hold what the branch tracks"), "{why}");
@@ -368,4 +368,22 @@ fn a_commit_of_a_data_ref_is_stopped_where_the_lints_refuse_the_tree() {
     assert_eq!(crate::data_refs::run_gated(&cfg, &["commit"], &pass), ExitCode::SUCCESS);
     assert_ne!(tip(), before);
     assert!(crate::data_refs::ref_files(&cfg).unwrap().changed.is_empty());
+}
+
+// Git stops reading a list it refuses at the first path, and says why on stderr. A list longer
+// than a pipe holds is then written into a pipe nobody reads: the call must still end, with git's
+// own words and not the broken pipe.
+//
+// Mutation: write the whole list before reading what git says; the error is then the broken pipe,
+// or, where git says more than a pipe holds first, the call never ends.
+#[test]
+fn untracking_a_list_git_refuses_ends_with_gits_own_words() {
+    let w = World::new();
+    let cfg = consumer(&w, "a");
+    let before = tracked(&cfg);
+    let mut paths = vec!["../outside/the/repository".to_string()];
+    paths.extend((0..20_000).map(|n| format!("research/a/long/path/that/is/not/tracked/at/all/{n:08}.md")));
+    let err = carry_out(&cfg, &Step::Untrack(paths)).unwrap_err();
+    assert!(err.starts_with("git update-index:") && err.contains("outside"), "{err}");
+    assert_eq!(tracked(&cfg), before, "nothing is untracked");
 }

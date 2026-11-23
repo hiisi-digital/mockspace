@@ -1,0 +1,11 @@
+[package]
+name = "fsmonitor-world"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MPL-2.0"
+
+[lib]
+path = "src/lib.rs"
+
+[workspace]

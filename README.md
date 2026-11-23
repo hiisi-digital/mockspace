@@ -35,8 +35,14 @@ The commands you reach for most:
 | `cargo mock lock` | move a round from `DOC` to `DRAFT`, or from `IMPL` to `CLOSED` |
 | `cargo mock close` | archive a closed round |
 | `cargo mock test` | run the tests of every tree mockspace owns |
+| `cargo mock data-refs` | fetch, update, commit and check the files kept on refs of their own |
+| `cargo mock migrate <name>` | move the tree to a new shape, one named migration at a time |
 | `cargo mock tools` | list every subcommand and project tool |
 | `cargo mock lints` | list every lint with its severity here |
+
+Files of `mock/` that should not ride along with every branch, such as templates or research notes, can live on a git ref of their own. `cargo mock migrate directory-to-ref` moves a directory there, and `--dry-run` shows every path it would touch before it does anything. A migration is always named, checks that the tree is the one it was written for, and refuses anything else.
+
+A fresh clone of a repository that keeps files this way has none of them yet, so run `cargo mock data-refs instantiate` once after cloning; until then most commands stop and say so. After that, `cargo mock data-refs update` brings in what others pushed, `cargo mock data-refs commit` sends your changes, and `cargo mock data-refs status` says where each ref stands. Before the engine writes over a file it keeps a copy in your cache for a day, and a local backup ref keeps the files through git's own checkouts, merges and resets; the usage guide lists what that covers and what it does not.
 
 The [usage guide](https://github.com/hiisi-digital/mockspace/blob/dev/docs/USAGE_GUIDE.md) has the rest, including configuration, lint authoring and the template structure.
 

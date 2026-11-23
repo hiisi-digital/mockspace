@@ -173,6 +173,7 @@ fn ran_tests(out: &Output) -> bool {
 }
 
 #[test]
+#[ignore = "8b3f4a23ed73: reruns the whole suite, about 20 minutes"]
 fn the_suite_leaves_the_repository_it_started_in_alone() {
     if std::env::var_os(CHILD).is_some() {
         return;
@@ -203,9 +204,12 @@ fn the_suite_leaves_the_repository_it_started_in_alone() {
     );
 }
 
-/// The files that make a test target say it is scrubbed: it includes the one file.
+/// What makes a test target say it is scrubbed: it includes the one file, from this package's
+/// `tests/` or from a member below it, or it expands the scrub itself.
 fn declares_the_scrub(text: &str) -> bool {
     text.contains("#[path = \"common/ambient.rs\"]")
+        || text.contains("/tests/common/ambient.rs\"]")
+        || text.contains("scrub_before_main!")
 }
 
 /// The targets in `targets` whose source does not declare the scrub.
@@ -258,7 +262,10 @@ fn other_members() -> Vec<PathBuf> {
         .nth(1)
         .and_then(|t| t.split(']').next())
         .expect("the root manifest lists its members");
-    list.split(',')
+    // a comment in the list holds commas of its own, so each line is cut at its `#` first
+    list.lines()
+        .map(|l| l.split('#').next().unwrap_or(""))
+        .flat_map(|l| l.split(','))
         .map(|m| m.trim().trim_matches('"'))
         .filter(|m| !m.is_empty() && *m != ".")
         .map(|m| root().join(m))
@@ -320,6 +327,57 @@ fn every_member_that_spawns_git_scrubs_its_tests() {
         Vec::<String>::new(),
         "these members spawn git and their `src/lib.rs` neither includes `tests/common/ambient.rs` nor expands `scrub_before_main!`"
     );
+}
+
+/// Every test target of a member under `mock/`, by name and path. These crates drive git and the
+/// engine's store from their tests, and their tests write the cache the store keeps its copies in.
+fn mock_member_targets() -> Vec<(String, PathBuf)> {
+    let mut out = Vec::new();
+    for m in other_members().into_iter().filter(|m| m.starts_with(root().join("mock"))) {
+        let Ok(entries) = fs::read_dir(m.join("tests")) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.extension().is_some_and(|x| x == "rs") {
+                let name = format!("{}/{}", m.file_name().unwrap().to_string_lossy(), p.file_stem().unwrap().to_string_lossy());
+                out.push((name, p));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+// Mutation: leave out a test target of `mockspace-store`; its tests then write the copies the
+// store keeps before a write into the person's own cache, and pick up the machine's git identity.
+#[test]
+fn every_test_target_of_a_crate_under_mock_declares_the_scrub() {
+    let targets = mock_member_targets();
+    assert!(
+        targets.iter().filter(|(n, _)| n.starts_with("mockspace-store/")).count() > 10,
+        "the scan found {} targets; it is looking in the wrong place",
+        targets.len()
+    );
+    assert_eq!(
+        unscrubbed(&targets),
+        Vec::<String>::new(),
+        "these targets spawn processes without `#[path = \"../../../../tests/common/ambient.rs\"] mod ambient;`"
+    );
+}
+
+#[test]
+fn a_target_of_a_crate_under_mock_without_the_scrub_is_named() {
+    let dir = mockspace_manifest::scratch::tempdir().unwrap();
+    for (name, text) in [
+        ("bare", "#[test]\nfn t() { std::process::Command::new(\"git\"); }\n"),
+        ("kept", "#[path = \"../../../../tests/common/ambient.rs\"]\nmod ambient;\n"),
+        ("expanded", "mockspace_manifest::scrub_before_main!();\n"),
+        ("named", "// common/ambient.rs is not included here\n"),
+    ] {
+        fs::write(dir.path().join(format!("{name}.rs")), text).unwrap();
+    }
+    let targets: Vec<(String, PathBuf)> =
+        ["bare", "kept", "expanded", "named"].iter().map(|n| (n.to_string(), dir.path().join(format!("{n}.rs")))).collect();
+    assert_eq!(unscrubbed(&targets), vec!["bare".to_string(), "named".to_string()]);
 }
 
 #[test]

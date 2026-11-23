@@ -358,7 +358,7 @@ fn check_is_byte_deterministic_run_to_run() {
     // dispatch paths.
     let lints_toml = r#"
 [lints.writing-style]
-extends = "mockspace::writing-style"
+extends = "mockspace::writing_style"
 "#;
     let fixture = MockspaceFixture::new()
         .with_lints_toml(lints_toml)
@@ -421,7 +421,7 @@ fn check_findings_are_path_order_independent() {
     // subdirectory shuffling; tracked as a follow-up under #564.
     let lints_toml = r#"
 [lints.writing-style]
-extends = "mockspace::writing-style"
+extends = "mockspace::writing_style"
 "#;
     let content = "Doc with \u{2014} marker.\n";
     // Counts every occurrence of the literal substring `em-dash`
@@ -486,7 +486,7 @@ extends = "mockspace::writing-style"
 fn check_opts_into_writing_style_preset_catches_em_dash() {
     // Closes #608: the writing-style preset ships em-dash detection
     // out of the box; once a consumer opts in via
-    // `extends = "mockspace::writing-style"`, the post-#611 synthesis
+    // `extends = "mockspace::writing_style"`, the post-#611 synthesis
     // path makes the lint reachable. This e2e drops a markdown file
     // with a single em-dash, opts in, and confirms the finding
     // surfaces.
@@ -498,7 +498,7 @@ fn check_opts_into_writing_style_preset_catches_em_dash() {
     // annotations.
     let lints_toml = r#"
 [lints.writing-style]
-extends = "mockspace::writing-style"
+extends = "mockspace::writing_style"
 "#;
     let fixture = MockspaceFixture::new()
         .with_lints_toml(lints_toml)
@@ -551,7 +551,7 @@ fn check_opts_into_preset_replaced_lint_via_extends() {
     let lib_rs = "pub fn count() -> u64 { 42 }\n";
     let lints_toml = r#"
 [lints.no-bare-numeric]
-extends = "mockspace::no-bare-numeric"
+extends = "mockspace::no_bare_numeric"
 "#;
     let fixture = MockspaceFixture::new()
         .with_lints_toml(lints_toml)

@@ -1,6 +1,6 @@
 //! An edit: the set of files one write puts or removes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::StoreError;
 use crate::path::validate_path;
@@ -10,6 +10,8 @@ use crate::path::validate_path;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Edit {
     files: BTreeMap<String, Option<Vec<u8>>>,
+    /// The puts that are executable (mode 100755); every other put is a plain file (100644).
+    exec:  BTreeSet<String>,
 }
 
 impl Edit {
@@ -19,13 +21,30 @@ impl Edit {
 
     /// Put `bytes` at `path`.
     pub fn put(mut self, path: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
-        self.files.insert(path.into(), Some(bytes.into()));
+        let path = path.into();
+        self.exec.remove(&path);
+        self.files.insert(path, Some(bytes.into()));
         self
+    }
+
+    /// Put `bytes` at `path` as an executable file.
+    pub fn put_exec(mut self, path: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
+        let path = path.into();
+        self.exec.insert(path.clone());
+        self.files.insert(path, Some(bytes.into()));
+        self
+    }
+
+    /// Whether the put at `path` is executable.
+    pub fn is_exec(&self, path: &str) -> bool {
+        self.exec.contains(path)
     }
 
     /// Remove the file at `path`. Removing a file that is not there is not an error.
     pub fn remove(mut self, path: impl Into<String>) -> Self {
-        self.files.insert(path.into(), None);
+        let path = path.into();
+        self.exec.remove(&path);
+        self.files.insert(path, None);
         self
     }
 

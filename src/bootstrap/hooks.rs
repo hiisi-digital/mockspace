@@ -39,7 +39,7 @@ pub(crate) fn ensure_generated_hooks(
     let git_dir = resolve_git_dir(repo_root);
     let user_hooks_dir = git_dir.join("hooks");
 
-    for hook_name in HOOK_NAMES.iter().chain(FOLLOW_UP_HOOKS) {
+    for hook_name in HOOK_NAMES.iter().chain(FOLLOW_UP_HOOKS).chain(CHAIN_HOOKS) {
         let path = out_dir.join(hook_name);
         let user_hook = user_hooks_dir.join(hook_name);
 
@@ -82,6 +82,7 @@ pub(crate) fn gen_hook(
         "commit-msg" => gen_commit_msg(user_hook),
         "post-merge" => gen_post_merge(user_hook),
         "post-rewrite" => gen_post_rewrite(user_hook),
+        chain if CHAIN_HOOKS.contains(&chain) => mockspace_manifest::gate::chain_hook(chain, HOOK_VERSION),
         _ => String::new(),
     }
 }

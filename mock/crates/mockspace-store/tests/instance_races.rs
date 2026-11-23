@@ -1,6 +1,9 @@
 //! An instance against writers that win a race: the same file written by both, a merge hook
 //! that merges, refuses, keeps the tip's file or leaves one out, and what the directory holds
 //! afterwards.
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use common::{MOCK_REF, T2, World, inst_dir, read, seeded, store, write};
@@ -70,7 +73,7 @@ fn a_stale_edit_of_a_file_the_winner_changed_goes_through_the_hook() {
         MINE,
         "what was written here is kept"
     );
-    assert_eq!(i.base().unwrap(), Some(base), "the base did not move");
+    assert_eq!(i.base().unwrap().map(|b| b.to_string()), Some(base), "the base did not move");
 }
 
 #[test]
@@ -137,7 +140,7 @@ fn a_merging_hook_lands_the_merge_and_the_directory_takes_it_so_the_next_apply_h
         merged,
         "the directory holds the merge"
     );
-    assert_eq!(i.base().unwrap(), first.commit);
+    assert_eq!(i.base().unwrap().map(|b| b.to_string()), first.commit);
     assert!(!i.is_dirty().unwrap());
     let commits = w.commits(MOCK_REF);
     let second = i.apply("mine again", &merge).unwrap();
@@ -280,7 +283,7 @@ fn a_conflicting_update_names_the_file_writes_nothing_and_apply_with_a_merge_is_
     assert!(err.to_string().contains("ticket/t1.toml"), "{err}");
     assert!(!dir.join("ticket/t9.toml").exists(), "nothing was written");
     assert_eq!(read(&dir, "ticket/t1.toml"), MINE);
-    assert_eq!(i.base().unwrap(), Some(base.clone()));
+    assert_eq!(i.base().unwrap().map(|b| b.to_string()), Some(base.clone()));
     let was = b.reader_of(&base).unwrap();
     i.apply("merge", &merging(&was)).unwrap();
     assert!(read(&dir, "ticket/t1.toml").contains("theirs = 1"));

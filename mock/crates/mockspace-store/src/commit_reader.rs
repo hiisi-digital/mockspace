@@ -56,11 +56,19 @@ impl Reader for CommitReader {
         let out = self
             .git
             .must(&["ls-tree", "-r", "-z", "--name-only", commit], &[], None)?;
-        let mut paths: Vec<String> = String::from_utf8_lossy(&out.stdout)
-            .split('\0')
-            .filter(|p| !p.is_empty() && under(p, prefix))
-            .map(str::to_owned)
-            .collect();
+        // a store names its files as text; a lossy name would name no file and read as absent
+        let mut paths = Vec::new();
+        for raw in out.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+            let path = std::str::from_utf8(raw).map_err(|_| {
+                StoreError::InvalidPath {
+                    path: String::from_utf8_lossy(raw).into_owned(),
+                    why:  "is not text, which a store cannot name",
+                }
+            })?;
+            if under(path, prefix) {
+                paths.push(path.to_owned());
+            }
+        }
         paths.sort();
         Ok(paths)
     }

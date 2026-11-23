@@ -387,6 +387,18 @@ fn partial_extraction_failure_still_reports_dupes_found_among_the_rest() {
 /// print `alpha.dylib`.
 #[test]
 fn a_variant_is_named_by_its_own_name_not_by_its_build_directory() {
+    // the host's own prefix and suffix, which `config::resolve_variant_path`
+    // builds the path from
+    let (p, s) = (std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX);
+    let a = &format!("/b/variants/alpha/target/release/{p}alpha{s}");
+    let b = &format!("/b/variants/beta/target/release/{p}beta{s}");
+    assert_eq!(short_name(a), "alpha");
+    assert_eq!(short_name(b), "beta");
+    assert_ne!(
+        short_name(a),
+        short_name(b),
+        "two variants must not share one label"
+    );
     for (a, b) in [
         (
             "/b/variants/alpha/target/release/libalpha.dylib",

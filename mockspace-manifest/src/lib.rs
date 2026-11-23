@@ -20,6 +20,7 @@
 pub mod ambient;
 /// The one writer of an executable file.
 pub mod exec;
+mod chain;
 mod follow_up;
 pub mod kept_ours;
 pub mod gate;

@@ -150,9 +150,9 @@ fn task_rejects_invalid_slug_in_id() {
     let fixture = MockspaceFixture::new().build().expect("fixture");
     git_init(&fixture);
 
-    // Uppercase fails slug validation at clap parse time, before any
-    // git operation runs. The CLI exits non-zero with the typed
-    // SlugError in the message.
+    // Uppercase is refused by the reference syntax at clap parse time, before any
+    // git operation runs. The CLI exits non-zero with the syntax's error in the
+    // message.
     let output = Command::cargo_bin("mock")
         .expect("cargo build provides the mock binary")
         .arg("--repo-root")
@@ -167,8 +167,8 @@ fn task_rejects_invalid_slug_in_id() {
     );
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
     assert!(
-        stderr.contains("invalid task id") && stderr.contains("not a valid slug"),
-        "expected typed clap-parse rejection naming the slug error, got: {stderr}"
+        stderr.contains("invalid task id") && stderr.contains("reference syntax") && stderr.contains("uppercase"),
+        "expected typed clap-parse rejection naming the syntax error, got: {stderr}"
     );
 }
 

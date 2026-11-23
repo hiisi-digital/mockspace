@@ -1,5 +1,8 @@
 //! An instance and the shape of its directory: files and directories changing places, a file in
 //! the way, instances made together, two spellings of one directory, a materialize that fails.
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use common::{T1, World, git, inst_dir, read, seeded, store, write};
@@ -135,7 +138,7 @@ fn a_file_here_in_the_way_of_the_tip_is_named_and_nothing_is_written() {
     assert!(err.to_string().contains("ticket/new"), "{err}");
     assert!(!dir.join("ticket/t9.toml").exists(), "nothing was written");
     assert_eq!(read(&dir, "ticket/new/z"), "mine\n");
-    assert_eq!(i.base().unwrap(), Some(base));
+    assert_eq!(i.base().unwrap().map(|b| b.to_string()), Some(base));
     // the control: with the file moved out of the way the same update goes through
     std::fs::remove_dir_all(dir.join("ticket/new")).unwrap();
     i.update().unwrap();
@@ -186,7 +189,7 @@ fn two_spellings_of_one_directory_are_one_instance() {
     let by_path = Instance::new(&a, real.join("sub/../registry")).unwrap();
     assert_eq!(by_alias.dir(), by_path.dir());
     let tip = by_alias.materialize().unwrap();
-    assert_eq!(by_path.base().unwrap(), Some(tip));
+    assert_eq!(by_path.base().unwrap().map(|b| b.to_string()), Some(tip));
 }
 
 #[test]

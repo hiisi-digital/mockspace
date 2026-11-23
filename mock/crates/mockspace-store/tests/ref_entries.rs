@@ -1,5 +1,8 @@
 //! What a ref store refuses to read as a file: a symbolic link, a submodule, a name that is not
 //! text. Each would otherwise be taken for something it is not, and no later check could tell.
+#[path = "../../../../tests/common/ambient.rs"]
+mod ambient;
+
 mod common;
 
 use std::ffi::OsStr;

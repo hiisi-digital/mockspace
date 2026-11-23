@@ -453,8 +453,8 @@ type = "ref[]"
     .unwrap();
     std::fs::write(
         mock.join("registry/ruling.toml"),
-        "[[ruling]]\nid = \"k1\"\nprovenance = [\"notes::present::#a-heading\"]\n\n\
-         [[ruling]]\nid = \"k2\"\nprovenance = [\"notes::absent::#a-heading\"]\n",
+        "[[ruling]]\nid = \"k1\"\nprovenance = [\"notes::present::a_heading\"]\n\n\
+         [[ruling]]\nid = \"k2\"\nprovenance = [\"notes::absent::a_heading\"]\n",
     )
     .unwrap();
 
