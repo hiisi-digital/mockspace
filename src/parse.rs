@@ -212,9 +212,10 @@ fn get_name(node: Node, src: &str) -> String {
 
 fn has_attribute(node: Node, src: &str, attr_name: &str) -> bool {
     if let Some(prev) = node.prev_named_sibling()
-        && prev.kind() == "attribute_item" {
-            return txt(prev, src).contains(attr_name);
-        }
+        && prev.kind() == "attribute_item"
+    {
+        return txt(prev, src).contains(attr_name);
+    }
     false
 }
 
@@ -280,15 +281,16 @@ fn parse_items(parser: &mut Parser, source: &str) -> Vec<Item> {
                 let attr_text = txt(node, source);
                 if attr_text.contains("proc_macro")
                     && let Some(next) = node.next_named_sibling()
-                        && next.kind() == "function_item" {
-                            let name = get_name(next, source);
-                            if !name.is_empty() {
-                                items.push(Item::Macro(MacroItem {
-                                    name,
-                                    is_proc: true,
-                                }));
-                            }
-                        }
+                    && next.kind() == "function_item"
+                {
+                    let name = get_name(next, source);
+                    if !name.is_empty() {
+                        items.push(Item::Macro(MacroItem {
+                            name,
+                            is_proc: true,
+                        }));
+                    }
+                }
             },
             _ => {},
         }
