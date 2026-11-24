@@ -52,6 +52,7 @@ fn resolves_to(new: &str, file: &str, line: Option<usize>) {
 
 // Mutation: leaving the case of a segment as written (a rewrite that only swaps `::#` for `::`)
 // gives `seed::DESIGN::844`, which the standard refuses, so this fails on the first row.
+// Dropping the retry with the extension in `citation` leaves the two `dup` rows as written.
 #[test]
 fn each_old_form_is_written_the_new_way_and_reaches_what_it_did() {
     let rows: &[(&str, &str, &str, Option<usize>)] = &[
@@ -67,6 +68,9 @@ fn each_old_form_is_written_the_new_way_and_reaches_what_it_did() {
         // a name opening on a digit is led, a directory and a heading alike
         ("seed::2024-notes::A::1", "seed::t2024_notes::a::1", "2024-notes/A.md", None),
         ("seed::DESIGN::#2026-plan", "seed::design::t2026_plan", "DESIGN.md", Some(9)),
+        // two files differing only after the first dot: the extension is named as a shape, whole
+        ("seed::dup::Thing.md::1", "seed::dup::thing<md>::1", "dup/Thing.md", None),
+        ("seed::dup::Thing.md.tmpl::#two", "seed::dup::thing<md_tmpl>::two", "dup/Thing.md.tmpl", Some(1)),
     ];
     for (old, new, file, line) in rows {
         assert_eq!(run(old), Outcome::Rewritten((*new).to_string()), "{old}");

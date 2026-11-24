@@ -156,6 +156,39 @@ fn an_entry_is_named_by_its_whole_name_or_a_file_up_to_its_first_dot() {
     assert_eq!(named(".hidden", false), None);
 }
 
+// A file's extension, as the shape a reference names it by: everything after the first dot, each
+// further dot an underscore, folded as a name is, and a shape the standard reads as one.
+//
+// Mutation: taking the part after the last dot names `changelist.doc.lock.md` as `md`, which
+// `changelist.src.md` shares; leaving the dots unfolded gives `doc.lock.md`, which the standard
+// refuses inside `<>`; folding no dot at all in `fold_byte` lets `fold` read `design.md` as a name.
+#[test]
+fn an_extension_is_all_of_a_name_after_its_first_dot_folded_into_one_shape() {
+    let ext = |name: &str| extension(name).map(|e| e.to_string());
+    let rows: &[(&str, Option<&str>)] = &[
+        ("unblock_value.out", Some("out")),
+        ("changelist.doc.lock.md", Some("doc_lock_md")),
+        ("DESIGN.md.tmpl", Some("md_tmpl")),
+        ("p5_output.v1_overstated-reading.txt", Some("v1_overstated_reading_txt")),
+        ("archive.7z", Some("t7z")),
+        ("README", None),
+        ("trailing.", None),
+        ("a._hidden", None),
+        ("a.b c", None),
+    ];
+    for (name, want) in rows {
+        assert_eq!(ext(name).as_deref(), *want, "{name}");
+        if let Some(shape) = want {
+            let query = format!("probes::stem<{shape}>::1");
+            let step = Query::parse(&query).ok().and_then(Query::path).and_then(|p| p.steps().nth(1));
+            assert_eq!(step.map(|s| s.constraints.names().collect::<Vec<_>>()), Some(vec![*shape]), "{query}");
+        }
+    }
+    assert!(extension("x.doc.lock.md").is_some_and(|e| e == "doc_lock_md"));
+    assert!(!extension("x.doc.lock.md").is_some_and(|e| e == "doc.lock.md"));
+    assert!(fold("design.md").is_none(), "a dot folds only in an extension");
+}
+
 // A reference whose root is a namespace named after its directory is read with the hyphen kept in
 // the root and nowhere else: the standard alone refuses it, and a hyphen past the root stays refused.
 //
