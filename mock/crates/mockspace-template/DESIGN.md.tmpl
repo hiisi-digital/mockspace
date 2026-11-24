@@ -2,7 +2,7 @@
 
 Reusable template engine and agent-file generator extracted from mockspace's `src/render_*.rs` modules. Provides Jinja2-syntax template rendering (via `minijinja`) over `serde::Serialize` contexts, plus a `Platform` trait that abstracts the differences between agent surfaces (Claude Code, GitHub Copilot, future tools) so the same template tree renders to multiple platform-specific output destinations.
 
-Consumed by the mockspace binary, by homma, and by any tool that needs to render templates against typed contexts or emit agent integration files.
+Consumed by the mockspace binary and by any tool that needs to render templates against typed contexts or emit agent integration files.
 
 ## What this crate provides
 
@@ -29,7 +29,7 @@ The template engine wraps `minijinja` so consumers get full Jinja2 syntax: `{{ v
 
 - Lighter compiled footprint than `tera` (~100KB vs ~300KB), faster build times.
 - Jinja2-syntax clone by Armin Ronacher (Jinja's original author); battle-tested semantics consumers know from Python.
-- Cleaner internals; `no_std`-friendlier than tera for future substrate adoption.
+- Cleaner internals; `no_std`-friendlier than tera for adopting the `notko`, `arvo` and `hilavitkutin` stack later.
 - Uses `serde::Serialize` for template context, which decouples the engine from any specific config type.
 
 ### Building a Template
@@ -46,7 +46,7 @@ struct Ctx { project_name: String, version: String }
 let mut env = TemplateEnv::new();
 env.add_template("readme", "# {{ project_name }} v{{ version }}\n")?;
 
-let ctx = Ctx { project_name: "homma".into(), version: "0.1.0".into() };
+let ctx = Ctx { project_name: "example".into(), version: "0.1.0".into() };
 let rendered = env.get_template("readme")?.render(&ctx)?;
 ```
 
@@ -107,9 +107,9 @@ pub trait Platform {
 
 ### Why std `Option` / `Result` / `PathBuf` / `String` here
 
-mockspace-template is the meta-tool layer; it does not consume the substrate stack (notko/arvo/hilavitkutin). The workspace's substrate-discipline rules (no bare `Option`/`Result`, no raw numerics, etc.) apply to consumers of the substrate, not to design tools that bootstrap the substrate.
+mockspace-template is the meta-tool layer; it does not build on the `notko`, `arvo` and `hilavitkutin` stack. The rules that come with the stack (no bare `Option`/`Result`, no raw numerics, etc.) apply to code built on the stack, not to design tools that bootstrap it.
 
-When mockspace-template eventually lands in mockspace's live root (after homma validates the shape), substrate adoption is revisited (see `BACKLOG.md.tmpl`). v1 stays on std types to minimize cross-dependency surface and keep the crate small.
+When mockspace-template eventually lands in mockspace's live root (after another consumer validates the shape), adopting the stack is revisited (see `BACKLOG.md.tmpl`). v1 stays on std types to minimize cross-dependency surface and keep the crate small.
 
 ### Adding a new platform
 
@@ -248,7 +248,7 @@ pub struct RenderedFile {
 |---|---|
 | Template authoring tools (interactive scaffolds, etc.) | mockspace binary CLI |
 | TOML config parsing | `mockspace-config` |
-| Git operations | homma (gix-based) |
+| Git operations | the tool that renders, not this crate |
 | Lint runner | mockspace internals (viola will replace) |
 | Design-round state machine | mockspace internals |
 | Bench harness | `mockspace-bench-core` / `mockspace-bench-harness` / `mockspace-bench-macro` |
@@ -259,7 +259,7 @@ pub struct RenderedFile {
 - `serde` + `serde_derive`, context model
 - `std`, for `PathBuf`, `fs`, `io::Result` and `time::Duration`
 
-No `notko`, `arvo`, `hilavitkutin`, or other substrate-stack deps. mockspace-template is meta-tool code; substrate adoption is deferred to the live-port round (see BACKLOG).
+No `notko`, `arvo` or `hilavitkutin` dependencies. mockspace-template is meta-tool code; adopting the stack is deferred to the live-port round (see BACKLOG).
 
 ## Audit trail
 

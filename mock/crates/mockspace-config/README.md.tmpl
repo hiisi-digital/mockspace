@@ -11,6 +11,6 @@ use std::path::Path;
 let cfg: Config = parse_mockspace_toml(Path::new("mockspace.toml"))?;
 ```
 
-The schema is strict: a key the schema does not have is an error naming it, rather than a value silently dropped.
+The root of the file is strict: a key it does not have is an error naming it. Inside a section, an unknown key is not checked.
 
 A lint's `extends` names a preset by the `<host>::<name>` shorthand. `parse_preset_shorthand` reads one, and `resolve_preset_chain` follows a preset's `extends` through a source of presets to the end of the chain.

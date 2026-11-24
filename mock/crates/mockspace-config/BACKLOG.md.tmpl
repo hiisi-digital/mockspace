@@ -25,9 +25,9 @@ Checks to add:
 
 Trigger: when a consumer reports a confusing config that produces a runtime error rather than a parse-time one.
 
-## Substrate adoption (future)
+## Stack adoption (future)
 
-When this crate consumes the workspace substrate:
+When this crate builds on the `notko`, `arvo` and `hilavitkutin` stack:
 
 - `String` → `hilavitkutin_str::Str`
 - `PathBuf` → reconsider; filesystem-boundary type
@@ -36,7 +36,7 @@ When this crate consumes the workspace substrate:
 - `u32` and `u64` fields → `arvo` numerals
 - `bool` fields → `arvo::Bool`
 
-Deferred for the same reason mockspace-template defers: meta-tool layer; substrate adoption entangles bootstrap with substrate evolution.
+Deferred for the same reason mockspace-template defers: it is meta-tool code, and adopting the stack now would tie mockspace's bootstrap to the stack's evolution.
 
 ## TOML schema documentation
 
