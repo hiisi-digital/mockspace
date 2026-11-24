@@ -10,7 +10,7 @@ use crate::error::ConfigError;
 /// matched on the major prefix; minor advances within the same major are
 /// loaded with a warning surface to be added once the diagnostic sink lands
 /// (spec §50 schema evolution windows).
-pub const SCHEMA_MAJOR: u32 = 1;
+pub const CONFIG_SCHEMA_MAJOR: u32 = 1;
 
 /// Read and parse a v2 `mockspace.toml` from disk.
 pub fn parse_mockspace_toml(path: &Path) -> Result<Config, ConfigError> {
@@ -37,11 +37,11 @@ fn validate_version(version: &str) -> Result<(), ConfigError> {
             details: format!("expected `<major>.<minor>` form (e.g. \"1.0\"); got {version:?}"),
         }
     })?;
-    if major != SCHEMA_MAJOR {
+    if major != CONFIG_SCHEMA_MAJOR {
         return Err(ConfigError::Validation {
             rule:    "mockspace.version",
             details: format!(
-                "schema major {major} not supported by this loader (expected {SCHEMA_MAJOR})"
+                "schema major {major} not supported by this loader (expected {CONFIG_SCHEMA_MAJOR})"
             ),
         });
     }

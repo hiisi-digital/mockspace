@@ -4,11 +4,11 @@ Future work tracked for mockspace-rs (the consumer-facing facade crate). Each en
 
 ## Workspace-aware template fragment includes
 
-Trigger: when the manual shared-fragment sync script (currently the workaround in clause-dev) stabilises across multiple workspaces, or when sibling workspaces (saalis, polka-dots) ask for the same mechanism.
+Trigger: when a shared-fragment sync done by hand across several repositories stabilises, or when another set of repositories asks for the same mechanism.
 
 Sketch: add an `{{include "fragment-url-or-path"}}` directive to the .tmpl render pipeline. Two flavours:
 
-- Local file: `{{include "../.shared/principles-fragment.md"}}`. Resolved if a workspace context is detected (multi-repo parent directory), otherwise the directive becomes a no-op with a comment warning.
+- Local file: `{{include "../shared/fragment.md"}}`. Resolved if a workspace context is detected (multi-repo parent directory), otherwise the directive becomes a no-op with a comment warning.
 - Git-hosted: `{{include "git://owner/repo/path@ref"}}`. For extra-repo sharing; advanced and may never be needed.
 
 Pipeline changes:

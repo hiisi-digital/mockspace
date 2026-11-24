@@ -2,7 +2,7 @@
 name = "mockspace-config"
 version = "0.1.0"
 edition = "2021"
-description = "Canonical schema for mockspace.toml + IntoMockspaceConfig trait."
+description = "The typed schema of the v2 mockspace.toml, and its parser."
 license = "MPL-2.0"
 repository = "https://github.com/hiisi-digital/mockspace"
 readme = "README.md.tmpl"

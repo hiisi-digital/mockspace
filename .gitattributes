@@ -1,0 +1,15 @@
+# mockspace: generated documents merge by regeneration, see the merge driver
+/docs/* merge=mockspace-generated
+
+# mockspace: two closed rounds with one id do not merge, see the round merge driver
+/mock/design_rounds/*/.meta merge=mockspace-round
+
+# mockspace: test-history files merge by what they record, see the test-history merge driver
+/mock/test-history/**/*.json merge=mockspace-test-history
+
+# mockspace: files that only grow keep both sides' additions, see the append merge driver
+/mock/crates/*/BACKLOG.md.tmpl merge=mockspace-append
+/mock/crates/*/SHAME.md.tmpl merge=mockspace-append
+
+# mockspace: a lockfile is settled from the merged manifests, see the lockfile merge driver
+/mock/Cargo.lock merge=mockspace-lockfile

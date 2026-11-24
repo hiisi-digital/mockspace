@@ -41,7 +41,7 @@ use letkajenkka::{Path, Selector};
 pub struct Folded<'a, K: Fold = NameFold>(&'a str, PhantomData<K>);
 
 /// What a [`Folded`] holds, and so how it folds. Sealed: the two kinds below are all there are.
-pub trait Fold: sealed::Sealed + Clone + Copy + fmt::Debug {
+pub trait Fold: sealed::FoldKind + Clone + Copy + fmt::Debug {
     /// Whether a dot folds to an underscore. Only a file's extension folds its dots, since nowhere
     /// else is a dot part of what a reference names.
     const DOTS: bool;
@@ -64,9 +64,9 @@ impl Fold for ExtensionFold {
 }
 
 mod sealed {
-    pub trait Sealed {}
-    impl Sealed for super::NameFold {}
-    impl Sealed for super::ExtensionFold {}
+    pub trait FoldKind {}
+    impl FoldKind for super::NameFold {}
+    impl FoldKind for super::ExtensionFold {}
 }
 
 /// A file's extension as a reference names it: a shape on the step naming the file, written only
@@ -131,7 +131,11 @@ pub const STAMP_DIGITS: usize = 12;
 /// two files apart, a reference names it as a shape, read by [`extension`].
 #[must_use]
 pub fn entry(name: &str, is_dir: bool) -> Option<Folded<'_>> {
-    if is_dir { fold(name) } else { fold(name.split('.').next().unwrap_or_default()) }
+    if is_dir {
+        fold(name)
+    } else {
+        fold(name.split('.').next().unwrap_or_default())
+    }
 }
 
 impl<K: Fold> Folded<'_, K> {
@@ -164,7 +168,11 @@ impl<K: Fold> Folded<'_, K> {
 }
 
 const fn fold_byte<K: Fold>(b: u8) -> u8 {
-    if b == HOST_SEPARATOR || (K::DOTS && b == b'.') { b'_' } else { b.to_ascii_lowercase() }
+    if b == HOST_SEPARATOR || (K::DOTS && b == b'.') {
+        b'_'
+    } else {
+        b.to_ascii_lowercase()
+    }
 }
 
 /// The separator of a host's own naming that [`fold`] makes an underscore.
@@ -259,10 +267,10 @@ pub fn root_in_host_naming(text: &str) -> Option<Vec<&str>> {
         .into_iter()
         .map(|n| {
             let at = n.as_ptr().addr() - base;
-            &text[at..at + n.len()]
+            &text[at .. at + n.len()]
         })
         .collect();
-    (read.len() >= 2 && read[1..].iter().all(|n| fold_separators(n).is_none())).then_some(read)
+    (read.len() >= 2 && read[1 ..].iter().all(|n| fold_separators(n).is_none())).then_some(read)
 }
 
 #[cfg(test)]

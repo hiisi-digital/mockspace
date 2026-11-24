@@ -77,7 +77,7 @@ pub enum TaskUriError {
 /// Matches the contract in [`crate::manifest`] with the wider mockspace
 /// stack: schema-version compatibility is enforced on the major prefix,
 /// minor advances are forward-compatible.
-pub const SCHEMA_MAJOR: u32 = 1;
+pub const MANIFEST_SCHEMA_MAJOR: u32 = 1;
 
 /// Parse a manifest task URI of the form `mock://task/<path>` or
 /// `mock://task/<path>#<step>` and return the underlying [`TaskId`] (and,
@@ -121,9 +121,9 @@ pub fn validate_structural(
             version: manifest.mockspace_version.clone(),
         }
     })?;
-    if major != SCHEMA_MAJOR {
+    if major != MANIFEST_SCHEMA_MAJOR {
         return Err(ValidationError::SchemaVersionMismatch {
-            expected_major: SCHEMA_MAJOR,
+            expected_major: MANIFEST_SCHEMA_MAJOR,
             found_major:    major,
         });
     }
