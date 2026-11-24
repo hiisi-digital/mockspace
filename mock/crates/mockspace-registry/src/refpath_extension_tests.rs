@@ -26,6 +26,10 @@ const PROBES: &[&str] = &[
     "probes/run.sh",
     "round/changelist.doc.lock.md",
     "round/changelist.src.md",
+    "case/Foo.md",
+    "case/foo.sh",
+    "a-b/x.md",
+    "a_b/x.sh",
 ];
 
 // Mutation: reading the shape onto `names` loses it from `extension` and `render`; refusing every
@@ -115,30 +119,16 @@ fn an_extension_the_name_alone_does_not_need_is_refused() {
     );
 }
 
-// The spellings an ambiguous citation is mended with: one for each file where they differ only by
-// an extension, and fewer where one file has none to name.
+// An extension tells apart only files whose names are the same up to the first dot, in one
+// directory: files folding to one name by case or a hyphen, or lying in two directories that fold
+// to one path, stay ambiguous whatever extension is named.
 //
-// Mutation: rendering a spelling without locating it offers `run<>` for the file with no
-// extension, or offers a spelling for every file regardless.
+// Mutation: filtering by the extension alone, as a walk that narrows each match, reaches `Foo.md`
+// for `foo<md>` and `a-b/x.md` for `a_b::x<md>`.
 #[test]
-fn an_ambiguous_citation_is_offered_the_spelling_of_each_file_it_reaches() {
+fn an_extension_tells_apart_no_files_that_differ_before_the_first_dot() {
     let dir = tree(PROBES);
-    let spelled = |text: &str| {
-        let r = FileRef::read(text).unwrap();
-        let Location::Ambiguous(files) = r.locate(dir.path()) else {
-            panic!("{text} is ambiguous")
-        };
-        r.extension_spellings(dir.path(), &files)
-    };
-    assert_eq!(spelled("panel::probes::unblock_value::1"), [
-        "panel::probes::unblock_value<out>::1",
-        "panel::probes::unblock_value<sh>::1"
-    ]);
-    assert_eq!(spelled("panel::probes::run::1"), [
-        "panel::probes::run<sh>::1"
-    ]);
-    assert_eq!(spelled("panel::round::changelist::one"), [
-        "panel::round::changelist<doc_lock_md>::one",
-        "panel::round::changelist<src_md>::one"
-    ]);
+    let at = |text: &str| FileRef::read(text).unwrap().locate(dir.path());
+    assert_eq!(at("panel::case::foo<md>::1"), Location::Ambiguous(vec!["Foo.md".to_string(), "foo.sh".to_string()]));
+    assert_eq!(at("panel::a_b::x<md>::1"), Location::Ambiguous(vec!["x.md".to_string(), "x.sh".to_string()]));
 }
