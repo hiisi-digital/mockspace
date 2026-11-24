@@ -305,15 +305,28 @@ fn citation(parts: &[&str], ctx: &Ctx<'_>) -> Outcome {
         names.push(name.clone());
     }
     let new = format!("{root}::{}", names.join("::"));
-    let Ok(read) = FileRef::read(&new) else {
+    let Ok(mut read) = FileRef::read(&new) else {
         return Outcome::Left(format!("`{new}` is not a reference under the standard"));
     };
-    match read.locate(&root_dir) {
+    let mut at = read.locate(&root_dir);
+    // two files differing only after the first dot: the extension tells them apart
+    if let (Location::Ambiguous(_), Some(named)) = (&at, comps.last().and_then(|c| read.with_extension_of(c))) {
+        at = named.locate(&root_dir);
+        read = named;
+    }
+    let new = read.render();
+    match at {
         Location::Found(f) if f == file => {},
-        Location::Found(f) => return Outcome::Left(format!("`{new}` would reach {}, not {}", f.display(), file.display())),
+        Location::Found(f) | Location::NeedlessExtension(f) => {
+            return Outcome::Left(format!("`{new}` would reach {}, not {}", f.display(), file.display()));
+        },
         Location::Missing => return Outcome::Left(format!("`{new}` would reach no file")),
         Location::Ambiguous(all) => {
-            return Outcome::Left(format!("`{new}` would reach several files ({}), and no spelling tells them apart", all.join(", ")));
+            return Outcome::Left(format!(
+                "`{new}` would reach several files ({}), and they differ by more than an extension, so no spelling \
+                 tells them apart",
+                all.join(", ")
+            ));
         },
     }
     if let (Some(at), Anchor::Heading(h)) = (line, read.anchor()) {

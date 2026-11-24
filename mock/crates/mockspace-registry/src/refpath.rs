@@ -31,6 +31,9 @@ pub enum Refusal {
     /// A well formed query that is not a plain path of names where one is required: a set, a
     /// wildcard, a constraint, an operation, or a line selector where a name belongs.
     NotPlain,
+    /// A citation carrying a shape anywhere but on the step naming its file, or more than one
+    /// there. The one shape a citation takes is the file's extension (letkajenkka `SPEC.md` 9.1).
+    MisplacedShape,
 }
 
 impl Refusal {
@@ -46,6 +49,12 @@ impl Refusal {
             },
             Self::NotPlain => {
                 format!("`{text}` names no single thing here: a reference of this kind is a plain path of names")
+            },
+            Self::MisplacedShape => {
+                format!(
+                    "`{text}` carries a shape where a citation takes none: the one shape it takes is the extension of the \
+                     file it names, alone and on the step naming the file, as in `panel::probes::run<sh>::1`"
+                )
             },
         }
     }
@@ -178,12 +187,14 @@ pub enum Anchor {
 ///
 /// Which of the steps after the root are directories and files and which is a heading is decided
 /// by the tree, since the grammar writes them alike. `names` holds every step after the root up to
-/// the line, and `lines` the line selector when the citation ends in one.
+/// the line, and `lines` the line selector when the citation ends in one. `extension` is the shape
+/// on the step naming the file, where two files differ by nothing else (letkajenkka `SPEC.md` 9.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileRef {
-    pub root:  String,
-    pub names: Vec<String>,
-    pub lines: Option<(u64, u64)>,
+    pub root:      String,
+    pub names:     Vec<String>,
+    pub lines:     Option<(u64, u64)>,
+    pub extension: Option<String>,
 }
 
 impl FileRef {
@@ -191,37 +202,83 @@ impl FileRef {
     ///
     /// # Errors
     ///
-    /// The standard's refusal, or [`Refusal::NotPlain`] for a text that parses and is no citation.
+    /// The standard's refusal, [`Refusal::NotPlain`] for a text that parses and is no citation, and
+    /// [`Refusal::MisplacedShape`] for one carrying a shape other than its file's extension.
     pub fn read(text: &str) -> Result<Self, Refusal> {
         let query = Query::parse(text).map_err(Refusal::Syntax)?;
         let Some(path) = query.path() else { return Err(Refusal::NotPlain) };
         let steps: Vec<_> = path.steps().collect();
         let Some((last, init)) = steps.split_last() else { return Err(Refusal::NotPlain) };
         let mut names = Vec::new();
+        let mut shapes = Vec::new();
         for s in init {
-            match (s.selector, s.constraints.is_empty()) {
-                (Selector::Ident(n), true) => names.push(n.to_string()),
+            match s.selector {
+                Selector::Ident(n) => {
+                    names.push(n.to_string());
+                    shapes.push(s.constraints);
+                },
                 _ => return Err(Refusal::NotPlain),
             }
         }
         let lines = match (last.selector, last.constraints.is_empty()) {
-            (Selector::Ident(n), true) => {
+            (Selector::Ident(n), _) => {
                 names.push(n.to_string());
+                shapes.push(last.constraints);
                 None
             },
             // a document has no line zero
             (Selector::Ordinal(n), true) if n > 0 => Some((n, n)),
             (Selector::Range(lo, hi), true) if lo > 0 => Some((lo, hi)),
+            (Selector::Ordinal(_) | Selector::Range(..), false) => return Err(Refusal::MisplacedShape),
             _ => return Err(Refusal::NotPlain),
         };
         if names.len() < 3 - usize::from(lines.is_some()) {
             return Err(Refusal::NotPlain);
+        }
+        // the step naming the file: the last name before a line, or the one before a heading
+        let file_at = names.len() - 1 - usize::from(lines.is_none());
+        let mut extension = None;
+        for (at, shape) in shapes.iter().enumerate().filter(|(_, c)| !c.is_empty()) {
+            let mut each = shape.names();
+            match (at == file_at, each.next(), each.next()) {
+                (true, Some(one), None) => extension = Some(one.to_string()),
+                _ => return Err(Refusal::MisplacedShape),
+            }
         }
         let root = names.remove(0);
         Ok(Self {
             root,
             names,
             lines,
+            extension,
+        })
+    }
+
+    /// The spellings naming an extension that reach one each of `files`, the names an ambiguous
+    /// citation reaches, for each that has one; empty where the files differ by more than it.
+    #[must_use]
+    pub fn extension_spellings(&self, root_dir: &Path, files: &[String]) -> Vec<String> {
+        files
+            .iter()
+            .filter_map(|f| self.with_extension_of(f))
+            .filter(|r| matches!(r.locate(root_dir), Location::Found(_)))
+            .map(|r| r.render())
+            .collect()
+    }
+
+    /// The index in `names` of the step naming the file.
+    fn file_at(&self) -> usize {
+        self.names.len() - 1 - usize::from(self.lines.is_none())
+    }
+
+    /// This citation naming the extension `file_name` has, where it has one: the spelling a
+    /// citation takes when its name alone reaches that file and another beside it.
+    #[must_use]
+    pub fn with_extension_of(&self, file_name: &str) -> Option<Self> {
+        let extension = mockspace_refnames::extension(file_name)?.to_string();
+        Some(Self {
+            extension: Some(extension),
+            ..self.clone()
         })
     }
 
@@ -235,9 +292,13 @@ impl FileRef {
     #[must_use]
     pub fn render(&self) -> String {
         let mut out = self.root.clone();
-        for n in &self.names {
+        let file_at = self.file_at();
+        for (at, n) in self.names.iter().enumerate() {
             out.push_str("::");
             out.push_str(n);
+            if let (true, Some(ext)) = (at == file_at, &self.extension) {
+                out.push_str(&format!("<{ext}>"));
+            }
         }
         match self.lines {
             Some((lo, hi)) if lo == hi => out.push_str(&format!("::{lo}")),
@@ -247,11 +308,15 @@ impl FileRef {
         out
     }
 
-    /// The path the names give, `/` joined, as a document names it.
+    /// The path the names give, `/` joined, as a document names it, and the file's extension
+    /// after it as the citation writes it, where it names one.
     #[must_use]
     pub fn path_text(&self) -> String {
-        let n = self.names.len() - usize::from(self.lines.is_none());
-        self.names[.. n].join("/")
+        let mut path = self.names[..= self.file_at()].join("/");
+        if let Some(ext) = &self.extension {
+            path.push_str(&format!("<{ext}>"));
+        }
+        path
     }
 
     /// The anchor: the line selector, or the last name read as a heading.
@@ -265,16 +330,26 @@ impl FileRef {
     }
 
     /// The file this citation names under `root_dir`, by walking the names and folding each
-    /// entry's own name as the standard has a host do.
+    /// entry's own name as the standard has a host do. An extension narrows the walk to the files
+    /// carrying it, and is refused where the names alone reach one file.
     #[must_use]
     pub fn locate(&self, root_dir: &Path) -> Location {
-        let file_names = &self.names[.. self.names.len() - usize::from(self.lines.is_none())];
+        let file_names = &self.names[..= self.file_at()];
         let mut found = Vec::new();
-        walk(root_dir, file_names, &mut found);
+        walk(root_dir, file_names, self.extension.as_deref(), &mut found);
         found.sort();
         found.dedup();
         match found.len() {
             0 => Location::Missing,
+            1 if self.extension.is_some() => {
+                let mut alone = Vec::new();
+                walk(root_dir, file_names, None, &mut alone);
+                if alone.len() == 1 {
+                    Location::NeedlessExtension(found.remove(0))
+                } else {
+                    Location::Found(found.remove(0))
+                }
+            },
             1 => Location::Found(found.remove(0)),
             _ => {
                 Location::Ambiguous(
@@ -295,95 +370,30 @@ pub enum Location {
     Missing,
     /// Several files fold to the names given. A host does not pick one.
     Ambiguous(Vec<String>),
+    /// The file found, by a citation naming an extension where its names alone reach that file and
+    /// no other: a document has one spelling, so the extension is refused (letkajenkka `SPEC.md` 9.1).
+    NeedlessExtension(PathBuf),
 }
 
-/// What one entry of a directory is, as a citation's walk needs it.
-#[derive(Debug, Clone)]
-struct Entry {
-    name:    String,
-    path:    PathBuf,
-    is_dir:  bool,
-    is_file: bool,
-}
+#[path = "refpath_listing.rs"]
+mod listing;
+use listing::listing;
+pub use listing::{CacheScope, cache_scope, dir_reads};
 
-thread_local! {
-    /// The directory listings held while a [`CacheScope`] is open, and how many scopes are.
-    static LISTINGS: std::cell::RefCell<(usize, std::collections::HashMap<PathBuf, std::rc::Rc<[Entry]>>)> =
-        std::cell::RefCell::new((0, std::collections::HashMap::new()));
-    static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// While this is alive, a directory a citation walks through is listed once and the listing held,
-/// so a pass that resolves many citations reads each directory once and not once for each of them.
-/// Nothing is held outside a scope, so a file made between two calls is found, and a scope is
-/// opened around a pass that does not write.
-#[must_use]
-pub struct CacheScope(());
-
-/// Opens a [`CacheScope`] on this thread. Scopes nest, and the listings go when the outermost ends.
-pub fn cache_scope() -> CacheScope {
-    LISTINGS.with(|l| l.borrow_mut().0 += 1);
-    CacheScope(())
-}
-
-impl Drop for CacheScope {
-    fn drop(&mut self) {
-        LISTINGS.with(|l| {
-            let mut l = l.borrow_mut();
-            l.0 -= 1;
-            if l.0 == 0 {
-                l.1.clear();
-            }
-        });
-    }
-}
-
-/// How many directories this thread has listed for citations, held ones not counted again.
-#[must_use]
-pub fn dir_reads() -> usize {
-    READS.with(std::cell::Cell::get)
-}
-
-fn listing(dir: &Path) -> std::rc::Rc<[Entry]> {
-    if let Some(held) = LISTINGS.with(|l| l.borrow().1.get(dir).cloned()) {
-        return held;
-    }
-    READS.with(|r| r.set(r.get() + 1));
-    let read: Vec<Entry> = fs::read_dir(dir)
-        .map(|rd| {
-            rd.filter_map(Result::ok)
-                .map(|e| {
-                    let path = e.path();
-                    Entry {
-                        name:    e.file_name().to_string_lossy().into_owned(),
-                        is_dir:  path.is_dir(),
-                        is_file: path.is_file(),
-                        path,
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let held: std::rc::Rc<[Entry]> = read.into();
-    LISTINGS.with(|l| {
-        let mut l = l.borrow_mut();
-        if l.0 > 0 {
-            l.1.insert(dir.to_path_buf(), held.clone());
-        }
-    });
-    held
-}
-
-/// Every file under `dir` that `names` reach, the last name being the file's own.
-fn walk(dir: &Path, names: &[String], out: &mut Vec<PathBuf>) {
+/// Every file under `dir` that `names` reach, the last name being the file's own, and carrying
+/// `extension` where one is given.
+fn walk(dir: &Path, names: &[String], extension: Option<&str>, out: &mut Vec<PathBuf>) {
     let Some((name, rest)) = names.split_first() else { return };
     for entry in listing(dir).iter() {
         if !mockspace_refnames::entry(&entry.name, entry.is_dir).is_some_and(|f| f == name.as_str()) {
             continue;
         }
         if entry.is_dir {
-            walk(&entry.path, rest, out);
-        } else if entry.is_file && rest.is_empty() {
+            walk(&entry.path, rest, extension, out);
+        } else if entry.is_file
+            && rest.is_empty()
+            && extension.is_none_or(|e| mockspace_refnames::extension(&entry.name).is_some_and(|x| x == e))
+        {
             out.push(entry.path.clone());
         }
     }
@@ -424,3 +434,7 @@ pub fn resolve_anchor(file: &Path, anchor: &Anchor) -> Option<usize> {
 #[cfg(test)]
 #[path = "refpath_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "refpath_extension_tests.rs"]
+mod extension_tests;

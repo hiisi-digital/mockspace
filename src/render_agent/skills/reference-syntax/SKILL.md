@@ -35,7 +35,8 @@ A postfix chain narrows a result, left to right: `{{ pathof(crates::store).dir()
 
 - `root::path::anchor`; the anchor is a heading (`the_four_lanes`), a line (`12`) or a span (`12..20`). Prefer the heading: a line number shifts silently. Line numbers only in a frozen root.
 - Any depth. Every step is lowercase letters, digits and `_`, starting with a letter; the host folds its names into that: `mock::design::12` finds `DESIGN.md.tmpl`, `crates::my_crate` the directory `my-crate`, `the_four_lanes` the heading a forge anchors as `the-four-lanes`.
-- Never an extension, uppercase letter, hyphen or dot; the old spelling is refused with a pointer to `cargo mock migrate references-to-letkajenkka`. Two files folding to one name is an error; a name that cannot fold cannot be cited.
+- Never an extension, uppercase letter, hyphen or dot in a name; the old spelling is refused with a pointer to `cargo mock migrate references-to-letkajenkka`. Two files folding to one name is an error; a name that cannot fold cannot be cited.
+- Two files differing only after the first dot: name the extension as a shape on the file's step, folded, further dots underscores: `panel::probes::unblock_value<out>::22`, `round::changelist<doc_lock_md>::one`. Only there: an extension the name alone does not need, or a shape on another step, is refused.
 - A namespace is addressed by its name (`law::keys`); `reg::law::keys` still resolves.
 
 ## Rows

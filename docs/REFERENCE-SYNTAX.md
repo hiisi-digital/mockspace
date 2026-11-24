@@ -338,8 +338,20 @@ namespace named after its directory, `ikiuni-renderer`, is reached as
 `ikiuni-renderer::a_row`. Every name after the root, and a slug on its own, keeps the
 set. Exactly one match
 resolves; several is an error rather than a guess, because the author meant one of
-them and picking silently would point the citation somewhere they did not choose. No
-spelling tells two such files apart, so one is renamed or removed. A file or directory
+them and picking silently would point the citation somewhere they did not choose.
+
+Where two files of one directory differ only after the first dot of their names, the
+extension is named as a shape on the step naming the file, folded as a name is and each
+further dot an underscore (letkajenkka `SPEC.md` 9.1):
+`{{ panel::probes::unblock_value<out>::22 }}` reaches `unblock_value.out` beside
+`unblock_value.sh`, and `changelist<doc_lock_md>` reaches `changelist.doc.lock.md`
+beside `changelist.src.md`. The extension is written only there: one named on a file
+the name alone reaches is refused, and so is a shape on any other step, so a file keeps
+one spelling. The finding for an ambiguous citation lists the spelling of each file it
+reaches. Files that differ by more than that, a case or a hyphen, have no spelling to
+tell them apart, and one is renamed or removed.
+
+A file or directory
 whose name cannot fold, because it opens on an underscore or holds a dot, a space or
 another character outside the set, cannot be cited. Two headings of one file that fold
 to one name are no anchor, for the same reason.
@@ -354,8 +366,8 @@ named `t` and a twelve-digit stamp would answer the same citation, so the lint
 The spelling before this syntax (uppercase, extensions, `::#heading`, spaces around
 the separator) is refused, and the refusal names the migration that rewrites it:
 `cargo mock migrate references-to-letkajenkka [--dry-run]`. It rewrites a reference
-only where the new spelling resolves to the file and line the old one did, and lists
-the rest. The same migration folds each preset shorthand of `extends` in the
+only where the new spelling resolves to the file and line the old one did, naming an
+extension where two files differ by nothing else, and lists the rest. The same migration folds each preset shorthand of `extends` in the
 `[lints.<name>]` tables of `lints.toml`, `mock/lints.toml` and `mockspace.toml` into
 this syntax's names (`stack-lints::no-heap` becomes `stack_lints::no_heap`), and it reads a registry kept on a ref through the
 registry's own stores and writes it back to that ref, never into the tree.
