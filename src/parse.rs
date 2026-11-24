@@ -38,7 +38,7 @@ pub fn package_dirs_in(src_dirs: &[PathBuf]) -> Vec<PathBuf> {
 pub fn discover_crates_in(src_dirs: &[PathBuf], crate_prefix: &str) -> CrateMap {
     let mut result = BTreeMap::new();
     for dir in src_dirs {
-        for (name, info) in discover_crates(dir, crate_prefix) {
+        for (name, info) in discover_unlinked(dir, crate_prefix) {
             if let Some(existing) = result.insert(name.clone(), info) {
                 let _ = existing;
                 panic!(
@@ -56,10 +56,33 @@ pub fn discover_crates_in(src_dirs: &[PathBuf], crate_prefix: &str) -> CrateMap 
             }
         }
     }
+    keep_discovered_deps(&mut result);
     result
 }
 
+/// Every package in one source directory.
 pub fn discover_crates(crates_dir: &Path, crate_prefix: &str) -> CrateMap {
+    let mut result = discover_unlinked(crates_dir, crate_prefix);
+    keep_discovered_deps(&mut result);
+    result
+}
+
+/// Drop every dependency that names no package of `crates`.
+///
+/// A dependency carrying the prefix is read as a sibling, but a package of the
+/// same prefix can live outside the source directories: a crate elsewhere in the
+/// repository, or one taken from a registry or a git source. It is no node of the
+/// graph, and every reader of `deps` indexes the map by it, so the structure
+/// graph panicked on the first such edge. Only what was discovered is a sibling.
+fn keep_discovered_deps(crates: &mut CrateMap) {
+    let known: Vec<String> = crates.keys().cloned().collect();
+    for info in crates.values_mut() {
+        info.deps.retain(|dep| known.contains(dep));
+    }
+}
+
+/// The packages of one source directory, each dependency as its manifest names it.
+fn discover_unlinked(crates_dir: &Path, crate_prefix: &str) -> CrateMap {
     let mut result = BTreeMap::new();
     // A missing directory yields nothing rather than failing: the default
     // `crates` is allowed not to exist for a project with no packages yet.
@@ -113,9 +136,9 @@ pub fn crate_info(
     };
     let cargo = fs::read_to_string(crate_dir.join("Cargo.toml")).unwrap_or_default();
     CrateInfo {
-        short_name: short,
-        items: parse_items(parser, source),
-        deps: extract_deps(&cargo, dir_name, crate_prefix),
+        short_name:      short,
+        items:           parse_items(parser, source),
+        deps:            extract_deps(&cargo, dir_name, crate_prefix),
         macro_generated: parse_macro_invocations(source, crate_prefix),
     }
 }
@@ -188,10 +211,10 @@ fn get_name(node: Node, src: &str) -> String {
 }
 
 fn has_attribute(node: Node, src: &str, attr_name: &str) -> bool {
-    if let Some(prev) = node.prev_named_sibling() {
-        if prev.kind() == "attribute_item" {
-            return txt(prev, src).contains(attr_name);
-        }
+    if let Some(prev) = node.prev_named_sibling()
+        && prev.kind() == "attribute_item"
+    {
+        return txt(prev, src).contains(attr_name);
     }
     false
 }
@@ -256,17 +279,16 @@ fn parse_items(parser: &mut Parser, source: &str) -> Vec<Item> {
             },
             "attribute_item" => {
                 let attr_text = txt(node, source);
-                if attr_text.contains("proc_macro") {
-                    if let Some(next) = node.next_named_sibling() {
-                        if next.kind() == "function_item" {
-                            let name = get_name(next, source);
-                            if !name.is_empty() {
-                                items.push(Item::Macro(MacroItem {
-                                    name,
-                                    is_proc: true,
-                                }));
-                            }
-                        }
+                if attr_text.contains("proc_macro")
+                    && let Some(next) = node.next_named_sibling()
+                    && next.kind() == "function_item"
+                {
+                    let name = get_name(next, source);
+                    if !name.is_empty() {
+                        items.push(Item::Macro(MacroItem {
+                            name,
+                            is_proc: true,
+                        }));
                     }
                 }
             },

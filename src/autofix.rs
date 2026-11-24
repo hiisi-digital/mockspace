@@ -25,6 +25,9 @@
 //!   to rewrite is restored. A sibling that was already dirty (the user's own
 //!   in-flight edit) is left alone and surfaced, never clobbered.
 //!
+//! clippy runs first and rustfmt after it, so a rewrite clippy makes is
+//! formatted before the commit records it.
+//!
 //! The fixers use whatever config the repo already has (`rustfmt.toml`, the
 //! `#![warn(clippy::…)]` crate attributes); this module never imposes a style.
 //!
@@ -67,7 +70,29 @@ pub fn run(repo_root: &Path, auto_fmt: bool, auto_clippy_fix: bool) -> Vec<Strin
         .into_iter()
         .collect();
 
-    // auto_fmt: rustfmt ONLY the staged .rs files that still exist on disk,
+    // auto_clippy_fix: crate-level, so run per changed package then revert any
+    // file clippy touched that is not staged and was not already dirty.
+    if auto_clippy_fix {
+        let pkgs = changed_package_dirs(&staged, repo_root, |p| p.is_file());
+        let mut ran = false;
+        for pkg in &pkgs {
+            ran |= run_cargo(pkg, &["clippy", "--fix", "--allow-dirty", "--allow-staged"]);
+        }
+        if ran {
+            let post_dirty: BTreeSet<PathBuf> = git_lines(repo_root, &["diff", "--name-only"])
+                .into_iter()
+                .collect();
+            let spurious = spurious_files(&post_dirty, &staged_set, &pre_dirty);
+            let reverted = revert(repo_root, &spurious);
+            actions.push(format!(
+                "auto_clippy_fix: cargo clippy --fix ({} package(s)); reverted {reverted} unrelated file(s)",
+                pkgs.len()
+            ));
+        }
+    }
+
+    // auto_fmt, after clippy so that what clippy rewrote is formatted too:
+    // rustfmt ONLY the staged .rs files that still exist on disk,
     // grouped by the edition of the package each belongs to. Bare `rustfmt`
     // assumes 2015 and refuses anything newer, so the edition is not optional.
     if auto_fmt {
@@ -93,27 +118,6 @@ pub fn run(repo_root: &Path, auto_fmt: bool, auto_clippy_fix: bool) -> Vec<Strin
             if done > 0 {
                 actions.push(format!("auto_fmt: rustfmt {done} staged file(s)"));
             }
-        }
-    }
-
-    // auto_clippy_fix: crate-level, so run per changed package then revert any
-    // file clippy touched that is not staged and was not already dirty.
-    if auto_clippy_fix {
-        let pkgs = changed_package_dirs(&staged, repo_root, |p| p.is_file());
-        let mut ran = false;
-        for pkg in &pkgs {
-            ran |= run_cargo(pkg, &["clippy", "--fix", "--allow-dirty", "--allow-staged"]);
-        }
-        if ran {
-            let post_dirty: BTreeSet<PathBuf> = git_lines(repo_root, &["diff", "--name-only"])
-                .into_iter()
-                .collect();
-            let spurious = spurious_files(&post_dirty, &staged_set, &pre_dirty);
-            let reverted = revert(repo_root, &spurious);
-            actions.push(format!(
-                "auto_clippy_fix: cargo clippy --fix ({} package(s)); reverted {reverted} unrelated file(s)",
-                pkgs.len()
-            ));
         }
     }
 
