@@ -44,7 +44,7 @@ keywords = ["design-rounds", "lints", "workflow", "mockspace"]
 # from the machine they were written on, plus migration guides that walk one
 # specific estate repo by repo by name.
 #
-# Op's call, and it is the resting state rather than the answer. The reference
+# This is the resting state rather than the answer. The reference
 # material wants moving into `mock/` where the design trail already lives, and
 # that waits on v1 and v2 artifacts being able to coexist there, or on v2 reaching
 # implementation and the two merging.

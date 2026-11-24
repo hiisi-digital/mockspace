@@ -3,6 +3,7 @@ name = "real-support-crate"
 version = "0.0.0"
 edition = "2024"
 publish = false
+license = "MPL-2.0"
 description = "A small, buildable bench support crate with passing tests, run by `mock bench test`'s own test"
 
 # Its own workspace root, so cargo never reads this directory as a member of the

@@ -14,13 +14,13 @@ Sketch: a function-style template helper that fetches a field by name and emits 
 
 ### `repo_root`: platform-aware path resolution
 
-Trigger: when templates need to emit absolute paths that must work across both per-repo (when mockspace bootstraps inside a consumer repo) and workspace-level (when homma runs across multiple repos) contexts.
+Trigger: when templates need to emit absolute paths that must work across both per-repo (when mockspace bootstraps inside a consumer repo) and workspace-level (when a tool renders across several repos) contexts.
 
 Sketch: a function returning the appropriate `repo_root` for the current render call; the consumer registers the resolver at TemplateEnv construction.
 
 ### `format_byline()`: well-formed Co-Authored-By trailers
 
-Trigger: when the workspace's byline policy (see `~/Dev/clause-dev/.claude/rules/ai-agent-framing.md`) needs templated emission. Deferred until commit-message templating becomes a thing.
+Trigger: when a project's byline policy needs templated emission. Deferred until commit-message templating becomes a thing.
 
 Sketch: takes an agent identifier and emits `Co-Authored-By: <name> <email>` with correct formatting.
 
@@ -58,16 +58,16 @@ Sketch: register custom functions that perform IO; gated behind a `live-data` ca
 
 Conditions for porting mock-crate code into mockspace root `src/`:
 
-1. At least one external consumer (homma) has exercised the full API surface end-to-end.
+1. At least one consumer other than mockspace has exercised the full API surface end-to-end.
 2. Platform trait signature has not changed across two consumer cycles (i.e. one revision of the trait and one period of stable usage post-revision).
 3. minijinja choice not displaced by a better template engine in the Rust ecosystem.
-4. `IntoMockspaceConfig` trait usage validated by at least one non-mockspace-toml config schema (homma.toml is the canonical first one).
+4. Rendering validated against a context built from at least one config schema other than `mockspace.toml`.
 
 When these hold, a follow-up round ports the mock-crate `src/` into mockspace root, deletes the internal `src/render_*.rs` modules, and publishes mockspace-template to crates.io as a real consumer-facing crate.
 
-## Substrate adoption (future)
+## Stack adoption (future)
 
-When this crate ports into mockspace root and eventually consumes the workspace substrate:
+When this crate ports into mockspace root and eventually builds on the `notko`, `arvo` and `hilavitkutin` stack:
 
 - `String` → `hilavitkutin_str::Str` for non-static strings
 - `PathBuf` → reconsider; might stay std `PathBuf` (filesystem ops boundary) or move to a workspace path primitive if one emerges
@@ -76,7 +76,7 @@ When this crate ports into mockspace root and eventually consumes the workspace 
 - `Vec<T>` in public APIs → `impl IntoIterator<Item = T>` or `&[T]`
 - Raw numeric primitives (none in current public surface, but watch for `usize` counts) → `arvo::USize` / `arvo::Cap<N>` / `arvo::UFixed<I, F, S>`
 
-This adoption is deliberately deferred. The meta-tool layer doesn't need substrate types for v1; introducing them now would entangle mockspace's bootstrap with the substrate's evolution, which is exactly the entanglement the workspace structure avoids.
+This adoption is deliberately deferred. The meta-tool layer doesn't need the stack's types for v1; introducing them now would tie mockspace's bootstrap to the stack's evolution.
 
 ## Test coverage
 

@@ -1,0 +1,50 @@
+035f7f7 chore: lock src changelist 202611240333
+1f79110 feat: give the repository its own `mockspace.toml`
+71b69c0 feat: tell files apart by an extension shape where nothing else does
+371ab0e feat: tell files apart by an extension shape where nothing else does
+4bc744e refactor: split the provenance and schema checks out of `validate.rs`
+a75913f refactor: tell a folded name from an extension by a marker type
+c6678dd fix: name an extension only among files sharing a stem byte for byte
+9dffe11 test: an extension tells apart no files that differ before the dot
+46e031a feat: tell files apart by an extension shape where nothing else does
+c06e487 fix: accept a hyphenated namespace in the rc gate
+e3d9c74 fix: accept a hyphenated namespace in the rc gate
+465945f feat: chain a project's message guard and find plain-word adverts
+ea97a8a feat: chain a project's message guard and find plain-word adverts
+5e0b866 fix: read an operation and a dangling reference in a hyphen namespace
+4070535 fix: hand the message guard every call it can read
+7b65acf fix: hold the plain-words advert net to a whole line
+deab8da fix: read the root of a hyphenated namespace reference as names does
+58630f6 fix: put back the formatting a stray fmt run changed
+442069d feat: chain a project's own message guard before the message gate
+765f009 Merge remote-tracking branch 'origin/dev' into work/ms-rc-hyphen
+7c5c108 fix: file a hyphenated namespace key under its namespace in the view
+7f8e89b feat: find a tool's advert written in plain words
+a9c3fa5 fix: run chained hooks once under git-shook and pin the gate refusal
+cd993b0 fix: run chained hooks once under git-shook and pin the gate refusal
+31d2e9a feat: register the gate through git-shook where it runs
+3da751c fix: a hook git-shook adopted runs once beside the chained copy
+3515ae3 feat: fold a digit-opening name with a leading t in citations
+b289205 feat: fold a digit-opening name with a leading t in citations
+5ee7c59 fix: the review's findings on the led fold
+8528d01 fix: lead a name that opens on a digit, as the host's fold
+6cf0d3b fix: accept hyphenated namespaces and chain a foreign post-checkout
+deb526a fix: accept hyphenated namespaces and chain a foreign post-checkout
+5948066 fix: the review's blockers on chaining and the hyphenated root
+a410561 fixup! fix: data refs chain a hook of the person's own instead of refusing it
+27ab2d2 fix: data refs chain a hook of the person's own instead of refusing it
+270d45b fix: references into a hyphenated namespace resolve
+daa3115 feat: move mock data to git data refs with safe migrations
+f800104 feat: move mock data to git data refs with safe migrations
+d7bd033 docs: drop the flat reading-references topic dev holds in its round
+e6098e9 test: break the hooks' own engine and record review pass 2
+bcfc99a bench: land the runs of the monitor's cost and of hash-mix
+cbb0a98 bench: run hash-mix on the generated driver at eight bytes
+4fcdf0d bench: price the data refs' monitor over git status and checkout
+255f851 docs: say what `MOCKSPACE_IN_ENGINE` does to the engine's children
+2b547ef test: reach the old commit by a hard reset of the branch too
+8d40b8b fix: run the monitor through git-shook and by the engine that made it
+048cb79 fix: keep a copy by shell and gate the link copy per target
+5e180a0 docs: record review pass 1 of `feat/v2`
+030da77 test: see the monitor hide no change without a commit of the file
+39d2af3 docs: name `data-refs` and `migrate` in the readme's usage

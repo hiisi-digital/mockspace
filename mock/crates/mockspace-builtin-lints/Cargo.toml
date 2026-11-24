@@ -32,6 +32,14 @@ panic = "abort"
 # An https-vs-ssh mismatch is two distinct sources to cargo and yields two
 # incompatible `arvo` crates whose `arvo::USize` will not unify at the
 # vtable boundary.
+#
+# The committed `Cargo.lock` holds each of them at the commit viola's own lock
+# resolves, which is what keeps this graph readable while those branch heads
+# move on: arvo's `dev` no longer has the `arvo` package viola-plugin-abi names,
+# and the crate cannot take arvo's newer crates in its place before viola does,
+# since its types cross viola's vtables. Update the lock only to a set viola's
+# lock carries. Nothing checks that: a root test holds each branch dependency
+# here to some commit in the lock, not to viola's commit.
 [dependencies]
 hilavitkutin-extensions = { git = "ssh://git@github.com/orgrinrt/hilavitkutin.git", branch = "dev", default-features = false }
 hilavitkutin-extensions-macros = { git = "ssh://git@github.com/orgrinrt/hilavitkutin.git", branch = "dev", default-features = false }
