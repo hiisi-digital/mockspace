@@ -61,7 +61,7 @@ Conditions for porting mock-crate code into mockspace root `src/`:
 1. At least one external consumer (homma) has exercised the full API surface end-to-end.
 2. Platform trait signature has not changed across two consumer cycles (i.e. one revision of the trait and one period of stable usage post-revision).
 3. minijinja choice not displaced by a better template engine in the Rust ecosystem.
-4. `IntoMockspaceConfig` trait usage validated by at least one non-mockspace-toml config schema (homma.toml is the canonical first one).
+4. Rendering validated against a context built from at least one config schema other than `mockspace.toml`.
 
 When these hold, a follow-up round ports the mock-crate `src/` into mockspace root, deletes the internal `src/render_*.rs` modules, and publishes mockspace-template to crates.io as a real consumer-facing crate.
 

@@ -1,0 +1,20 @@
+# mockspace-builtin-lints
+
+mockspace's built-in lints as one viola plugin: a `no_std` cdylib that exports a provider per lint through the vtables of `viola-plugin-abi`. The host hands each call the files it is to read, as a file slice of the NAM syntax tree, and a buffer it owns; the plugin writes its diagnostics into that buffer and keeps no state between calls, so the host may run calls in parallel with separate buffers. Config crosses the boundary already encoded, since a `no_std` cdylib cannot parse TOML.
+
+## What this crate provides
+
+| Item | Role |
+|---|---|
+| `MockspaceBuiltinLints` | The exported plugin: its descriptor lists every provider below. |
+| `NoTodoProvider`, `FileSizeProvider`, `AstTypePositionProvider`, `NoStdProvider` | Per-file lints, each a provider id and a `LintEvaluateVtable`. |
+| `NoAllocProvider`, `NoDynDispatchProvider`, `NoRuntimeRegistrationProvider`, `NoRuntimeSpawnProvider` | The token-scan family: one evaluator over a list of forbidden tokens, each lint its own provider. |
+| `NoDuplicateFnProvider` | The one project lint: a `LintEvaluateProjectIndexVtable` that indexes every file's public functions in one phase and reports duplicates in a second. |
+| `IndexRecord` | One entry of that index, `#[repr(C)]` since the host carries the buffer between the two phases as bytes: where the function is, the hash of its name it is grouped by, and the hash of its signature. |
+| `FileSizeConfig` | The fixed-layout config of `file-size`, read back by a cast when its length matches. |
+| `TokenScanFlags`, `AstTypePositionFlags` | The variable-length configs of the token-scan family and of `ast-type-position`, decoded by hand from a length-prefixed blob, within fixed bounds and without allocating. Private. |
+| `Lines` | The lines of a byte slice, as `str::lines` gives them, for the lints that count or scan lines. Private. |
+
+## Its dependency graph
+
+The crate is a workspace root of its own, outside the engine's workspace, since it links the stack and viola, a set of dependencies apart from the engine's. Its dependency specs are viola's own, byte for byte, so that cargo unifies the stack crates it shares with `viola-plugin-abi` into one copy each, which the types crossing the vtables require. Its committed `Cargo.lock` holds each of them at the commit viola's own lock resolves, which keeps the graph readable while the branches it names move on. It moves to a newer stack when viola does.

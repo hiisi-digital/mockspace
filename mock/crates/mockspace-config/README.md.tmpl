@@ -1,10 +1,8 @@
 # mockspace-config
 
-Canonical typed schema for `mockspace.toml` plus the `IntoMockspaceConfig` trait so consumer tools' configs can map onto mockspace's template-context vocabulary. Extracted from mockspace internals so viola, homma, and other workspace tools can consume mockspace's config shape without depending on the mockspace binary.
+The typed schema of the v2 `mockspace.toml` and its parser, for a tool that reads or writes a mockspace config without depending on the engine.
 
-## Usage shape
-
-Parsing mockspace.toml directly:
+## Usage
 
 ```rust
 use mockspace_config::{parse_mockspace_toml, Config};
@@ -13,28 +11,6 @@ use std::path::Path;
 let cfg: Config = parse_mockspace_toml(Path::new("mockspace.toml"))?;
 ```
 
-Implementing `IntoMockspaceConfig` for a custom config type so it produces a Config:
+The schema is strict: a key the schema does not have is an error naming it, rather than a value silently dropped.
 
-```rust
-use mockspace_config::{Config, IntoMockspaceConfig, MappingError};
-
-impl IntoMockspaceConfig for MyConfig {
-    fn into_mockspace_config(self) -> Result<Config, MappingError> {
-        Ok(Config {
-            project_name: self.workspace.name,
-            mock_dir: self.workspace.root.join("mock"),
-            // ... map remaining fields
-            ..Config::default()
-        })
-    }
-}
-```
-
-Templates rendered via `mockspace-template` consume `Config` (as `serde::Serialize` context), so any consumer producing a Config can render mockspace templates against their own config schema.
-
-## See also
-
-- `mock/design_rounds/202605131900_topic.extracted-lib-crates.md`: design round capturing the extraction rationale
-- `DESIGN.md.tmpl` in this directory: full design document
-- `BACKLOG.md.tmpl` in this directory: deferred work tracked
-- `mockspace-template`: sibling crate that consumes Config as template context
+A lint's `extends` names a preset by the `<host>::<name>` shorthand. `parse_preset_shorthand` reads one, and `resolve_preset_chain` follows a preset's `extends` through a source of presets to the end of the chain.

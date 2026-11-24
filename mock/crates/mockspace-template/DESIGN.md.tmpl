@@ -54,7 +54,7 @@ let rendered = env.get_template("readme")?.render(&ctx)?;
 
 Any `T: serde::Serialize`. The crate does NOT define a typed context schema; consumers serialize whatever shape they want, and templates reference field paths.
 
-Mockspace passes its `Config` value (typed). Homma passes a value constructed via `IntoMockspaceConfig` from its own typed config. Both produce the same template-visible vocabulary; templates work uniformly across consumer schemas.
+Mockspace passes its `Config` value (typed). Another tool passes a value it builds from its own typed config, carrying the same template-visible names; templates work uniformly across consumer schemas as long as those names are there.
 
 ### Autoescape policy
 
