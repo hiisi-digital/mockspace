@@ -375,14 +375,16 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // A declared data ref with no instance reads as a directory with nothing in it, and a file a
     // ref holds that the branch still tracks is in two places. Either stops the run here, before
     // a lint or a tool reads the mock directory. The verbs that repair it are let through.
-    if !is_recovery_command(&args) && first_positional(&args) != Some("data-refs")
-        && let Err(why) = crate::data_refs::standing(&cfg) {
-            eprintln!();
-            for line in why {
-                eprintln!("BLOCKED: {line}");
-            }
-            return ExitCode::FAILURE;
+    if !is_recovery_command(&args)
+        && first_positional(&args) != Some("data-refs")
+        && let Err(why) = crate::data_refs::standing(&cfg)
+    {
+        eprintln!();
+        for line in why {
+            eprintln!("BLOCKED: {line}");
         }
+        return ExitCode::FAILURE;
+    }
 
     // Keep the durable gate installed and active with no user involvement. This
     // is the whole engine-side setup under the launcher+pin model; the dissolved
@@ -1096,15 +1098,16 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // caller made about what is staged.
     if doc_only
         && let Some(r) = escape_hatch::verify_doc_only(&cfg.repo_root, &mock_rel_for_hatch, &layout)
-        {
-            eprintln!("BLOCKED: {}", r.explain());
-            return ExitCode::FAILURE;
-        }
+    {
+        eprintln!("BLOCKED: {}", r.explain());
+        return ExitCode::FAILURE;
+    }
     if let Some(s) = scope_arg
-        && let Some(r) = escape_hatch::verify_scope(&cfg.repo_root, &mock_rel_for_hatch, &layout, s) {
-            eprintln!("BLOCKED: {}", r.explain());
-            return ExitCode::FAILURE;
-        }
+        && let Some(r) = escape_hatch::verify_scope(&cfg.repo_root, &mock_rel_for_hatch, &layout, s)
+    {
+        eprintln!("BLOCKED: {}", r.explain());
+        return ExitCode::FAILURE;
+    }
 
     let workspace_nuked = detect_nuked_workspace(&cfg);
 
