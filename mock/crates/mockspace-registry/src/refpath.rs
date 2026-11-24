@@ -254,18 +254,6 @@ impl FileRef {
         })
     }
 
-    /// The spellings naming an extension that reach one each of `files`, the names an ambiguous
-    /// citation reaches, for each that has one; empty where the files differ by more than it.
-    #[must_use]
-    pub fn extension_spellings(&self, root_dir: &Path, files: &[String]) -> Vec<String> {
-        files
-            .iter()
-            .filter_map(|f| self.with_extension_of(f))
-            .filter(|r| matches!(r.locate(root_dir), Location::Found(_)))
-            .map(|r| r.render())
-            .collect()
-    }
-
     /// The index in `names` of the step naming the file.
     fn file_at(&self) -> usize {
         self.names.len() - 1 - usize::from(self.lines.is_none())
@@ -330,37 +318,112 @@ impl FileRef {
     }
 
     /// The file this citation names under `root_dir`, by walking the names and folding each
-    /// entry's own name as the standard has a host do. An extension narrows the walk to the files
-    /// carrying it, and is refused where the names alone reach one file.
+    /// entry's own name as the standard has a host do. An extension narrows what the names reach to
+    /// the file carrying it, among files of one directory whose names are the same up to the first
+    /// dot, and is refused where the names alone reach one file (letkajenkka `SPEC.md` 9.1).
     #[must_use]
     pub fn locate(&self, root_dir: &Path) -> Location {
-        let file_names = &self.names[..= self.file_at()];
+        let reached = self.reached(root_dir);
+        let Some(ext) = self.extension.as_deref() else {
+            return match reached.len() {
+                0 => Location::Missing,
+                1 => Location::Found(reached[0].clone()),
+                _ => Location::Ambiguous(file_names(&reached)),
+            };
+        };
+        if reached.len() > 1 && !share_a_stem(&reached) {
+            return Location::Ambiguous(file_names(&reached));
+        }
+        let mut carrying = reached.iter().filter(|p| {
+            p.file_name()
+                .and_then(|n| mockspace_refnames::extension(&n.to_string_lossy()).map(|x| x == ext))
+                .unwrap_or(false)
+        });
+        match (carrying.next(), reached.len()) {
+            (None, _) => Location::Missing,
+            (Some(one), 1) => Location::NeedlessExtension(one.clone()),
+            (Some(one), _) => Location::Found(one.clone()),
+        }
+    }
+
+    /// How the files this citation reaches without an extension are told apart, where they are
+    /// several.
+    #[must_use]
+    pub fn apart(&self, root_dir: &Path) -> Apart {
+        let reached = self.reached(root_dir);
+        if !share_a_stem(&reached) {
+            return Apart::ByNothing;
+        }
+        let (mut spelled, mut unnamed) = (Vec::new(), Vec::new());
+        for name in file_names(&reached) {
+            match self.with_extension_of(&name) {
+                Some(r) => spelled.push(r.render()),
+                None => unnamed.push(name),
+            }
+        }
+        Apart::ByExtension { spelled, unnamed }
+    }
+
+    /// Every file the names reach, extension aside, sorted.
+    fn reached(&self, root_dir: &Path) -> Vec<PathBuf> {
         let mut found = Vec::new();
-        walk(root_dir, file_names, self.extension.as_deref(), &mut found);
+        walk(root_dir, &self.names[..= self.file_at()], &mut found);
         found.sort();
         found.dedup();
-        match found.len() {
-            0 => Location::Missing,
-            1 if self.extension.is_some() => {
-                let mut alone = Vec::new();
-                walk(root_dir, file_names, None, &mut alone);
-                if alone.len() == 1 {
-                    Location::NeedlessExtension(found.remove(0))
-                } else {
-                    Location::Found(found.remove(0))
-                }
+        found
+    }
+}
+
+/// How the files an ambiguous citation reaches are told apart (letkajenkka `SPEC.md` 9.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Apart {
+    /// They share a directory and their names up to the first dot: `spelled` is the citation naming
+    /// each one's extension, and `unnamed` the files with no extension, which have no spelling
+    /// while another shares their stem.
+    ByExtension { spelled: Vec<String>, unnamed: Vec<String> },
+    /// They differ before the first dot, by case or a hyphen, or lie in different directories: no
+    /// spelling tells them apart.
+    ByNothing,
+}
+
+impl Apart {
+    /// What a finding says to mend the citation with.
+    #[must_use]
+    pub fn say(&self) -> String {
+        match self {
+            Self::ByExtension { spelled, unnamed } if unnamed.is_empty() => {
+                format!("They differ only by extension, so name the one meant: {}.", spelled.join(", "))
             },
-            1 => Location::Found(found.remove(0)),
-            _ => {
-                Location::Ambiguous(
-                    found
-                        .iter()
-                        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-                        .collect(),
+            Self::ByExtension { spelled, unnamed } => {
+                format!(
+                    "`{}` has no extension, so it has no spelling beside a file sharing its stem: rename one. Each other \
+                     file is named by its extension: {}.",
+                    unnamed.join("`, `"),
+                    spelled.join(", ")
                 )
+            },
+            Self::ByNothing => {
+                "They differ before the first dot of their names, or lie in different directories, so no spelling \
+                 tells them apart: rename or remove all but one."
+                    .to_string()
             },
         }
     }
+}
+
+/// Whether `files` lie in one directory and their names are the same, byte for byte, up to the
+/// first dot.
+fn share_a_stem(files: &[PathBuf]) -> bool {
+    let stem = |p: &PathBuf| {
+        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        (p.parent().map(Path::to_path_buf), name.split('.').next().unwrap_or_default().to_string())
+    };
+    files.windows(2).all(|w| stem(&w[0]) == stem(&w[1]))
+}
+
+/// The file names of `files`, in their order.
+fn file_names(files: &[PathBuf]) -> Vec<String> {
+    files.iter().filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).collect()
 }
 
 /// Where a citation's file is.
@@ -380,20 +443,16 @@ mod listing;
 use listing::listing;
 pub use listing::{CacheScope, cache_scope, dir_reads};
 
-/// Every file under `dir` that `names` reach, the last name being the file's own, and carrying
-/// `extension` where one is given.
-fn walk(dir: &Path, names: &[String], extension: Option<&str>, out: &mut Vec<PathBuf>) {
+/// Every file under `dir` that `names` reach, the last name being the file's own.
+fn walk(dir: &Path, names: &[String], out: &mut Vec<PathBuf>) {
     let Some((name, rest)) = names.split_first() else { return };
     for entry in listing(dir).iter() {
         if !mockspace_refnames::entry(&entry.name, entry.is_dir).is_some_and(|f| f == name.as_str()) {
             continue;
         }
         if entry.is_dir {
-            walk(&entry.path, rest, extension, out);
-        } else if entry.is_file
-            && rest.is_empty()
-            && extension.is_none_or(|e| mockspace_refnames::extension(&entry.name).is_some_and(|x| x == e))
-        {
+            walk(&entry.path, rest, out);
+        } else if entry.is_file && rest.is_empty() {
             out.push(entry.path.clone());
         }
     }

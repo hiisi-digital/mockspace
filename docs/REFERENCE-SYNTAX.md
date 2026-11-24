@@ -348,8 +348,11 @@ further dot an underscore (letkajenkka `SPEC.md` 9.1):
 beside `changelist.src.md`. The extension is written only there: one named on a file
 the name alone reaches is refused, and so is a shape on any other step, so a file keeps
 one spelling. The finding for an ambiguous citation lists the spelling of each file it
-reaches. Files that differ by more than that, a case or a hyphen, have no spelling to
-tell them apart, and one is renamed or removed.
+reaches. A file with no extension, `run` beside `run.sh`, has no spelling while the
+other shares its stem, so one of the two is renamed; `run<sh>` still reaches the
+other. Files whose names differ before the first dot, by case or a hyphen, or that lie
+in two directories folding to one path, have no spelling whatever extension is named,
+and one is renamed or removed.
 
 A file or directory
 whose name cannot fold, because it opens on an underscore or holds a dot, a space or

@@ -132,3 +132,37 @@ fn an_extension_tells_apart_no_files_that_differ_before_the_first_dot() {
     assert_eq!(at("panel::case::foo<md>::1"), Location::Ambiguous(vec!["Foo.md".to_string(), "foo.sh".to_string()]));
     assert_eq!(at("panel::a_b::x<md>::1"), Location::Ambiguous(vec!["x.md".to_string(), "x.sh".to_string()]));
 }
+
+// How the files of an ambiguous citation are told apart: by the extension of each that has one,
+// with a file of no extension named as having no spelling, or by nothing a citation writes.
+//
+// Mutation: offering a spelling for every file names `run<>` for the file with no extension;
+// classing by the folded names alone offers `foo<md>` and `foo<sh>` for `Foo.md` and `foo.sh`.
+#[test]
+fn an_ambiguous_citation_says_how_its_files_are_told_apart() {
+    let dir = tree(PROBES);
+    let apart = |text: &str| FileRef::read(text).unwrap().apart(dir.path());
+    assert_eq!(
+        apart("panel::probes::unblock_value::1"),
+        Apart::ByExtension {
+            spelled: vec!["panel::probes::unblock_value<out>::1".into(), "panel::probes::unblock_value<sh>::1".into()],
+            unnamed: Vec::new(),
+        }
+    );
+    assert_eq!(
+        apart("panel::probes::run::1"),
+        Apart::ByExtension {
+            spelled: vec!["panel::probes::run<sh>::1".into()],
+            unnamed: vec!["run".into()],
+        }
+    );
+    assert_eq!(
+        apart("panel::round::changelist::one"),
+        Apart::ByExtension {
+            spelled: vec!["panel::round::changelist<doc_lock_md>::one".into(), "panel::round::changelist<src_md>::one".into()],
+            unnamed: Vec::new(),
+        }
+    );
+    assert_eq!(apart("panel::case::foo::1"), Apart::ByNothing);
+    assert_eq!(apart("panel::a_b::x::1"), Apart::ByNothing);
+}

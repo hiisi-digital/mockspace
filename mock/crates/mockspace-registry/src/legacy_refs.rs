@@ -323,9 +323,9 @@ fn citation(parts: &[&str], ctx: &Ctx<'_>) -> Outcome {
         Location::Missing => return Outcome::Left(format!("`{new}` would reach no file")),
         Location::Ambiguous(all) => {
             return Outcome::Left(format!(
-                "`{new}` would reach several files ({}), and they differ by more than an extension, so no spelling \
-                 tells them apart",
-                all.join(", ")
+                "`{new}` would reach several files ({}). {}",
+                all.join(", "),
+                read.apart(&root_dir).say()
             ));
         },
     }

@@ -100,12 +100,7 @@ pub fn validate_provenance(
                         continue;
                     },
                     Location::Ambiguous(names) => {
-                        let spelled = p.extension_spellings(&root_dir, &names);
-                        let mend = if spelled.len() == names.len() {
-                            format!("They differ only by extension, so name the one meant: {}.", spelled.join(", "))
-                        } else {
-                            "They differ by more than an extension, so no spelling tells them apart: rename or remove all but one.".to_string()
-                        };
+                        let mend = p.apart(&root_dir).say();
                         out.push(RegistryFinding {
                         kind: "ambiguous-provenance",
                         message: format!(

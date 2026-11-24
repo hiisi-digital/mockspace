@@ -62,7 +62,8 @@ const PROBES: &[&str] = &[
 ];
 
 // Mutation: the message of the reader before this, which said to rename one of the two, holds no
-// spelling; offering a spelling for every file names `run<>` for the file with no extension.
+// spelling; offering a spelling for every file names `run<>` for the file with no extension, and
+// classing by the folded names alone offers `foo<md>` for `Foo.md` beside `foo.sh`.
 #[test]
 fn an_ambiguous_citation_is_told_the_spelling_of_each_file_where_only_extensions_differ() {
     let found = findings(PROBES, "panel::probes::unblock_value::1");
@@ -78,13 +79,12 @@ fn an_ambiguous_citation_is_told_the_spelling_of_each_file_where_only_extensions
 
     let found = findings(PROBES, "panel::probes::run::1");
     assert_eq!(found[0].kind, "ambiguous-provenance");
-    assert!(
-        found[0]
-            .message
-            .contains("differ by more than an extension"),
-        "{}",
-        found[0].message
-    );
+    assert!(found[0].message.contains("`run` has no extension, so it has no spelling"), "{}", found[0].message);
+    assert!(found[0].message.contains("panel::probes::run<sh>::1"), "{}", found[0].message);
+
+    let found = findings(&["case/Foo.md", "case/foo.sh"], "panel::case::foo::1");
+    assert_eq!(found[0].kind, "ambiguous-provenance");
+    assert!(found[0].message.contains("differ before the first dot"), "{}", found[0].message);
 }
 
 // Mutation: treating `NeedlessExtension` as found lets `alone<md>` pass; no finding for the two
