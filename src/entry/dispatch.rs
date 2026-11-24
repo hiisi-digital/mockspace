@@ -375,15 +375,14 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // A declared data ref with no instance reads as a directory with nothing in it, and a file a
     // ref holds that the branch still tracks is in two places. Either stops the run here, before
     // a lint or a tool reads the mock directory. The verbs that repair it are let through.
-    if !is_recovery_command(&args) && first_positional(&args) != Some("data-refs") {
-        if let Err(why) = crate::data_refs::standing(&cfg) {
+    if !is_recovery_command(&args) && first_positional(&args) != Some("data-refs")
+        && let Err(why) = crate::data_refs::standing(&cfg) {
             eprintln!();
             for line in why {
                 eprintln!("BLOCKED: {line}");
             }
             return ExitCode::FAILURE;
         }
-    }
 
     // Keep the durable gate installed and active with no user involvement. This
     // is the whole engine-side setup under the launcher+pin model; the dissolved
@@ -1095,19 +1094,17 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // Only the explicit flag is verified. A nuked workspace derives doc-only
     // internally below, and that derivation is the engine's own, not a claim a
     // caller made about what is staged.
-    if doc_only {
-        if let Some(r) = escape_hatch::verify_doc_only(&cfg.repo_root, &mock_rel_for_hatch, &layout)
+    if doc_only
+        && let Some(r) = escape_hatch::verify_doc_only(&cfg.repo_root, &mock_rel_for_hatch, &layout)
         {
             eprintln!("BLOCKED: {}", r.explain());
             return ExitCode::FAILURE;
         }
-    }
-    if let Some(s) = scope_arg {
-        if let Some(r) = escape_hatch::verify_scope(&cfg.repo_root, &mock_rel_for_hatch, &layout, s) {
+    if let Some(s) = scope_arg
+        && let Some(r) = escape_hatch::verify_scope(&cfg.repo_root, &mock_rel_for_hatch, &layout, s) {
             eprintln!("BLOCKED: {}", r.explain());
             return ExitCode::FAILURE;
         }
-    }
 
     let workspace_nuked = detect_nuked_workspace(&cfg);
 
@@ -1652,6 +1649,12 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 let Ok(text) = fs::read_to_string(entry.path()) else {
                     continue;
                 };
+                // Only what the engine wrote, by the marker the sweep reads: a document someone
+                // put in the docs directory by hand renders nothing, so a reference in it is
+                // its author's text, such as a page teaching the syntax by example.
+                if !crate::render_design::is_generated(&text) {
+                    continue;
+                }
                 let found = registry::unresolved_in_generated(&text);
                 if !found.is_empty() {
                     unresolved.push((entry.file_name().to_string_lossy().to_string(), found));
