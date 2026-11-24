@@ -82,7 +82,8 @@ pub fn validate_provenance(
                 });
                     continue;
                 };
-                let target = match p.locate(&repo_root.join(root_rel)) {
+                let root_dir = repo_root.join(root_rel);
+                let target = match p.locate(&root_dir) {
                     Location::Found(t) => t,
                     Location::Missing => {
                         out.push(RegistryFinding {
@@ -99,10 +100,16 @@ pub fn validate_provenance(
                         continue;
                     },
                     Location::Ambiguous(names) => {
+                        let spelled = p.extension_spellings(&root_dir, &names);
+                        let mend = if spelled.len() == names.len() {
+                            format!("They differ only by extension, so name the one meant: {}.", spelled.join(", "))
+                        } else {
+                            "They differ by more than an extension, so no spelling tells them apart: rename or remove all but one.".to_string()
+                        };
                         out.push(RegistryFinding {
                         kind: "ambiguous-provenance",
                         message: format!(
-                            "{}: `{}` matches several files ({}). No spelling tells them apart, since extensions are never written: rename or remove all but one, because picking one silently would point the citation somewhere you did not choose.",
+                            "{}: `{}` matches several files ({}). {mend} Picking one silently would point the citation somewhere you did not choose.",
                             row.qualified(),
                             p.render(),
                             names.join(", ")
@@ -110,6 +117,24 @@ pub fn validate_provenance(
                         source: Some(row.source.clone()),
                         gate:   GateScope::Always,
                     });
+                        continue;
+                    },
+                    Location::NeedlessExtension(_) => {
+                        let bare = FileRef {
+                            extension: None,
+                            ..p.clone()
+                        };
+                        out.push(RegistryFinding {
+                            kind:    "needless-extension",
+                            message: format!(
+                                "{}: `{}` names an extension no other file there needs telling apart from, and a file has one spelling: `{}`.",
+                                row.qualified(),
+                                p.render(),
+                                bare.render()
+                            ),
+                            source:  Some(row.source.clone()),
+                            gate:    GateScope::Always,
+                        });
                         continue;
                     },
                 };
@@ -204,6 +229,7 @@ pub const FINDING_KINDS: &[&str] = &[
     "unknown-provenance-root",
     "unresolvable-provenance",
     "ambiguous-provenance",
+    "needless-extension",
     "unresolvable-heading",
     "fragile-line-citation",
     "malformed-row-reference",
@@ -753,3 +779,7 @@ fn unquoted_times(namespaces: &[RegistryNamespace], reg: &Registry) -> Vec<Regis
     }
     out
 }
+
+#[cfg(test)]
+#[path = "validate_extension_tests.rs"]
+mod extension_tests;
