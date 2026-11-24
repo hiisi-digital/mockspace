@@ -10,12 +10,25 @@
 
 use std::path::Path;
 
+/// The dependency tables of a manifest: the three kinds at the top, the same three under each
+/// `[target.<cfg>]`, and `[workspace.dependencies]`.
+fn dependency_tables(doc: &toml_edit::DocumentMut) -> Vec<&toml_edit::Item> {
+    const KINDS: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
+    let mut tables: Vec<&toml_edit::Item> = KINDS.iter().filter_map(|k| doc.get(k)).collect();
+    if let Some(targets) = doc.get("target").and_then(|t| t.as_table_like()) {
+        for (_, target) in targets.iter() {
+            tables.extend(KINDS.iter().filter_map(|k| target.get(k)));
+        }
+    }
+    tables.extend(doc.get("workspace").and_then(|w| w.get("dependencies")));
+    tables
+}
+
 /// The names of the dependencies in `manifest` that come from git by a branch.
 fn branch_dependencies(manifest: &str) -> Vec<String> {
     let doc: toml_edit::DocumentMut = manifest.parse().expect("a manifest that parses");
     let mut names = Vec::new();
-    let tables = [doc.get("dependencies"), doc.get("build-dependencies")];
-    for table in tables.into_iter().flatten() {
+    for table in dependency_tables(&doc) {
         let Some(table) = table.as_table_like() else { continue };
         for (name, spec) in table.iter() {
             let Some(spec) = spec.as_table_like() else { continue };
@@ -64,6 +77,19 @@ const MANIFEST: &str = "[package]\nname = \"p\"\n[workspace]\n[dependencies]\n\
 #[test]
 fn a_branch_dependency_with_no_lockfile_is_named() {
     assert_eq!(unlocked(MANIFEST, None), ["a"]);
+}
+
+#[test]
+fn a_branch_dependency_in_every_dependency_table_is_named() {
+    let manifest = "[package]\nname = \"p\"\n\
+        [workspace.dependencies]\nw = { git = \"https://example.invalid/w.git\", branch = \"dev\" }\n\
+        [dev-dependencies]\nd = { git = \"https://example.invalid/d.git\", branch = \"dev\" }\n\
+        [build-dependencies]\nb = { git = \"https://example.invalid/b.git\", branch = \"dev\" }\n\
+        [target.'cfg(unix)'.dependencies]\nt = { git = \"https://example.invalid/t.git\", branch = \"dev\" }\n\
+        [target.'cfg(unix)'.dev-dependencies]\ntd = { git = \"https://example.invalid/td.git\", branch = \"dev\" }\n";
+    let mut found = unlocked(manifest, None);
+    found.sort();
+    assert_eq!(found, ["b", "d", "t", "td", "w"]);
 }
 
 #[test]

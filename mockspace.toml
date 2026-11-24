@@ -2,8 +2,10 @@
 #
 # The engine runs on its own tree the way it runs on any other: the launcher reads
 # this file, builds the pinned engine and points it at `mock/`. Nothing here marks
-# the repository as special. To run the engine from this working tree instead of
-# the pin, while working on the engine itself, pass `--engine .` to the launcher.
+# the repository as special. To run an engine change before it lands, push its
+# branch and pin `mockspace_rev` to the branch head for the run, then put the
+# branch pin back. `--engine .` does not do it here: the search pack below comes
+# from git, and the launcher cannot link it against a working tree's lint rules.
 
 # The engine pin. mockspace has cut no release yet, so this tracks the working
 # trunk, and the launcher re-resolves the branch head hourly.
