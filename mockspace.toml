@@ -1,0 +1,45 @@
+# mockspace, the mockspace config of its own repository.
+#
+# The engine runs on its own tree the way it runs on any other: the launcher reads
+# this file, builds the pinned engine and points it at `mock/`. Nothing here marks
+# the repository as special. To run the engine from this working tree instead of
+# the pin, while working on the engine itself, pass `--engine .` to the launcher.
+
+# The engine pin. mockspace has cut no release yet, so this tracks the working
+# trunk, and the launcher re-resolves the branch head hourly.
+mockspace_branch = "dev"
+
+project_name = "mockspace"
+crate_prefix = "mockspace"
+
+abi_version = 1
+mock_dir = "mock"
+
+proc_macro_crates = ["mockspace-rs-attrs"]
+module_crates = []
+
+# Depth in the dependency graph of the crates under `mock/crates`.
+layers = [
+    "L0 leaves",    # refnames, template, store, rs-attrs: no mockspace crate below them
+    "L1 models",    # config, core, registry: the config, the round model, the typed rows
+    "L2 engine",    # rs: lints, render and the config loader over the models
+    "L3 surface",   # cli, test-fixtures: the verbs, and what the tests drive them with
+]
+
+[domain_kinds]
+
+[known_macros]
+
+[crate_colors]
+
+# `mock search`: the one search over this repository, answered from its own index
+# and never building it. The tool comes in on the same cdylib a lint pack would,
+# from the pack's repository, alone and without the pack's lints.
+[lint-crates]
+mockspace-extra-search = { git = "ssh://git@github.com/orgrinrt/mockspace-extra-lints.git", branch = "dev" }
+
+# The commit types this repository uses beyond the defaults (feat, fix, refactor,
+# docs, test, chore, bench, release). The builtin `commit-subject` gate refuses a
+# type that is not listed, so a new type is added here and nowhere else.
+[lints.commit-subject]
+extra_types = "research,perf,merge,style"

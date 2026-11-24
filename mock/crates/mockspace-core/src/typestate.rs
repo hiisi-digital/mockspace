@@ -57,7 +57,7 @@ use crate::task::TaskState;
 // =========================================================================
 
 mod sealed {
-    pub trait Sealed {}
+    pub trait TypestateMarker {}
 }
 
 // =========================================================================
@@ -70,7 +70,7 @@ mod sealed {
 /// [`Phase`] this marker represents, letting generic code convert from
 /// typestate back to the runtime enum when needed (e.g. for TOML
 /// serialisation or diagnostic output).
-pub trait PhaseMarker: sealed::Sealed + 'static {
+pub trait PhaseMarker: sealed::TypestateMarker + 'static {
     /// The runtime phase this marker corresponds to.
     const PHASE: Phase;
 }
@@ -99,12 +99,12 @@ pub struct ApplySrcState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DoneState;
 
-impl sealed::Sealed for TopicState {}
-impl sealed::Sealed for PlanDocState {}
-impl sealed::Sealed for ApplyDocState {}
-impl sealed::Sealed for PlanSrcState {}
-impl sealed::Sealed for ApplySrcState {}
-impl sealed::Sealed for DoneState {}
+impl sealed::TypestateMarker for TopicState {}
+impl sealed::TypestateMarker for PlanDocState {}
+impl sealed::TypestateMarker for ApplyDocState {}
+impl sealed::TypestateMarker for PlanSrcState {}
+impl sealed::TypestateMarker for ApplySrcState {}
+impl sealed::TypestateMarker for DoneState {}
 
 impl PhaseMarker for TopicState {
     const PHASE: Phase = Phase::Topic;
@@ -146,15 +146,15 @@ pub struct FinishVerb;
 pub struct ReplanVerb;
 
 /// Sealed marker trait for transition verbs.
-pub trait VerbMarker: sealed::Sealed + 'static {
+pub trait VerbMarker: sealed::TypestateMarker + 'static {
     /// The runtime verb this marker corresponds to.
     const VERB: crate::transition::TransitionVerb;
 }
 
-impl sealed::Sealed for PlanVerb {}
-impl sealed::Sealed for ApplyVerb {}
-impl sealed::Sealed for FinishVerb {}
-impl sealed::Sealed for ReplanVerb {}
+impl sealed::TypestateMarker for PlanVerb {}
+impl sealed::TypestateMarker for ApplyVerb {}
+impl sealed::TypestateMarker for FinishVerb {}
+impl sealed::TypestateMarker for ReplanVerb {}
 
 impl VerbMarker for PlanVerb {
     const VERB: crate::transition::TransitionVerb = crate::transition::TransitionVerb::Plan;
@@ -296,7 +296,7 @@ pub struct PhaseMismatch {
 // =========================================================================
 
 /// Sealed marker trait for manifest sides.
-pub trait Side: sealed::Sealed + 'static {
+pub trait Side: sealed::TypestateMarker + 'static {
     /// The runtime side this marker corresponds to.
     const SIDE: ManifestSide;
 }
@@ -309,8 +309,8 @@ pub struct DocSide;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SrcSide;
 
-impl sealed::Sealed for DocSide {}
-impl sealed::Sealed for SrcSide {}
+impl sealed::TypestateMarker for DocSide {}
+impl sealed::TypestateMarker for SrcSide {}
 
 impl Side for DocSide {
     const SIDE: ManifestSide = ManifestSide::Doc;
@@ -332,7 +332,7 @@ impl Side for SrcSide {
 /// [`TypedManifest`] ensures only `AuthoringStage` manifests are
 /// mutable; sealed and deprecated forms are read-only at the type
 /// level.
-pub trait Stage: sealed::Sealed + 'static {
+pub trait Stage: sealed::TypestateMarker + 'static {
     /// Whether manifests at this stage admit mutation.
     ///
     /// Only `AuthoringStage` returns true; `LockedStage` and
@@ -362,9 +362,9 @@ pub struct LockedStage;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeprecatedStage;
 
-impl sealed::Sealed for AuthoringStage {}
-impl sealed::Sealed for LockedStage {}
-impl sealed::Sealed for DeprecatedStage {}
+impl sealed::TypestateMarker for AuthoringStage {}
+impl sealed::TypestateMarker for LockedStage {}
+impl sealed::TypestateMarker for DeprecatedStage {}
 
 impl Stage for AuthoringStage {
     const IS_MUTABLE: bool = true;
@@ -557,7 +557,7 @@ impl<'lock> LockProof<'lock> {
 /// supports compile-time queries (e.g. a function that takes a
 /// `TaskHandle<ClosedTaskState>` to access the closure metadata).
 /// Specific transitions are added as method bounds when needed.
-pub trait TaskStateMarker: sealed::Sealed + 'static {
+pub trait TaskStateMarker: sealed::TypestateMarker + 'static {
     /// The runtime state this marker corresponds to.
     const STATE: TaskState;
 }
@@ -582,11 +582,11 @@ pub struct DeferredTaskState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClosedTaskState;
 
-impl sealed::Sealed for OpenTaskState {}
-impl sealed::Sealed for InProgressTaskState {}
-impl sealed::Sealed for BlockedTaskState {}
-impl sealed::Sealed for DeferredTaskState {}
-impl sealed::Sealed for ClosedTaskState {}
+impl sealed::TypestateMarker for OpenTaskState {}
+impl sealed::TypestateMarker for InProgressTaskState {}
+impl sealed::TypestateMarker for BlockedTaskState {}
+impl sealed::TypestateMarker for DeferredTaskState {}
+impl sealed::TypestateMarker for ClosedTaskState {}
 
 impl TaskStateMarker for OpenTaskState {
     const STATE: TaskState = TaskState::Open;
