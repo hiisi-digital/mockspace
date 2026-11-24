@@ -16,6 +16,7 @@
 //! inside which nothing is a reference, and the config files a preset shorthand is written in.
 
 use core::fmt;
+use core::marker::PhantomData;
 
 mod fence;
 pub use fence::Fences;
@@ -31,11 +32,46 @@ use letkajenkka::{Path, Selector};
 /// A name as a reference writes it, folded from what a filesystem, a document or a config calls
 /// it: case lowered, each hyphen an underscore, and [`LEAD`] set before a name opening on a digit.
 ///
-/// Only [`fold`] makes one, so every value folds into an identifier of the standard. It holds the
+/// Only [`fold`] and [`extension`] make one, so every value folds into an identifier of the standard. It holds the
 /// name as given and is never allocated: it writes itself folded through `Display` and compares
 /// with a written name through `PartialEq<str>`, and those two are all it shows.
+///
+/// `K` is what was folded, a name or a file's extension, and says whether a dot folds too.
 #[derive(Clone, Copy, Debug)]
-pub struct Folded<'a>(&'a str);
+pub struct Folded<'a, K: Fold = NameFold>(&'a str, PhantomData<K>);
+
+/// What a [`Folded`] holds, and so how it folds. Sealed: the two kinds below are all there are.
+pub trait Fold: sealed::Sealed + Clone + Copy + fmt::Debug {
+    /// Whether a dot folds to an underscore. Only a file's extension folds its dots, since nowhere
+    /// else is a dot part of what a reference names.
+    const DOTS: bool;
+}
+
+/// A name: a directory, a file up to its first dot, a heading, a row. A dot does not fold.
+#[derive(Clone, Copy, Debug)]
+pub enum NameFold {}
+
+/// A file's extension, everything after its first dot. Each further dot folds to an underscore.
+#[derive(Clone, Copy, Debug)]
+pub enum ExtensionFold {}
+
+impl Fold for NameFold {
+    const DOTS: bool = false;
+}
+
+impl Fold for ExtensionFold {
+    const DOTS: bool = true;
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for super::NameFold {}
+    impl Sealed for super::ExtensionFold {}
+}
+
+/// A file's extension as a reference names it: a shape on the step naming the file, written only
+/// where two files differ by nothing else (letkajenkka `SPEC.md` 9.1).
+pub type Extension<'a> = Folded<'a, ExtensionFold>;
 
 /// `name` folded into the standard's character set, or `None` where no folding makes an identifier
 /// of it: it is empty, opens on an underscore, or holds a character the fold does not map into the
@@ -49,18 +85,39 @@ pub struct Folded<'a>(&'a str);
 /// through [`Folded::takes_a_led_stamp`], so a citation reaches one of the two.
 #[must_use]
 pub const fn fold(name: &str) -> Option<Folded<'_>> {
+    fold_as(name)
+}
+
+/// The extension of a file called `name`: what its name spells after the first dot, folded as
+/// [`fold`] folds a name and each further dot an underscore, so `changelist.doc.lock.md` has
+/// `doc_lock_md`. `None` for a name with no dot, or nothing after it, and where no folding makes
+/// an identifier of what follows it.
+#[must_use]
+pub const fn extension(name: &str) -> Option<Extension<'_>> {
     let bytes = name.as_bytes();
-    if bytes.is_empty() || !(bytes[0].is_ascii_digit() || is_start(fold_byte(bytes[0]))) {
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'.' {
+            return fold_as(name.split_at(i + 1).1);
+        }
+        i += 1;
+    }
+    None
+}
+
+const fn fold_as<K: Fold>(name: &str) -> Option<Folded<'_, K>> {
+    let bytes = name.as_bytes();
+    if bytes.is_empty() || !(bytes[0].is_ascii_digit() || is_start(fold_byte::<K>(bytes[0]))) {
         return None;
     }
     let mut i = 1;
     while i < bytes.len() {
-        if !is_body(fold_byte(bytes[i])) {
+        if !is_body(fold_byte::<K>(bytes[i])) {
             return None;
         }
         i += 1;
     }
-    Some(Folded(name))
+    Some(Folded(name, PhantomData))
 }
 
 /// The letter [`fold`] sets before a name opening on a digit.
@@ -70,13 +127,14 @@ pub const LEAD: char = 't';
 pub const STAMP_DIGITS: usize = 12;
 
 /// What a directory entry is called in a reference: a directory by its whole name, a file by its
-/// name up to its first dot, so the extensions are never written.
+/// name up to its first dot. An extension is never part of the name; where it is all that tells
+/// two files apart, a reference names it as a shape, read by [`extension`].
 #[must_use]
 pub fn entry(name: &str, is_dir: bool) -> Option<Folded<'_>> {
     if is_dir { fold(name) } else { fold(name.split('.').next().unwrap_or_default()) }
 }
 
-impl Folded<'_> {
+impl<K: Fold> Folded<'_, K> {
     /// Whether the fold sets [`LEAD`] before the name.
     const fn is_led(&self) -> bool {
         self.0.as_bytes()[0].is_ascii_digit()
@@ -91,7 +149,7 @@ impl Folded<'_> {
     #[must_use]
     pub const fn takes_a_led_stamp(&self) -> bool {
         let b = self.0.as_bytes();
-        if b.len() <= STAMP_DIGITS || fold_byte(b[0]) != LEAD as u8 {
+        if b.len() <= STAMP_DIGITS || fold_byte::<K>(b[0]) != LEAD as u8 {
             return false;
         }
         let mut i = 1;
@@ -105,8 +163,8 @@ impl Folded<'_> {
     }
 }
 
-const fn fold_byte(b: u8) -> u8 {
-    if b == HOST_SEPARATOR { b'_' } else { b.to_ascii_lowercase() }
+const fn fold_byte<K: Fold>(b: u8) -> u8 {
+    if b == HOST_SEPARATOR || (K::DOTS && b == b'.') { b'_' } else { b.to_ascii_lowercase() }
 }
 
 /// The separator of a host's own naming that [`fold`] makes an underscore.
@@ -122,19 +180,19 @@ pub fn fold_separators(text: &str) -> Option<String> {
     text.contains(sep).then(|| text.replace(sep, "_"))
 }
 
-impl fmt::Display for Folded<'_> {
+impl<K: Fold> fmt::Display for Folded<'_, K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_led() {
             fmt::Write::write_char(f, LEAD)?;
         }
         for b in self.0.bytes() {
-            fmt::Write::write_char(f, char::from(fold_byte(b)))?;
+            fmt::Write::write_char(f, char::from(fold_byte::<K>(b)))?;
         }
         Ok(())
     }
 }
 
-impl PartialEq<str> for Folded<'_> {
+impl<K: Fold> PartialEq<str> for Folded<'_, K> {
     fn eq(&self, other: &str) -> bool {
         let other = if self.is_led() {
             match other.strip_prefix(LEAD) {
@@ -149,11 +207,11 @@ impl PartialEq<str> for Folded<'_> {
                 .0
                 .bytes()
                 .zip(other.bytes())
-                .all(|(a, b)| fold_byte(a) == b)
+                .all(|(a, b)| fold_byte::<K>(a) == b)
     }
 }
 
-impl PartialEq<&str> for Folded<'_> {
+impl<K: Fold> PartialEq<&str> for Folded<'_, K> {
     fn eq(&self, other: &&str) -> bool {
         *self == **other
     }
